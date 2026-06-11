@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+@theme {
+  --color-brand-primary: var(--color-primary);
+  --color-brand-primary-hover: var(--color-primary-hover);
+  --color-brand-primary-light: var(--color-primary-light);
+  --color-brand-surface: var(--color-surface);
+  --color-brand-bg: var(--color-bg);
+  --color-brand-sidebar: var(--color-sidebar);
+  --color-brand-sidebar-hover: var(--color-sidebar-hover);
+  --color-brand-sidebar-active: var(--color-sidebar-active);
+  --color-brand-border: var(--color-border);
+  
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-disabled: var(--color-text-disabled);
+  
+  --color-brand-success: var(--color-success);
+  --color-brand-warning: var(--color-warning);
+  --color-brand-error: var(--color-error);
+  --color-brand-info: var(--color-info);
+  
+  --shadow-card: var(--shadow-card);
+  --radius-card: var(--radius-card);
+  --radius-sm: var(--radius-sm);
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}

@@ -1,0 +1,162 @@
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { FluentProvider, webLightTheme } from '@fluentui/react-components';
+import { ToastProvider } from './components/ui/ToastProvider';
+import { AuthProvider } from './auth/AuthProvider';
+import { ProtectedRoute } from './auth/ProtectedRoute';
+import { AppShell } from './components/layout/AppShell';
+import { Login } from './pages/Login';
+import { Dashboard } from './pages/Dashboard';
+import { AgentsList } from './pages/agents/AgentsList';
+import { AgentDetail } from './pages/agents/AgentDetail';
+import { ConnectionsPage } from './pages/connections/ConnectionsPage';
+import MySQLDashboard from './pages/mysql/MySQLDashboard';
+import SlowQueries from './pages/mysql/SlowQueries';
+import ErrorLogs from './pages/mysql/ErrorLogs';
+import ErrorAnalysis from './pages/mysql/ErrorAnalysis';
+import MySQLSelfHeal from './pages/mysql/MySQLSelfHeal';
+import DatabaseServersPage from './pages/databases/DatabaseServersPage';
+import AddOsServerPage from './pages/databases/AddOsServerPage';
+import AddServerPage from './pages/databases/AddServerPage';
+import ServerDetail from './pages/databases/ServerDetail';
+import { CloudPage } from './pages/cloud/CloudPage';
+import { MLPage } from './pages/ml/MLPage';
+import { AlertsPage } from './pages/alerts/AlertsPage';
+import { UsersPage } from './pages/users/UsersPage';
+import { InfraPage } from './pages/infra/InfraPage';
+import { SettingsPage } from './pages/settings/SettingsPage';
+import { NotFound } from './pages/NotFound';
+import './index.css';
+
+// Create a client
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
+
+// Configure client routes
+const router = createBrowserRouter([
+  {
+    path: '/login',
+    element: <Login />,
+  },
+  {
+    path: '/',
+    element: (
+      <ProtectedRoute>
+        <AppShell />
+      </ProtectedRoute>
+    ),
+    children: [
+      {
+        path: '',
+        element: <Navigate to="/dashboard" replace />,
+      },
+      {
+        path: 'dashboard',
+        element: <Dashboard />,
+      },
+      {
+        path: 'agents',
+        element: <AgentsList />,
+      },
+      {
+        path: 'agents/:id',
+        element: <AgentDetail />,
+      },
+      {
+        path: 'connections',
+        element: <ConnectionsPage />,
+      },
+      {
+        path: 'mysql-dashboard/:id',
+        element: <MySQLDashboard />,
+      },
+      {
+        path: 'mysql-dashboard/:id/slow-queries',
+        element: <SlowQueries />,
+      },
+      {
+        path: 'mysql-dashboard/:id/error-logs',
+        element: <ErrorLogs />,
+      },
+      {
+        path: 'mysql-dashboard/:id/error-analysis',
+        element: <ErrorAnalysis />,
+      },
+      {
+        path: 'mysql-dashboard/:id/self-heal',
+        element: <MySQLSelfHeal />,
+      },
+      {
+        path: 'databases',
+        element: <DatabaseServersPage />,
+      },
+      {
+        path: 'databases/add-os-server',
+        element: <AddOsServerPage />,
+      },
+      {
+        path: 'databases/add-server',
+        element: <AddServerPage />,
+      },
+      {
+        path: 'connections/server/:serverId',
+        element: <ServerDetail />,
+      },
+      
+      {
+        path: 'cloud',
+        element: <CloudPage />,
+      },
+      {
+        path: 'infra',
+        element: <InfraPage />,
+      },
+      {
+        path: 'ml',
+        element: <MLPage />,
+      },
+      {
+        path: 'alerts',
+        element: <AlertsPage />,
+      },
+      {
+        path: 'users',
+        element: (
+          <ProtectedRoute adminOnly>
+            <UsersPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: 'settings',
+        element: <SettingsPage />,
+      },
+      {
+        path: '*',
+        element: <NotFound />,
+      },
+    ],
+  },
+]);
+
+ReactDOM.createRoot(document.getElementById('app')).render(
+  <React.StrictMode>
+    <FluentProvider theme={webLightTheme} className="min-h-screen bg-brand-bg flex flex-col">
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <AuthProvider>
+            <RouterProvider router={router} />
+          </AuthProvider>
+        </ToastProvider>
+      </QueryClientProvider>
+    </FluentProvider>
+  </React.StrictMode>
+);

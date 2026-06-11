@@ -1,0 +1,51 @@
+import React from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import client from '../../api/client';
+
+const fetchDashboard = async (id) => {
+  const res = await client.get(`/connections/mysql/${id}/dashboard`);
+  return res.data;
+};
+
+export default function MySQLDashboard() {
+  const { id } = useParams();
+  const { data, isLoading, error, refetch } = useQuery(['mysqlDashboard', id], () => fetchDashboard(id), {
+    retry: false,
+    refetchInterval: 15000,
+  });
+
+  if (isLoading) return <div>Loading MySQL dashboard...</div>;
+  if (error) return <div>Error: {error.message}</div>;
+
+  const { connection, health_summary, query_stats, connections_detail } = data || {};
+
+  return (
+    <div className="mysql-dashboard p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold">{connection?.name || 'MySQL Dashboard'}</h1>
+        <div className="flex items-center gap-3">
+          <Link to={`/mysql-dashboard/${id}/slow-queries`} className="underline">Slow Queries</Link>
+          <Link to={`/mysql-dashboard/${id}/error-logs`} className="underline">Error Logs</Link>
+          <Link to={`/mysql-dashboard/${id}/error-analysis`} className="underline">AI Analysis</Link>
+          <button onClick={() => refetch()} className="ml-4 btn">Refresh</button>
+        </div>
+      </div>
+
+      <section className="mb-6">
+        <h2 className="font-semibold">Health Summary</h2>
+        <pre className="text-sm bg-white p-3 border rounded mt-2 overflow-auto">{JSON.stringify(health_summary, null, 2)}</pre>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="font-semibold">Connections Detail</h2>
+        <pre className="text-sm bg-white p-3 border rounded mt-2 overflow-auto">{JSON.stringify(connections_detail, null, 2)}</pre>
+      </section>
+
+      <section>
+        <h2 className="font-semibold">Query Stats</h2>
+        <pre className="text-sm bg-white p-3 border rounded mt-2 overflow-auto">{JSON.stringify(query_stats, null, 2)}</pre>
+      </section>
+    </div>
+  );
+}

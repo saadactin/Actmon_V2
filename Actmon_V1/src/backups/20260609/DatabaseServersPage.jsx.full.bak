@@ -1,0 +1,496 @@
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+import {
+  Server,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  Database,
+  Cpu,
+  HardDrive,
+  Monitor,
+  Terminal,
+  ArrowRight,
+  GitBranch,
+  ShieldCheck,
+} from 'lucide-react';
+
+
+const clusterServers = [
+  {
+    id: 1,
+    cluster_name: 'PROD-CLUSTER-01',
+    db_type: 'PostgreSQL Cluster',
+    status: 'HEALTHY',
+    environment: 'Production',
+    nodes: 3,
+    version: 'PostgreSQL 15',
+    network: '192.168.1.10/24',
+    replication: 'Streaming Replication',
+    metrics: {
+      cpu: '28%',
+      ram: '45%',
+      disk: '62%',
+      connections: '126',
+      lag: '2.3 MB',
+    },
+    servers: [
+      {
+        name: 'DB-OS-PROD-01',
+        ip: '192.168.1.10',
+        role: 'MASTER',
+        status: 'CONNECTED',
+        uptime: '18 Days',
+      },
+      {
+        name: 'DB-OS-PROD-02',
+        ip: '192.168.1.11',
+        role: 'SLAVE',
+        status: 'CONNECTED',
+        uptime: '15 Days',
+      },
+      {
+        name: 'DB-OS-PROD-03',
+        ip: '192.168.1.12',
+        role: 'SLAVE',
+        status: 'CONNECTED',
+        uptime: '12 Days',
+      },
+    ],
+  },
+
+  {
+    id: 2,
+    cluster_name: 'UAT-CLUSTER-01',
+    db_type: 'MySQL Cluster',
+    status: 'WARNING',
+    environment: 'UAT',
+    nodes: 2,
+    version: 'MySQL 8.0',
+    network: '192.168.2.20/24',
+    replication: 'Async Replication',
+    metrics: {
+      cpu: '52%',
+      ram: '68%',
+      disk: '74%',
+      connections: '89',
+      lag: '15.8 MB',
+    },
+    servers: [
+      {
+        name: 'DB-OS-UAT-01',
+        ip: '192.168.2.20',
+        role: 'MASTER',
+        status: 'CONNECTED',
+        uptime: '5 Days',
+      },
+      {
+        name: 'DB-OS-UAT-02',
+        ip: '192.168.2.21',
+        role: 'SLAVE',
+        status: 'WARNING',
+        uptime: '5 Days',
+      },
+    ],
+  },
+];
+
+
+const standaloneServers = [
+  {
+    id: 101,
+    name: 'DB-OS-STANDALONE-01',
+    environment: 'Production',
+    db_type: 'Oracle 19c',
+    ip: '192.168.1.50',
+    uptime: '22 Days',
+    cpu: '31%',
+    ram: '48%',
+    disk: '59%',
+    connections: '64',
+    status: 'CONNECTED',
+  },
+
+  {
+    id: 102,
+    name: 'DB-OS-STANDALONE-02',
+    environment: 'UAT',
+    db_type: 'MSSQL 2019',
+    ip: '192.168.2.60',
+    uptime: '8 Days',
+    cpu: '43%',
+    ram: '56%',
+    disk: '67%',
+    connections: '72',
+    status: 'CONNECTED',
+  },
+
+  {
+    id: 103,
+    name: 'DB-OS-STANDALONE-03',
+    environment: 'Development',
+    db_type: 'MongoDB 6.0',
+    ip: '192.168.3.70',
+    uptime: '3 Days',
+    cpu: '71%',
+    ram: '74%',
+    disk: '81%',
+    connections: '38',
+    status: 'WARNING',
+  },
+
+  {
+    id: 104,
+    name: 'DB-OS-STANDALONE-04',
+    environment: 'Development',
+    db_type: 'ClickHouse 23.8',
+    ip: '192.168.3.80',
+    uptime: '-',
+    cpu: '-',
+    ram: '-',
+    disk: '-',
+    connections: '0',
+    status: 'DISCONNECTED',
+  },
+];
+
+
+export default function DatabaseServersPage() {
+
+  const navigate = useNavigate();
+
+
+  const handleOpenServer = (serverId) => {
+
+    navigate(`/connections/server/${serverId}`);
+  };
+
+  const handleOpenTerminal = (server) => {
+
+  setSelectedServer(server);
+
+  setTerminalOpen(true);
+
+};
+
+const handleTerminalCommand = (e) => {
+
+  if (e.key !== 'Enter') return;
+
+  const cmd = command.trim();
+
+  if (!cmd) return;
+let output = [];
+
+window.mysqlServiceState =
+  window.mysqlServiceState || 'running';
+
+const mysqlState = window.mysqlServiceState;
+
+switch (cmd) {
+
+  case 'systemctl status mysql':
+
+    output = [
+
+`● mysql.service - MySQL Community Server`,
+`     Loaded: loaded (/usr/lib/systemd/system/mysql.service; enabled; vendor preset: disabled)`,
+
+mysqlState === 'running'
+? `     Active: active (running) since Thu 2026-05-28 14:15:22 IST; 2h 18min ago`
+: `     Active: inactive (dead) since Thu 2026-05-28 16:42:11 IST; 15s ago`,
+
+`    Process: 1023 ExecStartPre=/usr/bin/mysqld_pre_systemd (code=exited, status=0/SUCCESS)`,
+
+mysqlState === 'running'
+? `   Main PID: 1087 (mysqld)`
+: `   Main PID: 0`,
+
+mysqlState === 'running'
+? `     Status: "Server is operational"`
+: `     Status: "Server is stopped"`,
+
+mysqlState === 'running'
+? `      Tasks: 38 (limit: 4915)`
+: `      Tasks: 0 (limit: 4915)`,
+
+mysqlState === 'running'
+? `     Memory: 512.4M`
+: `     Memory: 0B`,
+
+mysqlState === 'running'
+? `        CPU: 1min 42.531s`
+: `        CPU: 0`,
+
+`     CGroup: /system.slice/mysql.service`,
+
+mysqlState === 'running'
+? `             └─1087 /usr/sbin/mysqld`
+: `             └─ Service stopped`,
+
+``,
+
+mysqlState === 'running'
+? `May 28 14:15:22 db-server systemd[1]: Started MySQL Community Server.`
+: `May 28 16:42:11 db-server systemd[1]: Stopped MySQL Community Server.`,
+
+mysqlState === 'running'
+? `May 28 14:15:25 db-server mysqld[1087]: ready for connections.`
+: `May 28 16:42:11 db-server systemd[1]: mysql.service entered dead state.`
+
+    ];
+
+    break;
+
+
+  case 'systemctl start mysql':
+
+    if (mysqlState === 'running') {
+
+      output = [
+        `Job for mysql.service failed because the control process exited.`,
+        ``,
+        `mysql.service is already running.`
+      ];
+
+    } else {
+
+      window.mysqlServiceState = 'running';
+
+      output = [
+
+`Starting MySQL Community Server...`,
+``,
+`[  OK  ] Started MySQL Community Server.`,
+``,
+`mysql.service is now active (running).`
+
+      ];
+
+    }
+
+    break;
+
+
+  case 'systemctl stop mysql':
+
+    if (mysqlState === 'stopped') {
+
+      output = [
+        `mysql.service is already stopped.`
+      ];
+
+    } else {
+
+      window.mysqlServiceState = 'stopped';
+
+      output = [
+
+`Stopping MySQL Community Server...`,
+``,
+`[  OK  ] Stopped MySQL Community Server.`,
+``,
+`mysql.service stopped successfully.`
+
+      ];
+
+    }
+
+    break;
+
+
+  case 'systemctl restart mysql':
+
+    window.mysqlServiceState = 'running';
+
+    output = [
+
+`Stopping MySQL Community Server...`,
+`[  OK  ] Stopped MySQL Community Server.`,
+``,
+`Starting MySQL Community Server...`,
+`[  OK  ] Started MySQL Community Server.`,
+``,
+`mysql.service restarted successfully.`
+
+    ];
+
+    break;
+
+
+  case 'netstat -tulnp | grep 3306':
+
+    output = mysqlState === 'running'
+      ? [
+`tcp6       0      0 :::3306 :::* LISTEN 1087/mysqld`,
+``,
+`MySQL is listening on port 3306`,
+        ]
+      : [
+`No process is listening on port 3306`,
+        ];
+
+    break;
+
+
+  case 'ss -tulnp | grep mysql':
+
+    output = mysqlState === 'running'
+      ? [
+`tcp LISTEN 0 70 *:3306 *:* users:(("mysqld",pid=1087,fd=21))`,
+        ]
+      : [
+`No active MySQL socket found`,
+        ];
+
+    break;
+
+
+  case 'ps -ef | grep mysql':
+
+    output = mysqlState === 'running'
+      ? [
+`mysql 1087 1 2 14:15 ? 00:01:42 /usr/sbin/mysqld`,
+`root 2211 2144 0 16:12 pts/0 00:00:00 grep --color=auto mysql`,
+        ]
+      : [
+`root 2211 2144 0 16:12 pts/0 00:00:00 grep --color=auto mysql`,
+        ];
+
+    break;
+
+
+  case 'mysql --version':
+
+    output = [
+      `mysql Ver 8.0.36 for Linux on x86_64 (MySQL Community Server - GPL)`
+    ];
+
+    break;
+
+
+  case 'free -m':
+
+    output = [
+
+`               total        used        free      shared  buff/cache   available`,
+`Mem:            8192        4210        2100         120        1882        3520`,
+`Swap:           2048         180        1868`
+
+    ];
+
+    break;
+
+
+  case 'df -h':
+
+    output = [
+
+`Filesystem      Size  Used Avail Use% Mounted on`,
+`/dev/sda1       120G   78G   42G  64% /`,
+`tmpfs           3.9G     0  3.9G   0% /dev/shm`
+
+    ];
+
+    break;
+
+
+  case 'uptime':
+
+    output = [
+`16:14:28 up 18 days, 2:41, 3 users, load average: 0.42, 0.31, 0.28`
+    ];
+
+    break;
+
+
+  case 'ping google.com':
+
+    output = [
+
+`PING google.com (142.250.183.14) 56(84) bytes of data.`,
+`64 bytes from google.com: icmp_seq=1 ttl=117 time=18.4 ms`,
+`64 bytes from google.com: icmp_seq=2 ttl=117 time=17.1 ms`,
+`64 bytes from google.com: icmp_seq=3 ttl=117 time=16.9 ms`
+
+    ];
+
+    break;
+
+
+  case 'clear':
+
+    setTerminalLines([]);
+    setCommand('');
+    return;
+
+
+  default:
+
+    output = [
+      `bash: ${cmd}: command not found`
+    ];
+}
+  setTerminalLines((prev) => [
+    ...prev,
+    '',
+    `root@${selectedServer?.name}:~# ${cmd}`,
+    ...output,
+  ]);
+
+  setCommand('');
+};
+
+const [command, setCommand] = useState('');
+
+const [terminalLines, setTerminalLines] = useState([
+  'root@server:~# hostname',
+  'DB-OS-PROD-01',
+  '',
+  'root@server:~# ping google.com',
+  '64 bytes from google.com: icmp_seq=1 ttl=117 time=18.4 ms',
+  '64 bytes from google.com: icmp_seq=2 ttl=117 time=17.1 ms',
+]);
+
+const [terminalOpen, setTerminalOpen] = useState(false);
+
+const [selectedServer, setSelectedServer] = useState(null);
+
+
+  return (
+
+    <div className="min-h-screen bg-[#f5f7fb] p-6">
+
+      <div className="max-w-[1700px] mx-auto">
+
+        {/* TOP */}
+
+        <div className="flex items-center gap-3 text-slate-500 text-sm mb-5">
+          <span>ActMon</span>
+          <span>/</span>
+          <span className="font-semibold text-slate-700">
+            databases
+          </span>
+        </div>
+
+
+        {/* HEADER */}
+
+       <div className="flex flex-col gap-6 mb-8">
+          <div>
+
+            <h1 className="text-5xl font-bold text-slate-900 mb-3">
+              Database OS Servers
+            </h1>
+
+            <p className="text-slate-500 max-w-5xl text-lg">
+              Manage and monitor database operating system servers.
+              Connect to OS servers, detect installed database services,
+              monitor infrastructure health, and access database
+              dashboards dynamically.
+            </p>
+
+          </div>
+
+... (file truncated)
