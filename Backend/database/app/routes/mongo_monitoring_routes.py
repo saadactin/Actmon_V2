@@ -188,9 +188,21 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
             "operations_total": operations_total,
         }
 
+        wt_max = wired_tiger_cache.get("maximum_bytes_configured", 0)
+        wt_used = wired_tiger_cache.get("bytes_currently_in_cache", 0)
+        wt_cache_pct = round(wt_used / max(wt_max, 1) * 100, 2) if wt_max > 0 else 0.0
+
         return {
             "status": "success",
+            "connection": {
+                "id": conn.id,
+                "name": conn.connection_name,
+                "host": conn.host,
+                "port": conn.port,
+                "database": conn.database_name,
+            },
             "health_summary": health_summary,
+            "server_info": health_summary,
             "connections": {
                 "current": current_connections,
                 "available": available_connections,
@@ -199,10 +211,22 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
             "opcounters": operations,
             "memory": memory,
             "wired_tiger_cache": wired_tiger_cache,
+            "wired_tiger": wired_tiger_cache,
             "repl_status": repl_status,
+            "replication": repl_status,
             "network": network,
             "global_lock": global_lock,
             "databases": databases,
+            "gauges": {
+                "connection_pct": connection_pct,
+                "memory_pct": 0.0,
+                "op_rate": operations_total,
+                "wired_tiger_cache_hit_pct": wt_cache_pct,
+            },
+            "collections": [],
+            "indexes": [],
+            "slow_ops": [],
+            "logs": [],
         }
 
     except Exception as e:

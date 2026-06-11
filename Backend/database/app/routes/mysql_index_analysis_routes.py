@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
 from collections import defaultdict
+from urllib.parse import quote_plus
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
@@ -21,8 +22,9 @@ def get_db():
 
 
 def _mysql_engine(conn):
+    pw = quote_plus(conn.password or "")
     url = (
-        f"mysql+pymysql://{conn.username}:{conn.password}"
+        f"mysql+pymysql://{conn.username}:{pw}"
         f"@{conn.host}:{conn.port}/{conn.database_name or ''}"
     )
     return create_engine(url, pool_pre_ping=True)

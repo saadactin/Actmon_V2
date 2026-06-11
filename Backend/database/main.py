@@ -7,6 +7,8 @@ from app.database.base import Base
 # Import ALL models so Base registers their tables
 from app.models.connection_model import ConnectionMaster          # noqa: F401
 from app.models.os_server_model import OsServer, DatabaseInstance # noqa: F401
+from app.models.backup_model import BackupJob                     # noqa: F401
+from app.models.backup_schedule_model import BackupSchedule       # noqa: F401
 
 # Routes
 from app.routes.server_routes import router as server_router
@@ -29,6 +31,10 @@ from app.routes.mysql_slow_queries_routes import router as mysql_slow_queries_ro
 from app.routes.mysql_explain_routes import router as mysql_explain_router
 from app.routes.mysql_error_logs_routes import router as mysql_error_logs_router
 from app.routes.mysql_index_analysis_routes import router as mysql_index_analysis_router
+from app.routes.mysql_backup_routes import router as mysql_backup_router
+from app.routes.mysql_schedule_routes import router as mysql_schedule_router
+from app.routes.mysql_table_routes import router as mysql_table_router
+from app.routes.mysql_replication_routes import router as mysql_replication_router
 
 from app.routes.oracle_monitoring_routes import router as oracle_monitoring_router
 from app.routes.mongo_monitoring_routes import router as mongo_monitoring_router
@@ -36,6 +42,7 @@ from app.routes.mongo_monitoring_routes import router as mongo_monitoring_router
 from app.routes.os_server_routes import router as os_server_router
 from app.routes.terminal_routes import router as terminal_router
 from app.routes.test_connection_routes import router as test_connection_router
+from app.routes.auth_routes import router as auth_router
 
 # Create all tables in PostgreSQL (graceful — won't crash if DB is offline at import time)
 try:
@@ -44,10 +51,20 @@ except Exception as _db_err:
     import warnings
     warnings.warn(f"[ACTMON] Could not create tables: {_db_err}\nStart PostgreSQL and restart the server.")
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    # Start backup scheduler background thread on server startup
+    from app.routes.mysql_schedule_routes import start_scheduler
+    start_scheduler()
+    yield
+
 app = FastAPI(
     title="ACTMON API",
     version="2.0.0",
-    description="ACTMON Database Monitoring Platform"
+    description="ACTMON Database Monitoring Platform",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -81,6 +98,10 @@ app.include_router(mysql_slow_queries_router)
 app.include_router(mysql_explain_router)
 app.include_router(mysql_error_logs_router)
 app.include_router(mysql_index_analysis_router)
+app.include_router(mysql_backup_router)
+app.include_router(mysql_schedule_router)
+app.include_router(mysql_table_router)
+app.include_router(mysql_replication_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
@@ -90,6 +111,7 @@ app.include_router(mongo_monitoring_router)
 app.include_router(os_server_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
+app.include_router(auth_router)
 
 
 @app.get("/")

@@ -313,13 +313,61 @@ def oracle_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
         "buffer_cache_hit_pct": buffer_cache_hit_pct,
     }
 
+    # ── Redo logs ─────────────────────────────────────────────
+    redo_logs = []
+    try:
+        rows = _rows(
+            engine,
+            "SELECT group#, members, bytes/1024/1024 AS size_mb, status, archived "
+            "FROM v$log ORDER BY group#"
+        )
+        redo_logs = [
+            {
+                "group": _safe_int(r.get("GROUP#")),
+                "members": _safe_int(r.get("MEMBERS")),
+                "size_mb": round(_safe_float(r.get("SIZE_MB")), 2),
+                "status": _safe_str(r.get("STATUS")),
+                "archived": _safe_str(r.get("ARCHIVED")),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        errors.append(f"redo_logs: {exc}")
+
     return {
         "status":               "success",
+        "connection": {
+            "id": conn.id,
+            "name": conn.connection_name,
+            "host": conn.host,
+            "port": conn.port,
+            "database": conn.database_name,
+        },
         "health_summary":       health_summary,
+        "overview":             health_summary,
+        "memory": {
+            "sga_mb":       sga_mb_total,
+            "pga_mb":       pga_mb,
+            "sga_used_pct": 0.0,
+            "pga_used_pct": 0.0,
+            "sga_details":  sga_stats,
+        },
+        "performance": {
+            "buffer_cache_hit_pct": buffer_cache_hit_pct,
+            "active_sessions":      active_sessions,
+            "session_pct":          session_pct,
+        },
         "sga_details":          sga_stats,
         "tablespaces":          tablespaces,
         "active_sql":           active_sql,
+        "active_sessions":      active_sql,
+        "top_sql":              active_sql,
         "wait_events":          wait_events,
+        "redo_logs":            redo_logs,
+        "sql_stats":            {},
+        "objects":              [],
+        "asm_diskgroups":       [],
+        "segments":             [],
         "errors":               errors,
     }
 

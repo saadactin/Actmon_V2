@@ -252,11 +252,58 @@ def get_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
         "total_tables": len(table_rows),
         "active_queries": len(process_rows),
         "memory_usage_mb": round(memory_tracking / (1024 * 1024), 2) if memory_tracking else 0,
+        "memory_usage_pct": 0.0,
+        "queries_per_second": 0.0,
+        "total_parts": int(parts_count),
         "parts_count": int(parts_count),
+    }
+
+    # -- Merges --
+    merges_rows, _err = _safe_query(
+        conn,
+        "SELECT database, \"table\", elapsed, progress, num_parts "
+        "FROM system.merges ORDER BY elapsed DESC"
+    )
+
+    # -- Replicas --
+    replicas_rows, _err = _safe_query(
+        conn,
+        "SELECT database, \"table\", is_leader, total_replicas, active_replicas "
+        "FROM system.replicas LIMIT 50"
+    )
+
+    # -- Settings (top 50 non-default) --
+    settings_rows, _err = _safe_query(
+        conn,
+        "SELECT name, value, changed, description "
+        "FROM system.settings WHERE changed = 1 LIMIT 50"
+    )
+
+    # -- Disk usage --
+    disk_rows, _err = _safe_query(
+        conn,
+        "SELECT name, path, free_space, total_space, "
+        "round(100*(1 - free_space/total_space), 1) AS used_pct "
+        "FROM system.disks"
+    )
+    disk_usage = disk_rows[0] if disk_rows else {"used_pct": 0}
+
+    # -- Query stats from metrics --
+    query_stats = {
+        "queries_per_second": _metric_value(metrics_rows, "Query"),
+        "merges": len(merges_rows),
+        "parts": int(parts_count),
     }
 
     return {
         "status": "success",
+        "connection": {
+            "id": conn.id,
+            "name": conn.connection_name,
+            "host": conn.host,
+            "port": conn.port,
+            "database": conn.database_name,
+        },
         "health_summary": health_summary,
         "version": results.get("version"),
         "uptime_seconds": results.get("uptime_seconds"),
@@ -266,7 +313,13 @@ def get_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
         "metrics": results.get("metrics", []),
         "async_metrics": results.get("async_metrics", []),
         "active_processes": results.get("active_processes", []),
+        "processes": results.get("active_processes", []),
         "recent_errors": results.get("recent_errors", []),
+        "merges": merges_rows,
+        "replicas": replicas_rows,
+        "settings": settings_rows,
+        "disk_usage": disk_usage,
+        "query_stats": query_stats,
         "errors": errors if errors else None,
     }
 

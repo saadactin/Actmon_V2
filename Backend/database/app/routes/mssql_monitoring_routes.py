@@ -389,9 +389,158 @@ def get_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
         except Exception as e:
             memory_info = {"error": str(e)}
 
+        # ── Locks / Blocking ──────────────────────────────────────────────────
+        locks = []
+        blocking = []
+        try:
+            locks = _rows(
+                engine,
+                """SELECT TOP 20 r.session_id, DB_NAME(r.database_id) AS db_name,
+                    r.wait_type, r.wait_time, r.blocking_session_id,
+                    LEFT(ISNULL(t.text,''),200) AS query
+                FROM sys.dm_exec_requests r
+                OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+                WHERE r.wait_type IS NOT NULL AND r.blocking_session_id >= 0"""
+            )
+            blocking = [r for r in locks if _to_int(r.get("blocking_session_id", 0)) > 0]
+        except Exception:
+            pass
+
+        # ── CPU info ──────────────────────────────────────────────────────────
+        cpu_info = {"sql_cpu_pct": 0, "sql_only_pct": 0}
+        try:
+            rows = _rows(
+                engine,
+                """SELECT TOP 1
+                    100 - SystemIdle AS sql_cpu_pct,
+                    SQLProcessUtilization AS sql_only_pct
+                FROM (
+                    SELECT
+                        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int') AS SystemIdle,
+                        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SQLProcessUtilization)[1]','int') AS SQLProcessUtilization
+                    FROM (
+                        SELECT TOP 1 CONVERT(XML, record) AS record
+                        FROM sys.dm_os_ring_buffers
+                        WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
+                        AND record LIKE '%<SystemHealth>%'
+                        ORDER BY timestamp DESC
+                    ) ring
+                ) cpu_data"""
+            )
+            if rows:
+                cpu_info = {"sql_cpu_pct": _to_int(rows[0].get("sql_cpu_pct", 0)),
+                            "sql_only_pct": _to_int(rows[0].get("sql_only_pct", 0))}
+        except Exception:
+            pass
+
+        # ── Users / Logins ────────────────────────────────────────────────────
+        users = []
+        try:
+            users = _rows(
+                engine,
+                """SELECT TOP 50 name, type_desc, is_disabled,
+                    CAST(create_date AS VARCHAR(30)) AS create_date,
+                    CAST(modify_date AS VARCHAR(30)) AS modify_date
+                FROM sys.server_principals
+                WHERE type IN ('S','U','G') ORDER BY name"""
+            )
+        except Exception:
+            pass
+
+        # ── Tables (top by reads) ─────────────────────────────────────────────
+        tables = []
+        try:
+            tables = _rows(
+                engine,
+                """SELECT TOP 20
+                    OBJECT_NAME(ius.object_id) AS table_name,
+                    SUM(ius.user_seeks+ius.user_scans+ius.user_lookups) AS total_reads,
+                    SUM(ius.user_updates) AS total_writes, p.rows AS row_count
+                FROM sys.dm_db_index_usage_stats ius
+                JOIN sys.partitions p ON ius.object_id=p.object_id AND p.index_id<=1
+                WHERE ius.database_id=DB_ID()
+                    AND OBJECTPROPERTY(ius.object_id,'IsUserTable')=1
+                GROUP BY ius.object_id, p.rows ORDER BY total_reads DESC"""
+            )
+            for r in tables:
+                for k, v in r.items():
+                    if hasattr(v,'__class__') and v.__class__.__name__=='Decimal':
+                        r[k] = float(v)
+        except Exception:
+            pass
+
+        # ── Backup history (last 7 days) ──────────────────────────────────────
+        backup_history = []
+        try:
+            backup_history = _rows(
+                engine,
+                """SELECT TOP 20 database_name,
+                    CAST(backup_start_date AS VARCHAR(30)) AS backup_start_date,
+                    CAST(backup_finish_date AS VARCHAR(30)) AS backup_finish_date,
+                    CAST(backup_size/1024/1024 AS DECIMAL(10,2)) AS size_mb,
+                    type AS backup_type, CAST(is_copy_only AS INT) AS is_copy_only
+                FROM msdb.dbo.backupset
+                WHERE backup_finish_date >= DATEADD(day,-7,GETDATE())
+                ORDER BY backup_finish_date DESC"""
+            )
+            for r in backup_history:
+                for k, v in r.items():
+                    if hasattr(v,'__class__') and v.__class__.__name__=='Decimal':
+                        r[k] = float(v)
+        except Exception:
+            pass
+
+        # ── Job history ───────────────────────────────────────────────────────
+        job_history = []
+        try:
+            job_history = _rows(
+                engine,
+                """SELECT TOP 20 j.name AS job_name, h.run_status,
+                    CAST(h.run_date AS VARCHAR(8)) AS run_date,
+                    CAST(h.run_time AS VARCHAR(6)) AS run_time,
+                    h.run_duration, LEFT(h.message,200) AS message
+                FROM msdb.dbo.sysjobhistory h
+                JOIN msdb.dbo.sysjobs j ON h.job_id=j.job_id
+                WHERE h.step_id=0
+                ORDER BY h.run_date DESC, h.run_time DESC"""
+            )
+        except Exception:
+            pass
+
+        # ── Always On ─────────────────────────────────────────────────────────
+        always_on = {"enabled": False, "groups": []}
+        try:
+            rows = _rows(
+                engine,
+                """SELECT ag.name AS ag_name, ars.role_desc,
+                    ags.synchronization_health_desc
+                FROM sys.availability_groups ag
+                JOIN sys.dm_hadr_availability_replica_states ars ON ag.group_id=ars.group_id
+                LEFT JOIN sys.dm_hadr_availability_group_states ags ON ag.group_id=ags.group_id
+                WHERE ars.is_local=1"""
+            )
+            always_on = {"enabled": bool(rows), "groups": rows}
+        except Exception:
+            pass
+
+        # ── Replication ───────────────────────────────────────────────────────
+        replication = {"enabled": False, "databases": [], "state": replication_state}
+        try:
+            rows = _rows(
+                engine,
+                """SELECT name AS database_name,
+                    CAST(is_published AS INT) AS is_published,
+                    CAST(is_subscribed AS INT) AS is_subscribed,
+                    CAST(is_distributor AS INT) AS is_distributor
+                FROM sys.databases
+                WHERE is_published=1 OR is_subscribed=1 OR is_distributor=1"""
+            )
+            replication = {"enabled": bool(rows), "databases": rows, "state": replication_state}
+        except Exception:
+            pass
+
         # ── Version string (short) ────────────────────────────────────────────
         version_str = str(server_info.get("version", "N/A"))
-        # Trim to first meaningful line
         if "\n" in version_str:
             version_str = version_str.split("\n")[0].strip()
 
@@ -407,33 +556,51 @@ def get_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
                 "active_sessions": active_sessions,
                 "max_connections": max_connections,
                 "connection_pct": connection_pct,
+                "connection_usage_pct": connection_pct,
                 "buffer_cache_hit_pct": buffer_cache_hit_pct,
+                "disk_io_pct": 0.0,
+                "memory_usage_pct": _to_float(memory_info.get("memory_utilization_percentage", 0)),
                 "replication_state": replication_state,
+                "sql_cpu_pct": cpu_info.get("sql_cpu_pct", 0),
             },
             "databases": databases,
             "wait_stats": wait_stats,
             "active_queries": active_queries,
             "top_cpu_queries": top_cpu_queries,
+            "top_queries": top_cpu_queries,
             "io_stats": io_stats,
+            "disk_io": io_stats,
             "memory": memory_info,
+            "server_info": {
+                "server_name": str(server_info.get("server_name", conn_rec.host)),
+                "version": version_str,
+            },
+            "sessions": {
+                "active": active_sessions,
+                "max": max_connections,
+                "pct": connection_pct,
+            },
+            "cpu": cpu_info,
+            "locks": locks,
+            "blocking": blocking,
+            "replication": replication,
+            "always_on": always_on,
+            "users": users,
+            "logins": users,
+            "tables": tables,
+            "backup_history": backup_history,
+            "job_history": job_history,
+            "missing_indexes": [],
             "chart_data": {
                 "connection_pct": connection_pct,
                 "buffer_cache_hit_pct": buffer_cache_hit_pct,
                 "db_sizes": [
-                    {
-                        "name": d.get("name", ""),
-                        "size_mb": _to_float(d.get("size_mb", 0)),
-                    }
-                    for d in databases
-                    if not d.get("error")
+                    {"name": d.get("name",""), "size_mb": _to_float(d.get("size_mb",0))}
+                    for d in databases if not d.get("error")
                 ][:10],
                 "top_wait_types": [
-                    {
-                        "wait_type": w.get("wait_type", ""),
-                        "pct": _to_float(w.get("pct", 0)),
-                    }
-                    for w in wait_stats
-                    if not w.get("error")
+                    {"wait_type": w.get("wait_type",""), "pct": _to_float(w.get("pct",0))}
+                    for w in wait_stats if not w.get("error")
                 ][:5],
             },
         }

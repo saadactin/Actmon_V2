@@ -17,6 +17,7 @@ router = APIRouter(
 
 DEFAULT_PORTS = {
     "MySQL": 3306,
+    "MariaDB": 3306,
     "PostgreSQL": 5432,
     "Oracle": 1521,
     "MongoDB": 27017,
@@ -421,10 +422,12 @@ def refresh_server(server_id: int, db: Session = Depends(get_db)):
         # Detect running DB services
         running_dbs = {}
         db_check_cmds = {
-            "MySQL": "systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null || echo inactive",
-            "PostgreSQL": "systemctl is-active postgresql 2>/dev/null || echo inactive",
-            "MongoDB": "systemctl is-active mongod 2>/dev/null || echo inactive",
+            "MySQL": "systemctl is-active mariadb 2>/dev/null || systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null || echo inactive",
+            "MariaDB": "systemctl is-active mariadb 2>/dev/null || systemctl is-active mysql 2>/dev/null || echo inactive",
+            "PostgreSQL": "systemctl is-active postgresql 2>/dev/null || systemctl is-active postgresql-* 2>/dev/null || echo inactive",
+            "MongoDB": "systemctl is-active mongod 2>/dev/null || systemctl is-active mongodb 2>/dev/null || echo inactive",
             "MSSQL": "systemctl is-active mssql-server 2>/dev/null || echo inactive",
+            "ClickHouse": "systemctl is-active clickhouse-server 2>/dev/null || echo inactive",
         }
         for db_svc, cmd in db_check_cmds.items():
             result = run(cmd)

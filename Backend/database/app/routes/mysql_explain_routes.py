@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
@@ -50,9 +51,10 @@ def explain_query(
             detail="Connection not found"
         )
 
+    pw = quote_plus(connection.password or "")
     mysql_url = (
         f"mysql+pymysql://{connection.username}:"
-        f"{connection.password}@"
+        f"{pw}@"
         f"{connection.host}:"
         f"{connection.port}/"
         f"{payload.database or connection.database_name}"

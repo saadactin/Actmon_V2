@@ -1,9 +1,16 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 pymysql
+pymssql
+pymongo
 pydantic
 paramiko
 psycopg2-binary
 python-dotenv
 cryptography
+PyJWT
+passlib[bcrypt]
+pyodbc
+python-multipart
+groq

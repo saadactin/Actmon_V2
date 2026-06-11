@@ -173,9 +173,9 @@ def get_mysql_dashboard(
         engine = create_engine(
             mysql_url,
             connect_args={
-                "connect_timeout": 3,
-                "read_timeout": 3,
-                "write_timeout": 3
+                "connect_timeout": 15,
+                "read_timeout": 30,
+                "write_timeout": 30
             }
         )
         with engine.connect() as conn:
@@ -342,35 +342,58 @@ def get_mysql_dashboard(
                 if to_int(proc.get("Time", 0)) >= 1 and proc.get("Command") != "Sleep"
             ]
 
-            # Replication status
+            # Replication / Galera status
             replication_dict = {}
             replication_state = "STANDALONE"
+            galera_info = {}
             try:
-                res_repl = conn.execute(text("SHOW SLAVE STATUS;"))
-                row_repl = res_repl.fetchone()
-                if not row_repl:
-                    try:
-                        res_repl = conn.execute(text("SHOW REPLICA STATUS;"))
-                        row_repl = res_repl.fetchone()
-                    except Exception:
-                        pass
-                
-                if row_repl:
-                    replication_state = "REPLICA"
-                    try:
-                        keys = res_repl.keys()
-                        for k, v in zip(keys, row_repl):
-                            if isinstance(v, (int, float)):
-                                replication_dict[k] = v
-                            elif v is None:
-                                replication_dict[k] = ""
-                            else:
-                                replication_dict[k] = str(v)
-                    except Exception:
-                        for idx, v in enumerate(row_repl):
-                            replication_dict[f"field_{idx}"] = str(v) if v is not None else ""
+                # Check Galera WSREP first
+                res_wsrep = conn.execute(text("SHOW GLOBAL STATUS LIKE 'wsrep_%';"))
+                wsrep_rows = {r[0]: r[1] for r in res_wsrep.fetchall()}
+                if wsrep_rows.get("wsrep_connected") == "ON":
+                    cluster_size = int(wsrep_rows.get("wsrep_cluster_size", 1))
+                    replication_state = "GALERA"
+                    galera_info = {
+                        "cluster_size": cluster_size,
+                        "cluster_status": wsrep_rows.get("wsrep_cluster_status", ""),
+                        "local_state_comment": wsrep_rows.get("wsrep_local_state_comment", ""),
+                        "connected": wsrep_rows.get("wsrep_connected", ""),
+                        "ready": wsrep_rows.get("wsrep_ready", ""),
+                        "flow_control_paused": wsrep_rows.get("wsrep_flow_control_paused", ""),
+                        "cert_deps_distance": wsrep_rows.get("wsrep_cert_deps_distance", ""),
+                        "node_name": wsrep_rows.get("wsrep_node_name", ""),
+                        "cluster_name": wsrep_rows.get("wsrep_cluster_name", ""),
+                        "incoming_addresses": wsrep_rows.get("wsrep_incoming_addresses", ""),
+                    }
             except Exception:
                 pass
+
+            if replication_state == "STANDALONE":
+                try:
+                    res_repl = conn.execute(text("SHOW SLAVE STATUS;"))
+                    row_repl = res_repl.fetchone()
+                    if not row_repl:
+                        try:
+                            res_repl = conn.execute(text("SHOW REPLICA STATUS;"))
+                            row_repl = res_repl.fetchone()
+                        except Exception:
+                            pass
+                    if row_repl:
+                        replication_state = "REPLICA"
+                        try:
+                            keys = res_repl.keys()
+                            for k, v in zip(keys, row_repl):
+                                if isinstance(v, (int, float)):
+                                    replication_dict[k] = v
+                                elif v is None:
+                                    replication_dict[k] = ""
+                                else:
+                                    replication_dict[k] = str(v)
+                        except Exception:
+                            for idx, v in enumerate(row_repl):
+                                replication_dict[f"field_{idx}"] = str(v) if v is not None else ""
+                except Exception:
+                    pass
 
             slow_log = vars_dict.get("slow_query_log", "OFF")
             long_query = to_float(vars_dict.get("long_query_time", 10.0))
@@ -519,7 +542,8 @@ def get_mysql_dashboard(
                 "error_log_count": 0,
                 "process_list": process_list,
                 "long_running_queries": long_running_queries,
-                "replication": replication_dict
+                "replication": replication_dict,
+                "galera": galera_info,
             }
             return payload
 
@@ -552,7 +576,7 @@ def get_backup_info(conn_id: int, db: Session = Depends(get_db)):
     )
 
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 5})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
         with eng.connect() as conn:
 
             def qval(sql):
@@ -676,7 +700,7 @@ def get_table_stats(conn_id: int, db: Session = Depends(get_db)):
     mysql_url = (f"mysql+pymysql://{connection.username}:{encoded_password}"
                  f"@{connection.host}:{connection.port}/{connection.database_name or ''}")
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 5})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
         with eng.connect() as conn:
             rows = conn.execute(text("""
                 SELECT
@@ -727,7 +751,7 @@ def get_user_stats(conn_id: int, db: Session = Depends(get_db)):
     mysql_url = (f"mysql+pymysql://{connection.username}:{encoded_password}"
                  f"@{connection.host}:{connection.port}/{connection.database_name or ''}")
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 5})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
         with eng.connect() as conn:
             # Active connections per user
             proc_rows = conn.execute(text("SHOW FULL PROCESSLIST")).fetchall()
@@ -784,7 +808,7 @@ def get_innodb_metrics(conn_id: int, db: Session = Depends(get_db)):
         except: return d
 
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 5})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
         with eng.connect() as conn:
             status = {}
             try:
