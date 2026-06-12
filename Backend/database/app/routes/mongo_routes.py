@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-import datetime
 from urllib.parse import quote_plus
 
 from app.database.connection import SessionLocal
@@ -32,21 +31,17 @@ def create_mongodb_connection(
     db: Session = Depends(get_db)
 ):
     try:
-        # MongoDB connection string format
-        connection_string = f"mongodb://{request.username}:{quote_plus(request.password)}@{request.host}:{request.port}/{request.database}"
-        
-        # Test connection would require pymongo library
-        # For now, we'll assume the connection is valid
-        
         new_connection = ConnectionMaster(
             db_type="mongodb",
+            connection_name=request.connection_name,
             host=request.host,
             port=request.port,
             username=request.username,
             password=request.password,
-            database=request.database,
-            alias=request.alias,
-            created_at=datetime.datetime.now()
+            database_name=request.database_name,
+            mongo_protocol=getattr(request, "mongo_protocol", "mongodb://"),
+            auth_source=getattr(request, "auth_source", "admin"),
+            replica_set=getattr(request, "replica_set", None),
         )
         db.add(new_connection)
         db.commit()
@@ -80,12 +75,15 @@ def update_mongodb_connection(
     if not connection:
         raise HTTPException(status_code=404, detail="MongoDB connection not found")
     try:
+        connection.connection_name = request.connection_name
         connection.host = request.host
         connection.port = request.port
         connection.username = request.username
         connection.password = request.password
-        connection.database = request.database
-        connection.alias = request.alias
+        connection.database_name = request.database_name
+        connection.mongo_protocol = getattr(request, "mongo_protocol", "mongodb://")
+        connection.auth_source = getattr(request, "auth_source", "admin")
+        connection.replica_set = getattr(request, "replica_set", None)
         db.commit()
         db.refresh(connection)
         return {"status": "success", "message": "MongoDB connection updated successfully", "data": connection}

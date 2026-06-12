@@ -14,3 +14,6 @@ passlib[bcrypt]
 pyodbc
 python-multipart
 groq
+# ClickHouse — native driver (enables clickhouse+native:// SQLAlchemy dialect)
+clickhouse-driver>=0.2.9
+clickhouse-sqlalchemy>=0.3.2

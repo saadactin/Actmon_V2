@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from urllib.parse import quote_plus
-import datetime
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
@@ -40,22 +39,18 @@ def create_oracle_connection(
     db: Session = Depends(get_db)
 ):
     try:
-        # Test connection
-        connection_string = f"oracle+cx_Oracle://{request.username}:{quote_plus(request.password)}@{request.host}:{request.port}/{request.service_name}"
-        engine = create_engine(connection_string, echo=False)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1 FROM dual"))
-        
-        # Save connection
         new_connection = ConnectionMaster(
             db_type="oracle",
+            connection_name=request.connection_name,
             host=request.host,
             port=request.port,
             username=request.username,
             password=request.password,
-            database=request.service_name,
-            alias=request.alias,
-            created_at=datetime.datetime.now()
+            database_name=request.database_name,
+            service_name=getattr(request, "service_name", None),
+            sid=getattr(request, "sid", None),
+            tns_descriptor=getattr(request, "tns_descriptor", None),
+            oracle_connect_string=getattr(request, "oracle_connect_string", None),
         )
         db.add(new_connection)
         db.commit()
@@ -102,16 +97,20 @@ def update_oracle_connection(
         raise HTTPException(status_code=404, detail="Oracle connection not found")
     
     try:
+        connection.connection_name = request.connection_name
         connection.host = request.host
         connection.port = request.port
         connection.username = request.username
         connection.password = request.password
-        connection.database = request.service_name
-        connection.alias = request.alias
-        
+        connection.database_name = request.database_name
+        connection.service_name = getattr(request, "service_name", None)
+        connection.sid = getattr(request, "sid", None)
+        connection.tns_descriptor = getattr(request, "tns_descriptor", None)
+        connection.oracle_connect_string = getattr(request, "oracle_connect_string", None)
+
         db.commit()
         db.refresh(connection)
-        
+
         return {
             "status": "success",
             "message": "Oracle connection updated successfully",

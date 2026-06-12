@@ -5,6 +5,7 @@ from pymongo import MongoClient
 from urllib.parse import quote_plus
 import json
 import math
+import datetime
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
@@ -58,22 +59,33 @@ def _safe_float(val):
         return 0.0
 
 
-# ---------------------------------------------------------------------------
-# 1. Monitoring Dashboard
-# ---------------------------------------------------------------------------
-@router.get("/{conn_id}/monitoring-dashboard")
-def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
+def _safe_int(val):
+    try:
+        return int(val)
+    except Exception:
+        return 0
+
+
+def _get_conn_or_404(conn_id: int, db: Session):
     conn = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "mongodb"
     ).first()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    return conn
 
-    client = None
+
+# ---------------------------------------------------------------------------
+# 1. Main Dashboard
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-dashboard")
+def mongo_dashboard(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
     try:
-        client = _mongo_client(conn)
-        admin_db = client.admin
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
 
         server_status = admin_db.command("serverStatus")
         build_info = admin_db.command("buildInfo")
@@ -83,52 +95,106 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
         uptime_seconds = server_status.get("uptime", 0)
         uptime_str = _format_uptime(uptime_seconds)
         host = server_status.get("host", conn.host)
+        pid = server_status.get("pid", 0)
+        process = server_status.get("process", "mongod")
 
-        connections = server_status.get("connections", {})
-        current_connections = connections.get("current", 0)
-        available_connections = connections.get("available", 0)
-        total_created = connections.get("totalCreated", 0)
+        # storage engine
+        storage_engine = "WiredTiger"
+        try:
+            storage_engine = server_status.get("storageEngine", {}).get("name", "WiredTiger")
+        except Exception:
+            pass
+
+        # connections
+        conns_raw = server_status.get("connections", {})
+        current_connections = conns_raw.get("current", 0)
+        available_connections = conns_raw.get("available", 0)
+        total_created = conns_raw.get("totalCreated", 0)
         total_possible = current_connections + available_connections
         connection_pct = round(
             (current_connections / total_possible * 100) if total_possible > 0 else 0.0, 2
         )
 
-        opcounters = server_status.get("opcounters", {})
-        operations = {
-            "insert": opcounters.get("insert", 0),
-            "query": opcounters.get("query", 0),
-            "update": opcounters.get("update", 0),
-            "delete": opcounters.get("delete", 0),
-            "getmore": opcounters.get("getmore", 0),
-            "command": opcounters.get("command", 0),
+        # opcounters
+        opcounters_raw = server_status.get("opcounters", {})
+        opcounters = {
+            "insert":  opcounters_raw.get("insert", 0),
+            "query":   opcounters_raw.get("query", 0),
+            "update":  opcounters_raw.get("update", 0),
+            "delete":  opcounters_raw.get("delete", 0),
+            "getmore": opcounters_raw.get("getmore", 0),
+            "command": opcounters_raw.get("command", 0),
         }
-        operations_total = sum(operations.values())
+        operations_total = sum(opcounters.values())
 
-        mem = server_status.get("mem", {})
+        # memory
+        mem_raw = server_status.get("mem", {})
         memory = {
-            "resident": mem.get("resident", 0),
-            "virtual": mem.get("virtual", 0),
-            "mapped": mem.get("mapped", 0),
+            "resident":   mem_raw.get("resident", 0),
+            "virtual":    mem_raw.get("virtual", 0),
+            "mapped":     mem_raw.get("mapped", 0),
         }
-        memory_resident_mb = memory["resident"]
 
+        # wiredTiger cache
         wt_raw = server_status.get("wiredTiger", {}).get("cache", {})
+        wt_bytes_in_cache = wt_raw.get("bytes currently in the cache", 0)
+        wt_max_bytes      = wt_raw.get("maximum bytes configured", 1)
+        wt_dirty_bytes    = wt_raw.get("tracked dirty bytes in the cache", 0)
+        wt_pages_read     = wt_raw.get("pages read into cache", 0)
+        wt_pages_written  = wt_raw.get("pages written from cache", 0)
+        wt_pages_req      = wt_raw.get("pages requested from cache", 1)
+        wt_unmod_evicted  = wt_raw.get("unmodified pages evicted", 0)
+        wt_cache_pct = round(wt_bytes_in_cache / max(wt_max_bytes, 1) * 100, 2)
+        wt_cache_hit_pct  = 0.0
+        try:
+            wt_app_read_from_disk = wt_raw.get("pages read into cache", 0)
+            wt_cache_hit_pct = round(
+                max(0.0, 100.0 - (wt_app_read_from_disk / max(wt_pages_req, 1)) * 100), 2
+            )
+        except Exception:
+            pass
+
         wired_tiger_cache = {
-            "bytes_currently_in_cache": wt_raw.get("bytes currently in the cache", 0),
-            "maximum_bytes_configured": wt_raw.get("maximum bytes configured", 0),
-            "unmodified_pages_evicted": wt_raw.get("unmodified pages evicted", 0),
-            "tracked_dirty_bytes_in_cache": wt_raw.get("tracked dirty bytes in the cache", 0),
-            "pages_read_into_cache": wt_raw.get("pages read into cache", 0),
-            "pages_written_from_cache": wt_raw.get("pages written from cache", 0),
+            "bytes_currently_in_cache":      wt_bytes_in_cache,
+            "maximum_bytes_configured":       wt_max_bytes,
+            "tracked_dirty_bytes_in_cache":   wt_dirty_bytes,
+            "pages_read_into_cache":          wt_pages_read,
+            "pages_written_from_cache":       wt_pages_written,
+            "pages_requested_from_cache":     wt_pages_req,
+            "unmodified_pages_evicted":       wt_unmod_evicted,
+            "cache_used_mb":                  round(wt_bytes_in_cache / 1024 / 1024, 2),
+            "cache_max_mb":                   round(wt_max_bytes / 1024 / 1024, 2),
+            "dirty_bytes_mb":                 round(wt_dirty_bytes / 1024 / 1024, 2),
+            "cache_pct":                      wt_cache_pct,
+            "cache_hit_pct":                  wt_cache_hit_pct,
         }
 
-        repl_raw = server_status.get("repl", {})
-        repl_status = {
-            "setName": repl_raw.get("setName", ""),
-            "ismaster": repl_raw.get("ismaster", False),
-            "secondary": repl_raw.get("secondary", False),
-            "hosts": repl_raw.get("hosts", []),
+        # network
+        network_raw = server_status.get("network", {})
+        network = {
+            "bytesIn":     network_raw.get("bytesIn", 0),
+            "bytesOut":    network_raw.get("bytesOut", 0),
+            "numRequests": network_raw.get("numRequests", 0),
         }
+
+        # globalLock
+        global_lock_raw = server_status.get("globalLock", {})
+        global_lock = {
+            "totalTime":   global_lock_raw.get("totalTime", 0),
+            "currentQueue": {
+                "total":   global_lock_raw.get("currentQueue", {}).get("total", 0),
+                "readers": global_lock_raw.get("currentQueue", {}).get("readers", 0),
+                "writers": global_lock_raw.get("currentQueue", {}).get("writers", 0),
+            },
+            "activeClients": {
+                "total":   global_lock_raw.get("activeClients", {}).get("total", 0),
+                "readers": global_lock_raw.get("activeClients", {}).get("readers", 0),
+                "writers": global_lock_raw.get("activeClients", {}).get("writers", 0),
+            },
+        }
+
+        # replication
+        repl_raw = server_status.get("repl", {})
         if repl_raw:
             if repl_raw.get("ismaster"):
                 replication_state = "PRIMARY"
@@ -140,137 +206,332 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
             replication_state = "STANDALONE"
         replica_set = repl_raw.get("setName", "")
 
-        network_raw = server_status.get("network", {})
-        network = {
-            "bytesIn": network_raw.get("bytesIn", 0),
-            "bytesOut": network_raw.get("bytesOut", 0),
-            "numRequests": network_raw.get("numRequests", 0),
-        }
+        # replica set full status
+        replica_members = []
+        oplog_info = {}
+        try:
+            rs_status = admin_db.command("replSetGetStatus")
+            replica_members = rs_status.get("members", [])
+            for m in replica_members:
+                for k in list(m.keys()):
+                    if hasattr(m[k], "isoformat"):
+                        m[k] = m[k].isoformat()
+                    elif not isinstance(m[k], (str, int, float, bool, type(None), list, dict)):
+                        m[k] = str(m[k])
+        except Exception:
+            pass
 
-        global_lock = server_status.get("globalLock", {})
-
+        # databases list
         databases = []
-        total_databases = 0
+        total_collections = 0
         for db_info in db_list_result.get("databases", []):
             entry = {
-                "name": db_info.get("name", ""),
+                "name":       db_info.get("name", ""),
                 "sizeOnDisk": db_info.get("sizeOnDisk", 0),
-                "empty": db_info.get("empty", False),
+                "empty":      db_info.get("empty", False),
             }
             try:
-                db_obj = client[entry["name"]]
+                db_obj = mc[entry["name"]]
                 stats = db_obj.command("dbStats")
-                entry["collections_count"] = stats.get("collections", 0)
-                entry["objects"] = stats.get("objects", 0)
-                entry["avg_obj_size"] = round(_safe_float(stats.get("avgObjSize", 0)), 2)
-                entry["data_size_mb"] = round(_safe_float(stats.get("dataSize", 0)) / 1024 / 1024, 2)
-                entry["index_size_mb"] = round(_safe_float(stats.get("indexSize", 0)) / 1024 / 1024, 2)
+                coll_cnt = stats.get("collections", 0)
+                entry["collections_count"] = coll_cnt
+                entry["objects"]        = stats.get("objects", 0)
+                entry["avg_obj_size"]   = round(_safe_float(stats.get("avgObjSize", 0)), 2)
+                entry["data_size_mb"]   = round(_safe_float(stats.get("dataSize", 0)) / 1024 / 1024, 2)
+                entry["index_size_mb"]  = round(_safe_float(stats.get("indexSize", 0)) / 1024 / 1024, 2)
+                total_collections += coll_cnt
             except Exception:
                 entry["collections_count"] = 0
-                entry["objects"] = 0
-                entry["avg_obj_size"] = 0.0
-                entry["data_size_mb"] = 0.0
+                entry["objects"]       = 0
+                entry["avg_obj_size"]  = 0.0
+                entry["data_size_mb"]  = 0.0
                 entry["index_size_mb"] = 0.0
             databases.append(entry)
-            total_databases += 1
+
+        total_databases = len(databases)
 
         health_summary = {
-            "version": version,
-            "uptime_str": uptime_str,
-            "host": host,
-            "total_databases": total_databases,
+            "version":             version,
+            "uptime_str":          uptime_str,
+            "uptime_seconds":      uptime_seconds,
+            "host":                host,
+            "pid":                 pid,
+            "process":             process,
+            "storage_engine":      storage_engine,
+            "total_databases":     total_databases,
+            "total_collections":   total_collections,
             "current_connections": current_connections,
             "available_connections": available_connections,
-            "connection_pct": connection_pct,
-            "replication_state": replication_state,
-            "replica_set": replica_set,
-            "memory_resident_mb": memory_resident_mb,
-            "operations_total": operations_total,
+            "connection_pct":      connection_pct,
+            "replication_state":   replication_state,
+            "replica_set":         replica_set,
+            "memory_resident_mb":  memory["resident"],
+            "memory_virtual_mb":   memory["virtual"],
+            "operations_total":    operations_total,
+            "wt_cache_pct":        wt_cache_pct,
+            "wt_cache_hit_pct":    wt_cache_hit_pct,
         }
-
-        wt_max = wired_tiger_cache.get("maximum_bytes_configured", 0)
-        wt_used = wired_tiger_cache.get("bytes_currently_in_cache", 0)
-        wt_cache_pct = round(wt_used / max(wt_max, 1) * 100, 2) if wt_max > 0 else 0.0
 
         return {
             "status": "success",
             "connection": {
-                "id": conn.id,
-                "name": conn.connection_name,
-                "host": conn.host,
-                "port": conn.port,
+                "id":       conn.id,
+                "name":     conn.connection_name,
+                "host":     conn.host,
+                "port":     conn.port,
                 "database": conn.database_name,
             },
-            "health_summary": health_summary,
-            "server_info": health_summary,
+            "health_summary":    health_summary,
+            "server_info":       health_summary,
             "connections": {
-                "current": current_connections,
-                "available": available_connections,
-                "totalCreated": total_created,
+                "current":       current_connections,
+                "available":     available_connections,
+                "totalCreated":  total_created,
             },
-            "opcounters": operations,
-            "memory": memory,
+            "opcounters":        opcounters,
+            "memory":            memory,
             "wired_tiger_cache": wired_tiger_cache,
-            "wired_tiger": wired_tiger_cache,
-            "repl_status": repl_status,
-            "replication": repl_status,
-            "network": network,
-            "global_lock": global_lock,
-            "databases": databases,
-            "gauges": {
-                "connection_pct": connection_pct,
-                "memory_pct": 0.0,
-                "op_rate": operations_total,
-                "wired_tiger_cache_hit_pct": wt_cache_pct,
+            "wired_tiger":       wired_tiger_cache,
+            "network":           network,
+            "global_lock":       global_lock,
+            "databases":         databases,
+            "repl_status": {
+                "setName":   repl_raw.get("setName", ""),
+                "ismaster":  repl_raw.get("ismaster", False),
+                "secondary": repl_raw.get("secondary", False),
+                "hosts":     repl_raw.get("hosts", []),
+                "state":     replication_state,
+                "members":   replica_members,
             },
-            "collections": [],
-            "indexes": [],
-            "slow_ops": [],
-            "logs": [],
+            "gauges": {
+                "connection_pct":            connection_pct,
+                "memory_pct":                0.0,
+                "op_rate":                   operations_total,
+                "wired_tiger_cache_hit_pct": wt_cache_hit_pct,
+                "wt_cache_pct":              wt_cache_pct,
+            },
+            "oplog_info": oplog_info,
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"MongoDB monitoring dashboard error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"MongoDB dashboard error: {str(e)}")
     finally:
-        if client:
+        if mc:
             try:
-                client.close()
+                mc.close()
             except Exception:
                 pass
 
 
 # ---------------------------------------------------------------------------
-# 2. Slow Operations
+# 2. Current Operations
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-ops")
+def mongo_ops(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        ops = []
+        error = None
+        try:
+            result = admin_db.command("currentOp")
+            for op in result.get("inprog", []):
+                # serialize query/command
+                query_str = ""
+                try:
+                    cmd = op.get("command", op.get("query", op.get("originatingCommand", {})))
+                    query_str = json.dumps(cmd, default=str)[:400]
+                except Exception:
+                    query_str = str(op.get("command", ""))[:400]
+
+                lock_stats = {}
+                try:
+                    for ltype, ldata in (op.get("locks") or {}).items():
+                        lock_stats[ltype] = ldata
+                except Exception:
+                    pass
+
+                secs = op.get("secs_running", 0)
+                microsecs = op.get("microsecs_running", 0)
+
+                ops.append({
+                    "opid":            str(op.get("opid", "")),
+                    "type":            op.get("type", ""),
+                    "ns":              op.get("ns", ""),
+                    "secs_running":    secs,
+                    "microsecs_running": microsecs,
+                    "op":              op.get("op", ""),
+                    "query":           query_str,
+                    "client":          op.get("client", ""),
+                    "desc":            op.get("desc", ""),
+                    "waitingForLock":  op.get("waitingForLock", False),
+                    "lockStats":       lock_stats,
+                    "active":          op.get("active", False),
+                    "planSummary":     op.get("planSummary", ""),
+                    "numYields":       op.get("numYields", 0),
+                    "appName":         op.get("appName", ""),
+                })
+        except Exception as e:
+            error = str(e)
+
+        active_count  = sum(1 for o in ops if o.get("active"))
+        waiting_count = sum(1 for o in ops if o.get("waitingForLock"))
+        slow_count    = sum(1 for o in ops if (o.get("secs_running", 0) or 0) > 1)
+
+        return {
+            "status": "success",
+            "ops": ops,
+            "total": len(ops),
+            "active_count":  active_count,
+            "waiting_count": waiting_count,
+            "slow_count":    slow_count,
+            "error": error,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB ops error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 3. Profiler
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-profiler")
+def mongo_profiler(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        db_list_result = admin_db.command("listDatabases")
+        system_dbs = {"admin", "local", "config"}
+        user_dbs = [
+            d["name"] for d in db_list_result.get("databases", [])
+            if d["name"] not in system_dbs
+        ]
+
+        all_profile_ops = []
+        profiler_levels = {}
+        errors = []
+
+        for db_name in user_dbs:
+            db_obj = mc[db_name]
+            try:
+                profile_status = db_obj.command("profile", -1)
+                level = profile_status.get("was", 0)
+                profiler_levels[db_name] = level
+
+                if level >= 1:
+                    try:
+                        cursor = (
+                            db_obj["system.profile"]
+                            .find({})
+                            .sort("ts", -1)
+                            .limit(100)
+                        )
+                        for doc in cursor:
+                            cmd = doc.get("command", doc.get("query", {}))
+                            try:
+                                cmd_str = json.dumps(cmd, default=str)[:400]
+                            except Exception:
+                                cmd_str = str(cmd)[:400]
+
+                            ts = doc.get("ts", "")
+                            if hasattr(ts, "isoformat"):
+                                ts = ts.isoformat()
+
+                            all_profile_ops.append({
+                                "db":            db_name,
+                                "op":            doc.get("op", ""),
+                                "ns":            doc.get("ns", ""),
+                                "millis":        doc.get("millis", 0),
+                                "ts":            str(ts),
+                                "nreturned":     doc.get("nreturned", 0),
+                                "nscanned":      doc.get("nscanned", doc.get("docsExamined", 0)),
+                                "ninserted":     doc.get("ninserted", 0),
+                                "nModified":     doc.get("nModified", 0),
+                                "keysExamined":  doc.get("keysExamined", 0),
+                                "docsExamined":  doc.get("docsExamined", 0),
+                                "keyUpdates":    doc.get("keyUpdates", 0),
+                                "writeConflicts":doc.get("writeConflicts", 0),
+                                "planSummary":   doc.get("planSummary", ""),
+                                "command":       cmd_str,
+                                "client":        doc.get("client", ""),
+                                "user":          doc.get("user", ""),
+                                "responseLength":doc.get("responseLength", 0),
+                                "numYield":      doc.get("numYield", 0),
+                            })
+                    except Exception as e2:
+                        errors.append(f"Error reading system.profile for {db_name}: {str(e2)}")
+            except Exception as e:
+                errors.append(f"Cannot get profiler level for {db_name}: {str(e)}")
+
+        # sort by millis descending
+        all_profile_ops.sort(key=lambda x: x.get("millis", 0), reverse=True)
+
+        return {
+            "status": "success",
+            "ops": all_profile_ops,
+            "total": len(all_profile_ops),
+            "profiler_levels": profiler_levels,
+            "errors": errors,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB profiler error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 4. Slow Operations
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-slow-operations")
 def mongo_slow_operations(conn_id: int, db: Session = Depends(get_db)):
-    conn = db.query(ConnectionMaster).filter(
-        ConnectionMaster.id == conn_id,
-        ConnectionMaster.db_type == "mongodb"
-    ).first()
-    if not conn:
-        raise HTTPException(status_code=404, detail="Connection not found")
-
-    client = None
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
     try:
-        client = _mongo_client(conn)
-        admin_db = client.admin
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
 
         current_ops = []
         try:
             current_op = admin_db.command("currentOp", {"active": True})
-            ops = current_op.get("inprog", [])
-            slow_ops = [op for op in ops if op.get("secs_running", 0) > 0]
-            for op in slow_ops:
-                current_ops.append({
-                    "opid": str(op.get("opid", "")),
-                    "type": op.get("type", ""),
-                    "ns": op.get("ns", ""),
-                    "secs_running": op.get("secs_running", 0),
-                    "op": op.get("op", ""),
-                    "client": op.get("client", ""),
-                    "desc": op.get("desc", ""),
-                })
+            for op in current_op.get("inprog", []):
+                secs = op.get("secs_running", 0) or 0
+                if secs > 0:
+                    try:
+                        cmd = op.get("command", op.get("query", {}))
+                        cmd_str = json.dumps(cmd, default=str)[:300]
+                    except Exception:
+                        cmd_str = ""
+                    current_ops.append({
+                        "source":          "currentOp",
+                        "opid":            str(op.get("opid", "")),
+                        "type":            op.get("type", ""),
+                        "ns":              op.get("ns", ""),
+                        "secs_running":    secs,
+                        "microsecs_running": op.get("microsecs_running", 0),
+                        "op":              op.get("op", ""),
+                        "query":           cmd_str,
+                        "client":          op.get("client", ""),
+                        "desc":            op.get("desc", ""),
+                        "waitingForLock":  op.get("waitingForLock", False),
+                        "planSummary":     op.get("planSummary", ""),
+                    })
         except Exception:
             pass
 
@@ -285,7 +546,7 @@ def mongo_slow_operations(conn_id: int, db: Session = Depends(get_db)):
             ]
             for db_name in user_dbs:
                 try:
-                    db_obj = client[db_name]
+                    db_obj = mc[db_name]
                     profile_level = db_obj.command("profile", -1)
                     if profile_level.get("was", 0) >= 1:
                         profiling_enabled = True
@@ -296,64 +557,843 @@ def mongo_slow_operations(conn_id: int, db: Session = Depends(get_db)):
                             .limit(50)
                         )
                         for doc in cursor:
-                            query_shape = ""
                             try:
                                 cmd = doc.get("command", doc.get("query", {}))
-                                query_shape = str(cmd)[:300]
+                                cmd_str = json.dumps(cmd, default=str)[:300]
                             except Exception:
-                                pass
+                                cmd_str = ""
+                            ts = doc.get("ts", "")
+                            if hasattr(ts, "isoformat"):
+                                ts = ts.isoformat()
                             profile_ops.append({
-                                "ts": str(doc.get("ts", "")),
-                                "ns": doc.get("ns", ""),
-                                "op": doc.get("op", ""),
-                                "millis": doc.get("millis", 0),
-                                "nreturned": doc.get("nreturned", 0),
-                                "keysExamined": doc.get("keysExamined", 0),
-                                "docsExamined": doc.get("docsExamined", 0),
-                                "query_shape": query_shape,
+                                "source":        "profiler",
+                                "ts":            str(ts),
+                                "ns":            doc.get("ns", ""),
+                                "op":            doc.get("op", ""),
+                                "millis":        doc.get("millis", 0),
+                                "nreturned":     doc.get("nreturned", 0),
+                                "keysExamined":  doc.get("keysExamined", 0),
+                                "docsExamined":  doc.get("docsExamined", 0),
+                                "planSummary":   doc.get("planSummary", ""),
+                                "query":         cmd_str,
+                                "client":        doc.get("client", ""),
+                                "user":          doc.get("user", ""),
                             })
                 except Exception:
                     pass
         except Exception:
             pass
 
+        all_ops = current_ops + profile_ops
+        all_ops.sort(key=lambda x: x.get("millis", x.get("secs_running", 0) * 1000), reverse=True)
+
         return {
             "status": "success",
-            "current_ops": current_ops,
-            "profile_ops": profile_ops,
+            "current_ops":  current_ops,
+            "profile_ops":  profile_ops,
+            "all_ops":      all_ops,
+            "total":        len(all_ops),
             "profiling_status": {
-                "was_slow": len(current_ops) > 0,
-                "enabled": profiling_enabled,
+                "enabled":    profiling_enabled,
+                "was_active": len(current_ops) > 0,
             },
-            "total": len(current_ops) + len(profile_ops),
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB slow operations error: {str(e)}")
     finally:
-        if client:
+        if mc:
             try:
-                client.close()
+                mc.close()
             except Exception:
                 pass
 
 
 # ---------------------------------------------------------------------------
-# 3. Error Logs
+# 5. Collections
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-collections")
+def mongo_collections(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        db_list_result = admin_db.command("listDatabases")
+        databases = []
+        errors = []
+
+        for db_info in db_list_result.get("databases", []):
+            db_name = db_info.get("name", "")
+            db_obj = mc[db_name]
+            db_entry = {
+                "name":        db_name,
+                "sizeOnDisk":  db_info.get("sizeOnDisk", 0),
+                "collections": [],
+            }
+            try:
+                coll_names = db_obj.list_collection_names()
+                for coll_name in coll_names:
+                    try:
+                        stats = db_obj.command("collStats", coll_name)
+                        coll_options = db_obj.get_collection(coll_name).options()
+                        db_entry["collections"].append({
+                            "name":              coll_name,
+                            "count":             stats.get("count", 0),
+                            "size":              stats.get("size", 0),
+                            "size_mb":           round(_safe_float(stats.get("size", 0)) / 1024 / 1024, 4),
+                            "storageSize":       stats.get("storageSize", 0),
+                            "storage_size_mb":   round(_safe_float(stats.get("storageSize", 0)) / 1024 / 1024, 4),
+                            "avgObjSize":        stats.get("avgObjSize", 0),
+                            "nindexes":          stats.get("nindexes", 0),
+                            "totalIndexSize":    stats.get("totalIndexSize", 0),
+                            "total_index_size_mb": round(_safe_float(stats.get("totalIndexSize", 0)) / 1024 / 1024, 4),
+                            "capped":            stats.get("capped", False),
+                            "max":               stats.get("max", 0),
+                            "maxSize":           stats.get("maxSize", 0),
+                            "validator":         bool(coll_options.get("validator")),
+                            "readConcernLevel":  coll_options.get("readConcern", {}).get("level", ""),
+                        })
+                    except Exception as e:
+                        errors.append(f"{db_name}.{coll_name}: {str(e)}")
+            except Exception as e:
+                errors.append(f"Cannot list collections in {db_name}: {str(e)}")
+            databases.append(db_entry)
+
+        total_collections = sum(len(d["collections"]) for d in databases)
+        total_docs = sum(
+            c["count"] for d in databases for c in d["collections"]
+        )
+
+        return {
+            "status": "success",
+            "databases": databases,
+            "total_collections": total_collections,
+            "total_docs": total_docs,
+            "errors": errors,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB collections error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 6. Indexes
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-indexes")
+def mongo_indexes(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        db_list_result = admin_db.command("listDatabases")
+        system_dbs = {"admin", "local", "config"}
+        all_indexes = []
+        errors = []
+
+        for db_info in db_list_result.get("databases", []):
+            db_name = db_info.get("name", "")
+            db_obj = mc[db_name]
+            try:
+                coll_names = db_obj.list_collection_names()
+            except Exception as e:
+                errors.append(f"Cannot list collections in {db_name}: {str(e)}")
+                continue
+
+            for coll_name in coll_names:
+                try:
+                    index_info = db_obj[coll_name].index_information()
+
+                    # get index stats via aggregation
+                    index_stats = {}
+                    try:
+                        pipeline = [{"$indexStats": {}}]
+                        for stat in db_obj[coll_name].aggregate(pipeline):
+                            idx_name = stat.get("name", "")
+                            accesses = stat.get("accesses", {})
+                            last_access = accesses.get("since")
+                            if hasattr(last_access, "isoformat"):
+                                last_access = last_access.isoformat()
+                            index_stats[idx_name] = {
+                                "ops":         accesses.get("ops", 0),
+                                "last_access": str(last_access) if last_access else None,
+                            }
+                    except Exception:
+                        pass
+
+                    # get collection stats for index sizes
+                    idx_sizes = {}
+                    try:
+                        cstats = db_obj.command("collStats", coll_name)
+                        idx_sizes = cstats.get("indexSizes", {})
+                    except Exception:
+                        pass
+
+                    for idx_name, idx_spec in index_info.items():
+                        stat = index_stats.get(idx_name, {})
+                        accesses = stat.get("ops", 0)
+                        last_acc  = stat.get("last_access")
+                        all_indexes.append({
+                            "db":          db_name,
+                            "collection":  coll_name,
+                            "ns":          f"{db_name}.{coll_name}",
+                            "name":        idx_name,
+                            "key":         idx_spec.get("key", {}),
+                            "unique":      idx_spec.get("unique", False),
+                            "sparse":      idx_spec.get("sparse", False),
+                            "background":  idx_spec.get("background", False),
+                            "expireAfterSeconds": idx_spec.get("expireAfterSeconds"),
+                            "size":        idx_sizes.get(idx_name, 0),
+                            "accesses":    _safe_int(accesses),
+                            "last_access": last_acc,
+                            "unused":      _safe_int(accesses) == 0 and idx_name != "_id_",
+                        })
+                except Exception as e:
+                    errors.append(f"{db_name}.{coll_name}: {str(e)}")
+
+        unused = [i for i in all_indexes if i["unused"]]
+
+        return {
+            "status": "success",
+            "indexes": all_indexes,
+            "total": len(all_indexes),
+            "unused_count": len(unused),
+            "unused_indexes": unused,
+            "errors": errors,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB indexes error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 7. Replication
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-replication")
+def mongo_replication(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        # server status repl section
+        server_status = admin_db.command("serverStatus")
+        repl_raw = server_status.get("repl", {})
+
+        rs_status = None
+        rs_error = None
+        try:
+            rs_status = admin_db.command("replSetGetStatus")
+        except Exception as e:
+            rs_error = str(e)
+
+        if rs_status is None:
+            return {
+                "status": "success",
+                "is_replica_set": False,
+                "set_name": "",
+                "state": "STANDALONE",
+                "members": [],
+                "oplog": {},
+                "replication_lag": [],
+                "error": rs_error,
+            }
+
+        set_name = rs_status.get("set", "")
+        my_state = rs_status.get("myState", 0)
+        state_map = {1: "PRIMARY", 2: "SECONDARY", 3: "RECOVERING", 4: "STARTUP2",
+                     5: "UNKNOWN", 6: "ARBITER", 7: "DOWN", 8: "ROLLBACK", 9: "REMOVED"}
+        my_state_str = state_map.get(my_state, f"STATE_{my_state}")
+
+        members = []
+        primary_optime = None
+        for m in rs_status.get("members", []):
+            state_val = m.get("state", 6)
+            state_str = state_map.get(state_val, f"STATE_{state_val}")
+
+            optime = m.get("optime", {})
+            optime_ts = None
+            if isinstance(optime, dict):
+                optime_ts = optime.get("ts")
+            elif hasattr(optime, "time"):
+                optime_ts = optime
+
+            optime_date = m.get("optimeDate")
+            if hasattr(optime_date, "isoformat"):
+                optime_date = optime_date.isoformat()
+
+            last_hb = m.get("lastHeartbeatMessage", "")
+            last_hb_recv = m.get("lastHeartbeatRecv")
+            if hasattr(last_hb_recv, "isoformat"):
+                last_hb_recv = last_hb_recv.isoformat()
+
+            if state_val == 1:  # PRIMARY
+                primary_optime = optime_ts
+
+            member_entry = {
+                "id":               m.get("_id", 0),
+                "name":             m.get("name", ""),
+                "health":           m.get("health", 0),
+                "state":            state_val,
+                "stateStr":         state_str,
+                "uptime":           m.get("uptime", 0),
+                "optime":           str(optime_ts) if optime_ts else "",
+                "optimeDate":       str(optime_date) if optime_date else "",
+                "lastHeartbeatMessage": last_hb,
+                "lastHeartbeatRecv":   str(last_hb_recv) if last_hb_recv else "",
+                "configVersion":    m.get("configVersion", 0),
+                "self":             m.get("self", False),
+                "priority":         m.get("priority", 1),
+                "votes":            m.get("votes", 1),
+                "lag":              0,
+                "syncingTo":        m.get("syncingTo", ""),
+                "syncSourceHost":   m.get("syncSourceHost", ""),
+            }
+            members.append(member_entry)
+
+        # compute replication lag per secondary
+        replication_lag = []
+        if primary_optime is not None:
+            try:
+                primary_ts = primary_optime.time if hasattr(primary_optime, "time") else int(str(primary_optime).split(" ")[0])
+                for m in members:
+                    if m["stateStr"] == "SECONDARY":
+                        sec_ts = 0
+                        try:
+                            raw_ts = m["optime"]
+                            if " " in str(raw_ts):
+                                sec_ts = int(str(raw_ts).split(" ")[0])
+                        except Exception:
+                            pass
+                        lag = max(0, primary_ts - sec_ts)
+                        m["lag"] = lag
+                        replication_lag.append({"member": m["name"], "lag_seconds": lag})
+            except Exception:
+                pass
+
+        # oplog stats
+        oplog_info = {}
+        try:
+            local_db = mc["local"]
+            oplog_stats = local_db.command("collStats", "oplog.rs")
+            first_doc = local_db["oplog.rs"].find_one(sort=[("ts", 1)])
+            last_doc  = local_db["oplog.rs"].find_one(sort=[("ts", -1)])
+            first_ts = last_ts = None
+            if first_doc and "ts" in first_doc:
+                first_ts = first_doc["ts"].time if hasattr(first_doc["ts"], "time") else 0
+            if last_doc and "ts" in last_doc:
+                last_ts = last_doc["ts"].time if hasattr(last_doc["ts"], "time") else 0
+
+            oplog_window_hours = 0.0
+            if first_ts and last_ts and last_ts > first_ts:
+                oplog_window_hours = round((last_ts - first_ts) / 3600, 2)
+
+            oplog_info = {
+                "size":                oplog_stats.get("maxSize", oplog_stats.get("storageSize", 0)),
+                "used":                oplog_stats.get("size", 0),
+                "size_mb":             round(_safe_float(oplog_stats.get("maxSize", 0)) / 1024 / 1024, 2),
+                "used_mb":             round(_safe_float(oplog_stats.get("size", 0)) / 1024 / 1024, 2),
+                "first_ts":            first_ts,
+                "last_ts":             last_ts,
+                "oplog_window_hours":  oplog_window_hours,
+                "count":               oplog_stats.get("count", 0),
+            }
+        except Exception as e:
+            oplog_info = {"error": str(e)}
+
+        return {
+            "status":          "success",
+            "is_replica_set":  True,
+            "set_name":        set_name,
+            "state":           my_state_str,
+            "members":         members,
+            "oplog":           oplog_info,
+            "replication_lag": replication_lag,
+            "ok":              rs_status.get("ok", 0),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB replication error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 8. Oplog
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-oplog")
+def mongo_oplog(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        local_db = mc["local"]
+
+        # oplog stats
+        try:
+            oplog_stats = local_db.command("collStats", "oplog.rs")
+        except Exception as e:
+            return {"status": "error", "error": str(e), "note": "oplog.rs not found — may not be a replica set"}
+
+        size_bytes = oplog_stats.get("maxSize", oplog_stats.get("storageSize", 0))
+        used_bytes = oplog_stats.get("size", 0)
+        size_mb    = round(_safe_float(size_bytes) / 1024 / 1024, 2)
+        used_mb    = round(_safe_float(used_bytes) / 1024 / 1024, 2)
+        used_pct   = round(used_bytes / max(size_bytes, 1) * 100, 2)
+
+        first_doc = local_db["oplog.rs"].find_one(sort=[("ts", 1)])
+        last_doc  = local_db["oplog.rs"].find_one(sort=[("ts", -1)])
+        first_ts = last_ts = 0
+        if first_doc and "ts" in first_doc:
+            first_ts = first_doc["ts"].time if hasattr(first_doc["ts"], "time") else 0
+        if last_doc and "ts" in last_doc:
+            last_ts = last_doc["ts"].time if hasattr(last_doc["ts"], "time") else 0
+
+        oplog_window_hours = 0.0
+        if first_ts and last_ts and last_ts > first_ts:
+            oplog_window_hours = round((last_ts - first_ts) / 3600, 2)
+
+        # operation type breakdown
+        op_types = {}
+        try:
+            pipeline = [{"$group": {"_id": "$op", "count": {"$sum": 1}}}]
+            for doc in local_db["oplog.rs"].aggregate(pipeline):
+                op_label = {
+                    "i": "insert", "u": "update", "d": "delete",
+                    "c": "command", "n": "noop", "db": "database",
+                }.get(doc["_id"], doc["_id"] or "unknown")
+                op_types[op_label] = doc["count"]
+        except Exception:
+            pass
+
+        # recent oplog entries (last 50)
+        recent_entries = []
+        try:
+            cursor = local_db["oplog.rs"].find({}).sort("ts", -1).limit(50)
+            for doc in cursor:
+                ts_raw = doc.get("ts")
+                ts_val = ts_raw.time if hasattr(ts_raw, "time") else 0
+                o2 = doc.get("o2", {})
+                recent_entries.append({
+                    "ts":    ts_val,
+                    "op":    doc.get("op", ""),
+                    "ns":    doc.get("ns", ""),
+                    "term":  doc.get("t", 0),
+                    "wall":  str(doc.get("wall", "")),
+                    "o":     json.dumps(doc.get("o", {}), default=str)[:200],
+                    "o2":    json.dumps(o2, default=str)[:100] if o2 else "",
+                })
+        except Exception:
+            pass
+
+        return {
+            "status":              "success",
+            "size_bytes":          size_bytes,
+            "used_bytes":          used_bytes,
+            "size_mb":             size_mb,
+            "used_mb":             used_mb,
+            "used_pct":            used_pct,
+            "first_ts":            first_ts,
+            "last_ts":             last_ts,
+            "oplog_window_hours":  oplog_window_hours,
+            "count":               oplog_stats.get("count", 0),
+            "op_types":            op_types,
+            "recent_entries":      recent_entries,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB oplog error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 9. Sharding
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-sharding")
+def mongo_sharding(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        # check if sharding is enabled
+        try:
+            server_status = admin_db.command("serverStatus")
+            is_mongos = server_status.get("process", "") == "mongos"
+        except Exception:
+            is_mongos = False
+
+        if not is_mongos:
+            # try to detect sharding via config db
+            try:
+                config_db = mc["config"]
+                shards_count = config_db["shards"].count_documents({})
+                if shards_count == 0:
+                    return {"status": "success", "enabled": False, "process": "mongod"}
+            except Exception:
+                return {"status": "success", "enabled": False, "process": "mongod"}
+
+        # gather sharding info
+        config_db = mc["config"]
+
+        # shards
+        shards = []
+        try:
+            for shard in config_db["shards"].find():
+                shards.append({
+                    "id":    shard.get("_id", ""),
+                    "host":  shard.get("host", ""),
+                    "state": shard.get("state", 1),
+                    "tags":  shard.get("tags", []),
+                })
+        except Exception:
+            pass
+
+        # databases
+        sharded_dbs = []
+        try:
+            for sdb in config_db["databases"].find():
+                sharded_dbs.append({
+                    "name":       sdb.get("_id", ""),
+                    "primary":    sdb.get("primary", ""),
+                    "partitioned":sdb.get("partitioned", False),
+                })
+        except Exception:
+            pass
+
+        # chunks per shard
+        chunks_per_shard = {}
+        try:
+            pipeline = [{"$group": {"_id": "$shard", "count": {"$sum": 1}}}]
+            for doc in config_db["chunks"].aggregate(pipeline):
+                chunks_per_shard[doc["_id"]] = doc["count"]
+        except Exception:
+            pass
+
+        # balancer status
+        balancer_status = {}
+        try:
+            balancer_status = admin_db.command("balancerStatus")
+            for k in list(balancer_status.keys()):
+                if not isinstance(balancer_status[k], (str, int, float, bool, list, dict, type(None))):
+                    balancer_status[k] = str(balancer_status[k])
+        except Exception as e:
+            balancer_status = {"error": str(e)}
+
+        # config servers
+        config_servers = []
+        try:
+            for cs in config_db["mongos"].find():
+                up = cs.get("up", 0)
+                ping = cs.get("ping")
+                if hasattr(ping, "isoformat"):
+                    ping = ping.isoformat()
+                config_servers.append({
+                    "id":   cs.get("_id", ""),
+                    "up":   up,
+                    "ping": str(ping) if ping else "",
+                    "advisoryHostFQDNs": cs.get("advisoryHostFQDNs", []),
+                })
+        except Exception:
+            pass
+
+        return {
+            "status":           "success",
+            "enabled":          True,
+            "process":          "mongos" if is_mongos else "mongod",
+            "shards":           shards,
+            "shards_count":     len(shards),
+            "databases":        sharded_dbs,
+            "chunks_per_shard": chunks_per_shard,
+            "balancer_status":  balancer_status,
+            "config_servers":   config_servers,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB sharding error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 10. Transactions
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-transactions")
+def mongo_transactions(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        server_status = admin_db.command("serverStatus")
+        txn_raw = server_status.get("transactions", None)
+
+        if txn_raw is None:
+            return {
+                "status":    "success",
+                "available": False,
+                "note":      "Transaction metrics require MongoDB 4.0+",
+                "transactions": {},
+            }
+
+        transactions = {
+            "totalStarted":                   txn_raw.get("totalStarted", 0),
+            "totalCommitted":                  txn_raw.get("totalCommitted", 0),
+            "totalAborted":                    txn_raw.get("totalAborted", 0),
+            "totalContactedParticipants":      txn_raw.get("totalContactedParticipants", 0),
+            "totalParticipantsAtCommit":       txn_raw.get("totalParticipantsAtCommit", 0),
+            "totalRequestsTargeted":           txn_raw.get("totalRequestsTargeted", 0),
+            "currentActive":                   txn_raw.get("currentActive", 0),
+            "currentInactive":                 txn_raw.get("currentInactive", 0),
+            "currentOpen":                     txn_raw.get("currentOpen", 0),
+            "currentPrepared":                 txn_raw.get("currentPrepared", 0),
+        }
+
+        # derive commit rate & abort rate
+        total = transactions["totalStarted"]
+        committed = transactions["totalCommitted"]
+        aborted   = transactions["totalAborted"]
+        commit_rate = round(committed / max(total, 1) * 100, 2)
+        abort_rate  = round(aborted  / max(total, 1) * 100, 2)
+
+        # retrieve twoPhaseCommit metrics if available (sharded only)
+        two_phase = {}
+        try:
+            two_phase = {k: v for k, v in txn_raw.items() if k.startswith("totalPrepared") or k.startswith("current")}
+        except Exception:
+            pass
+
+        return {
+            "status":       "success",
+            "available":    True,
+            "transactions": transactions,
+            "commit_rate":  commit_rate,
+            "abort_rate":   abort_rate,
+            "two_phase":    two_phase,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB transactions error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 11. WiredTiger
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-wiredtiger")
+def mongo_wiredtiger(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+        server_status = admin_db.command("serverStatus")
+        wt = server_status.get("wiredTiger", {})
+
+        if not wt:
+            return {"status": "success", "available": False, "note": "WiredTiger not in use"}
+
+        # cache
+        cache_raw = wt.get("cache", {})
+        cache = {
+            "bytes_read_into_cache":          cache_raw.get("bytes read into cache", 0),
+            "bytes_written_from_cache":        cache_raw.get("bytes written from cache", 0),
+            "pages_read_into_cache":           cache_raw.get("pages read into cache", 0),
+            "pages_written_from_cache":        cache_raw.get("pages written from cache", 0),
+            "pages_requested_from_cache":      cache_raw.get("pages requested from cache", 0),
+            "bytes_currently_in_cache":        cache_raw.get("bytes currently in the cache", 0),
+            "maximum_bytes_configured":         cache_raw.get("maximum bytes configured", 1),
+            "tracked_dirty_bytes_in_cache":    cache_raw.get("tracked dirty bytes in the cache", 0),
+            "unmodified_pages_evicted":        cache_raw.get("unmodified pages evicted", 0),
+            "modified_pages_evicted":          cache_raw.get("modified pages evicted", 0),
+            "percentage_overhead":             cache_raw.get("percentage overhead", 0),
+        }
+        max_bytes = cache["maximum_bytes_configured"] or 1
+        used_bytes = cache["bytes_currently_in_cache"]
+        cache["cache_used_pct"] = round(used_bytes / max_bytes * 100, 2)
+        cache["cache_used_mb"]  = round(used_bytes / 1024 / 1024, 2)
+        cache["cache_max_mb"]   = round(max_bytes  / 1024 / 1024, 2)
+
+        # block manager
+        bm_raw = wt.get("block-manager", {})
+        block_manager = {
+            "blocks_read":         bm_raw.get("blocks read", 0),
+            "blocks_written":      bm_raw.get("blocks written", 0),
+            "bytes_read":          bm_raw.get("bytes read", 0),
+            "bytes_written":       bm_raw.get("bytes written", 0),
+            "bytes_written_for_checkpoint": bm_raw.get("bytes written for checkpoint", 0),
+            "mapped_bytes_read":   bm_raw.get("mapped bytes read", 0),
+            "mapped_blocks_read":  bm_raw.get("mapped blocks read", 0),
+        }
+
+        # concurrent transactions
+        ct_raw = wt.get("concurrentTransactions", {})
+        concurrent_transactions = {
+            "read": {
+                "available": ct_raw.get("read", {}).get("available", 0),
+                "out":       ct_raw.get("read", {}).get("out", 0),
+                "totalTickets": ct_raw.get("read", {}).get("totalTickets", 0),
+            },
+            "write": {
+                "available": ct_raw.get("write", {}).get("available", 0),
+                "out":       ct_raw.get("write", {}).get("out", 0),
+                "totalTickets": ct_raw.get("write", {}).get("totalTickets", 0),
+            },
+        }
+
+        # log
+        log_raw = wt.get("log", {})
+        log_stats = {
+            "log_records_processed":      log_raw.get("log records processed by log scan", 0),
+            "log_bytes_of_payload_data":  log_raw.get("log bytes of payload data", 0),
+            "log_bytes_written":          log_raw.get("log bytes written", 0),
+            "log_flushes":                log_raw.get("log flush operations", 0),
+            "log_writes":                 log_raw.get("log write operations", 0),
+            "log_sync":                   log_raw.get("log sync operations", 0),
+            "log_scan_operations":        log_raw.get("log scan operations", 0),
+            "records_not_compressed":     log_raw.get("log records not compressed", 0),
+        }
+
+        # session
+        sess_raw = wt.get("session", {})
+        session_stats = {
+            "open_cursor_count":  sess_raw.get("open cursor count", 0),
+            "open_session_count": sess_raw.get("open session count", 0),
+            "table_compact_failed":  sess_raw.get("table compact failed calls", 0),
+            "table_compact_success": sess_raw.get("table compact successful calls", 0),
+        }
+
+        # transaction
+        txn_raw = wt.get("transaction", {})
+        wt_transactions = {
+            "transaction_begins":             txn_raw.get("transaction begins", 0),
+            "transaction_checkpoints":        txn_raw.get("transaction checkpoints", 0),
+            "transactions_committed":         txn_raw.get("transactions committed", 0),
+            "transactions_rolled_back":       txn_raw.get("transactions rolled back", 0),
+            "transaction_checkpoint_ms":      txn_raw.get("transaction checkpoint currently running", 0),
+        }
+
+        return {
+            "status":                  "success",
+            "available":               True,
+            "cache":                   cache,
+            "block_manager":           block_manager,
+            "concurrent_transactions": concurrent_transactions,
+            "log":                     log_stats,
+            "session":                 session_stats,
+            "transactions":            wt_transactions,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB WiredTiger error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 12. Users
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/mongo-users")
+def mongo_users(conn_id: int, db: Session = Depends(get_db)):
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
+
+        db_list_result = admin_db.command("listDatabases")
+        all_users = []
+        errors = []
+
+        for db_info in db_list_result.get("databases", []):
+            db_name = db_info.get("name", "")
+            db_obj = mc[db_name]
+            try:
+                users_result = db_obj.command("usersInfo", 1)
+                for user in users_result.get("users", []):
+                    uid = user.get("userId", user.get("_id", ""))
+                    if hasattr(uid, "hex"):
+                        uid = uid.hex
+                    all_users.append({
+                        "username": user.get("user", ""),
+                        "db":       user.get("db", db_name),
+                        "roles":    [
+                            {"role": r.get("role", ""), "db": r.get("db", "")}
+                            for r in user.get("roles", [])
+                        ],
+                        "userId":   str(uid),
+                        "customData": user.get("customData", {}),
+                    })
+            except Exception as e:
+                errors.append(f"Cannot get users from {db_name}: {str(e)}")
+
+        return {
+            "status": "success",
+            "users":  all_users,
+            "total":  len(all_users),
+            "errors": errors,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"MongoDB users error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 13. Error Logs
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-error-logs")
 def mongo_error_logs(conn_id: int, db: Session = Depends(get_db)):
-    conn = db.query(ConnectionMaster).filter(
-        ConnectionMaster.id == conn_id,
-        ConnectionMaster.db_type == "mongodb"
-    ).first()
-    if not conn:
-        raise HTTPException(status_code=404, detail="Connection not found")
-
-    client = None
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
     try:
-        client = _mongo_client(conn)
-        admin_db = client.admin
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
 
         log_lines = []
         source = "getLog"
@@ -365,70 +1405,81 @@ def mongo_error_logs(conn_id: int, db: Session = Depends(get_db)):
             note = f"getLog unavailable: {str(e)}"
 
         total_lines = len(log_lines)
+        # take last 200 lines
+        recent_lines = log_lines[-200:]
+
         all_logs = []
-        for line in log_lines[-500:]:
+        for line in recent_lines:
             try:
                 entry = json.loads(line)
+                ts_raw = entry.get("t", {})
+                timestamp = ts_raw.get("$date", "") if isinstance(ts_raw, dict) else str(ts_raw)
+                severity  = entry.get("s", "I")
+                component = entry.get("c", "")
+                ctx       = entry.get("ctx", "")
+                msg       = entry.get("msg", "")
+                attr      = entry.get("attr", {})
+                tags      = entry.get("tags", [])
                 all_logs.append({
-                    "logged": entry.get("t", {}).get("$date", ""),
-                    "severity": entry.get("s", "I"),
-                    "component": entry.get("c", ""),
-                    "context": entry.get("ctx", ""),
-                    "message": entry.get("msg", ""),
-                    "tags": entry.get("tags", []),
+                    "timestamp": timestamp,
+                    "severity":  severity,
+                    "component": component,
+                    "context":   ctx,
+                    "message":   msg,
+                    "attr":      json.dumps(attr, default=str)[:300] if attr else "",
+                    "tags":      tags,
                 })
             except Exception:
                 all_logs.append({
-                    "logged": "",
-                    "severity": "I",
+                    "timestamp": "",
+                    "severity":  "I",
                     "component": "RAW",
-                    "context": "",
-                    "message": str(line)[:300],
-                    "tags": [],
+                    "context":   "",
+                    "message":   str(line)[:300],
+                    "attr":      "",
+                    "tags":      [],
                 })
 
         severe_levels = {"W", "E", "F"}
-        filtered_logs = [
-            log for log in all_logs
-            if log.get("severity", "I") in severe_levels
-        ]
+        filtered_logs = [l for l in all_logs if l.get("severity", "I") in severe_levels]
         filtered_count = len(filtered_logs)
 
+        severity_counts = {}
+        for l in all_logs:
+            s = l.get("severity", "I")
+            severity_counts[s] = severity_counts.get(s, 0) + 1
+
         return {
-            "status": "success",
-            "source": source,
-            "logs": filtered_logs,
-            "total_lines": total_lines,
-            "filtered_count": filtered_count,
-            "note": note,
+            "status":          "success",
+            "source":          source,
+            "all_logs":        all_logs,
+            "logs":            filtered_logs,
+            "total_lines":     total_lines,
+            "filtered_count":  filtered_count,
+            "severity_counts": severity_counts,
+            "note":            note,
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB error logs error: {str(e)}")
     finally:
-        if client:
+        if mc:
             try:
-                client.close()
+                mc.close()
             except Exception:
                 pass
 
 
 # ---------------------------------------------------------------------------
-# 4. Collection Analysis
+# 14. Collection Analysis
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-collection-analysis")
 def mongo_collection_analysis(conn_id: int, db: Session = Depends(get_db)):
-    conn = db.query(ConnectionMaster).filter(
-        ConnectionMaster.id == conn_id,
-        ConnectionMaster.db_type == "mongodb"
-    ).first()
-    if not conn:
-        raise HTTPException(status_code=404, detail="Connection not found")
-
-    client = None
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
     try:
-        client = _mongo_client(conn)
-        admin_db = client.admin
+        mc = _mongo_client(conn)
+        admin_db = mc.admin
 
         db_list_result = admin_db.command("listDatabases")
         system_dbs = {"admin", "local", "config"}
@@ -441,54 +1492,94 @@ def mongo_collection_analysis(conn_id: int, db: Session = Depends(get_db)):
         errors = []
 
         for db_name in user_dbs:
-            db_obj = client[db_name]
+            db_obj = mc[db_name]
             try:
                 coll_names = db_obj.list_collection_names()
             except Exception as e:
-                errors.append(f"Could not list collections in {db_name}: {str(e)}")
+                errors.append(f"Cannot list collections in {db_name}: {str(e)}")
                 continue
 
             for coll_name in coll_names:
                 try:
                     stats = db_obj.command("collStats", coll_name)
                     index_info = db_obj[coll_name].index_information()
+
+                    # profiler scan efficiency
+                    scan_ratio = None
+                    try:
+                        ns = f"{db_name}.{coll_name}"
+                        profile_sample = list(
+                            db_obj["system.profile"]
+                            .find({"ns": ns}, {"nreturned": 1, "docsExamined": 1})
+                            .sort("ts", -1)
+                            .limit(20)
+                        )
+                        if profile_sample:
+                            total_returned = sum(p.get("nreturned", 0) for p in profile_sample)
+                            total_examined = sum(p.get("docsExamined", 0) for p in profile_sample)
+                            if total_returned > 0:
+                                scan_ratio = round(total_examined / total_returned, 2)
+                    except Exception:
+                        pass
+
                     collections.append({
-                        "db": db_name,
-                        "collection": coll_name,
-                        "count": stats.get("count", 0),
-                        "size_mb": round(_safe_float(stats.get("size", 0)) / 1024 / 1024, 2),
-                        "avg_obj_size": round(_safe_float(stats.get("avgObjSize", 0)), 0),
-                        "total_index_size_mb": round(
-                            _safe_float(stats.get("totalIndexSize", 0)) / 1024 / 1024, 2
-                        ),
-                        "index_count": len(index_info),
-                        "indexes": list(index_info.keys()),
-                        "capped": stats.get("capped", False),
+                        "db":                    db_name,
+                        "collection":            coll_name,
+                        "ns":                    f"{db_name}.{coll_name}",
+                        "count":                 stats.get("count", 0),
+                        "size":                  stats.get("size", 0),
+                        "size_mb":               round(_safe_float(stats.get("size", 0)) / 1024 / 1024, 4),
+                        "storageSize":           stats.get("storageSize", 0),
+                        "storage_size_mb":       round(_safe_float(stats.get("storageSize", 0)) / 1024 / 1024, 4),
+                        "avgObjSize":            stats.get("avgObjSize", 0),
+                        "nindexes":              stats.get("nindexes", 0),
+                        "totalIndexSize":        stats.get("totalIndexSize", 0),
+                        "total_index_size_mb":   round(_safe_float(stats.get("totalIndexSize", 0)) / 1024 / 1024, 4),
+                        "capped":                stats.get("capped", False),
+                        "index_count":           len(index_info),
+                        "indexes":               list(index_info.keys()),
+                        "scan_ratio":            scan_ratio,
                     })
                 except Exception as e:
-                    errors.append(f"Could not get stats for {db_name}.{coll_name}: {str(e)}")
+                    errors.append(f"{db_name}.{coll_name}: {str(e)}")
 
-        total_size_mb = round(sum(c["size_mb"] for c in collections), 2)
-        total_indexes = sum(c["index_count"] for c in collections)
+        # sort by size_mb descending — top 20
+        collections.sort(key=lambda x: x["size_mb"], reverse=True)
+        top20 = collections[:20]
 
-        summary = {
-            "total_collections": len(collections),
-            "total_size_mb": total_size_mb,
-            "total_indexes": total_indexes,
-        }
+        total_size_mb  = round(sum(c["size_mb"] for c in collections), 2)
+        total_indexes  = sum(c["index_count"] for c in collections)
+        total_docs     = sum(c["count"] for c in collections)
+        high_ratio     = [c for c in collections if c["scan_ratio"] is not None and c["scan_ratio"] > 10]
 
         return {
             "status": "success",
-            "collections": collections,
-            "summary": summary,
+            "collections":    collections,
+            "top20_by_size":  top20,
+            "summary": {
+                "total_collections": len(collections),
+                "total_size_mb":     total_size_mb,
+                "total_indexes":     total_indexes,
+                "total_docs":        total_docs,
+                "high_scan_ratio":   len(high_ratio),
+            },
             "errors": errors,
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB collection analysis error: {str(e)}")
     finally:
-        if client:
+        if mc:
             try:
-                client.close()
+                mc.close()
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Legacy / compat endpoint
+# ---------------------------------------------------------------------------
+@router.get("/{conn_id}/monitoring-dashboard")
+def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
+    """Alias kept for backward compatibility."""
+    return mongo_dashboard(conn_id, db)

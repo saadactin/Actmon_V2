@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-import datetime
 from urllib.parse import quote_plus
 
 from app.database.connection import SessionLocal
@@ -37,13 +36,13 @@ def create_clickhouse_connection(
         
         new_connection = ConnectionMaster(
             db_type="clickhouse",
+            connection_name=request.connection_name,
             host=request.host,
             port=request.port,
             username=request.username,
             password=request.password,
-            database=request.database,
-            alias=request.alias,
-            created_at=datetime.datetime.now()
+            database_name=request.database_name,
+            clickhouse_protocol=getattr(request, "clickhouse_protocol", "native"),
         )
         db.add(new_connection)
         db.commit()
@@ -77,12 +76,13 @@ def update_clickhouse_connection(
     if not connection:
         raise HTTPException(status_code=404, detail="ClickHouse connection not found")
     try:
+        connection.connection_name = request.connection_name
         connection.host = request.host
         connection.port = request.port
         connection.username = request.username
         connection.password = request.password
-        connection.database = request.database
-        connection.alias = request.alias
+        connection.database_name = request.database_name
+        connection.clickhouse_protocol = getattr(request, "clickhouse_protocol", "native")
         db.commit()
         db.refresh(connection)
         return {"status": "success", "message": "ClickHouse connection updated successfully", "data": connection}

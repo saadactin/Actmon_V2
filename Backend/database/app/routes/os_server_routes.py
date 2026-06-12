@@ -26,6 +26,32 @@ DEFAULT_PORTS = {
 }
 
 
+def _tcp_check(ip: str, port: int, timeout: float = 3.0) -> bool:
+    """Return True if TCP port is open (DB is accepting connections)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        result = s.connect_ex((ip, port))
+        s.close()
+        return result == 0
+    except Exception:
+        return False
+
+
+def _db_status_summary(instances) -> str:
+    """Compute aggregate DB status from a list of DatabaseInstance objects."""
+    statuses = [i.status for i in instances]
+    if not statuses:
+        return "Unknown"
+    if all(s == "Running" for s in statuses):
+        return "Running"
+    if any(s == "Running" for s in statuses):
+        return "Degraded"
+    if any(s == "Stopped" for s in statuses):
+        return "Stopped"
+    return "Unknown"
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -89,6 +115,75 @@ class SshTestRequest(BaseModel):
 # GET SUMMARY / KPIs
 # ==========================================
 
+@router.get("/live-status")
+def get_live_status(db: Session = Depends(get_db)):
+    """
+    Fast TCP-only live status for all servers.
+    Checks SSH port (OS) and DB ports (service) concurrently — no SSH required.
+    Updates stored statuses and returns the result.
+    """
+    import concurrent.futures
+
+    servers = db.query(OsServer).all()
+
+    def check_one(s):
+        os_up = _tcp_check(s.ip_address, s.ssh_port or 22, timeout=2.0)
+        os_status = "Connected" if os_up else "Disconnected"
+
+        db_services = list(s.database_services or [])
+        db_results: dict[str, str] = {}
+
+        # Check known DB services by port
+        for svc in db_services:
+            port = DEFAULT_PORTS.get(svc)
+            if not port:
+                for inst in s.db_instances:
+                    if inst.db_type.lower() == svc.lower() and inst.port:
+                        port = inst.port
+                        break
+            if port:
+                db_results[svc] = "Running" if _tcp_check(s.ip_address, port, timeout=2.0) else "Stopped"
+
+        # Also check registered instances not already covered
+        for inst in s.db_instances:
+            if inst.db_type not in db_results and inst.port:
+                db_results[inst.db_type] = "Running" if _tcp_check(s.ip_address, inst.port, timeout=2.0) else "Stopped"
+
+        vals = list(db_results.values())
+        if vals and all(v == "Running" for v in vals):
+            db_status = "Running"
+        elif any(v == "Running" for v in vals):
+            db_status = "Degraded"
+        elif any(v == "Stopped" for v in vals):
+            db_status = "Stopped"
+        else:
+            db_status = "Unknown"
+
+        return {
+            "id": s.id,
+            "os_status": os_status,
+            "db_status": db_status,
+            "db_services": db_results,
+        }
+
+    # Run checks in parallel (max 30 concurrent)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as ex:
+        results = list(ex.map(check_one, servers))
+
+    # Persist the fresh statuses
+    status_map = {r["id"]: r for r in results}
+    for s in servers:
+        r = status_map.get(s.id)
+        if r:
+            s.status = r["os_status"]
+            for inst in s.db_instances:
+                if inst.db_type in r["db_services"]:
+                    inst.status = r["db_services"][inst.db_type]
+    db.commit()
+
+    return {"status": "success", "data": results}
+
+
 @router.get("/summary")
 def get_summary(db: Session = Depends(get_db)):
     total = db.query(func.count(OsServer.id)).scalar() or 0
@@ -131,6 +226,27 @@ def list_os_servers(
 
     result = []
     for s in servers:
+        # Build per-service DB status map from registered instances
+        inst_map = {}
+        for inst in s.db_instances:
+            inst_map[inst.db_type] = {
+                "db_type": inst.db_type,
+                "port": inst.port or DEFAULT_PORTS.get(inst.db_type),
+                "status": inst.status or "Unknown",
+            }
+
+        # For database_services without a registered instance, show Unknown
+        for svc in (s.database_services or []):
+            if svc not in inst_map:
+                inst_map[svc] = {
+                    "db_type": svc,
+                    "port": DEFAULT_PORTS.get(svc),
+                    "status": "Unknown",
+                }
+
+        db_instances_list = list(inst_map.values())
+        db_status = _db_status_summary(s.db_instances) if s.db_instances else "Unknown"
+
         result.append({
             "id": s.id,
             "server_name": s.server_name,
@@ -143,7 +259,9 @@ def list_os_servers(
             "ssh_port": s.ssh_port,
             "ssh_username": s.ssh_username,
             "database_services": s.database_services or [],
-            "status": s.status,
+            "status": s.status,          # OS / SSH connectivity
+            "db_status": db_status,      # DB service(s) running/stopped
+            "db_instances": db_instances_list,
             "cpu_usage": s.cpu_usage,
             "ram_usage": s.ram_usage,
             "disk_usage": s.disk_usage,
@@ -388,7 +506,24 @@ def refresh_server(server_id: int, db: Session = Depends(get_db)):
     if not server.ssh_username or not server.ssh_password:
         raise HTTPException(status_code=400, detail="SSH credentials not configured")
 
+    # Build service → port map for TCP fallback
+    db_services = list(server.database_services or [])
+    svc_ports = {}
+    for svc in db_services:
+        port = DEFAULT_PORTS.get(svc)
+        if not port:
+            for inst in server.db_instances:
+                if inst.db_type.lower() == svc.lower() and inst.port:
+                    port = inst.port
+                    break
+        if port:
+            svc_ports[svc] = port
+    for inst in server.db_instances:
+        if inst.port and inst.db_type not in svc_ports:
+            svc_ports[inst.db_type] = inst.port
+
     metrics = {}
+    running_dbs = {}
     try:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -419,26 +554,36 @@ def refresh_server(server_id: int, db: Session = Depends(get_db)):
         uptime_raw = run("uptime -p 2>/dev/null || uptime")
         metrics["uptime"] = uptime_raw if uptime_raw else "N/A"
 
-        # Detect running DB services
-        running_dbs = {}
+        # Detect running DB services via systemctl
         db_check_cmds = {
-            "MySQL": "systemctl is-active mariadb 2>/dev/null || systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null || echo inactive",
-            "MariaDB": "systemctl is-active mariadb 2>/dev/null || systemctl is-active mysql 2>/dev/null || echo inactive",
+            "MySQL":      "systemctl is-active mariadb 2>/dev/null || systemctl is-active mysql 2>/dev/null || systemctl is-active mysqld 2>/dev/null || echo inactive",
+            "MariaDB":    "systemctl is-active mariadb 2>/dev/null || systemctl is-active mysql 2>/dev/null || echo inactive",
             "PostgreSQL": "systemctl is-active postgresql 2>/dev/null || systemctl is-active postgresql-* 2>/dev/null || echo inactive",
-            "MongoDB": "systemctl is-active mongod 2>/dev/null || systemctl is-active mongodb 2>/dev/null || echo inactive",
-            "MSSQL": "systemctl is-active mssql-server 2>/dev/null || echo inactive",
+            "MongoDB":    "systemctl is-active mongod 2>/dev/null || systemctl is-active mongodb 2>/dev/null || echo inactive",
+            "MSSQL":      "systemctl is-active mssql-server 2>/dev/null || echo inactive",
             "ClickHouse": "systemctl is-active clickhouse-server 2>/dev/null || echo inactive",
         }
         for db_svc, cmd in db_check_cmds.items():
-            result = run(cmd)
-            running_dbs[db_svc] = "active" in result.lower()
+            res = run(cmd)
+            running_dbs[db_svc] = "active" in res.lower()
+
+        # Also TCP-check services not covered by systemctl commands above
+        for svc, port in svc_ports.items():
+            if svc not in running_dbs:
+                running_dbs[svc] = _tcp_check(server.ip_address, port)
 
         ssh.close()
 
-        # Update DB instance statuses
+        # Update registered DB instances
+        updated = set()
         for inst in server.db_instances:
             if inst.db_type in running_dbs:
                 inst.status = "Running" if running_dbs[inst.db_type] else "Stopped"
+                updated.add(inst.db_type)
+            elif inst.port:
+                is_up = _tcp_check(server.ip_address, inst.port)
+                inst.status = "Running" if is_up else "Stopped"
+                running_dbs[inst.db_type] = is_up
 
         server.status = "Connected"
         server.cpu_usage = metrics.get("cpu_usage")
@@ -447,12 +592,34 @@ def refresh_server(server_id: int, db: Session = Depends(get_db)):
         server.uptime = metrics.get("uptime")
         db.commit()
 
-        return {"status": "success", "message": "Server refreshed", "metrics": metrics, "running_dbs": running_dbs}
+        return {
+            "status": "success",
+            "message": "Server refreshed",
+            "metrics": metrics,
+            "running_dbs": running_dbs,
+        }
 
     except Exception as e:
+        # SSH failed — OS unreachable or credentials wrong.
+        # Fall back to TCP port checks so DB status is still meaningful.
+        for svc, port in svc_ports.items():
+            running_dbs[svc] = _tcp_check(server.ip_address, port)
+        for inst in server.db_instances:
+            if inst.db_type in running_dbs:
+                inst.status = "Running" if running_dbs[inst.db_type] else "Stopped"
+            elif inst.port:
+                is_up = _tcp_check(server.ip_address, inst.port)
+                inst.status = "Running" if is_up else "Stopped"
+                running_dbs[inst.db_type] = is_up
+
         server.status = "Disconnected"
         db.commit()
-        return {"status": "warning", "message": f"Could not connect: {str(e)}", "server_status": "Disconnected"}
+        return {
+            "status": "warning",
+            "message": f"SSH failed: {str(e)}",
+            "server_status": "Disconnected",
+            "running_dbs": running_dbs,
+        }
 
 
 # ==========================================

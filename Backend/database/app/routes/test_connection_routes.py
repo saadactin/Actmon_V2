@@ -179,18 +179,122 @@ def test_oracle(req: TestRequest):
 # ── ClickHouse ─────────────────────────────────────────────────
 @router.post("/clickhouse")
 def test_clickhouse(req: TestRequest):
+    """
+    Dynamically test ClickHouse connectivity.
+
+    Strategy (in order):
+      1. HTTP interface on port 8123  (standard HTTP port)
+      2. HTTP interface on user-given port (in case they use a custom HTTP port)
+      3. Native TCP via clickhouse-driver on port 9000 or user port
+    Each HTTP attempt tries X-ClickHouse-User/Key headers AND Basic Auth.
+    Returns the first success or a combined error listing all attempts.
+    """
+    import urllib.request  as _ur
+    import urllib.parse    as _up
+    import urllib.error    as _ue
+    import json            as _json
+    import base64          as _b64
+
+    username = (req.username or "default").strip()
+    password = (req.password or "")
+    database = (req.database_name or "default").strip()
+    user_port = req.port
+
+    # Build ordered list of HTTP ports to attempt (deduplicated)
+    _http_candidates = []
+    # Standard HTTP port first if user gave a native port
+    if user_port in (9000, 9440):
+        _http_candidates = [8123, user_port]
+    elif user_port in (8123, 8443):
+        _http_candidates = [user_port]
+    else:
+        # Unknown port — try it as HTTP, then fall back to 8123
+        _http_candidates = [user_port, 8123]
+
+    attempt_log = []   # collects "[method:port] error" strings
+
+    def _http_one(port: int) -> str | None:
+        """Try ClickHouse HTTP on *port*. Returns version string or None."""
+        params = _up.urlencode({
+            "query":          "SELECT version() AS ver",
+            "default_format": "JSONEachRow",
+        })
+        db_enc = _up.quote(database)
+        url    = f"http://{req.host}:{port}/?{params}&database={db_enc}"
+
+        # Auth strategies: CH-specific headers first (handles special chars best),
+        # then Basic-Auth fallback.
+        auth_strategies = [
+            # 1 — X-ClickHouse-User / X-ClickHouse-Key (recommended by ClickHouse docs)
+            {
+                "X-ClickHouse-User": username,
+                "X-ClickHouse-Key":  password,
+            },
+            # 2 — HTTP Basic Auth
+            {
+                "Authorization": "Basic " + _b64.b64encode(
+                    f"{username}:{password}".encode()
+                ).decode(),
+            },
+        ]
+
+        for headers in auth_strategies:
+            method_tag = list(headers.keys())[0]
+            try:
+                http_req = _ur.Request(url)
+                for k, v in headers.items():
+                    http_req.add_header(k, v)
+                with _ur.urlopen(http_req, timeout=8) as resp:
+                    raw = resp.read().decode().strip()
+                    if raw:
+                        first_line = raw.split("\n")[0]
+                        row = _json.loads(first_line)
+                        return str(list(row.values())[0])
+                    return "unknown"
+            except _ue.HTTPError as e:
+                # Read ClickHouse error body for a helpful message
+                try:
+                    body = e.read().decode()[:200].strip()
+                except Exception:
+                    body = ""
+                attempt_log.append(f"HTTP:{port}/{method_tag} → {e.code} {body or e.reason}")
+            except Exception as e:
+                attempt_log.append(f"HTTP:{port}/{method_tag} → {_clean(e)}")
+        return None
+
+    # ── 1. Try HTTP ports ──────────────────────────────────────
+    for port in _http_candidates:
+        ver = _http_one(port)
+        if ver is not None:
+            note = f" — HTTP port {port}" if port != user_port else ""
+            db_note = f" · database '{database}'" if database != "default" else ""
+            return _ok(f"ClickHouse {ver}{note}{db_note}")
+
+    # ── 2. Native TCP via clickhouse-driver ───────────────────
+    native_port = user_port if user_port not in (8123, 8443) else 9000
     try:
-        pw = quote_plus(req.password or "")
-        url = f"clickhouse+http://{req.username}:{pw}@{req.host}:{req.port}/{req.database_name or 'default'}"
-        eng = create_engine(url)
-        with eng.connect() as conn:
-            row = conn.execute(text("SELECT version()")).fetchone()
-            ver = str(row[0]) if row else "?"
-        return _ok(f"ClickHouse {ver}")
-    except SQLAlchemyError as e:
-        _fail(f"ClickHouse connection failed: {_clean(e)}")
+        from clickhouse_driver import Client
+        client = Client(
+            host=req.host,
+            port=native_port,
+            user=username,
+            password=password,
+            database=database,
+            connect_timeout=8,
+            settings={"use_numpy": False},
+        )
+        rows = client.execute("SELECT version()")
+        ver  = str(rows[0][0]) if rows else "?"
+        client.disconnect()
+        return _ok(f"ClickHouse {ver} — native TCP :{native_port} · database '{database}'")
     except Exception as e:
-        _fail(f"Error: {_clean(e)}")
+        attempt_log.append(f"native:{native_port} → {_clean(e)}")
+
+    # ── All attempts failed ───────────────────────────────────
+    _fail(
+        f"ClickHouse connection failed. "
+        f"Attempts: {' | '.join(attempt_log) or 'none'}"
+    )
 
 
 def _clean(e: Exception) -> str:

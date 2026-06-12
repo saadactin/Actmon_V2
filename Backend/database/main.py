@@ -39,6 +39,9 @@ from app.routes.mysql_replication_routes import router as mysql_replication_rout
 from app.routes.oracle_monitoring_routes import router as oracle_monitoring_router
 from app.routes.mongo_monitoring_routes import router as mongo_monitoring_router
 
+from app.routes.postgres_backup_routes import router as postgres_backup_router
+from app.routes.mssql_backup_routes import router as mssql_backup_router
+
 from app.routes.os_server_routes import router as os_server_router
 from app.routes.terminal_routes import router as terminal_router
 from app.routes.test_connection_routes import router as test_connection_router
@@ -55,9 +58,13 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app_instance):
-    # Start backup scheduler background thread on server startup
+    # Start backup scheduler background threads on server startup
     from app.routes.mysql_schedule_routes import start_scheduler
     start_scheduler()
+    from app.routes.postgres_backup_routes import start_pg_scheduler
+    start_pg_scheduler()
+    from app.routes.mssql_backup_routes import start_mssql_scheduler
+    start_mssql_scheduler()
     yield
 
 app = FastAPI(
@@ -98,10 +105,16 @@ app.include_router(mysql_slow_queries_router)
 app.include_router(mysql_explain_router)
 app.include_router(mysql_error_logs_router)
 app.include_router(mysql_index_analysis_router)
+app.include_router(mysql_schedule_router)   # must come before backup_router (avoids /{job_id} conflict)
 app.include_router(mysql_backup_router)
-app.include_router(mysql_schedule_router)
 app.include_router(mysql_table_router)
 app.include_router(mysql_replication_router)
+
+# PostgreSQL backup + PITR routes (schedule routes are embedded in the same router — ordered correctly)
+app.include_router(postgres_backup_router)
+
+# MSSQL backup + PITR routes
+app.include_router(mssql_backup_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
