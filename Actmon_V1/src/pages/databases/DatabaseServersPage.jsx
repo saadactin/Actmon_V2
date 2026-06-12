@@ -1,0 +1,977 @@
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  Server, CheckCircle2, AlertTriangle, XCircle, Database, GitBranch,
+  Terminal, ArrowRight, RefreshCw, Trash2, Plus, Loader2, Search, X,
+  Activity, Layers,
+  ChevronRight, Network, Clock,
+} from 'lucide-react';
+
+import {
+  listOsServers, getServerSummary, refreshServerStatus, deleteOsServer, getLiveStatus,
+} from '../../api/servers';
+import { listConnections } from '../../api/connections';
+
+function getDashboardPath(conn) {
+  const type = (conn.db_type || '').toLowerCase();
+  const map = {
+    mysql: `/mysql-dashboard/${conn.id}`,
+    postgresql: `/postgresql-dashboard/${conn.id}`,
+    oracle: `/oracle-dashboard/${conn.id}`,
+    mssql: `/mssql-dashboard/${conn.id}`,
+    mongodb: `/mongodb-dashboard/${conn.id}`,
+    clickhouse: `/clickhouse-dashboard/${conn.id}`,
+  };
+  return map[type] || '/connections';
+}
+
+function findConn(allConnections, server) {
+  const services = (server.database_services || []).map((d) => d.toLowerCase());
+  const normalise = (t) => t === 'mariadb' ? 'mysql' : t;
+  return allConnections.find((c) => {
+    const sameHost = c.host === server.ip_address;
+    const connType = normalise((c.db_type || '').toLowerCase());
+    const sameType = services.some((s) => normalise(s) === connType);
+    return sameHost && sameType;
+  }) || null;
+}
+
+const XTerminal = lazy(() => import('../../components/terminal/XTerminal'));
+const ENV_FILTERS = ['All', 'Production', 'UAT', 'Development', 'Testing'];
+
+const NODE_META = {
+  Primary:        { label:'PRIMARY',     text:'text-emerald-700', bg:'bg-emerald-100',  dot:'bg-emerald-500', accent:'border-l-emerald-500', glow:'shadow-emerald-100' },
+  Master:         { label:'MASTER',      text:'text-emerald-700', bg:'bg-emerald-100',  dot:'bg-emerald-500', accent:'border-l-emerald-500', glow:'shadow-emerald-100' },
+  Secondary:      { label:'SECONDARY',   text:'text-blue-700',   bg:'bg-blue-100',     dot:'bg-blue-500',    accent:'border-l-blue-400',    glow:'shadow-blue-100' },
+  Replica:        { label:'REPLICA',     text:'text-blue-700',   bg:'bg-blue-100',     dot:'bg-blue-500',    accent:'border-l-blue-400',    glow:'shadow-blue-100' },
+  Slave:          { label:'SLAVE',       text:'text-blue-700',   bg:'bg-blue-100',     dot:'bg-blue-500',    accent:'border-l-blue-400',    glow:'shadow-blue-100' },
+  'Galera Node':  { label:'GALERA',      text:'text-purple-700', bg:'bg-purple-100',   dot:'bg-purple-500',  accent:'border-l-purple-500',  glow:'shadow-purple-100' },
+  Arbiter:        { label:'ARBITER',     text:'text-amber-700',  bg:'bg-amber-100',    dot:'bg-amber-400',   accent:'border-l-amber-400',   glow:'shadow-amber-100' },
+  Standalone:     { label:'STANDALONE',  text:'text-slate-600',  bg:'bg-slate-100',    dot:'bg-slate-400',   accent:'border-l-slate-300',   glow:'shadow-slate-100' },
+  'Cluster Node': { label:'NODE',        text:'text-slate-600',  bg:'bg-slate-100',    dot:'bg-slate-400',   accent:'border-l-slate-300',   glow:'shadow-slate-100' },
+};
+function nodeMeta(t) { return NODE_META[t] || NODE_META['Cluster Node']; }
+function isGalera(nodes) { return nodes.some((n) => n.node_type === 'Galera Node'); }
+function sortNodes(nodes) {
+  const ord = { Primary:0, Master:1, Secondary:2, Replica:3, Slave:4, 'Galera Node':5, Arbiter:6, 'Cluster Node':7, Standalone:9 };
+  return [...nodes].sort((a,b) => (ord[a.node_type]??99)-(ord[b.node_type]??99));
+}
+function parsePct(v) { return v ? parseFloat(v)||0 : null; }
+function clusterAverages(nodes) {
+  const cpus  = nodes.map((n)=>parsePct(n.cpu_usage)).filter((v)=>v!==null);
+  const rams  = nodes.map((n)=>parsePct(n.ram_usage)).filter((v)=>v!==null);
+  const disks = nodes.map((n)=>parsePct(n.disk_usage)).filter((v)=>v!==null);
+  const avg   = (arr)=>arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
+  return { cpu:avg(cpus), ram:avg(rams), disk:avg(disks) };
+}
+
+/* ── DB type badge colors ─────────────────────────────── */
+const DB_COLORS = {
+  mysql:'bg-orange-100 text-orange-700 border-orange-200',
+  mariadb:'bg-orange-100 text-orange-700 border-orange-200',
+  postgresql:'bg-indigo-100 text-indigo-700 border-indigo-200',
+  oracle:'bg-red-100 text-red-700 border-red-200',
+  mssql:'bg-sky-100 text-sky-700 border-sky-200',
+  mongodb:'bg-emerald-100 text-emerald-700 border-emerald-200',
+  clickhouse:'bg-yellow-100 text-yellow-700 border-yellow-200',
+};
+function dbColor(s) { return DB_COLORS[(s||'').toLowerCase()] || 'bg-slate-100 text-slate-600 border-slate-200'; }
+
+/* ══════════════════════════════════════════════════════
+   PAGE
+══════════════════════════════════════════════════════ */
+export default function DatabaseServersPage() {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [envFilter, setEnvFilter]       = useState('All');
+  const [search, setSearch]             = useState('');
+  const [terminalServer, setTerminalServer] = useState(null);
+
+  const { data: summaryData } = useQuery({
+    queryKey: ['serverSummary'],
+    queryFn: getServerSummary,
+    refetchInterval: 30000,
+  });
+
+  const { data: serversData, isLoading } = useQuery({
+    queryKey: ['osServers', envFilter],
+    queryFn: () => listOsServers(envFilter !== 'All' ? { environment: envFilter } : {}),
+    refetchInterval: 60000,
+  });
+
+  // Live TCP-based status poll — every 15 seconds, no SSH needed
+  const { data: liveData } = useQuery({
+    queryKey: ['liveStatus'],
+    queryFn: getLiveStatus,
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+
+  const { data: allConnections = [] } = useQuery({
+    queryKey: ['allConnections'],
+    queryFn: async () => {
+      const types = ['mysql', 'postgresql', 'oracle', 'mssql', 'mongodb', 'clickhouse'];
+      const results = await Promise.allSettled(types.map((t) => listConnections(t)));
+      return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+    },
+    staleTime: 60000,
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: refreshServerStatus,
+    onSuccess: () => qc.invalidateQueries(['osServers']),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: deleteOsServer,
+    onSuccess: () => { qc.invalidateQueries(['osServers']); qc.invalidateQueries(['serverSummary']); },
+  });
+
+  // Build live-status overlay map: server id → { os_status, db_status, db_services }
+  const liveMap = {};
+  for (const r of (liveData?.data || [])) {
+    liveMap[r.id] = r;
+  }
+
+  // Merge live status into each server record
+  const mergeNode = (s) => {
+    const live = liveMap[s.id];
+    if (!live) return s;
+    // Override statuses with live TCP-check results
+    const mergedInstances = (s.db_instances || []).map(inst => ({
+      ...inst,
+      status: live.db_services?.[inst.db_type] || inst.status,
+    }));
+    // Fill in db_instances for services not yet registered
+    for (const [svc, st] of Object.entries(live.db_services || {})) {
+      if (!mergedInstances.find(i => i.db_type === svc)) {
+        mergedInstances.push({ db_type: svc, port: null, status: st });
+      }
+    }
+    return {
+      ...s,
+      status:   live.os_status,
+      db_status: live.db_status,
+      db_instances: mergedInstances,
+    };
+  };
+
+  const servers = (serversData?.data || [])
+    .filter((s) =>
+      !search ||
+      s.server_name.toLowerCase().includes(search.toLowerCase()) ||
+      s.ip_address.includes(search)
+    )
+    .map(mergeNode);
+
+  const clusterMap = {};
+  const standaloneList = [];
+  for (const s of servers) {
+    if (s.node_type !== 'Standalone' && s.cluster_name) {
+      (clusterMap[s.cluster_name] = clusterMap[s.cluster_name] || []).push(s);
+    } else {
+      standaloneList.push(s);
+    }
+  }
+
+  const summary = summaryData || { total:0, connected:0, warning:0, disconnected:0, clusters:0 };
+  const healthPct = summary.total > 0 ? Math.round((summary.connected / summary.total) * 100) : 0;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-indigo-900 border-t-indigo-400 rounded-full animate-spin mx-auto mb-4"/>
+          <p className="text-slate-400 font-semibold">Loading infrastructure…</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#f1f4f9]">
+
+      {/* ══════════════════ HERO TOPBAR ══════════════════ */}
+      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 px-6 pt-6 pb-0 relative overflow-hidden">
+        {/* subtle grid bg */}
+        <div className="absolute inset-0 opacity-[0.03]"
+          style={{ backgroundImage:'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize:'32px 32px' }}/>
+
+        {/* breadcrumb */}
+        <div className="relative flex items-center gap-2 text-xs text-slate-500 mb-5">
+          <span className="hover:text-slate-300 cursor-pointer transition-colors">ActMon</span>
+          <ChevronRight size={11}/>
+          <span className="text-slate-300 font-semibold">Infrastructure</span>
+        </div>
+
+        {/* header row */}
+        <div className="relative flex flex-col md:flex-row md:items-start justify-between gap-5 mb-6">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center">
+                <Server size={20} className="text-indigo-300"/>
+              </div>
+              <div>
+                <h1 className="text-2xl font-black text-white tracking-tight leading-none">Database Servers</h1>
+                <p className="text-slate-400 text-xs mt-0.5">OS-level monitoring · SSH terminal · cluster topology</p>
+              </div>
+            </div>
+          </div>
+
+          {/* right: health ring + add button */}
+          <div className="flex items-center gap-4 flex-shrink-0">
+            {/* health pill */}
+            <div className="hidden md:flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 backdrop-blur-sm">
+              <div className="relative w-9 h-9">
+                <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="15" fill="none" stroke="#ffffff10" strokeWidth="3"/>
+                  <circle cx="18" cy="18" r="15" fill="none"
+                    stroke={healthPct>80?'#22c55e':healthPct>50?'#f59e0b':'#ef4444'}
+                    strokeWidth="3" strokeDasharray={`${(healthPct/100)*94.2} 94.2`} strokeLinecap="round"/>
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-white">{healthPct}%</span>
+              </div>
+              <div>
+                <p className="text-white font-black text-sm leading-none">{summary.connected}/{summary.total}</p>
+                <p className="text-slate-400 text-[10px] mt-0.5">servers online</p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => navigate('/databases/add-os-server')}
+              className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
+            >
+              <Plus size={15}/> Add Server
+            </button>
+          </div>
+        </div>
+
+        {/* ── KPI stat bar (sits on gradient, bleeds into page) ── */}
+        <div className="relative grid grid-cols-2 md:grid-cols-5 gap-px bg-white/10 rounded-t-2xl overflow-hidden -mx-6">
+          {[
+            { icon:<Server size={16}/>,         label:'Total',        value:summary.total,        sub:'servers registered',  color:'text-white',       from:'from-slate-800/60' },
+            { icon:<CheckCircle2 size={16}/>,   label:'Online',       value:summary.connected,    sub:'connected now',       color:'text-emerald-400', from:'from-emerald-900/30' },
+            { icon:<AlertTriangle size={16}/>,  label:'Warning',      value:summary.warning,      sub:'need attention',      color:'text-amber-400',   from:'from-amber-900/30' },
+            { icon:<XCircle size={16}/>,        label:'Offline',      value:summary.disconnected, sub:'unreachable',         color:'text-red-400',     from:'from-red-900/30' },
+            { icon:<GitBranch size={16}/>,      label:'Clusters',     value:summary.clusters,     sub:'HA groups',           color:'text-indigo-300',  from:'from-indigo-900/30' },
+          ].map(({ icon, label, value, sub, color, from }) => (
+            <div key={label} className={`bg-gradient-to-b ${from} to-slate-900/40 backdrop-blur px-5 py-4`}>
+              <div className={`flex items-center gap-2 ${color} mb-1`}>
+                {icon}
+                <span className="text-[11px] font-bold uppercase tracking-widest opacity-80">{label}</span>
+              </div>
+              <p className={`text-3xl font-black ${color} leading-none`}>{value ?? 0}</p>
+              <p className="text-slate-500 text-[10px] mt-1">{sub}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ══════════════════ CONTENT ══════════════════ */}
+      <div className="max-w-[1800px] mx-auto px-6 py-6">
+
+        {/* filter + search bar */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3 flex flex-wrap items-center gap-2 mb-6">
+          <div className="flex items-center gap-1 flex-wrap">
+            {ENV_FILTERS.map((env) => (
+              <button key={env} onClick={() => setEnvFilter(env)}
+                className={`h-7 px-3.5 rounded-lg font-bold text-[11px] transition-all ${envFilter===env
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
+                {env}
+              </button>
+            ))}
+          </div>
+
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative">
+              <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+              <input value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search server or IP…"
+                className="h-8 pl-8 pr-9 rounded-xl border border-slate-200 text-[12px] outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 w-56 transition-all"/>
+              {search && (
+                <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+                  <X size={11}/>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* empty state */}
+        {servers.length === 0 && (
+          <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-20 text-center">
+            <div className="w-20 h-20 rounded-3xl bg-slate-100 flex items-center justify-center mx-auto mb-5">
+              <Server size={36} className="text-slate-300"/>
+            </div>
+            <h2 className="text-xl font-black text-slate-700 mb-2">
+              {search ? `No servers matching "${search}"` : 'No servers registered yet'}
+            </h2>
+            <p className="text-slate-400 text-sm mb-6">Add an OS server to start monitoring your database infrastructure.</p>
+            {!search && (
+              <button onClick={() => navigate('/databases/add-os-server')}
+                className="h-10 px-6 rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-700 shadow transition-all">
+                + Add OS Server
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── CLUSTER TOPOLOGY ── */}
+        {Object.keys(clusterMap).length > 0 && (
+          <section className="mb-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-5 rounded-full bg-indigo-500"/>
+                <h2 className="text-[15px] font-black text-slate-900 uppercase tracking-wide">Cluster Topology</h2>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-black">
+                {Object.keys(clusterMap).length} cluster{Object.keys(clusterMap).length>1?'s':''}
+              </span>
+            </div>
+
+            <div className="space-y-5">
+              {Object.entries(clusterMap).map(([clusterName, rawNodes]) => {
+                const nodes   = sortNodes(rawNodes);
+                const galera  = isGalera(nodes);
+                const allOk   = nodes.every((n) => n.status === 'Connected');
+                const anyWarn = nodes.some((n) => n.status === 'Warning');
+                const status  = allOk ? 'HEALTHY' : anyWarn ? 'WARNING' : 'DEGRADED';
+                const dbTypes = [...new Set(nodes.flatMap((n) => n.database_services || []))];
+                const avgs    = clusterAverages(nodes);
+
+                return (
+                  <div key={clusterName} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+
+                    {/* cluster header */}
+                    <div className={`px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3 ${
+                      status==='HEALTHY'?'border-b-slate-100 bg-gradient-to-r from-emerald-50/40 to-white':
+                      status==='WARNING'?'border-b-amber-100 bg-gradient-to-r from-amber-50/40 to-white':
+                      'border-b-red-100 bg-gradient-to-r from-red-50/30 to-white'}`}>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${galera?'bg-purple-100':'bg-indigo-100'}`}>
+                            <GitBranch size={17} className={galera?'text-purple-600':'text-indigo-600'}/>
+                          </div>
+                          <div>
+                            <h3 className="text-base font-black text-slate-900 leading-none">{clusterName}</h3>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${galera?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}`}>
+                                {galera ? 'Galera Multi-Primary' : 'Streaming Replication'}
+                              </span>
+                              <span className="text-slate-400 text-[10px]">{nodes[0]?.environment}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-slate-400 text-[11px] flex items-center gap-1">
+                            <Layers size={10}/> {nodes.length} nodes
+                          </span>
+                          {dbTypes.map((d) => (
+                            <span key={d} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${dbColor(d)}`}>{d}</span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        {/* avg metrics mini-strip */}
+                        <div className="hidden lg:flex items-center gap-4 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2">
+                          {[
+                            { label:'CPU', val:avgs.cpu,  color:'text-orange-600'  },
+                            { label:'RAM', val:avgs.ram,  color:'text-purple-600'  },
+                            { label:'Disk',val:avgs.disk, color:'text-blue-600'    },
+                          ].map(({ label, val, color }) => (
+                            <div key={label} className="text-center">
+                              <p className="text-[9px] text-slate-400 font-bold uppercase">{label}</p>
+                              <p className={`text-[13px] font-black ${color}`}>{val!==null ? `${val}%` : '—'}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black ${
+                          status==='HEALTHY' ?'bg-emerald-100 text-emerald-700':
+                          status==='WARNING' ?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${status==='HEALTHY'?'bg-emerald-500 animate-pulse':status==='WARNING'?'bg-amber-500':'bg-red-500'}`}/>
+                          {status}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* topology nodes */}
+                    <div className="px-6 py-6 overflow-x-auto">
+                      {galera
+                        ? <GaleraTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections}/>
+                        : <ReplicationTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections}/>
+                      }
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ── STANDALONE SERVERS ── */}
+        {standaloneList.length > 0 && (
+          <section className="mb-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-5 rounded-full bg-slate-400"/>
+                <h2 className="text-[15px] font-black text-slate-900 uppercase tracking-wide">Standalone Servers</h2>
+              </div>
+              <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-black">
+                {standaloneList.length} server{standaloneList.length>1?'s':''}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+              {standaloneList.map((server) => (
+                <TopologyNodeCard
+                  key={server.id}
+                  node={server}
+                  navigate={navigate}
+                  openTerminal={setTerminalServer}
+                  refreshMutation={refreshMutation}
+                  allConnections={allConnections}
+                  onDelete={() => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
+                  showMetricsInline
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* legend */}
+        <div className="bg-white rounded-xl border border-slate-100 px-5 py-3 flex flex-wrap gap-5 text-[11px] text-slate-500">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest self-center">Legend</span>
+          {[
+            ['bg-emerald-500 animate-pulse','Connected'],
+            ['bg-amber-500','Warning'],
+            ['bg-red-500','Offline'],
+            ['bg-emerald-500','Primary / Master'],
+            ['bg-blue-500','Secondary / Replica'],
+            ['bg-purple-500','Galera Node'],
+          ].map(([cls,label]) => (
+            <span key={label} className="flex items-center gap-1.5">
+              <span className={`w-2 h-2 rounded-full inline-block ${cls}`}/>{label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* ══ FLOATING TERMINAL ══ */}
+      {terminalServer && (
+        <TerminalWindow server={terminalServer} onClose={() => setTerminalServer(null)}/>
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   REPLICATION TOPOLOGY
+══════════════════════════════════════════════════════ */
+function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[] }) {
+  const primary     = nodes.filter((n)=>n.node_type==='Primary'||n.node_type==='Master');
+  const secondaries = nodes.filter((n)=>!['Primary','Master'].includes(n.node_type));
+  const ordered     = [...primary, ...secondaries];
+
+  return (
+    <div className="flex items-stretch justify-center gap-0 flex-wrap md:flex-nowrap">
+      {ordered.map((node, idx) => (
+        <React.Fragment key={node.id}>
+          <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections}/>
+          {idx < ordered.length-1 && (
+            <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-px h-4 bg-slate-200"/>
+                <div className="relative w-8 h-8 rounded-full border-2 border-dashed border-blue-300 bg-blue-50 flex items-center justify-center">
+                  <ArrowRight size={13} className="text-blue-400"/>
+                  <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 whitespace-nowrap">stream</span>
+                </div>
+                <div className="w-px h-7 bg-slate-200"/>
+              </div>
+            </div>
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   GALERA TOPOLOGY
+══════════════════════════════════════════════════════ */
+function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[] }) {
+  return (
+    <div>
+      <div className="flex justify-center mb-5">
+        <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-purple-50 border border-purple-200">
+          <Network size={12} className="text-purple-500"/>
+          <span className="text-[11px] font-bold text-purple-700">Multi-Primary · All nodes accept writes · wsrep sync replication</span>
+        </div>
+      </div>
+      <div className="flex items-stretch justify-center gap-0 flex-wrap md:flex-nowrap">
+        {nodes.map((node, idx) => (
+          <React.Fragment key={node.id}>
+            <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections}/>
+            {idx < nodes.length-1 && (
+              <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
+                <div className="flex flex-col items-center gap-1.5">
+                  <div className="w-px h-4 bg-purple-100"/>
+                  <div className="w-8 h-8 rounded-full border-2 border-purple-300 bg-purple-50 flex items-center justify-center shadow-sm">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-purple-500">
+                      <path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>
+                    </svg>
+                  </div>
+                  <div className="w-px h-7 bg-purple-100"/>
+                </div>
+              </div>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   NODE CARD
+══════════════════════════════════════════════════════ */
+function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false }) {
+  const [hovered, setHovered] = useState(false);
+  const m = nodeMeta(node.node_type);
+  const hasMetrics = node.cpu_usage || node.ram_usage || node.disk_usage;
+  const isRefreshing = refreshMutation.isPending && refreshMutation.variables === node.id;
+  const conn = findConn(allConnections, node);
+
+  // OS connectivity (SSH)
+  const osUp   = node.status === 'Connected';
+  const osWarn = node.status === 'Warning';
+  const osDown = node.status === 'Disconnected';
+
+  // DB service status
+  const dbStatus   = node.db_status || 'Unknown';
+  const dbUp       = dbStatus === 'Running';
+  const dbDegraded = dbStatus === 'Degraded';
+  const dbDown     = dbStatus === 'Stopped';
+
+  // Overall border/accent: if DB is down but OS is up → amber warning
+  const borderCls = osDown
+    ? 'border-red-100'
+    : (dbDown || dbDegraded) ? 'border-amber-200'
+    : 'border-slate-200';
+
+  const topBarCls = osDown
+    ? 'bg-gradient-to-r from-red-400 to-red-500'
+    : dbDown     ? 'bg-gradient-to-r from-amber-400 to-orange-500'
+    : dbDegraded ? 'bg-gradient-to-r from-amber-300 to-amber-400'
+    : osUp       ? 'bg-gradient-to-r from-emerald-400 to-emerald-500'
+    : 'bg-gradient-to-r from-slate-300 to-slate-400';
+
+  // Per-DB-instance detail (for tooltip display)
+  const dbInstances = node.db_instances || [];
+
+  return (
+    <div
+      className={`relative flex-shrink-0 rounded-2xl border bg-white transition-all duration-200
+        ${hovered ? 'shadow-xl -translate-y-1' : 'shadow-md'}
+        ${borderCls}`}
+      style={{ width: '300px' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* thick top accent bar */}
+      <div className={`h-1.5 w-full rounded-t-2xl ${topBarCls}`}/>
+
+      <div className="p-5">
+        {/* ── top row: role badge + live dots ── */}
+        <div className="flex items-center justify-between mb-4">
+          <span className={`px-2.5 py-1 rounded-lg text-[11px] font-black tracking-wider uppercase ${m.text} ${m.bg} shadow-sm`}>
+            {m.label}
+          </span>
+          <div className="flex items-center gap-3">
+            {/* OS live dot */}
+            <div className="flex flex-col items-center gap-0.5" title={`OS: ${node.status||'Unknown'}`}>
+              <PulsingDot status={node.status}/>
+              <span className={`text-[9px] font-black ${osUp?'text-emerald-600':osDown?'text-red-500':'text-slate-400'}`}>OS</span>
+            </div>
+            {/* DB live dot */}
+            <div className="flex flex-col items-center gap-0.5" title={`DB: ${dbStatus}`}>
+              <DbDot status={dbStatus}/>
+              <span className={`text-[9px] font-black ${dbUp?'text-emerald-600':dbDown?'text-red-500':dbDegraded?'text-amber-500':'text-slate-400'}`}>DB</span>
+            </div>
+            {/* Terminal button — prominent */}
+            <button
+              onClick={() => openTerminal(node)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-[10px] font-bold transition-all shadow-sm hover:shadow-md"
+              title="Open SSH Terminal"
+            >
+              <Terminal size={12}/>SSH
+            </button>
+          </div>
+        </div>
+
+        {/* ── server name + IP ── */}
+        <div className="mb-4">
+          <h3 className="text-[17px] font-black text-slate-900 leading-tight truncate">{node.server_name}</h3>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="font-mono text-[12px] text-slate-500 font-semibold">{node.ip_address}</span>
+            {node.os_type && (
+              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-md">{node.os_type}</span>
+            )}
+          </div>
+        </div>
+
+        {/* ── DB services with per-service status ── */}
+        {node.database_services?.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {node.database_services.map((svc) => {
+              const inst = dbInstances.find(i => i.db_type === svc);
+              const st   = inst?.status || 'Unknown';
+              const stDot = st==='Running'?'bg-emerald-500':st==='Stopped'?'bg-red-500':st==='Degraded'?'bg-amber-500':'bg-slate-300';
+              return (
+                <span key={svc} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${dbColor(svc)}`}>
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stDot} ${st==='Running'?'animate-pulse':''}`}/>
+                  {svc}
+                  {st==='Stopped' && <span className="font-black text-red-600">↓</span>}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── OS + DB status badges ── */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+            osUp   ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+            osWarn ? 'bg-amber-50 border-amber-200 text-amber-700' :
+            osDown ? 'bg-red-50 border-red-200 text-red-600' :
+            'bg-slate-50 border-slate-200 text-slate-500'}`}>
+            <Server size={11}/>
+            <span>{osUp?'OS Online':osDown?'OS Offline':node.status||'OS Unknown'}</span>
+          </div>
+          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+            dbUp       ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+            dbDegraded ? 'bg-amber-50 border-amber-200 text-amber-700' :
+            dbDown     ? 'bg-red-50 border-red-200 text-red-600' :
+            'bg-slate-50 border-slate-200 text-slate-500'}`}>
+            <Database size={11}/>
+            <span>{dbUp?'DB Running':dbDown?'DB Stopped':dbDegraded?'Degraded':'DB Unknown'}</span>
+          </div>
+        </div>
+
+        {/* ── uptime ── */}
+        {node.uptime && (
+          <div className="flex items-center gap-1.5 mb-4 text-slate-400">
+            <Clock size={11}/>
+            <span className="text-[11px]">{node.uptime}</span>
+          </div>
+        )}
+
+        {/* inline metrics — standalone cards only */}
+        {showMetricsInline && hasMetrics && (
+          <div className="space-y-1.5 mb-3 p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+            {[
+              { label:'CPU',  val:node.cpu_usage,  color:'text-orange-600', barBase:'bg-orange-500' },
+              { label:'RAM',  val:node.ram_usage,  color:'text-purple-600', barBase:'bg-purple-500' },
+              { label:'Disk', val:node.disk_usage, color:'text-blue-600',   barBase:'bg-blue-500'   },
+            ].map(({ label, val, color, barBase }) => {
+              const pct = parseFloat(val)||0;
+              const barColor = pct>85?'bg-red-500':pct>65?'bg-amber-400':barBase;
+              return (
+                <div key={label}>
+                  <div className="flex justify-between mb-0.5">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">{label}</span>
+                    <span className={`text-[10px] font-black ${color}`}>{val || (isRefreshing?'…':'—')}</span>
+                  </div>
+                  <div className="h-1 rounded-full bg-slate-200 overflow-hidden">
+                    {val && <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width:`${Math.min(pct,100)}%` }}/>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── actions ── */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => {
+              if (conn) {
+                navigate(getDashboardPath(conn));
+              } else {
+                const db = node.database_services?.[0]?.toLowerCase()||'mysql';
+                const portMap = { mysql:3306, postgresql:5432, oracle:1521, mssql:1433, mongodb:27017, clickhouse:8123 };
+                navigate(`/connections/add?type=${db}&host=${node.ip_address}&port=${portMap[db]||3306}&name=${encodeURIComponent(node.server_name+'-'+db)}`);
+              }
+            }}
+            className={`flex-1 h-9 rounded-xl text-[12px] font-bold transition-all flex items-center justify-center gap-2 ${
+              conn ? 'bg-slate-900 text-white hover:bg-indigo-600 hover:shadow-lg hover:shadow-indigo-200'
+                   : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}
+          >
+            {conn ? <><Activity size={12}/>Dashboard</> : <><Plus size={12}/>Connect</>}
+          </button>
+          <button
+            onClick={() => refreshMutation.mutate(node.id)}
+            className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all
+              ${isRefreshing?'border-indigo-300 bg-indigo-50 text-indigo-500':'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-400 hover:text-indigo-500'}`}
+            title="Deep refresh (SSH)"
+          >
+            <RefreshCw size={13} className={isRefreshing?'animate-spin':''}/>
+          </button>
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="w-9 h-9 rounded-xl border border-red-100 text-red-400 hover:bg-red-50 hover:border-red-200 flex items-center justify-center transition-all"
+              title="Delete"
+            >
+              <Trash2 size={13}/>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   MICRO-COMPONENTS
+══════════════════════════════════════════════════════ */
+function PulsingDot({ status }) {
+  if (status==='Connected') return (
+    <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+      <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-75"/>
+      <span className="relative rounded-full h-2.5 w-2.5 bg-emerald-500"/>
+    </span>
+  );
+  const c = status==='Warning'?'bg-amber-500':status==='Disconnected'?'bg-red-500':'bg-slate-300';
+  return <div className={`w-2.5 h-2.5 rounded-full ${c} flex-shrink-0`}/>;
+}
+
+function DbDot({ status }) {
+  if (status==='Running') return (
+    <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+      <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-50"/>
+      <span className="relative rounded-full h-2.5 w-2.5 bg-emerald-500"/>
+    </span>
+  );
+  const c = status==='Stopped'?'bg-red-500':status==='Degraded'?'bg-amber-500':'bg-slate-300';
+  return <div className={`w-2.5 h-2.5 rounded-full ${c} flex-shrink-0`}/>;
+}
+
+/* ══════════════════════════════════════════════════════
+   TERMINAL WINDOW  — floating, draggable, min/max/close
+══════════════════════════════════════════════════════ */
+function TerminalWindow({ server, onClose }) {
+  const IW = Math.min(980, window.innerWidth  - 60);
+  const IH = Math.min(600, window.innerHeight - 60);
+  const IX = Math.round((window.innerWidth  - IW) / 2);
+  const IY = Math.round((window.innerHeight - IH) / 2);
+
+  const [pos,       setPos]       = useState({ x: IX, y: IY });
+  const [size,      setSize]      = useState({ w: IW, h: IH });
+  const [minimized, setMinimized] = useState(false);
+  const [maximized, setMaximized] = useState(false);
+
+  const savedState = useRef({ pos: { x: IX, y: IY }, size: { w: IW, h: IH } });
+  const drag       = useRef({ active: false, ox: 0, oy: 0 });
+  const resize     = useRef({ active: false, edge: '', ox: 0, oy: 0, x: 0, y: 0, w: 0, h: 0 });
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (drag.current.active) {
+        setPos({
+          x: Math.max(0, Math.min(e.clientX - drag.current.ox, window.innerWidth  - size.w)),
+          y: Math.max(0, Math.min(e.clientY - drag.current.oy, window.innerHeight - 44)),
+        });
+      }
+      if (resize.current.active) {
+        const { edge, ox, oy, x, y, w, h } = resize.current;
+        const dx = e.clientX - ox, dy = e.clientY - oy;
+        let nx=x, ny=y, nw=w, nh=h;
+        if (edge.includes('e')) nw = Math.max(520, w + dx);
+        if (edge.includes('s')) nh = Math.max(320, h + dy);
+        if (edge.includes('w')) { nw = Math.max(520, w - dx); nx = x + w - nw; }
+        if (edge.includes('n')) { nh = Math.max(320, h - dy); ny = y + h - nh; }
+        setSize({ w: nw, h: nh });
+        setPos({ x: nx, y: ny });
+      }
+    };
+    const onUp = () => { drag.current.active = false; resize.current.active = false; };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+    return () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  }, [size]);
+
+  const onTitleDrag = (e) => {
+    if (maximized || e.target.closest('button')) return;
+    e.preventDefault();
+    drag.current = { active: true, ox: e.clientX - pos.x, oy: e.clientY - pos.y };
+  };
+
+  const startResize = (edge) => (e) => {
+    e.preventDefault(); e.stopPropagation();
+    resize.current = { active: true, edge, ox: e.clientX, oy: e.clientY, ...pos, ...size };
+  };
+
+  const toggleMax = () => {
+    if (maximized) { setPos(savedState.current.pos); setSize(savedState.current.size); }
+    else { savedState.current = { pos: { ...pos }, size: { ...size } }; }
+    setMaximized(v => !v);
+    setMinimized(false);
+  };
+
+  const toggleMin = () => setMinimized(v => !v);
+
+  const wStyle = maximized
+    ? { position:'fixed', inset:0, borderRadius:0, border:'none' }
+    : { position:'fixed', left:pos.x, top:pos.y, width:size.w, height: minimized ? 'auto' : size.h,
+        borderRadius:'10px', border:'1px solid #30363d' };
+
+  /* resize edge handle */
+  const RH = ({ edge, cls }) => (
+    <div onMouseDown={startResize(edge)}
+      className={`absolute z-10 ${cls}`}
+      style={{ cursor:`${edge}-resize` }}/>
+  );
+
+  return (
+    <div style={{ ...wStyle, zIndex:99999 }}
+      className="flex flex-col bg-[#0d1117] shadow-2xl shadow-black/80 overflow-hidden">
+
+      {/* resize handles */}
+      {!maximized && !minimized && <>
+        <RH edge="n"  cls="top-0 left-3 right-3 h-[4px]"/>
+        <RH edge="s"  cls="bottom-0 left-3 right-3 h-[4px]"/>
+        <RH edge="e"  cls="right-0 top-3 bottom-3 w-[4px]"/>
+        <RH edge="w"  cls="left-0 top-3 bottom-3 w-[4px]"/>
+        <RH edge="nw" cls="top-0 left-0 w-4 h-4"/>
+        <RH edge="ne" cls="top-0 right-0 w-4 h-4"/>
+        <RH edge="sw" cls="bottom-0 left-0 w-4 h-4"/>
+        <RH edge="se" cls="bottom-0 right-0 w-4 h-4"/>
+      </>}
+
+      {/* ── TITLE BAR ── */}
+      <div
+        onMouseDown={onTitleDrag}
+        className="flex-shrink-0 h-10 flex items-center justify-between bg-[#1c1c1e] border-b border-[#2d2d2d] cursor-move select-none"
+      >
+        {/* Left: icon + session info */}
+        <div className="flex items-center gap-2.5 pl-3 min-w-0">
+          <div className="w-6 h-6 rounded-md bg-[#2a2a2e] flex items-center justify-center flex-shrink-0">
+            <Terminal size={12} className="text-emerald-400"/>
+          </div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[12px] font-mono text-emerald-400 font-bold leading-none">{server.ssh_username||'root'}</span>
+            <span className="text-[#555] text-[12px] font-mono">@</span>
+            <span className="text-[#d0d0d0] text-[12px] font-mono font-semibold truncate max-w-[150px]">{server.server_name}</span>
+            <span className="text-[#555] text-[11px] font-mono hidden sm:block">{server.ip_address}</span>
+          </div>
+          <div className="hidden md:flex items-center gap-1 ml-1">
+            <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
+              <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-60"/>
+              <span className="relative rounded-full h-full w-full bg-emerald-500"/>
+            </span>
+            <span className="text-[10px] text-emerald-500 font-semibold">connected</span>
+          </div>
+        </div>
+
+        {/* Right: window controls — exactly like screenshot */}
+        <div className="flex items-stretch h-full flex-shrink-0" onMouseDown={e=>e.stopPropagation()}>
+          {/* Minimize — */}
+          <button
+            onClick={toggleMin}
+            title={minimized ? 'Restore' : 'Minimize'}
+            className="w-12 h-full flex items-center justify-center text-[#888] hover:text-white hover:bg-[#2a2a2e] transition-colors"
+          >
+            <svg width="12" height="2" viewBox="0 0 12 2">
+              <rect width="12" height="2" rx="1" fill="currentColor"/>
+            </svg>
+          </button>
+
+          {/* Maximize □ / Restore */}
+          <button
+            onClick={toggleMax}
+            title={maximized ? 'Restore' : 'Maximize'}
+            className="w-12 h-full flex items-center justify-center text-[#888] hover:text-white hover:bg-[#2a2a2e] transition-colors"
+          >
+            {maximized ? (
+              /* restore icon */
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                <rect x="3.5" y="0.5" width="9" height="9" rx="1.2" stroke="currentColor" strokeWidth="1.3"/>
+                <rect x="0.5" y="3.5" width="9" height="9" rx="1.2" fill="#1c1c1e" stroke="currentColor" strokeWidth="1.3"/>
+              </svg>
+            ) : (
+              /* maximize icon */
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <rect x="0.75" y="0.75" width="10.5" height="10.5" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
+              </svg>
+            )}
+          </button>
+
+          {/* Close × — red */}
+          <button
+            onClick={onClose}
+            title="Close"
+            className="w-12 h-full flex items-center justify-center bg-[#c0392b] hover:bg-[#e74c3c] text-white transition-colors"
+            style={{ borderRadius: maximized ? 0 : '0 9px 0 0' }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <line x1="1.5" y1="1.5" x2="10.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+              <line x1="10.5" y1="1.5" x2="1.5" y2="10.5" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* ── TERMINAL BODY ── */}
+      {!minimized && (
+        <div className="flex-1 min-h-0 flex flex-col">
+          {/* tab strip */}
+          <div className="flex-shrink-0 flex items-end bg-[#141416] border-b border-[#2d2d2d] px-2 pt-1.5">
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-[#0d1117] border border-b-0 border-[#2d2d2d] rounded-t-lg">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-50"/>
+                <span className="relative rounded-full h-full w-full bg-emerald-500"/>
+              </span>
+              <span className="text-[11px] font-mono text-[#ccc] max-w-[140px] truncate">{server.server_name}</span>
+            </div>
+          </div>
+
+          {/* xterm content */}
+          <div className="flex-1 min-h-0">
+            <Suspense fallback={
+              <div className="w-full h-full flex items-center justify-center bg-[#0d1117]">
+                <div className="text-center">
+                  <Loader2 className="animate-spin text-emerald-500 mx-auto mb-3" size={30}/>
+                  <p className="text-[#555] text-xs font-mono">Connecting to {server.server_name}…</p>
+                </div>
+              </div>
+            }>
+              <XTerminal serverId={server.id} serverName={server.server_name} height="100%"/>
+            </Suspense>
+          </div>
+
+          {/* status footer */}
+          <div className="flex-shrink-0 h-5 bg-[#0d1117] border-t border-[#1c1c1e] flex items-center px-4 gap-4">
+            <span className="text-[9px] font-mono text-[#444] flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block"/>
+              {server.ip_address}:{server.ssh_port||22}
+            </span>
+            <span className="ml-auto text-[9px] font-mono text-[#444]">Real PTY · bash</span>
+          </div>
+        </div>
+      )}
+
+      {/* minimized hint */}
+      {minimized && (
+        <div className="bg-[#141416] border-t border-[#2d2d2d] px-4 py-2 flex items-center gap-2">
+          <span className="text-[10px] text-[#555] font-mono">Session minimized</span>
+          <button onClick={toggleMin} className="ml-auto text-[10px] font-bold text-emerald-500 hover:text-emerald-400 font-mono">
+            restore
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

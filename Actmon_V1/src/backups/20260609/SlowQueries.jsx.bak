@@ -1,0 +1,34 @@
+import React from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import client from '../../api/client';
+
+const fetchSlowQueries = async (id) => {
+  const res = await client.get(`/connections/mysql/${id}/slow-queries`);
+  return res.data;
+};
+
+export default function SlowQueries() {
+  const { id } = useParams();
+  const { data, isLoading, error, refetch } = useQuery(['mysqlSlowQueries', id], () => fetchSlowQueries(id), {
+    retry: false,
+    refetchInterval: 15000,
+  });
+
+  if (isLoading) return <div>Loading slow queries...</div>;
+  if (error) return <div>Error: {error.message}</div>;
+
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold">Slow Queries</h1>
+        <Link to={`/mysql-dashboard/${id}`} className="underline">Back</Link>
+      </div>
+
+      <pre className="text-sm bg-white p-3 border rounded mt-2 overflow-auto">{JSON.stringify(data, null, 2)}</pre>
+      <div className="mt-3">
+        <button onClick={() => refetch()} className="btn">Refresh</button>
+      </div>
+    </div>
+  );
+}

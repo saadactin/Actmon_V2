@@ -1,0 +1,375 @@
+import React, { useState } from 'react';
+
+import { useNavigate } from 'react-router-dom';
+
+import { useForm } from 'react-hook-form';
+
+import {
+  ArrowLeft,
+  CheckCircle2,
+  AlertTriangle,
+  Server,
+  ShieldCheck,
+  Monitor,
+  Network,
+  KeyRound,
+  Cpu,
+  Database,
+  Save,
+  Globe,
+} from 'lucide-react';
+import { registerAgent } from '../../api/agents';
+import { useQueryClient } from '@tanstack/react-query';
+
+
+const OPERATING_SYSTEMS = [
+
+  {
+    name: 'Linux',
+    icon: '🐧',
+    port: 22,
+  },
+
+  {
+    name: 'Ubuntu',
+    icon: '🟠',
+    port: 22,
+  },
+
+  {
+    name: 'Windows',
+    icon: '🪟',
+    port: 22,
+  },
+
+  {
+    name: 'CentOS',
+    icon: '⚫',
+    port: 22,
+  },
+
+  {
+    name: 'Oracle Linux',
+    icon: '🔴',
+    port: 22,
+  },
+
+  {
+    name: 'RedHat',
+    icon: '🎩',
+    port: 22,
+  },
+
+];
+
+
+const DATABASE_SERVICES = [
+
+  'MySQL',
+  'PostgreSQL',
+  'Oracle',
+  'MongoDB',
+  'MSSQL',
+  'ClickHouse',
+
+];
+
+
+
+export default function AddOsServerPage() {
+
+  const queryClient = useQueryClient();
+
+  const navigate = useNavigate();
+
+  const [selectedOs, setSelectedOs] =
+    useState('Linux');
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [testing, setTesting] =
+    useState(false);
+
+  const [message, setMessage] =
+    useState(null);
+
+  const [selectedDatabases, setSelectedDatabases] =
+    useState([]);
+
+
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    formState: { errors },
+  } = useForm({
+
+    defaultValues: {
+
+      sshPort: 22,
+
+      environment: 'Production',
+
+      nodeType: 'Standalone',
+
+      monitoringEnabled: true,
+
+      autoDiscovery: true,
+
+    },
+  });
+
+
+  const nodeType = watch('nodeType');
+
+
+  const handleOsChange = (
+    os
+  ) => {
+
+    setSelectedOs(os);
+
+    const selected =
+      OPERATING_SYSTEMS.find(
+        (o) =>
+          o.name === os
+      );
+
+    setValue(
+      'sshPort',
+      selected.port
+    );
+  };
+
+
+  const handleDatabaseToggle = (
+    db
+  ) => {
+
+    if (
+      selectedDatabases.includes(db)
+    ) {
+
+      setSelectedDatabases(
+        selectedDatabases.filter(
+          (item) =>
+            item !== db
+        )
+      );
+
+    } else {
+
+      setSelectedDatabases([
+        ...selectedDatabases,
+        db,
+      ]);
+
+    }
+
+  };
+
+
+  const handleTestConnection = async (
+    data
+  ) => {
+
+    try {
+
+      setTesting(true);
+
+      setMessage(null);
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 1500)
+      );
+
+      setMessage({
+
+        type: 'success',
+
+        text:
+          'SSH Connection Successful',
+
+      });
+
+    } catch (error) {
+
+      setMessage({
+
+        type: 'error',
+
+        text:
+          'SSH Connection Failed',
+
+      });
+
+    } finally {
+
+      setTesting(false);
+
+    }
+
+  };
+
+
+  const handleSaveServer = async (
+    data
+  ) => {
+
+    try {
+
+      setLoading(true);
+
+      setMessage(null);
+
+      const payload = {
+
+        ...data,
+
+        operatingSystem:
+          selectedOs,
+
+        databaseServices:
+          selectedDatabases,
+
+      };
+
+      console.log(
+        'OS SERVER DATA =>',
+        payload
+      );
+
+      // Try to register with backend if endpoint exists, otherwise fallback to local simulation
+      try {
+        await registerAgent(payload);
+        // refresh agents list
+        queryClient.invalidateQueries({ queryKey: ['agents'] });
+        setMessage({ type: 'success', text: 'OS Server Registered — awaiting agent heartbeat' });
+        setTimeout(() => navigate('/databases'), 800);
+      } catch (err) {
+        // Backend may not support direct registration; keep simulated behaviour
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        setMessage({ type: 'success', text: 'OS Server added (local simulation). Start agent for real registration.' });
+        setTimeout(() => navigate('/databases'), 800);
+      }
+
+    } catch (error) {
+
+      setMessage({
+
+        type: 'error',
+
+        text:
+          'Failed to Add OS Server',
+
+      });
+
+    } finally {
+
+      setLoading(false);
+
+    }
+
+  };
+
+
+  return (
+
+    <div className="min-h-screen bg-[#f5f7fb] p-6">
+
+      <div className="max-w-5xl mx-auto">
+
+
+        {/* HEADER */}
+
+        <div className="flex items-center gap-4 mb-8">
+
+          <button
+            onClick={() =>
+              navigate('/databases')
+            }
+            className="w-10 h-10 rounded-xl border border-slate-200 bg-white flex items-center justify-center hover:bg-slate-100 transition-all"
+          >
+
+            <ArrowLeft className="w-5 h-5" />
+
+          </button>
+
+
+          <div>
+
+            <h1 className="text-3xl font-bold text-slate-900">
+              Add OS Server
+            </h1>
+
+            <p className="text-slate-500 mt-1">
+              Configure operating system server and SSH access.
+            </p>
+
+          </div>
+
+        </div>
+
+
+        {/* OS TYPES */}
+
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-6">
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+
+            {OPERATING_SYSTEMS.map((os) => (
+
+              <button
+                key={os.name}
+                type="button"
+                onClick={() =>
+                  handleOsChange(
+                    os.name
+                  )
+                }
+                className={`h-24 rounded-2xl border transition-all ${
+                  selectedOs ===
+                  os.name
+                    ? 'border-slate-900 bg-slate-900 text-white'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+
+                <div className="flex flex-col items-center justify-center">
+
+                  <div className="text-3xl mb-2">
+                    {os.icon}
+                  </div>
+
+                  <div className="text-sm font-semibold">
+                    {os.name}
+                  </div>
+
+                </div>
+
+              </button>
+
+            ))}
+
+          </div>
+
+        </div>
+
+
+        {/* FORM */}
+
+        <div className="bg-white rounded-2xl border border-slate-200">
+
+          <div className="px-6 py-5 border-b border-slate-200">
+
+            <h2 className="text-xl font-bold text-slate-900">
+
+              OS Server Configuration
+
+            </h2>
+
+          </div>
+
+          
