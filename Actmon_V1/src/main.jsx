@@ -23,6 +23,7 @@ import MySQLBackupPage from './pages/mysql/MySQLBackupPage';
 import PostgreSQLDashboard from './pages/postgresql/PostgreSQLDashboard';
 import PostgreSQLBackupPage from './pages/postgresql/PostgreSQLBackupPage';
 import PGSlowQueries from './pages/postgresql/SlowQueries';
+import PGQueryDetail from './pages/postgresql/QueryDetailPage';
 import PGErrorLogs from './pages/postgresql/ErrorLogs';
 import PGIndexAnalysis from './pages/postgresql/IndexAnalysis';
 import MSSQLDashboard from './pages/mssql/MSSQLDashboard';
@@ -38,6 +39,7 @@ import MongoDBDashboard from './pages/mongodb/MongoDBDashboard';
 import MongoSlowOperations from './pages/mongodb/SlowOperations';
 import MongoErrorLogs from './pages/mongodb/ErrorLogs';
 import MongoCollectionAnalysis from './pages/mongodb/CollectionAnalysis';
+import MongoDBBackupPage from './pages/mongodb/MongoDBBackupPage';
 import ClickHouseDashboard from './pages/clickhouse/ClickHouseDashboard';
 import CHSlowQueries from './pages/clickhouse/SlowQueries';
 import CHErrorLogs from './pages/clickhouse/ErrorLogs';
@@ -53,6 +55,7 @@ import { UsersPage } from './pages/users/UsersPage';
 import { InfraPage } from './pages/infra/InfraPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { NotFound } from './pages/NotFound';
+import ChatbotPage from './pages/chatbot/ChatbotPage';
 import './index.css';
 
 // Create a client
@@ -134,6 +137,7 @@ const router = createBrowserRouter([
       // PostgreSQL
       { path: 'postgresql-dashboard/:id', element: <PostgreSQLDashboard /> },
       { path: 'postgresql-dashboard/:id/slow-queries', element: <PGSlowQueries /> },
+      { path: 'postgresql-dashboard/:id/slow-queries/detail', element: <PGQueryDetail /> },
       { path: 'postgresql-dashboard/:id/error-logs', element: <PGErrorLogs /> },
       { path: 'postgresql-dashboard/:id/index-analysis', element: <PGIndexAnalysis /> },
       { path: 'postgresql-dashboard/:id/backup', element: <PostgreSQLBackupPage /> },
@@ -153,6 +157,7 @@ const router = createBrowserRouter([
       { path: 'mongodb-dashboard/:id/slow-operations', element: <MongoSlowOperations /> },
       { path: 'mongodb-dashboard/:id/error-logs', element: <MongoErrorLogs /> },
       { path: 'mongodb-dashboard/:id/collection-analysis', element: <MongoCollectionAnalysis /> },
+      { path: 'mongodb-dashboard/:id/backup', element: <MongoDBBackupPage /> },
       // ClickHouse
       { path: 'clickhouse-dashboard/:id', element: <ClickHouseDashboard /> },
       { path: 'clickhouse-dashboard/:id/slow-queries', element: <CHSlowQueries /> },
@@ -202,6 +207,10 @@ const router = createBrowserRouter([
       {
         path: 'settings',
         element: <SettingsPage />,
+      },
+      {
+        path: 'chatbot',
+        element: <ChatbotPage />,
       },
       {
         path: '*',

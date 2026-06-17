@@ -48,7 +48,10 @@ const fetchRedoLogs    = (id) => client.get(`/connections/oracle/${id}/oracle-re
 const fetchDataGuard   = (id) => client.get(`/connections/oracle/${id}/oracle-data-guard`).then(r => r.data);
 const fetchProcesses   = (id) => client.get(`/connections/oracle/${id}/oracle-processes`).then(r => r.data);
 const fetchSysStats    = (id) => client.get(`/connections/oracle/${id}/oracle-system-stats`).then(r => r.data);
-const fetchSlowQueries = (id) => client.get(`/connections/oracle/${id}/oracle-slow-queries`).then(r => r.data);
+const fetchSlowQueries  = (id) => client.get(`/connections/oracle/${id}/oracle-slow-queries`).then(r => r.data);
+const fetchLiveQueries  = (id) => client.get(`/connections/oracle/${id}/oracle-live-queries`).then(r => r.data);
+const fetchLocks        = (id) => client.get(`/connections/oracle/${id}/oracle-locks`).then(r => r.data);
+const fetchParameters   = (id) => client.get(`/connections/oracle/${id}/oracle-parameters`).then(r => r.data);
 
 const TABS = [
   { id: 'overview',     label: 'Overview',      icon: Activity },
@@ -63,6 +66,9 @@ const TABS = [
   { id: 'users',        label: 'Users',         icon: Key },
   { id: 'systemstats',  label: 'Sys Stats',     icon: BarChart2 },
   { id: 'slowqueries',  label: 'Slow Queries',  icon: Clock },
+  { id: 'liveQueries', label: 'Live Queries',  icon: Activity },
+  { id: 'locks',       label: 'Locks',         icon: Lock },
+  { id: 'parameters',  label: 'Parameters',    icon: Settings },
 ];
 
 const REFRESH_INTERVAL = 15;
@@ -73,10 +79,17 @@ export default function OracleDashboard() {
   const [activeTab, setActiveTab]     = useState('overview');
   const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines]   = useState({ sessions: [], bufHit: [], pga: [] });
-  const [sqlSearch, setSqlSearch]     = useState('');
-  const [userSearch, setUserSearch]   = useState('');
-  const [statSearch, setStatSearch]   = useState('');
-  const [expandedSql, setExpandedSql] = useState(null);
+  const [sqlSearch, setSqlSearch]           = useState('');
+  const [userSearch, setUserSearch]         = useState('');
+  const [statSearch, setStatSearch]         = useState('');
+  const [paramSearch, setParamSearch]       = useState('');
+  const [expandedSql, setExpandedSql]       = useState(null);
+  const [expandedLive, setExpandedLive]     = useState(null);
+  const [expandedSess, setExpandedSess]     = useState(null);
+  const [expandedTs, setExpandedTs]         = useState(null);
+  const [expandedUser, setExpandedUser]     = useState(null);
+  const [expandedSlow, setExpandedSlow]     = useState(null);
+  const [drillModal, setDrillModal]         = useState(null);
   const countRef = useRef(null);
 
   /* ── Main dashboard query ── */
@@ -100,7 +113,10 @@ export default function OracleDashboard() {
   const { data: dgData,     isLoading: dgLoading }     = useQuery({ queryKey: ['oracleDg', id],     queryFn: () => fetchDataGuard(id),   retry: false, refetchInterval: 30000, enabled: activeTab === 'dataguard' });
   const { data: procData,   isLoading: procLoading }   = useQuery({ queryKey: ['oracleProcs', id],  queryFn: () => fetchProcesses(id),   retry: false, refetchInterval: 15000, enabled: activeTab === 'processes' });
   const { data: sysStatData, isLoading: sysStatLoading } = useQuery({ queryKey: ['oracleSysStat', id], queryFn: () => fetchSysStats(id), retry: false, refetchInterval: 30000, enabled: activeTab === 'systemstats' });
-  const { data: slowData,   isLoading: slowLoading }   = useQuery({ queryKey: ['oracleSlowSql', id], queryFn: () => fetchSlowQueries(id), retry: false, refetchInterval: 30000, enabled: activeTab === 'slowqueries' });
+  const { data: slowData,   isLoading: slowLoading }   = useQuery({ queryKey: ['oracleSlowSql', id],  queryFn: () => fetchSlowQueries(id),  retry: false, refetchInterval: 30000, enabled: activeTab === 'slowqueries' });
+  const { data: liveData,   isLoading: liveLoading }   = useQuery({ queryKey: ['oracleLive', id],     queryFn: () => fetchLiveQueries(id),  retry: false, refetchInterval: 5000,  enabled: activeTab === 'liveQueries' });
+  const { data: lockData,   isLoading: lockLoading }   = useQuery({ queryKey: ['oracleLocks', id],    queryFn: () => fetchLocks(id),        retry: false, refetchInterval: 10000, enabled: activeTab === 'locks' });
+  const { data: paramData,  isLoading: paramLoading }  = useQuery({ queryKey: ['oracleParams', id],   queryFn: () => fetchParameters(id),   retry: false, staleTime: 120000,      enabled: activeTab === 'parameters' });
 
   /* ── Countdown timer ── */
   useEffect(() => {
@@ -127,7 +143,7 @@ export default function OracleDashboard() {
   }, [data]);
 
   if (isLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+    <div className="min-h-screen flex items-center justify-center bg-[#f1f5f9]">
       <div className="text-center">
         <div className="w-12 h-12 border-4 border-red-200 border-t-red-600 rounded-full animate-spin mx-auto mb-4" />
         <p className="text-slate-600 font-semibold">Connecting to Oracle Database…</p>
@@ -175,27 +191,37 @@ export default function OracleDashboard() {
   const POOL_COLORS = [C.red, C.orange, C.amber, C.blue, C.purple, C.teal, C.green, C.cyan];
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-[#f1f5f9] flex flex-col">
+
+      {/* ─── DRILL MODAL ─── */}
+      {drillModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-end">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setDrillModal(null)} />
+          <div className="relative z-10 w-full max-w-2xl h-full bg-white shadow-2xl flex flex-col">
+            <div className="flex items-start justify-between p-5 border-b border-slate-200 bg-gradient-to-r from-slate-900 to-slate-800">
+              <div>
+                <h2 className="text-white font-black text-lg">{drillModal.title}</h2>
+                {drillModal.subtitle && <p className="text-slate-300 text-xs mt-0.5">{drillModal.subtitle}</p>}
+              </div>
+              <button onClick={() => setDrillModal(null)} className="text-white/60 hover:text-white text-xl font-bold ml-4">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">{drillModal.content}</div>
+          </div>
+        </div>
+      )}
 
       {/* ─── HEADER ─── */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white shadow-xl">
-        <div className="px-6 py-4 flex flex-wrap justify-between items-start gap-3">
+      <div className="text-white shadow-xl" style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e3a5f 55%,#3b0a0a 100%)' }}>
+        <div className="px-6 pt-5 pb-3 flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-red-400/20 border border-red-400/40 rounded-2xl flex items-center justify-center">
-              {/* Health ring SVG */}
-              <svg width="32" height="32" viewBox="0 0 36 36">
-                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#ffffff20" strokeWidth="3" />
-                <circle cx="18" cy="18" r="15.9" fill="none"
-                  stroke={healthScore >= 80 ? '#22C55E' : healthScore >= 60 ? '#F59E0B' : '#EF4444'}
-                  strokeWidth="3" strokeDasharray={`${healthScore} ${100 - healthScore}`}
-                  strokeLinecap="round" strokeDashoffset="25" transform="rotate(-90 18 18)" />
-                <text x="18" y="22" textAnchor="middle" fontSize="9" fill="white" fontWeight="bold">{healthScore}</text>
-              </svg>
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-lg"
+              style={{ background: 'rgba(199,70,52,0.25)', border: '1px solid rgba(199,70,52,0.4)' }}>
+              🏛
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight">Oracle Dashboard</h1>
-              <p className="text-red-300 text-sm mt-0.5">
-                {connection?.name || 'Oracle'} — {connection?.host}:{connection?.port}
+              <h1 className="text-[22px] font-black tracking-tight leading-tight">Oracle Dashboard</h1>
+              <p className="text-[13px] mt-0.5" style={{ color: 'rgba(252,165,165,0.85)' }}>
+                {connection?.name || 'Oracle'}&nbsp;&mdash;&nbsp;{connection?.host}:{connection?.port}
                 {connection?.service_name ? ` / ${connection.service_name}` : connection?.database ? ` / ${connection.database}` : ''}
               </p>
             </div>
@@ -209,15 +235,20 @@ export default function OracleDashboard() {
               { to: `/oracle-dashboard/${id}/index-analysis`, label: 'Index Analysis' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
-                className="px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-xs font-semibold text-white/80 hover:text-white">
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.75)' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.16)'; e.currentTarget.style.color = '#fff'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = 'rgba(255,255,255,0.75)'; }}>
                 {label}
               </Link>
             ))}
             <button onClick={() => refetch()}
-              className="flex items-center gap-2 px-4 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-sm font-semibold">
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all"
+              style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}>
               <RefreshCw size={13} className={isFetching ? 'animate-spin' : ''} />
               <span>Refresh</span>
-              <span className="ml-1 w-5 h-5 rounded-full bg-red-500/30 text-red-200 text-[10px] font-black flex items-center justify-center">
+              <span className="w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center"
+                style={{ background: 'rgba(199,70,52,0.4)', color: '#fca5a5' }}>
                 {countdown}
               </span>
             </button>
@@ -225,14 +256,20 @@ export default function OracleDashboard() {
         </div>
 
         {/* TAB BAR */}
-        <div className="px-4 flex gap-0.5 overflow-x-auto border-t border-white/10">
+        <div className="px-2 flex overflow-x-auto" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
           {TABS.map(tab => {
             const Icon = tab.icon;
+            const active = activeTab === tab.id;
             return (
               <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                className={`relative flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-lg whitespace-nowrap transition-all ${
-                  activeTab === tab.id ? 'bg-slate-50 text-red-700' : 'text-white/60 hover:text-white hover:bg-white/10'
-                }`}>
+                className="relative flex items-center gap-2 px-4 py-3 text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0"
+                style={active ? {
+                  background: '#f1f5f9',
+                  color: '#C74634',
+                  borderRadius: '10px 10px 0 0',
+                  marginBottom: '-1px',
+                  boxShadow: '0 -2px 8px rgba(0,0,0,0.15)',
+                } : { color: 'rgba(255,255,255,0.55)' }}>
                 <Icon size={13} />
                 {tab.label}
               </button>
@@ -250,24 +287,65 @@ export default function OracleDashboard() {
 
             {/* KPI strip */}
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
-              <KpiCard icon={Server}      title="Instance"      value={hs.instance_name || '—'}   accent="red" />
-              <KpiCard icon={Database}    title="DB Name"       value={hs.db_name || '—'}          accent="orange" />
-              <KpiCard icon={Activity}    title="Status"        value={hs.status || '—'}           accent={hs.status === 'OPEN' ? 'green' : 'red'} />
-              <KpiCard icon={Users}       title="Sessions"      value={`${totalSess}/${maxSess}`}  accent={sessionPct > 80 ? 'red' : 'green'} />
-              <KpiCard icon={MemoryStick} title="SGA (MB)"      value={fmtNum(sgaMb)}              accent="blue" />
-              <KpiCard icon={Cpu}         title="PGA (MB)"      value={fmtNum(pgaMb)}              accent="purple" />
-              <KpiCard icon={HardDrive}   title="DB Size (GB)"  value={hs.db_size_gb || '—'}       accent="amber" />
-              <KpiCard icon={TrendingUp}  title="Buffer Hit%"   value={`${bufHitPct}%`}            accent={bufHitPct < 80 ? 'red' : bufHitPct < 90 ? 'orange' : 'green'} />
+              <KpiCard icon={Server}   title="Instance"     value={hs.instance_name || '—'} accent="red"
+                onClick={() => setDrillModal({ title: 'Instance Info', content: (
+                  <div className="space-y-2">
+                    {[['Instance Name',hs.instance_name],['Host',hs.host_name],['Version',hs.version],['Status',hs.status],['Startup Time',hs.startup_time],['Log Mode',hs.log_mode]].map(([l,v])=>(
+                      <div key={l} className="flex justify-between py-2 border-b border-slate-100 text-sm"><span className="text-slate-500">{l}</span><span className="font-bold text-slate-800 font-mono">{v||'—'}</span></div>
+                    ))}
+                  </div>
+                )})} />
+              <KpiCard icon={Database}  title="DB Name"   value={hs.db_name || '—'}  accent="orange"
+                onClick={() => setDrillModal({ title: 'Database Details', content: (
+                  <div className="space-y-2">
+                    {[['DB Name',hs.db_name],['DB Unique Name',hs.db_unique_name],['Log Mode',hs.log_mode],['DB Size (GB)',hs.db_size_gb],['Status',hs.status]].map(([l,v])=>(
+                      <div key={l} className="flex justify-between py-2 border-b border-slate-100 text-sm"><span className="text-slate-500">{l}</span><span className="font-bold text-slate-800">{v||'—'}</span></div>
+                    ))}
+                  </div>
+                )})} />
+              <KpiCard icon={Activity}  title="Status"    value={hs.status || '—'}   accent={hs.status === 'OPEN' ? 'green' : 'red'} />
+              <KpiCard icon={Users}     title="Sessions"  value={`${totalSess}/${maxSess}`} accent={sessionPct > 80 ? 'red' : 'green'}
+                onClick={() => setActiveTab('sessions')} hint="Click to view sessions" />
+              <KpiCard icon={MemoryStick} title="SGA (MB)" value={fmtNum(sgaMb)} accent="blue"
+                onClick={() => setActiveTab('performance')} hint="Click for SGA details" />
+              <KpiCard icon={Cpu}       title="PGA (MB)"  value={fmtNum(pgaMb)} accent="purple"
+                onClick={() => setActiveTab('performance')} hint="Click for PGA details" />
+              <KpiCard icon={HardDrive} title="DB Size (GB)" value={hs.db_size_gb || '—'} accent="amber"
+                onClick={() => setDrillModal({ title: 'Tablespace Usage', subtitle: `${tablespaces.length} tablespaces`, content: (
+                  <div className="space-y-2">
+                    {tablespaces.map((ts,i) => {
+                      const pct = Number(ts.used_pct)||0;
+                      return (
+                        <div key={i} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                          <div className="flex justify-between mb-1"><span className="font-bold text-red-700 text-sm">{ts.tablespace_name}</span><span className={`font-black text-sm ${pct>85?'text-red-600':pct>70?'text-orange-600':'text-green-600'}`}>{pct}%</span></div>
+                          <div className="h-2 bg-slate-200 rounded-full"><div className="h-2 rounded-full transition-all" style={{width:`${pct}%`,background:pct>85?C.red:pct>70?C.orange:C.green}} /></div>
+                          <div className="flex justify-between mt-1 text-[10px] text-slate-400"><span>Used: {fmtNum(ts.used_mb)} MB</span><span>Total: {fmtNum(ts.total_mb)} MB</span></div>
+                        </div>
+                      );
+                    })}
+                    {tablespaces.length===0 && <p className="text-center text-slate-400 py-8">No tablespace data</p>}
+                  </div>
+                )})} hint="Click to view tablespaces" />
+              <KpiCard icon={TrendingUp} title="Buffer Hit%" value={`${bufHitPct}%`} accent={bufHitPct < 80 ? 'red' : bufHitPct < 90 ? 'orange' : 'green'}
+                onClick={() => setActiveTab('performance')} hint="Click for performance details" />
             </div>
 
-            {/* Status badges */}
-            <div className="flex flex-wrap gap-2">
-              <StatusBadge ok={hs.status === 'OPEN'}      label={`DB: ${hs.status || '—'}`} />
-              <StatusBadge ok={sessionPct < 80}           label={`Sessions ${sessionPct}%`} />
-              <StatusBadge ok={bufHitPct >= 90}           label={`Buffer Hit ${bufHitPct}%`} />
-              <StatusBadge ok={libHitPct >= 95}           label={`Library Cache ${libHitPct}%`} />
-              <StatusBadge ok={maxTsPct < 85}             label={`Max TS ${maxTsPct}%`} />
-              {hs.log_mode && <StatusBadge ok={hs.log_mode === 'ARCHIVELOG'} label={`Log: ${hs.log_mode}`} />}
+            {/* Status health bar */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest">System Health</h3>
+                <span className={`text-[10px] font-black px-2.5 py-1 rounded-full ${healthScore >= 80 ? 'bg-green-100 text-green-700' : healthScore >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                  Score {healthScore}/100
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <StatusBadge ok={hs.status === 'OPEN'}      label={`DB: ${hs.status || '—'}`} />
+                <StatusBadge ok={sessionPct < 80}           label={`Sessions ${sessionPct}%`} />
+                <StatusBadge ok={bufHitPct >= 90}           label={`Buffer Hit ${bufHitPct}%`} />
+                <StatusBadge ok={libHitPct >= 95}           label={`Library Cache ${libHitPct}%`} />
+                <StatusBadge ok={maxTsPct < 85}             label={`Max Tablespace ${maxTsPct}%`} />
+                {hs.log_mode && <StatusBadge ok={hs.log_mode === 'ARCHIVELOG'} label={`Log: ${hs.log_mode}`} />}
+              </div>
             </div>
 
             {/* Gauges */}
@@ -294,36 +372,52 @@ export default function OracleDashboard() {
                 <TrendCard title="PGA Used %"         data={sparklines.pga}      color={C.purple} unit="%" />
               </div>
             ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 p-4 text-center text-slate-400 text-xs">
-                Live trend charts appear after first auto-refresh
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
+                <Activity size={20} className="text-slate-300 mx-auto mb-2" />
+                <p className="text-slate-400 text-xs font-semibold">Live trend charts appear after first auto-refresh (15 s)</p>
               </div>
             )}
 
             {/* Wait events + Top SQL */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <Panel title="Top Wait Events">
+              <Panel title="Top Wait Events — click bar for details" accent="red">
                 {wait_events.length === 0 ? (
                   <p className="text-center text-slate-400 text-xs py-8">No wait event data</p>
                 ) : (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart layout="vertical"
-                      data={wait_events.slice(0, 8).map(w => ({
-                        name: (w.event || '').slice(0, 28),
-                        waits: Number(w.total_waits) || 0,
-                        time_s: Number(w.time_waited_seconds) || 0,
-                      }))}
-                      margin={{ left: 10, right: 10 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
-                      <YAxis width={155} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
-                      <Tooltip formatter={(v, n) => [fmtNum(v), n]} cursor={{ fill: '#fef2f2' }} />
-                      <Bar dataKey="waits" fill={C.red} radius={[0, 4, 4, 0]} name="Waits" />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart layout="vertical"
+                        data={wait_events.slice(0, 8).map(w => ({
+                          name: (w.event || '').slice(0, 28),
+                          waits: Number(w.total_waits) || 0,
+                          time_s: Number(w.time_waited_seconds) || 0,
+                          _full: w,
+                        }))}
+                        margin={{ left: 10, right: 10 }}
+                        onClick={e => {
+                          const w = e?.activePayload?.[0]?.payload?._full;
+                          if (!w) return;
+                          setDrillModal({ title: w.event || 'Wait Event', subtitle: `Wait Class: ${w.wait_class || '—'}`, content: (
+                            <div className="space-y-3">
+                              {[['Event',w.event],['Wait Class',w.wait_class],['Total Waits',fmtNum(w.total_waits)],['Time Waited (s)',w.time_waited_seconds],['Avg Wait (ms)',w.avg_wait_ms]].map(([l,v])=>(
+                                <div key={l} className="flex justify-between py-2 border-b border-slate-100 text-sm"><span className="text-slate-500">{l}</span><span className="font-bold text-slate-800">{v||'—'}</span></div>
+                              ))}
+                            </div>
+                          )});
+                        }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                        <YAxis width={155} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                        <Tooltip formatter={(v, n) => [fmtNum(v), n]} cursor={{ fill: '#fef2f2' }} />
+                        <Bar dataKey="waits" fill={C.red} radius={[0, 4, 4, 0]} name="Waits" style={{ cursor: 'pointer' }} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <p className="text-[10px] text-slate-300 mt-1 text-center">Click any bar to see full event details</p>
+                  </>
                 )}
               </Panel>
 
-              <Panel title="Instance Info">
+              <Panel title="Instance Info" accent="blue">
                 <Row label="Instance Name"   value={hs.instance_name || '—'} mono />
                 <Row label="Host"            value={hs.host_name || '—'} mono />
                 <Row label="DB Name"         value={hs.db_name || '—'} mono />
@@ -337,19 +431,34 @@ export default function OracleDashboard() {
             </div>
 
             {/* Top SQL table */}
-            <Panel title={`Top SQL by Elapsed Time (${top_sql.length})`}>
+            <Panel title={`Top SQL by Elapsed Time (${top_sql.length}) — click row for full SQL`} accent="orange">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 sticky top-0">
                     <tr>
-                      {['SQL ID','Executions','Elapsed (ms)','CPU (ms)','Buf Gets','Disk Reads','Rows','Avg Elapsed ms','SQL Text'].map(h => (
+                      {['SQL ID','Executions','Elapsed (ms)','CPU (ms)','Buf Gets','Disk Reads','Rows','Avg ms','SQL Text'].map(h => (
                         <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {top_sql.slice(0, 10).map((s, i) => (
-                      <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${s.avg_elapsed_ms > 1000 ? 'bg-red-50/40' : ''}`}>
+                      <tr key={i} onClick={() => setDrillModal({ title: `SQL: ${s.sql_id}`, subtitle: `Executions: ${fmtNum(s.executions)} · Avg: ${fmtNum(s.avg_elapsed_ms)} ms`, content: (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-2">
+                            {[['SQL ID',s.sql_id],['Executions',fmtNum(s.executions)],['Elapsed (ms)',fmtNum(s.elapsed_ms)],['CPU (ms)',fmtNum(s.cpu_ms)],['Buf Gets',fmtNum(s.buffer_gets)],['Disk Reads',fmtNum(s.disk_reads)],['Rows Processed',fmtNum(s.rows_processed)],['Avg Elapsed (ms)',fmtNum(s.avg_elapsed_ms)]].map(([l,v])=>(
+                              <div key={l} className="bg-slate-50 rounded-lg p-2 border border-slate-100"><p className="text-[10px] text-slate-400 uppercase font-bold">{l}</p><p className="font-black text-slate-800 text-sm mt-0.5">{v}</p></div>
+                            ))}
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-2"><p className="text-xs font-bold text-slate-500 uppercase">Full SQL</p>
+                              <button onClick={()=>navigator.clipboard.writeText(s.sql_fulltext||s.sql_text||'')} className="flex items-center gap-1 px-2 py-1 bg-slate-800 text-white rounded text-[10px] hover:bg-slate-700"><Copy size={9}/> Copy</button>
+                            </div>
+                            <pre className="bg-slate-900 rounded-xl p-4 font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all max-h-64 overflow-y-auto">{s.sql_fulltext||s.sql_text||'—'}</pre>
+                          </div>
+                        </div>
+                      )})}
+                        className={`border-t border-slate-100 hover:bg-red-50/30 cursor-pointer ${s.avg_elapsed_ms > 1000 ? 'bg-red-50/40' : ''}`}>
                         <td className="px-3 py-2.5 font-mono text-[10px] text-red-700">{s.sql_id || '—'}</td>
                         <td className="px-3 py-2.5 font-bold text-slate-800">{fmtNum(s.executions)}</td>
                         <td className={`px-3 py-2.5 font-bold text-sm ${s.elapsed_ms > 5000 ? 'text-red-600' : s.elapsed_ms > 1000 ? 'text-orange-600' : 'text-slate-700'}`}>{fmtNum(s.elapsed_ms)}</td>
@@ -358,7 +467,7 @@ export default function OracleDashboard() {
                         <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(s.disk_reads)}</td>
                         <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(s.rows_processed)}</td>
                         <td className={`px-3 py-2.5 font-bold text-xs ${s.avg_elapsed_ms > 1000 ? 'text-red-600' : s.avg_elapsed_ms > 200 ? 'text-orange-600' : 'text-green-600'}`}>{fmtNum(s.avg_elapsed_ms)}</td>
-                        <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[200px] truncate">{(s.sql_text || '').slice(0, 80) || '—'}</td>
+                        <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[200px] truncate flex items-center gap-1">{(s.sql_text || '').slice(0, 80) || '—'}<ChevronRight size={10} className="text-slate-300 flex-shrink-0"/></td>
                       </tr>
                     ))}
                     {top_sql.length === 0 && (
@@ -386,7 +495,7 @@ export default function OracleDashboard() {
 
                 {/* SGA pool breakdown */}
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                  <Panel title="SGA Pool Breakdown">
+                  <Panel title="SGA Pool Breakdown" accent="blue">
                     {sgaData?.pools?.length > 0 ? (
                       <>
                         <ResponsiveContainer width="100%" height={220}>
@@ -402,12 +511,13 @@ export default function OracleDashboard() {
                         </ResponsiveContainer>
                         <div className="mt-3 grid grid-cols-2 gap-2">
                           {sgaData.pools.slice(0, 6).map((p, i) => (
-                            <div key={i} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 text-xs">
+                            <div key={i} className="flex items-center justify-between rounded-xl px-3 py-2.5 text-xs border"
+                              style={{ borderColor: POOL_COLORS[i % POOL_COLORS.length] + '40', background: POOL_COLORS[i % POOL_COLORS.length] + '10' }}>
                               <span className="flex items-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: POOL_COLORS[i % POOL_COLORS.length] }} />
-                                <span className="text-slate-600 truncate max-w-[100px]">{p.pool}</span>
+                                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 shadow-sm" style={{ background: POOL_COLORS[i % POOL_COLORS.length] }} />
+                                <span className="text-slate-700 font-semibold truncate max-w-[90px]">{p.pool}</span>
                               </span>
-                              <span className="font-bold text-slate-800">{fmtNum(p.mb)} MB</span>
+                              <span className="font-black text-slate-900 text-[11px]">{fmtNum(p.mb)} MB</span>
                             </div>
                           ))}
                         </div>
@@ -416,22 +526,26 @@ export default function OracleDashboard() {
                   </Panel>
 
                   {/* PGA stats */}
-                  <Panel title="PGA Statistics">
+                  <Panel title="PGA Statistics" accent="purple">
                     {pgaData?.summary ? (
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-3">
                           {[
-                            ['Total Allocated', `${fmtNum(pgaData.summary.total_allocated_mb)} MB`],
-                            ['Total Used',      `${fmtNum(pgaData.summary.total_used_mb)} MB`],
-                            ['Aggregate Target',`${fmtNum(pgaData.summary.aggregate_target_mb)} MB`],
-                            ['Cache Hit %',     `${pgaData.summary.cache_hit_pct}%`],
-                            ['Work Areas Active', pgaData.summary.work_areas_active],
-                          ].map(([label, val]) => (
-                            <div key={label} className="bg-slate-50 rounded-xl border border-slate-100 p-3">
-                              <p className="text-[10px] text-slate-400 font-semibold uppercase">{label}</p>
-                              <p className="text-lg font-black text-slate-800 mt-0.5">{val}</p>
-                            </div>
-                          ))}
+                            ['Total Allocated', `${fmtNum(pgaData.summary.total_allocated_mb)} MB`,  'blue'],
+                            ['Total Used',      `${fmtNum(pgaData.summary.total_used_mb)} MB`,       'purple'],
+                            ['Aggregate Target',`${fmtNum(pgaData.summary.aggregate_target_mb)} MB`, 'indigo'],
+                            ['Cache Hit %',     `${pgaData.summary.cache_hit_pct}%`,                 'green'],
+                            ['Work Areas Active', pgaData.summary.work_areas_active,                 'teal'],
+                          ].map(([label, val, col]) => {
+                            const bg   = { blue:'bg-blue-50 border-blue-200', purple:'bg-purple-50 border-purple-200', indigo:'bg-indigo-50 border-indigo-200', green:'bg-green-50 border-green-200', teal:'bg-teal-50 border-teal-200' }[col];
+                            const text = { blue:'text-blue-800', purple:'text-purple-800', indigo:'text-indigo-800', green:'text-green-800', teal:'text-teal-800' }[col];
+                            return (
+                              <div key={label} className={`rounded-xl border-2 p-3 ${bg}`}>
+                                <p className={`text-[9px] font-black uppercase tracking-widest ${text} opacity-70`}>{label}</p>
+                                <p className={`text-xl font-black mt-0.5 ${text}`}>{val}</p>
+                              </div>
+                            );
+                          })}
                         </div>
                         <div className="mt-2 max-h-48 overflow-y-auto">
                           {(pgaData.stats || []).slice(0, 20).map((s, i) => (
@@ -447,7 +561,7 @@ export default function OracleDashboard() {
                 </div>
 
                 {/* Wait events */}
-                <Panel title="Wait Events by Time">
+                <Panel title="Wait Events by Time" accent="orange">
                   {waitData?.events?.length > 0 ? (
                     <>
                       <ResponsiveContainer width="100%" height={280}>
@@ -504,12 +618,18 @@ export default function OracleDashboard() {
             return (
               <div className="space-y-5">
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                  <MetricKpi title="Total"       value={summary.total || 0}       accent="blue" />
-                  <MetricKpi title="Active"      value={summary.active || 0}      accent={summary.active > 0 ? 'green' : 'slate'} />
-                  <MetricKpi title="Inactive"    value={summary.inactive || 0}    accent="slate" />
-                  <MetricKpi title="Blocking"    value={summary.blocking || 0}    accent={summary.blocking > 0 ? 'red' : 'green'} />
-                  <MetricKpi title="User"        value={summary.user || 0}        accent="orange" />
-                  <MetricKpi title="Background"  value={summary.background || 0}  accent="purple" />
+                  <MetricKpi title="Total"       value={summary.total || 0}       accent="blue"
+                    onClick={() => setDrillModal({ title: 'All Sessions', subtitle: `${summary.total} total sessions`, content: <SessionDetailTable sessions={sessions} /> })} />
+                  <MetricKpi title="Active"      value={summary.active || 0}      accent={summary.active > 0 ? 'green' : 'slate'}
+                    onClick={() => setDrillModal({ title: 'Active Sessions', subtitle: `${summary.active} active`, content: <SessionDetailTable sessions={sessions.filter(s=>s.status==='ACTIVE')} /> })} />
+                  <MetricKpi title="Inactive"    value={summary.inactive || 0}    accent="slate"
+                    onClick={() => setDrillModal({ title: 'Inactive Sessions', subtitle: `${summary.inactive} inactive`, content: <SessionDetailTable sessions={sessions.filter(s=>s.status==='INACTIVE')} /> })} />
+                  <MetricKpi title="Blocking"    value={summary.blocking || 0}    accent={summary.blocking > 0 ? 'red' : 'green'}
+                    onClick={() => summary.blocking > 0 && setDrillModal({ title: 'Blocking Sessions', subtitle: `${summary.blocking} blocking`, content: <SessionDetailTable sessions={sessions.filter(s=>s.blocking_session!=null)} /> })} />
+                  <MetricKpi title="User"        value={summary.user || 0}        accent="orange"
+                    onClick={() => setDrillModal({ title: 'User Sessions', subtitle: `${summary.user} user sessions`, content: <SessionDetailTable sessions={sessions.filter(s=>s.type==='USER')} /> })} />
+                  <MetricKpi title="Background"  value={summary.background || 0}  accent="purple"
+                    onClick={() => setDrillModal({ title: 'Background Sessions', subtitle: `${summary.background} background`, content: <SessionDetailTable sessions={sessions.filter(s=>s.type==='BACKGROUND')} /> })} />
                 </div>
 
                 {blocking.length > 0 && (
@@ -531,39 +651,48 @@ export default function OracleDashboard() {
                   </div>
                 )}
 
-                <Panel title={`Sessions (${sessions.length})`}>
+                <Panel title={`Sessions (${sessions.length}) — click row for details`}>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 sticky top-0">
                         <tr>
-                          {['SID','Serial#','Username','Status','Type','Machine','Program','Wait Event','Sec Wait','SQL ID'].map(h => (
+                          {['','SID','Serial#','Username','Status','Type','Machine','Wait Event','Sec Wait','SQL ID'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {sessions.slice(0, 60).map((s, i) => (
-                          <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${s.blocking_session ? 'bg-red-50/60' : ''}`}>
-                            <td className="px-3 py-2 font-mono text-xs text-slate-500">{s.sid}</td>
-                            <td className="px-3 py-2 font-mono text-[10px] text-slate-400">{s.serial_number}</td>
-                            <td className="px-3 py-2 font-semibold text-red-700 text-xs">{s.username || '—'}</td>
-                            <td className="px-3 py-2">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                s.status === 'ACTIVE' ? 'bg-green-100 text-green-700'
-                                : s.status === 'INACTIVE' ? 'bg-slate-100 text-slate-500'
-                                : 'bg-yellow-100 text-yellow-700'}`}>
-                                {s.status || '—'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.type === 'USER' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{s.type || '—'}</span>
-                            </td>
-                            <td className="px-3 py-2 text-[10px] text-slate-400 max-w-[100px] truncate">{s.machine || '—'}</td>
-                            <td className="px-3 py-2 text-[10px] text-slate-400 max-w-[100px] truncate">{s.program || '—'}</td>
-                            <td className="px-3 py-2 text-[10px] text-orange-600 max-w-[120px] truncate">{s.wait_event || '—'}</td>
-                            <td className={`px-3 py-2 font-bold text-xs ${s.seconds_in_wait > 60 ? 'text-red-600' : s.seconds_in_wait > 10 ? 'text-orange-600' : 'text-slate-600'}`}>{s.seconds_in_wait || 0}</td>
-                            <td className="px-3 py-2 font-mono text-[10px] text-slate-400">{s.sql_id || '—'}</td>
-                          </tr>
+                          <React.Fragment key={i}>
+                            <tr onClick={() => setExpandedSess(expandedSess === i ? null : i)}
+                              className={`border-t border-slate-100 hover:bg-red-50/20 cursor-pointer ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${s.blocking_session ? 'bg-red-50/60' : ''}`}>
+                              <td className="px-2 py-2 text-slate-300">{expandedSess === i ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-slate-500">{s.sid}</td>
+                              <td className="px-3 py-2 font-mono text-[10px] text-slate-400">{s.serial_number}</td>
+                              <td className="px-3 py-2 font-semibold text-red-700 text-xs">{s.username || '—'}</td>
+                              <td className="px-3 py-2">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : s.status === 'INACTIVE' ? 'bg-slate-100 text-slate-500' : 'bg-yellow-100 text-yellow-700'}`}>{s.status || '—'}</span>
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.type === 'USER' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{s.type || '—'}</span>
+                              </td>
+                              <td className="px-3 py-2 text-[10px] text-slate-400 max-w-[100px] truncate">{s.machine || '—'}</td>
+                              <td className="px-3 py-2 text-[10px] text-orange-600 max-w-[120px] truncate">{s.wait_event || '—'}</td>
+                              <td className={`px-3 py-2 font-bold text-xs ${s.seconds_in_wait > 60 ? 'text-red-600' : s.seconds_in_wait > 10 ? 'text-orange-600' : 'text-slate-600'}`}>{s.seconds_in_wait || 0}</td>
+                              <td className="px-3 py-2 font-mono text-[10px] text-slate-400">{s.sql_id || '—'}</td>
+                            </tr>
+                            {expandedSess === i && (
+                              <tr className="bg-slate-50 border-t border-red-100">
+                                <td colSpan={10} className="px-5 py-3">
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                                    {[['SID',s.sid],['Serial#',s.serial_number],['Username',s.username],['Status',s.status],['Type',s.type],['Machine',s.machine],['Program',s.program],['Module',s.module],['Wait Event',s.wait_event],['Wait Class',s.wait_class],['Seconds in Wait',s.seconds_in_wait],['SQL ID',s.sql_id],['Blocking SID',s.blocking_session],['Logon Time',s.logon_time]].map(([l,v])=>(
+                                      <div key={l} className="bg-white rounded-lg p-2 border border-slate-200"><p className="text-[9px] text-slate-400 uppercase font-bold">{l}</p><p className="font-bold text-slate-800 text-xs mt-0.5 truncate">{v||'—'}</p></div>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         ))}
                         {sessions.length === 0 && (
                           <tr><td colSpan={10} className="text-center py-10 text-slate-400">No session data</td></tr>
@@ -712,12 +841,12 @@ export default function OracleDashboard() {
                   <MetricKpi title="Max Usage %"        value={`${maxTsPct}%`}   accent={maxTsPct > 85 ? 'red' : maxTsPct > 70 ? 'orange' : 'green'} />
                 </div>
 
-                <Panel title="Tablespace Details">
+                <Panel title="Tablespace Details — click row for breakdown">
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 sticky top-0">
                         <tr>
-                          {['Tablespace','Status','Type','Total (MB)','Used (MB)','Free (MB)','Usage %'].map(h => (
+                          {['','Tablespace','Status','Type','Total (MB)','Used (MB)','Free (MB)','Usage %'].map(h => (
                             <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -726,27 +855,50 @@ export default function OracleDashboard() {
                         {tsList.map((ts, i) => {
                           const pct = Number(ts.used_pct) || 0;
                           return (
-                            <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${pct > 85 ? 'bg-red-50/50' : pct > 70 ? 'bg-orange-50/50' : ''}`}>
-                              <td className="px-4 py-3 font-bold text-red-700">{ts.tablespace_name}</td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${ts.status === 'ONLINE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{ts.status || '—'}</span>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-slate-500">{ts.contents || '—'}</td>
-                              <td className="px-4 py-3 font-mono text-xs">{fmtNum(ts.total_mb)}</td>
-                              <td className="px-4 py-3 font-mono text-xs">{fmtNum(ts.used_mb)}</td>
-                              <td className="px-4 py-3 font-mono text-xs">{fmtNum(ts.free_mb)}</td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-2">
-                                  <span className={`font-black text-sm ${pct > 85 ? 'text-red-600' : pct > 70 ? 'text-orange-600' : 'text-green-600'}`}>{pct}%</span>
-                                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden min-w-[60px]">
-                                    <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct > 85 ? C.red : pct > 70 ? C.orange : C.green }} />
+                            <React.Fragment key={i}>
+                              <tr onClick={() => setExpandedTs(expandedTs === i ? null : i)}
+                                className={`border-t border-slate-100 hover:bg-red-50/20 cursor-pointer ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${pct > 85 ? 'bg-red-50/50' : pct > 70 ? 'bg-orange-50/50' : ''}`}>
+                                <td className="px-3 py-3 text-slate-300">{expandedTs === i ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}</td>
+                                <td className="px-4 py-3 font-bold text-red-700">{ts.tablespace_name}</td>
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${ts.status === 'ONLINE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{ts.status || '—'}</span>
+                                </td>
+                                <td className="px-4 py-3 text-xs text-slate-500">{ts.contents || '—'}</td>
+                                <td className="px-4 py-3 font-mono text-xs">{fmtNum(ts.total_mb)}</td>
+                                <td className="px-4 py-3 font-mono text-xs">{fmtNum(ts.used_mb)}</td>
+                                <td className="px-4 py-3 font-mono text-xs">{fmtNum(ts.free_mb)}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`font-black text-sm ${pct > 85 ? 'text-red-600' : pct > 70 ? 'text-orange-600' : 'text-green-600'}`}>{pct}%</span>
+                                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden min-w-[80px]">
+                                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: pct > 85 ? C.red : pct > 70 ? C.orange : C.green }} />
+                                    </div>
                                   </div>
-                                </div>
-                              </td>
-                            </tr>
+                                </td>
+                              </tr>
+                              {expandedTs === i && (
+                                <tr className="bg-slate-50 border-t border-red-100">
+                                  <td colSpan={8} className="px-6 py-3">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                                      {[['Tablespace',ts.tablespace_name],['Status',ts.status],['Type',ts.contents],['Total (MB)',fmtNum(ts.total_mb)],['Used (MB)',fmtNum(ts.used_mb)],['Free (MB)',fmtNum(ts.free_mb)],['Usage %',`${pct}%`],['Allocation Type',ts.allocation_type||'—']].map(([l,v])=>(
+                                        <div key={l} className="bg-white rounded-lg p-2 border border-slate-200"><p className="text-[9px] text-slate-400 uppercase font-bold">{l}</p><p className="font-bold text-slate-800 text-sm mt-0.5">{v}</p></div>
+                                      ))}
+                                    </div>
+                                    <div className="h-3 bg-slate-200 rounded-full overflow-hidden">
+                                      <div className="h-full rounded-full transition-all" style={{width:`${pct}%`,background:pct>85?C.red:pct>70?C.orange:C.green}}/>
+                                    </div>
+                                    <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                                      <span>Used: {fmtNum(ts.used_mb)} MB</span>
+                                      <span className={`font-black ${pct>85?'text-red-600':pct>70?'text-orange-500':'text-green-600'}`}>{pct}% used</span>
+                                      <span>Total: {fmtNum(ts.total_mb)} MB</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
                           );
                         })}
-                        {tsList.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-slate-400">No tablespace data</td></tr>}
+                        {tsList.length === 0 && <tr><td colSpan={8} className="text-center py-10 text-slate-400">No tablespace data</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -1185,7 +1337,7 @@ export default function OracleDashboard() {
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 sticky top-0">
                         <tr>
-                          {['Username','Status','Created','Profile','Default Tablespace','Last Login'].map(h => (
+                          {['','Username','Status','Created','Profile','Default Tablespace','Last Login'].map(h => (
                             <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -1193,22 +1345,35 @@ export default function OracleDashboard() {
                       <tbody>
                         {filtered.map((u, i) => {
                           const statusColor = u.account_status === 'OPEN' ? 'bg-green-100 text-green-700'
-                            : u.account_status.includes('LOCKED') ? 'bg-red-100 text-red-700'
+                            : (u.account_status||'').includes('LOCKED') ? 'bg-red-100 text-red-700'
                             : 'bg-yellow-100 text-yellow-700';
                           return (
-                            <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/30' : ''}`}>
-                              <td className="px-4 py-3 font-bold text-red-700">{u.username}</td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{u.account_status || '—'}</span>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-slate-400">{u.created || '—'}</td>
-                              <td className="px-4 py-3 text-xs text-slate-500">{u.profile || '—'}</td>
-                              <td className="px-4 py-3 text-xs text-slate-500">{u.default_tablespace || '—'}</td>
-                              <td className="px-4 py-3 text-xs text-slate-400">{u.last_login || '—'}</td>
-                            </tr>
+                            <React.Fragment key={i}>
+                              <tr onClick={() => setExpandedUser(expandedUser === i ? null : i)}
+                                className={`border-t border-slate-100 hover:bg-red-50/20 cursor-pointer ${i % 2 === 1 ? 'bg-slate-50/30' : ''}`}>
+                                <td className="px-3 py-3 text-slate-300">{expandedUser === i ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}</td>
+                                <td className="px-4 py-3 font-bold text-red-700">{u.username}</td>
+                                <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusColor}`}>{u.account_status || '—'}</span></td>
+                                <td className="px-4 py-3 text-xs text-slate-400">{u.created || '—'}</td>
+                                <td className="px-4 py-3 text-xs text-slate-500">{u.profile || '—'}</td>
+                                <td className="px-4 py-3 text-xs text-slate-500">{u.default_tablespace || '—'}</td>
+                                <td className="px-4 py-3 text-xs text-slate-400">{u.last_login || '—'}</td>
+                              </tr>
+                              {expandedUser === i && (
+                                <tr className="bg-slate-50 border-t border-red-100">
+                                  <td colSpan={7} className="px-6 py-3">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                      {[['Username',u.username],['Account Status',u.account_status],['Created',u.created],['Profile',u.profile],['Default Tablespace',u.default_tablespace],['Temp Tablespace',u.temporary_tablespace],['Last Login',u.last_login],['Expiry Date',u.expiry_date],['External Name',u.external_name]].map(([l,v])=>(
+                                        <div key={l} className="bg-white rounded-lg p-2 border border-slate-200"><p className="text-[9px] text-slate-400 uppercase font-bold">{l}</p><p className="font-bold text-slate-800 text-xs mt-0.5">{v||'—'}</p></div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
                           );
                         })}
-                        {filtered.length === 0 && <tr><td colSpan={6} className="text-center py-10 text-slate-400">No users found</td></tr>}
+                        {filtered.length === 0 && <tr><td colSpan={7} className="text-center py-10 text-slate-400">No users found</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -1327,33 +1492,371 @@ export default function OracleDashboard() {
                   </div>
                 )}
 
-                <Panel title={`Top Slow SQL (${queries.length}) — from v$sqlarea, ordered by avg elapsed time`}>
+                <Panel title={`Top Slow SQL (${queries.length}) — click row for full SQL`}>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 sticky top-0">
                         <tr>
-                          {['SQL ID','Schema','Executions','Avg Elapsed (s)','Avg CPU (s)','Avg Disk Reads','Avg Buf Gets','Rows','Last Active','SQL Text'].map(h => (
+                          {['','SQL ID','Schema','Executions','Avg Elapsed (s)','Avg CPU (s)','Avg Disk Reads','Avg Buf Gets','Rows','Last Active'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {queries.map((q, i) => (
-                          <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${q.avg_elapsed_sec > 5 ? 'bg-red-50/40' : q.avg_elapsed_sec > 1 ? 'bg-orange-50/30' : ''}`}>
-                            <td className="px-3 py-2.5 font-mono text-[10px] text-red-700">{q.sql_id}</td>
-                            <td className="px-3 py-2.5 text-[10px] text-slate-500">{q.parsing_schema_name || '—'}</td>
-                            <td className="px-3 py-2.5 font-bold text-slate-800 text-xs">{fmtNum(q.executions)}</td>
-                            <td className={`px-3 py-2.5 font-bold text-xs ${q.avg_elapsed_sec > 5 ? 'text-red-600' : q.avg_elapsed_sec > 1 ? 'text-orange-600' : 'text-green-600'}`}>{q.avg_elapsed_sec}</td>
-                            <td className="px-3 py-2.5 font-mono text-xs">{q.avg_cpu_sec}</td>
-                            <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(q.avg_disk_reads)}</td>
-                            <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(q.avg_buffer_gets)}</td>
-                            <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(q.rows_processed)}</td>
-                            <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">{_shortDate(q.last_active_time)}</td>
-                            <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[220px] truncate">{(q.sql_text || '').slice(0, 80) || '—'}</td>
-                          </tr>
+                          <React.Fragment key={i}>
+                            <tr onClick={() => setExpandedSlow(expandedSlow === i ? null : i)}
+                              className={`border-t border-slate-100 hover:bg-red-50/20 cursor-pointer ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${q.avg_elapsed_sec > 5 ? 'bg-red-50/40' : q.avg_elapsed_sec > 1 ? 'bg-orange-50/30' : ''}`}>
+                              <td className="px-2 py-2.5 text-slate-300">{expandedSlow === i ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}</td>
+                              <td className="px-3 py-2.5 font-mono text-[10px] text-red-700">{q.sql_id}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-500">{q.parsing_schema_name || '—'}</td>
+                              <td className="px-3 py-2.5 font-bold text-slate-800 text-xs">{fmtNum(q.executions)}</td>
+                              <td className={`px-3 py-2.5 font-bold text-xs ${q.avg_elapsed_sec > 5 ? 'text-red-600' : q.avg_elapsed_sec > 1 ? 'text-orange-600' : 'text-green-600'}`}>{q.avg_elapsed_sec}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs">{q.avg_cpu_sec}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(q.avg_disk_reads)}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(q.avg_buffer_gets)}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(q.rows_processed)}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">{_shortDate(q.last_active_time)}</td>
+                            </tr>
+                            {expandedSlow === i && (
+                              <tr className="border-t border-red-100 bg-slate-900">
+                                <td colSpan={10} className="px-4 py-3">
+                                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+                                    {[['SQL ID',q.sql_id],['Schema',q.parsing_schema_name],['Executions',fmtNum(q.executions)],['Avg Elapsed (s)',q.avg_elapsed_sec],['Avg CPU (s)',q.avg_cpu_sec],['Avg Disk Reads',fmtNum(q.avg_disk_reads)],['Avg Buf Gets',fmtNum(q.avg_buffer_gets)],['Rows',fmtNum(q.rows_processed)]].map(([l,v])=>(
+                                      <div key={l} className="bg-slate-800 rounded-lg p-2"><p className="text-[9px] text-slate-400 uppercase font-bold">{l}</p><p className="font-bold text-white text-xs mt-0.5">{v||'—'}</p></div>
+                                    ))}
+                                  </div>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Full SQL</span>
+                                    <button onClick={e=>{e.stopPropagation();navigator.clipboard.writeText(q.sql_fulltext||q.sql_text||'');}}
+                                      className="flex items-center gap-1 h-6 px-2 rounded bg-slate-700 text-[10px] text-slate-300 hover:bg-slate-600"><Copy size={9}/> Copy</button>
+                                  </div>
+                                  <pre className="font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                                    {q.sql_fulltext||q.sql_text||'—'}
+                                  </pre>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         ))}
                         {queries.length === 0 && (
                           <tr><td colSpan={10} className="text-center py-10 text-slate-400">No slow query data</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              </div>
+            );
+          })()
+        )}
+
+        {/* ══ LIVE QUERIES ══════════════════════════════════════════ */}
+        {activeTab === 'liveQueries' && (
+          liveLoading && !liveData ? <TabLoader /> : (() => {
+            const queries = liveData?.queries || [];
+            const activeCount = queries.filter(q => q.status === 'ACTIVE').length;
+            return (
+              <div className="space-y-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+                      </span>
+                      <span className="text-sm font-bold text-red-700">LIVE — auto-refresh 5s</span>
+                    </div>
+                    <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-black">{activeCount} ACTIVE</span>
+                  </div>
+                  {liveLoading && <Loader2 size={14} className="animate-spin text-slate-400" />}
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricKpi title="Total Sessions"  value={queries.length}                                    accent="blue" />
+                  <MetricKpi title="Active"          value={activeCount}                                       accent={activeCount > 0 ? 'red' : 'green'} />
+                  <MetricKpi title="Waiting"         value={queries.filter(q => q.wait_event).length}         accent={queries.filter(q => q.wait_event).length > 5 ? 'orange' : 'slate'} />
+                  <MetricKpi title="Max Wait (s)"    value={Math.max(0, ...queries.map(q => Number(q.seconds_in_wait) || 0))} accent="orange" />
+                </div>
+
+                <Panel title={`Active Sessions with SQL (${queries.length})`}>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          {['','SID','Username','Status','SQL ID','Wait Event','Wait (s)','Machine','SQL Text'].map(h => (
+                            <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {queries.map((q, i) => (
+                          <React.Fragment key={i}>
+                            <tr className={`border-t border-slate-100 hover:bg-red-50/30 cursor-pointer ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${q.status === 'ACTIVE' ? 'border-l-2 border-l-red-400' : ''}`}
+                              onClick={() => setExpandedLive(expandedLive === i ? null : i)}>
+                              <td className="px-2 py-2.5 text-slate-300">
+                                {expandedLive === i ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{q.sid}</td>
+                              <td className="px-3 py-2.5 font-bold text-red-700 text-xs">{q.username || '—'}</td>
+                              <td className="px-3 py-2.5">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${q.status === 'ACTIVE' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{q.status || '—'}</span>
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-[10px] text-red-600">{q.sql_id || '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-orange-600 max-w-[120px] truncate">{q.wait_event || '—'}</td>
+                              <td className={`px-3 py-2.5 font-bold text-xs ${Number(q.seconds_in_wait) > 60 ? 'text-red-600' : Number(q.seconds_in_wait) > 10 ? 'text-orange-600' : 'text-slate-600'}`}>{q.seconds_in_wait || 0}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{q.machine || '—'}</td>
+                              <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[200px] truncate">{(q.sql_text || '').slice(0, 80) || '—'}</td>
+                            </tr>
+                            {expandedLive === i && (
+                              <tr className="border-t border-red-100 bg-slate-900">
+                                <td colSpan={9} className="px-4 py-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Full SQL — SID {q.sid} · {q.username}</span>
+                                    <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(q.sql_fulltext || q.sql_text || ''); }}
+                                      className="flex items-center gap-1 h-6 px-2 rounded bg-slate-700 text-[10px] text-slate-300 hover:bg-slate-600">
+                                      <Copy size={9} /> Copy
+                                    </button>
+                                  </div>
+                                  <pre className="font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                                    {q.sql_fulltext || q.sql_text || '—'}
+                                  </pre>
+                                  <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-slate-400">
+                                    {q.serial_number && <span>Serial# {q.serial_number}</span>}
+                                    {q.program && <span>Program: {q.program}</span>}
+                                    {q.module && <span>Module: {q.module}</span>}
+                                    {q.logon_time && <span>Logon: {q.logon_time}</span>}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                        {queries.length === 0 && (
+                          <tr><td colSpan={9} className="text-center py-12 text-slate-400">No active sessions with SQL</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              </div>
+            );
+          })()
+        )}
+
+        {/* ══ LOCKS ═════════════════════════════════════════════════ */}
+        {activeTab === 'locks' && (
+          lockLoading && !lockData ? <TabLoader /> : (() => {
+            const lockWaits  = lockData?.lock_waits  || [];
+            const enqStats   = lockData?.enqueue_stats || [];
+            const hasBlocking = lockWaits.some(l => l.blocking_sid);
+            return (
+              <div className="space-y-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricKpi title="Lock Waits"     value={lockWaits.length}              accent={lockWaits.length > 0 ? 'red' : 'green'} />
+                  <MetricKpi title="Blocking"        value={lockWaits.filter(l => l.blocking_sid).length} accent={hasBlocking ? 'red' : 'green'} />
+                  <MetricKpi title="Enqueue Types"   value={enqStats.length}              accent="blue" />
+                  <MetricKpi title="Max Wait (s)"    value={Math.max(0, ...lockWaits.map(l => Number(l.seconds_in_wait) || 0))} accent="orange" />
+                </div>
+
+                {hasBlocking && (
+                  <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
+                    <AlertTriangle className="text-red-500 flex-shrink-0 mt-0.5" size={18} />
+                    <div>
+                      <p className="font-bold text-red-700 text-sm">Blocking Locks Detected</p>
+                      <p className="text-xs text-red-600 mt-1">{lockWaits.filter(l => l.blocking_sid).length} session(s) are being blocked. Investigate and consider killing the blocking session if needed.</p>
+                    </div>
+                  </div>
+                )}
+
+                <Panel title={`Lock Waits (${lockWaits.length})`}>
+                  {lockWaits.length === 0 ? (
+                    <div className="py-12 text-center text-slate-400">
+                      <CheckCircle2 size={36} className="mx-auto mb-3 text-green-300" />
+                      <p className="font-semibold">No lock waits detected</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 sticky top-0">
+                          <tr>
+                            {['SID','Username','Status','Wait Event','Wait (s)','Blocking SID','Lock Type','Mode Held','Mode Req','Object'].map(h => (
+                              <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {lockWaits.map((l, i) => (
+                            <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${l.blocking_sid ? 'bg-red-50/50 border-l-2 border-l-red-400' : ''}`}>
+                              <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{l.sid}</td>
+                              <td className="px-3 py-2.5 font-bold text-red-700 text-xs">{l.username || '—'}</td>
+                              <td className="px-3 py-2.5">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${l.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{l.status || '—'}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-[10px] text-orange-600 max-w-[120px] truncate">{l.wait_event || '—'}</td>
+                              <td className={`px-3 py-2.5 font-black text-xs ${Number(l.seconds_in_wait) > 60 ? 'text-red-600' : Number(l.seconds_in_wait) > 10 ? 'text-orange-600' : 'text-slate-600'}`}>{l.seconds_in_wait || 0}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-red-600 font-bold">{l.blocking_sid || '—'}</td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{l.lock_type || '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-500">{l.mode_held || '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-500">{l.mode_requested || '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-600 max-w-[120px] truncate">{l.object_name || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Panel>
+
+                {enqStats.length > 0 && (
+                  <Panel title={`Enqueue Statistics (${enqStats.length})`}>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            {['Enqueue Type','Total Requests','Successful Gets','Failed Gets','Waits','Wait Time (s)'].map(h => (
+                              <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {enqStats.filter(e => (e.total_waits || 0) > 0 || (e.failed_gets || 0) > 0).slice(0, 30).map((e, i) => (
+                            <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${(e.failed_gets || 0) > 0 ? 'bg-orange-50/40' : ''}`}>
+                              <td className="px-4 py-2.5 font-bold text-red-700 text-xs">{e.event || e.eq_type || '—'}</td>
+                              <td className="px-4 py-2.5 font-mono text-xs">{fmtNum(e.total_requests)}</td>
+                              <td className="px-4 py-2.5 font-mono text-xs text-green-600">{fmtNum(e.succ_gets)}</td>
+                              <td className={`px-4 py-2.5 font-mono text-xs ${(e.failed_gets || 0) > 0 ? 'text-red-600 font-bold' : 'text-slate-400'}`}>{fmtNum(e.failed_gets)}</td>
+                              <td className={`px-4 py-2.5 font-mono text-xs ${(e.total_waits || 0) > 0 ? 'text-orange-600 font-bold' : 'text-slate-400'}`}>{fmtNum(e.total_waits)}</td>
+                              <td className="px-4 py-2.5 font-mono text-xs">{fmtNum(e.wait_time_s)}</td>
+                            </tr>
+                          ))}
+                          {enqStats.every(e => !e.total_waits && !e.failed_gets) && (
+                            <tr><td colSpan={6} className="text-center py-8 text-slate-400 text-xs">No enqueue waits or failures</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Panel>
+                )}
+
+                {lockData?.error && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 flex items-center gap-2">
+                    <AlertTriangle size={16} /> {lockData.error}
+                  </div>
+                )}
+              </div>
+            );
+          })()
+        )}
+
+        {/* ══ PARAMETERS ════════════════════════════════════════════ */}
+        {activeTab === 'parameters' && (
+          paramLoading && !paramData ? <TabLoader /> : (() => {
+            const keyParams = paramData?.key_params || {};
+            const allParams = paramData?.all_params || [];
+            const filteredParams = allParams.filter(p =>
+              !paramSearch ||
+              (p.name || '').toLowerCase().includes(paramSearch.toLowerCase()) ||
+              (p.value || '').toLowerCase().includes(paramSearch.toLowerCase()) ||
+              (p.description || '').toLowerCase().includes(paramSearch.toLowerCase())
+            );
+            const KEY_GROUPS = [
+              {
+                title: 'Memory',
+                params: [
+                  ['SGA Target',        keyParams['sga_target']],
+                  ['PGA Target',        keyParams['pga_aggregate_target']],
+                  ['Shared Pool Size',  keyParams['shared_pool_size']],
+                  ['DB Cache Size',     keyParams['db_cache_size']],
+                  ['Java Pool Size',    keyParams['java_pool_size']],
+                ],
+              },
+              {
+                title: 'Connections',
+                params: [
+                  ['Max Sessions',      keyParams['sessions']],
+                  ['Max Processes',     keyParams['processes']],
+                  ['Open Cursors',      keyParams['open_cursors']],
+                  ['Cursor Sharing',    keyParams['cursor_sharing']],
+                ],
+              },
+              {
+                title: 'I/O & Logging',
+                params: [
+                  ['DB Block Size',     keyParams['db_block_size']],
+                  ['DB Files',          keyParams['db_files']],
+                  ['Log Buffer',        keyParams['log_buffer']],
+                  ['Undo Tablespace',   keyParams['undo_tablespace']],
+                  ['Undo Retention',    keyParams['undo_retention']],
+                ],
+              },
+              {
+                title: 'Optimiser',
+                params: [
+                  ['Optimiser Mode',    keyParams['optimizer_mode']],
+                  ['Parallel Max Srv',  keyParams['parallel_max_servers']],
+                  ['Parallel Min Srv',  keyParams['parallel_min_servers']],
+                  ['Sort Area Size',    keyParams['sort_area_size']],
+                ],
+              },
+            ];
+            return (
+              <div className="space-y-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <MetricKpi title="Total Params"    value={allParams.length}                                       accent="blue" />
+                  <MetricKpi title="Modified"        value={allParams.filter(p => p.isdefault === 'FALSE').length}  accent="orange" />
+                  <MetricKpi title="Session Mod"     value={allParams.filter(p => p.issys_modifiable === 'IMMEDIATE').length} accent="teal" />
+                  <MetricKpi title="SGA Target"      value={keyParams['sga_target'] || '—'}                        accent="purple" />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                  {KEY_GROUPS.map(group => (
+                    <div key={group.title} className="bg-white rounded-2xl border border-slate-200 p-4">
+                      <h4 className="text-xs font-black text-red-700 uppercase tracking-wider mb-3">{group.title}</h4>
+                      <div className="space-y-2">
+                        {group.params.map(([label, val]) => (
+                          <div key={label} className="flex items-center justify-between text-xs py-1 border-b border-slate-100 last:border-0">
+                            <span className="text-slate-500 truncate mr-2">{label}</span>
+                            <span className="font-mono font-bold text-slate-800 text-right flex-shrink-0">{val || '—'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <Panel title={`All Parameters (${allParams.length})`}>
+                  <div className="mb-3 relative">
+                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input value={paramSearch} onChange={e => setParamSearch(e.target.value)}
+                      placeholder="Search parameter name, value, or description…"
+                      className="h-9 w-full pl-8 pr-3 rounded-xl border border-slate-200 text-xs outline-none focus:border-red-400 bg-white" />
+                  </div>
+                  <div className="overflow-x-auto max-h-[520px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          {['Parameter','Value','Default?','Session Modifiable','Description'].map(h => (
+                            <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredParams.slice(0, 300).map((p, i) => (
+                          <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${p.isdefault === 'FALSE' ? 'bg-amber-50/30' : ''}`}>
+                            <td className="px-4 py-2.5 font-mono text-xs text-red-700 font-semibold">{p.name}</td>
+                            <td className="px-4 py-2.5 font-mono font-bold text-xs text-slate-800">{p.value || '—'}</td>
+                            <td className="px-4 py-2.5">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${p.isdefault === 'TRUE' ? 'bg-slate-100 text-slate-500' : 'bg-amber-100 text-amber-700'}`}>
+                                {p.isdefault === 'TRUE' ? 'YES' : 'MODIFIED'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-[10px] text-slate-500">{p.issys_modifiable || '—'}</td>
+                            <td className="px-4 py-2.5 text-[10px] text-slate-400 max-w-[280px] truncate">{p.description || '—'}</td>
+                          </tr>
+                        ))}
+                        {filteredParams.length === 0 && (
+                          <tr><td colSpan={5} className="text-center py-10 text-slate-400">No parameters found</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -1404,56 +1907,105 @@ function _shortDate(val) {
 
 /* ─── components ─── */
 function HealthBadge({ score }) {
-  const color = score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-yellow-400' : 'bg-red-500';
+  const bg = score >= 80 ? 'bg-emerald-500' : score >= 60 ? 'bg-yellow-400 text-slate-900' : 'bg-red-500';
+  const label = score >= 80 ? 'Healthy' : score >= 60 ? 'Warning' : 'Critical';
   return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl ${color} text-white text-xs font-black shadow`}>
+    <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black shadow ${bg} text-white`}>
       <Heart size={12} className="animate-pulse" />
-      Health {score}
+      {label} {score}
     </div>
   );
 }
 
-function KpiCard({ icon: Icon, title, value, accent }) {
-  const acc = {
-    red:    'border-l-red-500',    orange: 'border-l-orange-500', amber:  'border-l-amber-500',
-    green:  'border-l-green-500',  blue:   'border-l-blue-500',   purple: 'border-l-purple-500',
-    teal:   'border-l-teal-500',   slate:  'border-l-slate-400',  cyan:   'border-l-cyan-500',
+function KpiCard({ icon: Icon, title, value, accent, onClick, hint }) {
+  const colorMap = {
+    red:    '#C74634',
+    orange: '#F97316',
+    amber:  '#F59E0B',
+    green:  '#22C55E',
+    blue:   '#3B82F6',
+    purple: '#8B5CF6',
+    teal:   '#14B8A6',
+    slate:  '#64748B',
+    cyan:   '#06B6D4',
+    indigo: '#6366F1',
   };
+  const color = colorMap[accent] || colorMap.slate;
   return (
-    <div className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent] || acc.slate} p-4 hover:shadow-md transition-all`}>
-      <div className="flex justify-between items-start">
-        <div>
+    <div onClick={onClick}
+      className={`bg-white rounded-xl border border-slate-200 p-4 transition-all ${onClick ? 'cursor-pointer hover:shadow-md hover:scale-[1.02] active:scale-[0.99]' : 'hover:shadow-sm'}`}
+      style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="flex justify-between items-start gap-2">
+        <div className="min-w-0 flex-1">
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
-          <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
+          <p className="text-[15px] font-black mt-1 truncate" style={{ color }}>{value ?? '—'}</p>
+          {hint && <p className="text-[9px] text-slate-300 mt-1 truncate">{hint}</p>}
         </div>
-        <Icon size={20} className="text-slate-300 mt-0.5" />
+        <Icon size={17} style={{ color, opacity: 0.35 }} className="mt-0.5 flex-shrink-0" />
       </div>
     </div>
   );
 }
 
-function MetricKpi({ title, value, accent }) {
-  const acc = {
-    green:  'bg-green-50 border-green-200 text-green-700',
-    red:    'bg-red-50 border-red-200 text-red-700',
-    orange: 'bg-orange-50 border-orange-200 text-orange-700',
-    amber:  'bg-amber-50 border-amber-200 text-amber-700',
-    blue:   'bg-blue-50 border-blue-200 text-blue-700',
-    purple: 'bg-purple-50 border-purple-200 text-purple-700',
-    teal:   'bg-teal-50 border-teal-200 text-teal-700',
-    slate:  'bg-slate-50 border-slate-200 text-slate-700',
+function MetricKpi({ title, value, accent, onClick }) {
+  const colorMap = {
+    green:  '#22C55E',
+    red:    '#C74634',
+    orange: '#F97316',
+    amber:  '#F59E0B',
+    blue:   '#3B82F6',
+    purple: '#8B5CF6',
+    teal:   '#14B8A6',
+    slate:  '#64748B',
   };
+  const color = colorMap[accent] || colorMap.slate;
   return (
-    <div className={`rounded-xl border p-4 ${acc[accent] || acc.slate}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
-      <p className="text-2xl font-black mt-1">{value ?? '—'}</p>
+    <div onClick={onClick}
+      className={`bg-white rounded-xl border border-slate-200 p-4 transition-all ${onClick ? 'cursor-pointer hover:shadow-md hover:scale-[1.02]' : ''}`}
+      style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
+          <p className="text-[22px] font-black mt-1" style={{ color }}>{value ?? '—'}</p>
+        </div>
+        {onClick && <ChevronRight size={14} className="text-slate-300 flex-shrink-0 mt-1" />}
+      </div>
+    </div>
+  );
+}
+
+function SessionDetailTable({ sessions = [] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead className="bg-slate-50 sticky top-0">
+          <tr>{['SID','Username','Status','Machine','Wait Event','Sec Wait','SQL ID'].map(h=>(
+            <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+          ))}</tr>
+        </thead>
+        <tbody>
+          {sessions.map((s,i)=>(
+            <tr key={i} className={`border-t border-slate-100 ${i%2===1?'bg-slate-50/30':''} ${s.blocking_session?'bg-red-50/50':''}`}>
+              <td className="px-3 py-2 font-mono text-slate-500">{s.sid}</td>
+              <td className="px-3 py-2 font-bold text-red-700">{s.username||'—'}</td>
+              <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${s.status==='ACTIVE'?'bg-green-100 text-green-700':'bg-slate-100 text-slate-500'}`}>{s.status||'—'}</span></td>
+              <td className="px-3 py-2 text-slate-400 max-w-[100px] truncate">{s.machine||'—'}</td>
+              <td className="px-3 py-2 text-orange-600 max-w-[120px] truncate">{s.wait_event||'—'}</td>
+              <td className={`px-3 py-2 font-bold ${Number(s.seconds_in_wait)>60?'text-red-600':Number(s.seconds_in_wait)>10?'text-orange-600':'text-slate-600'}`}>{s.seconds_in_wait||0}</td>
+              <td className="px-3 py-2 font-mono text-slate-400">{s.sql_id||'—'}</td>
+            </tr>
+          ))}
+          {sessions.length===0 && <tr><td colSpan={7} className="text-center py-8 text-slate-400">No sessions</td></tr>}
+        </tbody>
+      </table>
     </div>
   );
 }
 
 function StatusBadge({ ok, label }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+      ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
       {ok ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
       {label}
     </span>
@@ -1462,9 +2014,13 @@ function StatusBadge({ ok, label }) {
 
 function Panel({ title, children }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5">
-      {title && <h3 className="font-bold text-slate-800 text-sm mb-4">{title}</h3>}
-      {children}
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      {title && (
+        <div className="px-5 py-4 border-b border-slate-100">
+          <h3 className="font-bold text-slate-800 text-sm">{title}</h3>
+        </div>
+      )}
+      <div className="p-5">{children}</div>
     </div>
   );
 }
@@ -1472,43 +2028,43 @@ function Panel({ title, children }) {
 function Row({ label, value, mono }) {
   return (
     <div className="flex items-start justify-between gap-4 py-1.5 border-b border-slate-100 last:border-0">
-      <span className="text-slate-500 text-xs flex-shrink-0">{label}</span>
-      <span className={`text-right font-semibold text-slate-800 text-xs ${mono ? 'font-mono' : ''} break-all`}>{value}</span>
+      <span className="text-slate-400 text-xs flex-shrink-0">{label}</span>
+      <span className={`text-right font-semibold text-slate-800 text-xs ${mono ? 'font-mono' : ''} break-all`}>{value ?? '—'}</span>
     </div>
   );
 }
 
 function TabLoader() {
   return (
-    <div className="flex items-center justify-center py-20">
-      <div className="w-8 h-8 border-4 border-red-200 border-t-red-600 rounded-full animate-spin" />
+    <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <div className="w-10 h-10 border-4 border-red-100 border-t-red-500 rounded-full animate-spin" />
+      <p className="text-xs text-slate-400 font-semibold">Loading data…</p>
     </div>
   );
 }
 
 function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn }) {
-  const safePct       = Math.max(0, Math.min(100, pct || 0));
-  const fill          = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.green);
-  const displayCenter = centerLabel !== undefined ? centerLabel : safePct;
-  const displayUnit   = centerLabel !== undefined ? centerUnit : '%';
+  const safePct = Math.max(0, Math.min(100, pct || 0));
+  const fill    = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.green);
+  const display = centerLabel !== undefined ? centerLabel : safePct;
+  const unit    = centerLabel !== undefined ? centerUnit : '%';
+  const R = 52, cx = 75, cy = 80;
+  const angle  = (safePct / 100) * Math.PI;
+  const ex     = cx - R * Math.cos(angle);
+  const ey     = cy - R * Math.sin(angle);
+  const large  = safePct > 50 ? 1 : 0;
+  const trackD = `M ${cx - R} ${cy} A ${R} ${R} 0 0 1 ${cx + R} ${cy}`;
+  const fillD  = safePct < 1 ? '' : `M ${cx - R} ${cy} A ${R} ${R} 0 ${large} 1 ${ex} ${ey}`;
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <div className="relative flex flex-col items-center">
-        <PieChart width={150} height={90}>
-          <Pie data={[{ v: safePct }, { v: 100 - safePct }]}
-            cx={75} cy={86} startAngle={180} endAngle={0}
-            innerRadius={50} outerRadius={68} dataKey="v" stroke="none">
-            <Cell fill={fill} />
-            <Cell fill="#e2e8f0" />
-          </Pie>
-        </PieChart>
-        <div style={{ marginTop: '-38px' }} className="text-center pointer-events-none">
-          <p className="text-xl font-black text-slate-900 leading-none">{displayCenter}</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">{displayUnit}</p>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-400 mt-2 text-center leading-tight">{sub}</p>
+      <svg width="150" height="88" viewBox="0 0 150 88">
+        <path d={trackD} fill="none" stroke="#e2e8f0" strokeWidth="13" strokeLinecap="round" />
+        {fillD && <path d={fillD} fill="none" stroke={fill} strokeWidth="13" strokeLinecap="round" />}
+        <text x="75" y="74" textAnchor="middle" style={{ fontWeight: 900, fontSize: 20, fill: '#1e293b' }}>{display}</text>
+        <text x="75" y="85" textAnchor="middle" style={{ fontSize: 10, fill: '#94a3b8' }}>{unit}</text>
+      </svg>
+      <p className="text-[10px] text-slate-400 mt-1 text-center leading-tight">{sub}</p>
     </div>
   );
 }
@@ -1519,7 +2075,7 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
   const gradId = `tg-oracle-${title.replace(/\s+/g, '')}`;
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
-      <div className="flex justify-between items-center mb-2">
+      <div className="flex justify-between items-center mb-3">
         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{title}</p>
         <span className="text-base font-black" style={{ color }}>{fmt(latest)}</span>
       </div>
@@ -1527,19 +2083,19 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
         <AreaChart data={data}>
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor={color} stopOpacity={0.25} />
+              <stop offset="5%"  stopColor={color} stopOpacity={0.2} />
               <stop offset="95%" stopColor={color} stopOpacity={0} />
             </linearGradient>
           </defs>
           <XAxis dataKey="t" hide />
           <YAxis hide domain={['auto', 'auto']} />
-          <Tooltip contentStyle={{ fontSize: 9, padding: '2px 8px' }} formatter={v => fmt(v)} labelFormatter={() => ''} />
+          <Tooltip contentStyle={{ fontSize: 9, padding: '2px 8px', borderRadius: 8 }} formatter={v => fmt(v)} labelFormatter={() => ''} />
           <Area type="monotone" dataKey="v" stroke={color} fill={`url(#${gradId})`} strokeWidth={2} dot={false} />
         </AreaChart>
       </ResponsiveContainer>
       <div className="flex justify-between text-[9px] text-slate-300 mt-1">
         <span>{fmt(data[0]?.v)}</span>
-        <span className="text-slate-400">{data.length} samples · {REFRESH_INTERVAL}s interval</span>
+        <span className="text-slate-400">{data.length} samples · {REFRESH_INTERVAL}s</span>
       </div>
     </div>
   );

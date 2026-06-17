@@ -17,6 +17,7 @@ GET /{id}/replication/variables   — all replication-related system variables
 from urllib.parse import quote_plus
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -46,7 +47,7 @@ def _engine(conn: ConnectionMaster):
     return create_engine(
         url,
         connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30},
-        pool_pre_ping=True,
+        poolclass=NullPool,
     )
 
 
@@ -94,6 +95,10 @@ def _get_conn(conn_id: int, db: Session) -> ConnectionMaster:
 
 @router.get("/{conn_id}/replication/status")
 def replication_status(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_replication_status", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn(conn_id, db)
     result = {
         "status":              "success",
@@ -264,6 +269,10 @@ def replication_status(conn_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{conn_id}/replication/variables")
 def replication_variables(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_replication_variables", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn(conn_id, db)
     try:
         engine = _engine(conn)

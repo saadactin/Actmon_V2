@@ -90,3 +90,8 @@ export const registerAgent = async (payload) => {
   const response = await client.post('/agents/register', payload);
   return response.data;
 };
+
+export const syncConnections = async () => {
+  const response = await client.post('/agents/sync-connections');
+  return response.data;
+};

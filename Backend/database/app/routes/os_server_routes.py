@@ -450,10 +450,36 @@ def delete_os_server(server_id: int, db: Session = Depends(get_db)):
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
+    # Collect connection IDs to delete:
+    # 1. Explicitly linked via DatabaseInstance.connection_id
+    linked_ids = set()
+    for inst in server.db_instances:
+        if inst.connection_id:
+            linked_ids.add(inst.connection_id)
+
+    # 2. Named by convention: "{server_name}-{db_type_lower}"
+    #    (covers connections added before the link endpoint was used)
+    name_prefix = f"{server.server_name}-"
+    named_conns = db.query(ConnectionMaster).filter(
+        ConnectionMaster.connection_name.like(f"{name_prefix}%")
+    ).all()
+    for c in named_conns:
+        linked_ids.add(c.id)
+
+    # Delete all related ConnectionMaster records
+    if linked_ids:
+        db.query(ConnectionMaster).filter(
+            ConnectionMaster.id.in_(linked_ids)
+        ).delete(synchronize_session=False)
+
     db.delete(server)
     db.commit()
 
-    return {"status": "success", "message": "Server deleted"}
+    deleted_count = len(linked_ids)
+    return {
+        "status": "success",
+        "message": f"Server deleted along with {deleted_count} associated DB connection(s)",
+    }
 
 
 # ==========================================

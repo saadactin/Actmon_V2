@@ -40,6 +40,17 @@ import os
 import json
 import re
 import socket
+import asyncio
+import time
+import threading
+import paramiko
+from fastapi.responses import StreamingResponse
+from typing import List, Optional
+from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv()
+_groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 
 router = APIRouter(
@@ -92,6 +103,20 @@ class SelfHealPayload(BaseModel):
     target_variable: str = ""
 
     target_value: str = ""
+
+
+class AnalyzeGroqPayload(BaseModel):
+
+    logs: List[dict] = []
+    log_path: str = ""
+    source: str = ""
+    host: str = ""
+    database: str = ""
+
+
+class SelfHealStreamPayload(BaseModel):
+
+    commands: List[str] = []
 
 
 # =====================================================
@@ -188,6 +213,122 @@ INFO_HINTS = [
     r"\bcompleted\b",
     r"\bplugin\b",
 ]
+
+
+_SSH_CONNECT_TIMEOUT = 3  # fast fail when host is unreachable
+
+
+def _read_file_via_ssh(host: str, port: int, username: str, password: str, filepath: str):
+    """Read a remote file via SSH cat. Returns (content_str, error_str)."""
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(hostname=host, port=int(port or 22), username=username,
+                    password=password, timeout=_SSH_CONNECT_TIMEOUT,
+                    look_for_keys=False, allow_agent=False)
+        _, stdout, stderr = ssh.exec_command(f"cat '{filepath}'", timeout=20)
+        content = stdout.read().decode("utf-8", errors="ignore")
+        err = stderr.read().decode("utf-8", errors="ignore").strip()
+        if not content and err:
+            return None, err
+        return content, None
+    except Exception as e:
+        return None, str(e)
+    finally:
+        try: ssh.close()
+        except: pass
+
+
+def _ssh_read_errorlog(host: str, port: int, username: str, password: str,
+                       extra_paths: list = None):
+    """
+    Connect once via SSH, then try multiple file paths and commands.
+    Returns (content_str, source_label, path_used) or (None, None, None).
+    """
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        ssh.connect(hostname=host, port=int(port or 22), username=username,
+                    password=password, timeout=_SSH_CONNECT_TIMEOUT,
+                    look_for_keys=False, allow_agent=False)
+    except Exception:
+        return None, None, None
+
+    def run(cmd):
+        try:
+            _, out, err = ssh.exec_command(cmd, timeout=20)
+            return out.read().decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    try:
+        # Discover .err files dynamically
+        discovered = run(
+            "find /var/lib/mysql /var/log/mysql /var/log/mariadb "
+            "-maxdepth 2 \\( -name '*.err' -o -name 'error.log' \\) "
+            "2>/dev/null | head -5"
+        ).splitlines()
+
+        file_paths = [p.strip() for p in discovered if p.strip()]
+        if extra_paths:
+            file_paths += [p for p in extra_paths if p]
+        file_paths += [
+            "/var/log/mysql/error.log",
+            "/var/log/mariadb/mariadb.log",
+            "/var/lib/mysql/mysql.err",
+        ]
+        file_paths = list(dict.fromkeys(file_paths))  # deduplicate
+
+        for fp in file_paths:
+            content = run(f"cat '{fp}' 2>/dev/null")
+            if content and len(content.strip()) > 10:
+                return content, "ssh_file", fp
+
+        # No file found — try journalctl / syslog
+        for label, cmd in [
+            ("ssh_journald",
+             "journalctl -u mariadb --no-pager -n 500 --output=short-iso 2>/dev/null "
+             "|| journalctl -u mariadb.service --no-pager -n 500 --output=short-iso 2>/dev/null "
+             "|| journalctl -u mysql --no-pager -n 500 --output=short-iso 2>/dev/null"),
+            ("ssh_syslog",
+             "grep -iE 'mariadb|mysqld|InnoDB' /var/log/syslog 2>/dev/null | tail -300 "
+             "|| grep -iE 'mariadb|mysqld' /var/log/daemon.log 2>/dev/null | tail -300"),
+        ]:
+            content = run(cmd)
+            # Filter out journalctl header hints
+            lines = [l for l in content.splitlines()
+                     if l.strip() and not l.startswith("Hint:") and not l.startswith("--")]
+            if len(lines) > 2:
+                return "\n".join(lines), label, label
+
+        return None, None, None
+    finally:
+        try: ssh.close()
+        except: pass
+
+
+def _parse_ssh_log_lines(lines: list, mysql_is_down: bool) -> list:
+    """Convert raw log lines (file or journalctl format) to log dicts."""
+    logs = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        cls = classify_mysql_log_line(line)
+        # Try ISO timestamp first (journalctl --output=short-iso)
+        ts = re.search(r'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}', line)
+        logs.append({
+            "logged":      ts.group(0).replace("T", " ")[:19] if ts else None,
+            "severity":    cls["severity"],
+            "status":      cls["status"],
+            "category":    cls["category"],
+            "mysql_level": cls["mysql_level"],
+            "message":     line,
+            "subsystem":   "MySQL",
+        })
+    logs = resolve_mysql_log_timeline(logs, mysql_is_down)
+    logs.reverse()
+    return logs
 
 
 def tail_file(filepath, n=300):
@@ -554,11 +695,11 @@ def collect_mysql_diagnostic_context(connection):
 
             connect_args={
 
-                "connect_timeout": 3,
+                "connect_timeout": 2,
 
-                "read_timeout": 3,
+                "read_timeout": 2,
 
-                "write_timeout": 3
+                "write_timeout": 2
 
             }
 
@@ -696,6 +837,8 @@ def get_error_logs(
 
     mysql_is_down = False
 
+    _is_local_host = connection.host in ("localhost", "127.0.0.1", "::1", socket.gethostname())
+
     # =================================================
     # TRY PERFORMANCE SCHEMA ERROR LOG FIRST
     # Works for remote MySQL (8.0.22+) without file access
@@ -708,9 +851,9 @@ def get_error_logs(
             mysql_url,
 
             connect_args={
-                "connect_timeout": 4,
-                "read_timeout":    8,
-                "write_timeout":   8,
+                "connect_timeout": 2,
+                "read_timeout":    5,
+                "write_timeout":   5,
             }
 
         )
@@ -788,11 +931,11 @@ def get_error_logs(
 
             connect_args={
 
-                "connect_timeout": 3,
+                "connect_timeout": 2,
 
-                "read_timeout": 3,
+                "read_timeout": 2,
 
-                "write_timeout": 3
+                "write_timeout": 2
 
             }
 
@@ -848,75 +991,36 @@ def get_error_logs(
 
         mysql_is_down = True
 
-        # =============================================
-        # FALLBACK PATHS
-        # =============================================
+        # Only use local Windows fallback paths when the connection host is localhost
+        _is_local_host = connection.host in ("localhost", "127.0.0.1", "::1", socket.gethostname())
 
-        fallback_paths = [
+        if _is_local_host:
+            # =============================================
+            # FALLBACK PATHS (local Windows MySQL only)
+            # =============================================
 
-            r"C:\ProgramData\MySQL\MySQL Server 8.0\Data\mysql_error.log",
+            fallback_paths = [
+                r"C:\ProgramData\MySQL\MySQL Server 8.0\Data\mysql_error.log",
+                r"C:\ProgramData\MySQL\MySQL Server 8.0\Data\error.log",
+            ]
 
-            r"C:\ProgramData\MySQL\MySQL Server 8.0\Data\error.log",
+            hostname = socket.gethostname()
+            fallback_paths.insert(0, rf"C:\ProgramData\MySQL\MySQL Server 8.0\Data\{hostname}.err")
 
-        ]
+            for path in fallback_paths:
+                if os.path.exists(path):
+                    mysql_error_path = path
+                    print(f"FALLBACK PATH FOUND = {mysql_error_path}")
+                    break
 
-        hostname = socket.gethostname()
-
-        fallback_paths.insert(
-
-            0,
-
-            rf"C:\ProgramData\MySQL\MySQL Server 8.0\Data\{hostname}.err"
-
-        )
-
-        for path in fallback_paths:
-
-            if os.path.exists(path):
-
-                mysql_error_path = path
-
-                print(
-                    f"FALLBACK PATH FOUND = {mysql_error_path}"
-                )
-
-                break
-
-        # =============================================
-        # AUTO DISCOVER LOG FILE
-        # =============================================
-
-        if not mysql_error_path:
-
-            data_dir = (
-
-                r"C:\ProgramData\MySQL\MySQL Server 8.0\Data"
-
-            )
-
-            if os.path.exists(data_dir):
-
-                for f in os.listdir(data_dir):
-
-                    if (
-
-                        f.endswith(".err")
-
-                        or
-
-                        f.endswith(".log")
-
-                    ):
-
-                        mysql_error_path = os.path.join(
-
-                            data_dir,
-
-                            f
-
-                        )
-
-                        break
+            # Auto-discover .err files in local MySQL data dir
+            if not mysql_error_path:
+                data_dir = r"C:\ProgramData\MySQL\MySQL Server 8.0\Data"
+                if os.path.exists(data_dir):
+                    for f in os.listdir(data_dir):
+                        if f.endswith(".err") or f.endswith(".log"):
+                            mysql_error_path = os.path.join(data_dir, f)
+                            break
 
 
     # =================================================
@@ -933,58 +1037,105 @@ def get_error_logs(
 
     ):
 
+        # ─── SSH Fallback (single connection for all attempts) ────────────────
+        _ssh_logs = None
+        _ssh_source_label = "ssh_file"
+        _ssh_path_used = None
+
+        if connection.ssh_user and connection.ssh_password:
+            _ssh_host = connection.ssh_host or connection.host
+            _ssh_port = connection.ssh_port or 22
+            # Extra paths from what MySQL reported (before it went down)
+            _extra = []
+            if mysql_error_path:
+                _extra.append(mysql_error_path)
+                if not mysql_error_path.startswith('/'):
+                    _extra.append('/var/lib/mysql/' + mysql_error_path.lstrip('./\\'))
+
+            _content, _ssh_source_label, _ssh_path_used = _ssh_read_errorlog(
+                _ssh_host, _ssh_port,
+                connection.ssh_user, connection.ssh_password,
+                extra_paths=_extra
+            )
+            if _content:
+                _raw_lines = [l for l in _content.splitlines()[-500:] if l.strip()]
+                _ssh_logs = _parse_ssh_log_lines(_raw_lines, mysql_is_down)
+
+        if _ssh_logs is not None:
+            _note = None
+            if not _ssh_logs:
+                _note = "SSH log retrieved but contained no parseable entries."
+            return {
+                "status":     "success",
+                "source":     _ssh_source_label,
+                "log_path":   _ssh_path_used,
+                "mysql_down": mysql_is_down,
+                "total":      len(_ssh_logs),
+                "summary":    build_mysql_log_summary(_ssh_logs),
+                "logs":       _ssh_logs,
+                "note":       _note,
+                "ssh_host":   connection.ssh_host or connection.host,
+            }
+        elif connection.ssh_user and connection.ssh_password:
+            _note_extra = (
+                " SSH connected but no error log found — "
+                "MariaDB error logging is disabled on this server (skip_log_error is set). "
+                "Run fix_mariadb_errorlog.py or use the Self-Heal terminal to enable it."
+            )
+        else:
+            _note_extra = " Configure SSH credentials (SSH Config button) to enable remote log reading."
+        # ─────────────────────────────────────────────────────────────────────
+
         # Try performance_schema.events_errors_summary as a last-resort fallback
-        # This works even on older MySQL and doesn't need file access
-        try:
+        # Skip entirely if MySQL is already confirmed down on a remote host
+        if not (mysql_is_down and not _is_local_host):
+            try:
+                fb_engine = create_engine(mysql_url, connect_args={"connect_timeout": 2})
 
-            fb_engine = create_engine(mysql_url, connect_args={"connect_timeout": 4})
+                with fb_engine.connect() as fb_conn:
 
-            with fb_engine.connect() as fb_conn:
+                    err_rows = fb_conn.execute(text("""
+                        SELECT
+                            ERROR_NUMBER,
+                            ERROR_NAME,
+                            SUM_ERROR_RAISED AS count,
+                            SUM_ERROR_HANDLED AS handled,
+                            FIRST_SEEN,
+                            LAST_SEEN
+                        FROM performance_schema.events_errors_summary_global_by_error
+                        WHERE SUM_ERROR_RAISED > 0
+                        ORDER BY SUM_ERROR_RAISED DESC
+                        LIMIT 100
+                    """)).fetchall()
 
-                err_rows = fb_conn.execute(text("""
-                    SELECT
-                        ERROR_NUMBER,
-                        ERROR_NAME,
-                        SUM_ERROR_RAISED AS count,
-                        SUM_ERROR_HANDLED AS handled,
-                        FIRST_SEEN,
-                        LAST_SEEN
-                    FROM performance_schema.events_errors_summary_global_by_error
-                    WHERE SUM_ERROR_RAISED > 0
-                    ORDER BY SUM_ERROR_RAISED DESC
-                    LIMIT 100
-                """)).fetchall()
+                    error_summary_logs = []
 
-                error_summary_logs = []
+                    for row in err_rows:
+                        d = dict(row._mapping)
+                        error_summary_logs.append({
+                            "logged":      str(d.get("LAST_SEEN") or ""),
+                            "severity":    "ERROR",
+                            "subsystem":   "MySQL",
+                            "error_code":  str(d.get("ERROR_NUMBER", "")),
+                            "message":     f"[{d.get('ERROR_NAME','')}] raised {d.get('count',0)} times (handled: {d.get('handled',0)}) — last seen: {d.get('LAST_SEEN','')}",
+                            "status":      "OPEN",
+                            "category":    "ERROR",
+                            "mysql_level": "Error",
+                        })
 
-                for row in err_rows:
+                    return {
+                        "status":     "success",
+                        "source":     "performance_schema_errors",
+                        "log_path":   mysql_error_path or "remote — not accessible",
+                        "mysql_down": mysql_is_down,
+                        "total":      len(error_summary_logs),
+                        "summary":    build_mysql_log_summary(error_summary_logs),
+                        "logs":       error_summary_logs,
+                        "note":       "performance_schema.error_log not available on this MySQL version. Showing error summary from events_errors_summary_global_by_error.",
+                    }
 
-                    d = dict(row._mapping)
-
-                    error_summary_logs.append({
-                        "logged":     str(d.get("LAST_SEEN") or ""),
-                        "severity":   "ERROR",
-                        "subsystem":  "MySQL",
-                        "error_code": str(d.get("ERROR_NUMBER", "")),
-                        "message":    f"[{d.get('ERROR_NAME','')}] raised {d.get('count',0)} times (handled: {d.get('handled',0)}) — last seen: {d.get('LAST_SEEN','')}",
-                        "status":     "OPEN",
-                        "category":   "ERROR",
-                        "mysql_level": "Error",
-                    })
-
-                return {
-                    "status":     "success",
-                    "source":     "performance_schema_errors",
-                    "log_path":   mysql_error_path or "remote — not accessible",
-                    "mysql_down": mysql_is_down,
-                    "total":      len(error_summary_logs),
-                    "summary":    build_mysql_log_summary(error_summary_logs),
-                    "logs":       error_summary_logs,
-                    "note":       "performance_schema.error_log not available on this MySQL version. Showing error summary from events_errors_summary_global_by_error.",
-                }
-
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         return {
 
@@ -1004,9 +1155,9 @@ def get_error_logs(
 
             "note": (
                 "Error log is not accessible. "
-                "If MySQL is remote, the log file cannot be read from the backend server. "
-                "Requires MySQL 8.0.22+ for performance_schema.error_log SQL access. "
-                f"Log path reported by MySQL: {mysql_error_path or 'unknown'}"
+                "MariaDB error logging may be disabled on this server (skip_log_error is set). "
+                + _note_extra
+                + f" Log path reported by MySQL: {mysql_error_path or 'unknown (log_error is empty)'}"
             ),
 
         }
@@ -1273,3 +1424,291 @@ def get_self_heal_history(
         "history": history[:20]
     }
 
+
+# =====================================================
+# GROQ AI ERROR ANALYSIS
+# =====================================================
+
+@router.post("/{conn_id}/analyze-groq")
+async def analyze_groq_errors(
+    conn_id: int,
+    payload: AnalyzeGroqPayload,
+    db: Session = Depends(get_db)
+):
+    connection = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    top_logs = [
+        l for l in payload.logs
+        if l.get("severity") in ("CRITICAL", "ERROR", "WARNING")
+    ][:30]
+
+    if not top_logs:
+        top_logs = payload.logs[:20]
+
+    formatted = "\n".join([
+        f"[{i+1}] [{l.get('severity','?')}] {l.get('logged','?')} — {l.get('message','')[:300]}"
+        for i, l in enumerate(top_logs)
+    ])
+
+    prompt = f"""You are an Expert Senior MariaDB/MySQL DBA AI assistant.
+
+Analyze these error log entries from a production database server.
+
+Server: {payload.host or connection.host}:{connection.port}
+Database: {payload.database or connection.database_name}
+Log Source: {payload.source}
+Log Path: {payload.log_path or 'unknown'}
+
+Error Log Entries (most critical first):
+{formatted}
+
+Return ONLY valid JSON. No markdown. No code blocks.
+
+{{
+  "severity": "CRITICAL|ERROR|WARNING|INFO",
+  "summary": "Brief 1-2 sentence overview of the database health",
+  "root_cause": "Technical root cause explanation",
+  "business_impact": "Business/operational impact description",
+  "error_patterns": ["pattern1", "pattern2"],
+  "fix_steps": [
+    "Step 1: Description of fix",
+    "Step 2: Description of fix"
+  ],
+  "ssh_commands": [
+    "systemctl status mariadb",
+    "journalctl -xe -u mariadb --no-pager | tail -50"
+  ],
+  "mysql_commands": [
+    "SHOW PROCESSLIST;",
+    "SHOW GLOBAL STATUS LIKE 'Threads%';"
+  ],
+  "preventive_measures": ["measure1", "measure2"],
+  "estimated_fix_time": "5-10 minutes"
+}}"""
+
+    try:
+        resp = _groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=2000,
+        )
+        raw = resp.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        analysis = json.loads(raw)
+    except json.JSONDecodeError:
+        analysis = {
+            "severity": "ERROR",
+            "summary": "Could not parse AI response as JSON.",
+            "root_cause": raw[:500] if "raw" in dir() else "AI response unavailable",
+            "business_impact": "Unknown",
+            "error_patterns": [],
+            "fix_steps": [],
+            "ssh_commands": [],
+            "mysql_commands": [],
+            "preventive_measures": [],
+            "estimated_fix_time": "Unknown",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Groq analysis failed: {e}")
+
+    return {"status": "success", "analysis": analysis}
+
+
+# =====================================================
+# SELF-HEAL STREAM (SSE)
+# =====================================================
+
+@router.post("/{conn_id}/self-heal-stream")
+async def self_heal_stream(
+    conn_id: int,
+    payload: SelfHealStreamPayload,
+    db: Session = Depends(get_db)
+):
+    connection = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
+
+    if not connection:
+        async def _err():
+            yield f"data: {json.dumps({'type': 'error', 'msg': 'Connection not found'})}\n\n"
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    ssh_host     = connection.ssh_host or connection.host
+    ssh_port     = int(connection.ssh_port or 22)
+    ssh_user     = connection.ssh_user
+    ssh_password = connection.ssh_password
+    commands     = [c.strip() for c in payload.commands if c.strip()]
+
+    async def generate():
+        if not ssh_user or not ssh_password:
+            yield f"data: {json.dumps({'type': 'error', 'msg': 'SSH credentials not configured. Use SSH Config to set them.'})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'info', 'msg': f'Connecting to {ssh_host}:{ssh_port} as {ssh_user}...'})}\n\n"
+
+        ssh_client = paramiko.SSHClient()
+        ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            await asyncio.to_thread(
+                ssh_client.connect,
+                hostname=ssh_host, port=ssh_port,
+                username=ssh_user, password=ssh_password,
+                timeout=10, look_for_keys=False, allow_agent=False
+            )
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'msg': f'SSH connection failed: {e}'})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'connected', 'msg': f'Connected to {ssh_host} as {ssh_user}'})}\n\n"
+
+        loop = asyncio.get_event_loop()
+        q: asyncio.Queue = asyncio.Queue()
+
+        def _pty_session():
+            def emit(evt):
+                loop.call_soon_threadsafe(q.put_nowait, evt)
+
+            def drain(wait=0.4):
+                time.sleep(wait)
+                buf = b""
+                while shell.recv_ready():
+                    buf += shell.recv(65536)
+                    time.sleep(0.05)
+                return buf.decode("utf-8", errors="ignore")
+
+            def send_wait_marker(cmd_text, idx, timeout=60):
+                """Send cmd then a sentinel echo; return text between them (cleaned)."""
+                marker = f"__ACTMON_DONE_{idx}__"
+                shell.send(cmd_text + "\n")
+                shell.send(f"echo '{marker}'\n")
+                deadline = time.time() + timeout
+                buf = ""
+                while time.time() < deadline:
+                    if shell.recv_ready():
+                        buf += shell.recv(65536).decode("utf-8", errors="ignore")
+                        if marker in buf:
+                            raw = buf[:buf.index(marker)]
+                            lines = raw.split("\n")
+                            skip = {cmd_text.strip(), f"echo '{marker}'", marker}
+                            cleaned = []
+                            for ln in lines:
+                                s = ln.strip()
+                                # Skip terminal prompt lines and echoed commands
+                                if s in skip:
+                                    continue
+                                if re.search(r'[\$#]\s*$', s) and len(s) < 60 and (
+                                        "root@" in s or ssh_user in s):
+                                    continue
+                                cleaned.append(ln)
+                            return "\n".join(cleaned).strip()
+                    time.sleep(0.1)
+                return buf.strip()
+
+            try:
+                shell = ssh_client.invoke_shell(width=220, height=50)
+                drain(1.5)  # absorb login banner
+
+                # ── Attempt 1: su - root ────────────────────────────────────────
+                emit({"type": "info", "msg": "Escalating privileges via su - root..."})
+                shell.send("su - root\n")
+                time.sleep(1.5)
+                out = drain(0.5)
+
+                got_root = False
+                if "assword" in out:
+                    shell.send(ssh_password + "\n")
+                    time.sleep(2.5)
+                    out2 = drain(0.5)
+                    if "#" in out2 or "root@" in out2.lower():
+                        got_root = True
+                        emit({"type": "stdout", "data": "✓ Root shell obtained via su"})
+                    else:
+                        shell.send("exit\n")
+                        drain(0.5)
+                        emit({"type": "stderr", "data": "su failed — wrong root password or su not allowed"})
+                elif "#" in out or "root@" in out.lower():
+                    got_root = True
+                    emit({"type": "stdout", "data": "✓ Already root"})
+
+                root_method = "su" if got_root else None
+
+                if not got_root:
+                    # ── Attempt 2: sudo -S ──────────────────────────────────────
+                    emit({"type": "info", "msg": "Trying sudo -S fallback..."})
+                    sq = ssh_password.replace("'", "'\\''")  # escape single quotes
+                    test_out = send_wait_marker(
+                        f"echo '{sq}' | sudo -S id 2>/dev/null", 9999, timeout=10
+                    )
+                    if "uid=0" in test_out or "root" in test_out:
+                        root_method = "sudo"
+                        emit({"type": "stdout", "data": "✓ sudo -S works — running commands with sudo"})
+                    else:
+                        emit({"type": "error", "msg": (
+                            "Cannot escalate to root. "
+                            "Neither 'su - root' nor 'sudo -S' works for this user. "
+                            "Add suyash to sudoers or use the correct root password."
+                        )})
+                        loop.call_soon_threadsafe(q.put_nowait, None)
+                        return
+
+                # ── Run each command ────────────────────────────────────────────
+                for i, cmd in enumerate(commands):
+                    emit({"type": "cmd", "cmd": cmd})
+
+                    if root_method == "su":
+                        # We are inside the root shell — run directly
+                        run_cmd = cmd
+                    else:
+                        # Not in root shell — prefix each command with sudo -S
+                        sq = ssh_password.replace("'", "'\\''")
+                        safe_cmd = cmd.replace("'", "'\\''")
+                        run_cmd = f"echo '{sq}' | sudo -S bash -c '{safe_cmd}' 2>&1"
+
+                    result = send_wait_marker(run_cmd, i, timeout=90)
+
+                    if result:
+                        lower = result.lower()
+                        if any(k in lower for k in ("permission denied", "cannot create", "error:", "failed to")):
+                            emit({"type": "stderr", "data": result})
+                        else:
+                            emit({"type": "stdout", "data": result})
+                    else:
+                        emit({"type": "stdout", "data": "(completed — no output)"})
+
+                shell.send("exit\n")
+                drain(0.5)
+
+            except Exception as exc:
+                emit({"type": "error", "msg": f"PTY session error: {exc}"})
+            finally:
+                try:
+                    ssh_client.close()
+                except Exception:
+                    pass
+                loop.call_soon_threadsafe(q.put_nowait, None)  # sentinel
+
+        t = threading.Thread(target=_pty_session, daemon=True)
+        t.start()
+
+        while True:
+            evt = await q.get()
+            if evt is None:
+                break
+            yield f"data: {json.dumps(evt)}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done', 'msg': 'All commands executed'})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        }
+    )

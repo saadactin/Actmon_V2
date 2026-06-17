@@ -41,3 +41,9 @@ class ConnectionMaster(Base):
 
     # CLICKHOUSE
     clickhouse_protocol = Column(String(100))
+
+    # SSH (for remote file access — slow log reading, etc.)
+    ssh_host     = Column(String(500))
+    ssh_port     = Column(Integer)
+    ssh_user     = Column(String(255))
+    ssh_password = Column(String(500))

@@ -2,7 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
+from typing import Optional, List, Any
+from pydantic import BaseModel
 import datetime
+import json
+import os
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
@@ -69,6 +73,10 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
              connections_detail, memory, replication, process_list,
              long_running_queries, server_vars.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_monitoring_dashboard", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -317,7 +325,7 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    # ── BGWriter statistics ───────────────────────────────────────────────────
+    # ── BGWriter + Checkpoint statistics (PG17 splits these into separate views)
     bgwriter = {}
     checkpoints = {}
     try:
@@ -325,22 +333,43 @@ def monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
         if rows:
             bg = rows[0]
             bgwriter = {
-                "buffers_clean":      int(bg.get("buffers_clean") or 0),
-                "maxwritten_clean":   int(bg.get("maxwritten_clean") or 0),
-                "buffers_backend":    int(bg.get("buffers_backend") or 0),
-                "buffers_alloc":      int(bg.get("buffers_alloc") or 0),
+                "buffers_clean":    int(bg.get("buffers_clean") or 0),
+                "maxwritten_clean": int(bg.get("maxwritten_clean") or 0),
+                "buffers_backend":  int(bg.get("buffers_backend") or 0),
+                "buffers_alloc":    int(bg.get("buffers_alloc") or 0),
+                "stats_reset":      str(bg.get("stats_reset") or ""),
+                # PG16 and earlier still have checkpoint cols here
                 "buffers_checkpoint": int(bg.get("buffers_checkpoint") or 0),
-                "stats_reset":        str(bg.get("stats_reset") or ""),
-            }
-            checkpoints = {
-                "checkpoints_timed":      int(bg.get("checkpoints_timed") or 0),
-                "checkpoints_req":        int(bg.get("checkpoints_req") or 0),
-                "checkpoint_write_time":  float(bg.get("checkpoint_write_time") or 0),
-                "checkpoint_sync_time":   float(bg.get("checkpoint_sync_time") or 0),
-                "buffers_checkpoint":     int(bg.get("buffers_checkpoint") or 0),
+                "checkpoints_timed":  int(bg.get("checkpoints_timed") or 0),
+                "checkpoints_req":    int(bg.get("checkpoints_req") or 0),
             }
     except Exception:
         pass
+
+    # pg_stat_checkpointer (PG17+) — supersedes checkpoint cols in pg_stat_bgwriter
+    try:
+        cp_rows = _rows(engine, "SELECT * FROM pg_stat_checkpointer")
+        if cp_rows:
+            cp = cp_rows[0]
+            checkpoints = {
+                "checkpoints_timed":     int(cp.get("num_timed") or 0),
+                "checkpoints_req":       int(cp.get("num_requested") or 0),
+                "checkpoint_write_time": float(cp.get("write_time") or 0),
+                "checkpoint_sync_time":  float(cp.get("sync_time") or 0),
+                "buffers_written":       int(cp.get("buffers_written") or 0),
+                "stats_reset":           str(cp.get("stats_reset") or ""),
+            }
+            bgwriter["buffers_checkpoint"] = checkpoints["buffers_written"]
+    except Exception:
+        # Fallback: build from pg_stat_bgwriter (PG16 and earlier)
+        if bgwriter:
+            checkpoints = {
+                "checkpoints_timed":     bgwriter.get("checkpoints_timed", 0),
+                "checkpoints_req":       bgwriter.get("checkpoints_req", 0),
+                "checkpoint_write_time": 0.0,
+                "checkpoint_sync_time":  0.0,
+                "buffers_written":       bgwriter.get("buffers_checkpoint", 0),
+            }
 
     # ── pg_stat_statements ────────────────────────────────────────────────────
     pg_stat_statements = []
@@ -627,6 +656,10 @@ def pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     Return top 50 slowest queries.
     Tries pg_stat_statements first; falls back to pg_stat_activity.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_slow_queries", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -649,13 +682,14 @@ def pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     try:
         rows = _rows(
             engine,
-            "SELECT userid::regrole AS user_name, dbid, query, calls, "
-            "total_exec_time, mean_exec_time, max_exec_time, stddev_exec_time, "
-            "rows, shared_blks_hit, shared_blks_read "
-            "FROM pg_stat_statements "
-            "WHERE query NOT LIKE '%pg_stat_statements%' "
-            "AND query NOT LIKE '%pg_catalog%' "
-            "ORDER BY mean_exec_time DESC "
+            "SELECT userid::regrole AS user_name, s.dbid, d.datname, s.query, s.calls, "
+            "s.total_exec_time, s.mean_exec_time, s.max_exec_time, s.stddev_exec_time, "
+            "s.rows, s.shared_blks_hit, s.shared_blks_read "
+            "FROM pg_stat_statements s "
+            "JOIN pg_database d ON d.oid = s.dbid "
+            "WHERE s.query NOT LIKE '%pg_stat_statements%' "
+            "AND s.query NOT LIKE '%pg_catalog%' "
+            "ORDER BY s.mean_exec_time DESC "
             "LIMIT 50"
         )
         queries = [dict(r) for r in rows]
@@ -672,7 +706,15 @@ def pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
         pg_stat_statements_available = True
         source = "pg_stat_statements"
     except Exception as e:
-        error = str(e)
+        # Return a clean reason, not a raw SQL traceback
+        raw = str(e)
+        if "pg_stat_statements" in raw and ("does not exist" in raw or "UndefinedTable" in raw):
+            error = "not_installed"
+        elif "permission denied" in raw.lower() or "42501" in raw:
+            error = "permission_denied"
+        else:
+            error = "unavailable"
+
         # ── Fallback: pg_stat_activity ────────────────────────────────────────
         try:
             rows = _rows(
@@ -692,7 +734,6 @@ def pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
             source = "pg_stat_activity"
             pg_stat_statements_available = False
         except Exception as e2:
-            error = f"pg_stat_statements: {error} | pg_stat_activity: {str(e2)}"
             queries = []
 
     return {
@@ -705,110 +746,57 @@ def pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     }
 
 
-# =========================================================
-# 3. ERROR LOGS
-# =========================================================
-
-@router.get("/{conn_id}/pg-error-logs")
-def pg_error_logs(conn_id: int, db: Session = Depends(get_db)):
+@router.post("/{conn_id}/enable-pg-stat-statements")
+def enable_pg_stat_statements(conn_id: int, db: Session = Depends(get_db)):
     """
-    Retrieve PostgreSQL error/warning log entries.
-    Source 1: pg_catalog.pg_log (PostgreSQL 10+).
-    Source 2: pg_stat_activity fallback (aborted / locked sessions).
+    Attempt to CREATE EXTENSION IF NOT EXISTS pg_stat_statements in the target DB.
+    Returns whether it succeeded and what the next step is.
     """
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
     ).first()
-
     if not conn_rec:
         raise HTTPException(status_code=404, detail="PostgreSQL connection not found")
 
     try:
         engine = _pg_engine(conn_rec)
     except Exception as e:
-        return {"status": "error", "error": str(e), "logs": [], "total": 0}
+        raise HTTPException(status_code=500, detail=str(e))
 
-    logs = []
-    source = "unknown"
-    note = None
-
-    # ── Source 1: pg_catalog.pg_log ───────────────────────────────────────────
     try:
-        rows = _rows(
-            engine,
-            "SELECT log_time, user_name, database_name, process_id, "
-            "connection_from, session_id, session_line_num, command_tag, "
-            "session_start_time, virtual_transaction_id, transaction_id, "
-            "error_severity, sql_state_code, message, detail, hint, "
-            "internal_query, internal_query_pos, context, query, query_pos, "
-            "location, application_name "
-            "FROM pg_catalog.pg_log "
-            "ORDER BY log_time DESC LIMIT 200"
-        )
-        logs = []
-        for r in rows:
-            logs.append({
-                "logged": str(r.get("log_time") or ""),
-                "severity": str(r.get("error_severity") or ""),
-                "database": str(r.get("database_name") or ""),
-                "user": str(r.get("user_name") or ""),
-                "message": str(r.get("message") or ""),
-                "sql_state": str(r.get("sql_state_code") or ""),
-                "context": str(r.get("context") or ""),
-                "detail": str(r.get("detail") or ""),
-                "hint": str(r.get("hint") or ""),
-                "application_name": str(r.get("application_name") or ""),
-                "process_id": r.get("process_id"),
-            })
-        source = "pg_catalog.pg_log"
-    except Exception as e1:
-        note = f"pg_catalog.pg_log not available ({e1}); using pg_stat_activity fallback."
-        # ── Source 2: pg_stat_activity fallback ──────────────────────────────
-        try:
-            rows = _rows(
-                engine,
-                "SELECT pid, usename, datname, state, wait_event_type, wait_event, "
-                "left(query, 300) AS query, backend_start "
-                "FROM pg_stat_activity "
-                "WHERE state = 'idle in transaction (aborted)' "
-                "OR wait_event_type = 'Lock'"
-            )
-            logs = []
-            for r in rows:
-                logs.append({
-                    "logged": str(r.get("backend_start") or ""),
-                    "severity": "WARNING",
-                    "database": str(r.get("datname") or ""),
-                    "user": str(r.get("usename") or ""),
-                    "message": (
-                        f"State: {r.get('state')} | "
-                        f"Wait: {r.get('wait_event_type')}/{r.get('wait_event')}"
-                    ),
-                    "sql_state": "",
-                    "context": str(r.get("query") or ""),
-                    "detail": "",
-                    "hint": "",
-                    "application_name": "",
-                    "process_id": r.get("pid"),
-                })
-            source = "pg_stat_activity"
-        except Exception as e2:
-            note = (note or "") + f" pg_stat_activity also failed: {e2}"
-            logs = []
-            source = "none"
-
-    return {
-        "status": "success",
-        "source": source,
-        "logs": logs,
-        "total": len(logs),
-        "note": note,
-    }
+        from sqlalchemy import text as _text
+        with engine.connect() as conn:
+            conn.execute(_text("CREATE EXTENSION IF NOT EXISTS pg_stat_statements"))
+            conn.commit()
+        return {
+            "status": "success",
+            "message": "pg_stat_statements extension created successfully. Refresh the slow queries page to see data.",
+            "next_step": None,
+        }
+    except Exception as e:
+        raw = str(e)
+        if "shared_preload_libraries" in raw or "requires restart" in raw or "could not open extension control file" in raw:
+            return {
+                "status": "needs_restart",
+                "message": "The extension library is not loaded. You must add it to postgresql.conf and restart PostgreSQL first.",
+                "next_step": "add_preload",
+            }
+        if "permission denied" in raw.lower() or "42501" in raw:
+            return {
+                "status": "permission_denied",
+                "message": f"The database user '{conn_rec.username}' does not have SUPERUSER or CREATE EXTENSION permission.",
+                "next_step": "grant_permission",
+            }
+        return {
+            "status": "error",
+            "message": f"Could not create extension: {raw[:300]}",
+            "next_step": None,
+        }
 
 
 # =========================================================
-# 4. INDEX ANALYSIS
+# 3. INDEX ANALYSIS
 # =========================================================
 
 @router.get("/{conn_id}/pg-index-analysis")
@@ -820,6 +808,10 @@ def pg_index_analysis(conn_id: int, db: Session = Depends(get_db)):
     - bloated_tables: tables with high dead-tuple ratios (vacuum candidates)
     - summary: aggregate counts
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_index_analysis", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -937,6 +929,10 @@ def replication_detail(conn_id: int, db: Session = Depends(get_db)):
     - Replication config parameters
     - Replication topology summary
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_replication_detail", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -1380,6 +1376,10 @@ def replication_detail(conn_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{conn_id}/queries-detail")
 def queries_detail(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_queries_detail", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -1640,6 +1640,10 @@ def _process_table_rows(raw_rows, dbname: str) -> list:
 
 @router.get("/{conn_id}/tables-detail")
 def tables_detail(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_tables_detail", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -1763,98 +1767,115 @@ def table_structure(
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
-    columns     = []
-    indexes     = []
-    constraints = []
-    triggers    = []
-    row_count   = None
+    columns               = []
+    indexes               = []
+    constraints           = []
+    triggers              = []
+    row_count             = None
+    exact_row_count       = None
+    table_meta            = {}
+    partitions            = []
+    partition_info        = {}
+    col_stats             = []
+    top_queries           = []
+    slow_queries          = []
+    has_pg_stat_statements = False
 
     try:
         with db_eng.connect() as conn:
 
             # ── Columns ──────────────────────────────────────────────────────
-            columns = [dict(r) for r in conn.execute(text("""
-                SELECT
-                    c.ordinal_position,
-                    c.column_name,
-                    c.data_type,
-                    c.udt_name,
-                    c.character_maximum_length,
-                    c.numeric_precision,
-                    c.numeric_scale,
-                    c.datetime_precision,
-                    c.is_nullable,
-                    c.column_default,
-                    c.is_identity,
-                    c.identity_generation,
-                    pgd.description AS column_comment
-                FROM information_schema.columns c
-                LEFT JOIN pg_catalog.pg_statio_all_tables st
-                    ON st.schemaname = c.table_schema AND st.relname = c.table_name
-                LEFT JOIN pg_catalog.pg_description pgd
-                    ON pgd.objoid = st.relid
-                    AND pgd.objsubid = c.ordinal_position
-                WHERE c.table_schema = :schema AND c.table_name = :table
-                ORDER BY c.ordinal_position
-            """), {"schema": schema, "table": table}).mappings().fetchall()]
+            try:
+                columns = [dict(r) for r in conn.execute(text("""
+                    SELECT
+                        c.ordinal_position,
+                        c.column_name,
+                        c.data_type,
+                        c.udt_name,
+                        c.character_maximum_length,
+                        c.numeric_precision,
+                        c.numeric_scale,
+                        c.datetime_precision,
+                        c.is_nullable,
+                        c.column_default,
+                        c.is_identity,
+                        c.identity_generation,
+                        pgd.description AS column_comment
+                    FROM information_schema.columns c
+                    LEFT JOIN pg_catalog.pg_statio_all_tables st
+                        ON st.schemaname = c.table_schema AND st.relname = c.table_name
+                    LEFT JOIN pg_catalog.pg_description pgd
+                        ON pgd.objoid = st.relid
+                        AND pgd.objsubid = c.ordinal_position
+                    WHERE c.table_schema = :schema AND c.table_name = :tname
+                    ORDER BY c.ordinal_position
+                """), {"schema": schema, "tname": table}).mappings().fetchall()]
+            except Exception as e:
+                errors.append(f"columns: {e}")
 
             # ── Indexes (full detail) ─────────────────────────────────────────
-            indexes = [dict(r) for r in conn.execute(text("""
-                SELECT
-                    i.relname                           AS index_name,
-                    ix.indisunique                      AS is_unique,
-                    ix.indisprimary                     AS is_primary,
-                    ix.indisvalid                       AS is_valid,
-                    ix.indisclustered                   AS is_clustered,
-                    pg_size_pretty(pg_relation_size(i.oid)) AS index_size,
-                    pg_relation_size(i.oid)             AS index_bytes,
-                    s.idx_scan,
-                    s.idx_tup_read,
-                    s.idx_tup_fetch,
-                    pg_get_indexdef(i.oid)              AS index_def,
-                    string_agg(a.attname, ', ' ORDER BY x.n) AS columns
-                FROM pg_class t
-                JOIN pg_namespace n  ON n.oid = t.relnamespace
-                JOIN pg_index ix     ON ix.indrelid = t.oid
-                JOIN pg_class i      ON i.oid = ix.indexrelid
-                JOIN pg_stat_user_indexes s
-                    ON s.indexrelid = i.oid
-                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS x(attnum, n) ON true
-                JOIN pg_attribute a  ON a.attrelid = t.oid AND a.attnum = x.attnum
-                WHERE n.nspname = :schema AND t.relname = :table AND t.relkind = 'r'
-                GROUP BY i.relname, ix.indisunique, ix.indisprimary, ix.indisvalid,
-                         ix.indisclustered, i.oid, s.idx_scan, s.idx_tup_read, s.idx_tup_fetch
-                ORDER BY ix.indisprimary DESC, ix.indisunique DESC, i.relname
-            """), {"schema": schema, "table": table}).mappings().fetchall()]
+            try:
+                indexes = [dict(r) for r in conn.execute(text("""
+                    SELECT
+                        i.relname                           AS index_name,
+                        ix.indisunique                      AS is_unique,
+                        ix.indisprimary                     AS is_primary,
+                        ix.indisvalid                       AS is_valid,
+                        ix.indisclustered                   AS is_clustered,
+                        pg_size_pretty(pg_relation_size(i.oid)) AS index_size,
+                        pg_relation_size(i.oid)             AS index_bytes,
+                        s.idx_scan,
+                        s.idx_tup_read,
+                        s.idx_tup_fetch,
+                        pg_get_indexdef(i.oid)              AS index_def,
+                        string_agg(a.attname, ', ' ORDER BY x.n) AS columns
+                    FROM pg_class t
+                    JOIN pg_namespace n  ON n.oid = t.relnamespace
+                    JOIN pg_index ix     ON ix.indrelid = t.oid
+                    JOIN pg_class i      ON i.oid = ix.indexrelid
+                    JOIN pg_stat_user_indexes s
+                        ON s.indexrelid = i.oid
+                    JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS x(attnum, n) ON true
+                    JOIN pg_attribute a  ON a.attrelid = t.oid AND a.attnum = x.attnum
+                    WHERE n.nspname = :schema AND t.relname = :tname AND t.relkind IN ('r','p')
+                    GROUP BY i.relname, ix.indisunique, ix.indisprimary, ix.indisvalid,
+                             ix.indisclustered, i.oid, s.idx_scan, s.idx_tup_read, s.idx_tup_fetch
+                    ORDER BY ix.indisprimary DESC, ix.indisunique DESC, i.relname
+                """), {"schema": schema, "tname": table}).mappings().fetchall()]
+            except Exception as e:
+                errors.append(f"indexes: {e}")
 
             # ── Constraints ───────────────────────────────────────────────────
-            constraints = [dict(r) for r in conn.execute(text("""
-                SELECT
-                    tc.constraint_name,
-                    tc.constraint_type,
-                    string_agg(kcu.column_name, ', ' ORDER BY kcu.ordinal_position) AS columns,
-                    ccu.table_schema  AS foreign_schema,
-                    ccu.table_name    AS foreign_table,
-                    ccu.column_name   AS foreign_column,
-                    rc.update_rule,
-                    rc.delete_rule
-                FROM information_schema.table_constraints tc
-                LEFT JOIN information_schema.key_column_usage kcu
-                    ON kcu.constraint_name = tc.constraint_name
-                    AND kcu.table_schema   = tc.table_schema
-                    AND kcu.table_name     = tc.table_name
-                LEFT JOIN information_schema.constraint_column_usage ccu
-                    ON ccu.constraint_name = tc.constraint_name
-                    AND ccu.table_schema   = tc.table_schema
-                LEFT JOIN information_schema.referential_constraints rc
-                    ON rc.constraint_name  = tc.constraint_name
-                    AND rc.constraint_schema = tc.table_schema
-                WHERE tc.table_schema = :schema AND tc.table_name = :table
-                GROUP BY tc.constraint_name, tc.constraint_type,
-                         ccu.table_schema, ccu.table_name, ccu.column_name,
-                         rc.update_rule, rc.delete_rule
-                ORDER BY tc.constraint_type, tc.constraint_name
-            """), {"schema": schema, "table": table}).mappings().fetchall()]
+            try:
+                constraints = [dict(r) for r in conn.execute(text("""
+                    SELECT
+                        tc.constraint_name,
+                        tc.constraint_type,
+                        string_agg(kcu.column_name, ', ' ORDER BY kcu.ordinal_position) AS columns,
+                        ccu.table_schema  AS foreign_schema,
+                        ccu.table_name    AS foreign_table,
+                        ccu.column_name   AS foreign_column,
+                        rc.update_rule,
+                        rc.delete_rule
+                    FROM information_schema.table_constraints tc
+                    LEFT JOIN information_schema.key_column_usage kcu
+                        ON kcu.constraint_name = tc.constraint_name
+                        AND kcu.table_schema   = tc.table_schema
+                        AND kcu.table_name     = tc.table_name
+                    LEFT JOIN information_schema.constraint_column_usage ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                        AND ccu.table_schema   = tc.table_schema
+                    LEFT JOIN information_schema.referential_constraints rc
+                        ON rc.constraint_name  = tc.constraint_name
+                        AND rc.constraint_schema = tc.table_schema
+                    WHERE tc.table_schema = :schema AND tc.table_name = :tname
+                    GROUP BY tc.constraint_name, tc.constraint_type,
+                             ccu.table_schema, ccu.table_name, ccu.column_name,
+                             rc.update_rule, rc.delete_rule
+                    ORDER BY tc.constraint_type, tc.constraint_name
+                """), {"schema": schema, "tname": table}).mappings().fetchall()]
+            except Exception as e:
+                errors.append(f"constraints: {e}")
 
             # ── Triggers ─────────────────────────────────────────────────────
             try:
@@ -1863,23 +1884,228 @@ def table_structure(
                            action_statement, action_orientation
                     FROM information_schema.triggers
                     WHERE event_object_schema = :schema
-                      AND event_object_table  = :table
+                      AND event_object_table  = :tname
                     ORDER BY trigger_name, event_manipulation
-                """), {"schema": schema, "table": table}).mappings().fetchall()]
+                """), {"schema": schema, "tname": table}).mappings().fetchall()]
             except Exception as e:
                 errors.append(f"triggers: {e}")
 
-            # ── Estimated row count ───────────────────────────────────────────
+            # ── Table meta + accurate sizes ───────────────────────────────────
             try:
                 row = conn.execute(text("""
-                    SELECT reltuples::bigint AS row_count
+                    SELECT
+                        c.reltuples::bigint                                    AS est_rows,
+                        COALESCE(s.n_live_tup, 0)                             AS live_rows,
+                        COALESCE(s.n_dead_tup, 0)                             AS dead_rows,
+                        c.relkind,
+                        c.reloptions,
+                        CASE WHEN c.relkind = 'p' THEN true ELSE false END    AS is_partitioned,
+                        pg_size_pretty(pg_total_relation_size(c.oid))         AS total_size,
+                        pg_size_pretty(pg_relation_size(c.oid))               AS heap_size,
+                        pg_total_relation_size(c.oid)                         AS total_bytes,
+                        pg_relation_size(c.oid)                               AS heap_bytes,
+                        pg_size_pretty(pg_indexes_size(c.oid))                AS indexes_size,
+                        pg_indexes_size(c.oid)                                AS indexes_bytes,
+                        CASE WHEN c.reltoastrelid != 0
+                             THEN pg_size_pretty(pg_relation_size(c.reltoastrelid))
+                             ELSE '0 B' END                                    AS toast_size,
+                        CASE WHEN c.reltoastrelid != 0
+                             THEN pg_relation_size(c.reltoastrelid)
+                             ELSE 0 END                                        AS toast_bytes,
+                        obj_description(c.oid, 'pg_class')                    AS table_comment
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
-                    WHERE n.nspname = :schema AND c.relname = :table
-                """), {"schema": schema, "table": table}).fetchone()
-                row_count = int(row[0]) if row else None
-            except Exception:
-                pass
+                    LEFT JOIN pg_stat_user_tables s
+                        ON s.relid = c.oid
+                    WHERE n.nspname = :schema AND c.relname = :tname
+                """), {"schema": schema, "tname": table}).mappings().fetchone()
+                if row:
+                    est = int(row["est_rows"] or 0)
+                    live = int(row["live_rows"] or 0)
+                    # Use whichever is more accurate
+                    row_count = live if live > 0 else est
+                    table_meta = {
+                        "is_partitioned":  bool(row["is_partitioned"]),
+                        "relkind":         str(row["relkind"] or ""),
+                        "total_size":      str(row["total_size"] or ""),
+                        "heap_size":       str(row["heap_size"] or ""),
+                        "total_bytes":     int(row["total_bytes"] or 0),
+                        "heap_bytes":      int(row["heap_bytes"] or 0),
+                        "indexes_size":    str(row["indexes_size"] or ""),
+                        "indexes_bytes":   int(row["indexes_bytes"] or 0),
+                        "toast_size":      str(row["toast_size"] or "0 B"),
+                        "toast_bytes":     int(row["toast_bytes"] or 0),
+                        "table_comment":   str(row["table_comment"] or ""),
+                        "est_rows":        est,
+                        "live_rows":       live,
+                        "stats_uptodate":  live > 0,
+                        "storage_options": [],
+                    }
+                    if row["reloptions"]:
+                        for opt in (row["reloptions"] or []):
+                            if "=" in str(opt):
+                                k, v = str(opt).split("=", 1)
+                                table_meta["storage_options"].append({"key": k, "value": v})
+            except Exception as e:
+                errors.append(f"table_meta: {e}")
+
+            # ── Exact row count (fast estimate via pg_stat_user_tables) ─────────
+            try:
+                rc_row = conn.execute(text("""
+                    SELECT
+                        n_live_tup             AS live_tup,
+                        n_dead_tup             AS dead_tup,
+                        reltuples::bigint       AS est_tup
+                    FROM pg_stat_user_tables st
+                    JOIN pg_class c ON c.oid = st.relid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE st.schemaname = :schema AND st.relname = :tname
+                """), {"schema": schema, "tname": table}).mappings().fetchone()
+                if rc_row:
+                    live = int(rc_row["live_tup"] or 0)
+                    est  = int(rc_row["est_tup"]  or 0)
+                    exact_row_count = live if live > 0 else est
+                    if table_meta:
+                        table_meta["live_rows"] = live
+                        table_meta["est_rows"]  = est
+                        table_meta["stats_uptodate"] = live > 0
+            except Exception as e:
+                errors.append(f"row_count: {e}")
+
+            # ── Partition info ─────────────────────────────────────────────────
+            try:
+                if table_meta.get("is_partitioned"):
+                    # Strategy and key
+                    prow = conn.execute(text("""
+                        SELECT
+                            CASE pt.partstrat
+                                WHEN 'r' THEN 'RANGE'
+                                WHEN 'l' THEN 'LIST'
+                                WHEN 'h' THEN 'HASH'
+                                ELSE pt.partstrat::text
+                            END                             AS strategy,
+                            pg_get_partkeydef(c.oid)        AS partition_key
+                        FROM pg_class c
+                        JOIN pg_namespace n ON n.oid = c.relnamespace
+                        JOIN pg_partitioned_table pt ON pt.partrelid = c.oid
+                        WHERE n.nspname = :schema AND c.relname = :tname
+                    """), {"schema": schema, "tname": table}).mappings().fetchone()
+                    if prow:
+                        partition_info = {
+                            "strategy":      str(prow["strategy"] or ""),
+                            "partition_key": str(prow["partition_key"] or ""),
+                        }
+
+                    # Child partitions
+                    part_rows = conn.execute(text("""
+                        SELECT
+                            child.relname                                         AS partition_name,
+                            cn.nspname                                            AS schema_name,
+                            pg_size_pretty(pg_total_relation_size(child.oid))     AS total_size,
+                            pg_total_relation_size(child.oid)                     AS total_bytes,
+                            pg_get_expr(child.relpartbound, child.oid)            AS partition_bound,
+                            COALESCE(s.n_live_tup, 0)                            AS n_live_tup,
+                            COALESCE(s.n_dead_tup, 0)                            AS n_dead_tup,
+                            child.reltuples::bigint                               AS est_rows
+                        FROM pg_inherits i
+                        JOIN pg_class parent ON i.inhparent = parent.oid
+                        JOIN pg_namespace pn  ON pn.oid = parent.relnamespace
+                        JOIN pg_class child   ON i.inhrelid = child.oid
+                        JOIN pg_namespace cn  ON cn.oid = child.relnamespace
+                        LEFT JOIN pg_stat_user_tables s ON s.relid = child.oid
+                        WHERE pn.nspname = :schema AND parent.relname = :tname
+                        ORDER BY child.relname
+                    """), {"schema": schema, "tname": table}).mappings().fetchall()
+                    partitions = [dict(r) for r in part_rows]
+                    for p in partitions:
+                        p["total_bytes"] = int(p.get("total_bytes") or 0)
+                        p["n_live_tup"]  = int(p.get("n_live_tup") or 0)
+                        p["n_dead_tup"]  = int(p.get("n_dead_tup") or 0)
+                        p["est_rows"]    = int(p.get("est_rows") or 0)
+                    partition_info["count"] = len(partitions)
+            except Exception as e:
+                errors.append(f"partitions: {e}")
+
+            # ── Column statistics from pg_stats ───────────────────────────────
+            try:
+                cstat_rows = conn.execute(text("""
+                    SELECT
+                        attname          AS column_name,
+                        null_frac,
+                        avg_width,
+                        n_distinct,
+                        correlation,
+                        most_common_vals::text AS most_common_vals,
+                        most_common_freqs
+                    FROM pg_stats
+                    WHERE schemaname = :schema AND tablename = :tname
+                    ORDER BY attname
+                """), {"schema": schema, "tname": table}).mappings().fetchall()
+                col_stats = [dict(r) for r in cstat_rows]
+                for cs in col_stats:
+                    cs["null_frac"]  = float(cs.get("null_frac") or 0)
+                    cs["avg_width"]  = int(cs.get("avg_width") or 0)
+                    cs["n_distinct"] = float(cs.get("n_distinct") or 0)
+                    # parse most_common_vals from postgres array literal
+                    mcv = cs.get("most_common_vals") or ""
+                    if mcv.startswith("{") and mcv.endswith("}"):
+                        inner = mcv[1:-1]
+                        cs["most_common_vals"] = [v.strip('"') for v in inner.split(",")][:5]
+                    else:
+                        cs["most_common_vals"] = []
+                    cs["correlation"] = float(cs.get("correlation") or 0) if cs.get("correlation") is not None else None
+            except Exception as e:
+                errors.append(f"col_stats: {e}")
+
+            # ── Top queries from pg_stat_statements ───────────────────────────
+            try:
+                # Check if extension is available
+                ext_row = conn.execute(text(
+                    "SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements'"
+                )).fetchone()
+                has_pg_stat_statements = bool(ext_row)
+
+                if has_pg_stat_statements:
+                    tbl_pattern = f"%{table}%"
+                    q_rows = conn.execute(text("""
+                        SELECT
+                            queryid::text                                   AS query_id,
+                            LEFT(query, 300)                                AS query_text,
+                            calls,
+                            ROUND(total_exec_time::numeric, 1)              AS total_time_ms,
+                            ROUND(mean_exec_time::numeric, 2)               AS mean_time_ms,
+                            ROUND(stddev_exec_time::numeric, 2)             AS stddev_ms,
+                            rows,
+                            shared_blks_hit,
+                            shared_blks_read,
+                            ROUND((shared_blks_hit::numeric /
+                                   GREATEST(shared_blks_hit + shared_blks_read, 1) * 100), 1) AS cache_hit_pct
+                        FROM pg_stat_statements
+                        WHERE query ILIKE :pattern
+                          AND query NOT ILIKE '%pg_stat%'
+                        ORDER BY total_exec_time DESC
+                        LIMIT 15
+                    """), {"pattern": tbl_pattern}).mappings().fetchall()
+                    all_queries = [dict(r) for r in q_rows]
+                    for q in all_queries:
+                        q["calls"]          = int(q.get("calls") or 0)
+                        q["rows"]           = int(q.get("rows") or 0)
+                        q["total_time_ms"]  = float(q.get("total_time_ms") or 0)
+                        q["mean_time_ms"]   = float(q.get("mean_time_ms") or 0)
+                        q["stddev_ms"]      = float(q.get("stddev_ms") or 0)
+                        q["cache_hit_pct"]  = float(q.get("cache_hit_pct") or 0)
+                        q["shared_blks_hit"]  = int(q.get("shared_blks_hit") or 0)
+                        q["shared_blks_read"] = int(q.get("shared_blks_read") or 0)
+
+                    # Top by calls
+                    top_queries = sorted(all_queries, key=lambda x: x["calls"], reverse=True)[:5]
+                    # Slowest by mean time (min 5 calls to reduce noise)
+                    slow_queries = sorted(
+                        [q for q in all_queries if q["calls"] >= 3],
+                        key=lambda x: x["mean_time_ms"], reverse=True
+                    )[:5]
+            except Exception as e:
+                errors.append(f"top_queries: {e}")
 
     except Exception as e:
         errors.append(str(e))
@@ -1887,16 +2113,23 @@ def table_structure(
         db_eng.dispose()
 
     return {
-        "status":      "success",
-        "database":    database,
-        "schema":      schema,
-        "table":       table,
-        "row_count":   row_count,
-        "columns":     columns,
-        "indexes":     indexes,
-        "constraints": constraints,
-        "triggers":    triggers,
-        "errors":      errors,
+        "status":                 "success",
+        "database":               database,
+        "schema":                 schema,
+        "table":                  table,
+        "row_count":              exact_row_count if exact_row_count is not None else row_count,
+        "table_meta":             table_meta,
+        "columns":                columns,
+        "indexes":                indexes,
+        "constraints":            constraints,
+        "triggers":               triggers,
+        "partitions":             partitions,
+        "partition_info":         partition_info,
+        "col_stats":              col_stats,
+        "top_queries":            top_queries,
+        "slow_queries":           slow_queries,
+        "has_pg_stat_statements": has_pg_stat_statements,
+        "errors":                 errors,
     }
 
 
@@ -2013,6 +2246,10 @@ _PARAM_GROUPS: dict = {
 
 @router.get("/{conn_id}/config-detail")
 def pg_config_detail(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_config_detail", db)
+    if _cached is not None:
+        return _cached
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:
         raise HTTPException(404, "Connection not found")
@@ -2102,6 +2339,10 @@ def pg_config_detail(conn_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{conn_id}/users-detail")
 def users_detail(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_users_detail", db)
+    if _cached is not None:
+        return _cached
     rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -2245,6 +2486,10 @@ def users_detail(conn_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{conn_id}/storage-detail")
 def storage_detail(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "pg_storage_detail", db)
+    if _cached is not None:
+        return _cached
     rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -2422,4 +2667,1568 @@ def storage_detail(conn_id: int, db: Session = Depends(get_db)):
             "vacuum_needed":     len(vacuum_needed),
         },
         "errors": errors,
+    }
+
+
+# =========================================================
+# PG SLOW QUERIES — AI & EXPLAIN ENDPOINTS
+# =========================================================
+
+class PgSlowQueryGroqRequest(BaseModel):
+    sql_text: str
+    user_name: Optional[str] = None
+    calls: int = 0
+    mean_exec_time_ms: float = 0.0
+    max_exec_time_ms: float = 0.0
+    total_exec_time_ms: float = 0.0
+    rows: int = 0
+    shared_blks_hit: int = 0
+    shared_blks_read: int = 0
+    cache_hit_pct: float = 100.0
+    explain_rows: Optional[List[Any]] = []
+
+
+@router.post("/{conn_id}/pg-slow-queries/analyze-groq")
+def pg_analyze_slow_query_groq(
+    conn_id: int,
+    payload: PgSlowQueryGroqRequest,
+    db: Session = Depends(get_db),
+):
+    """Deep Groq LLM analysis for a single PostgreSQL slow query."""
+    rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
+    if not rec:
+        return {"status": "error", "error": "Connection not found"}
+
+    try:
+        from groq import Groq
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        explain_text = json.dumps(payload.explain_rows, indent=2) if payload.explain_rows else "Not run yet"
+
+        prompt = f"""You are a world-class PostgreSQL DBA expert. Analyze this slow query deeply and return ONLY valid JSON — no markdown, no code blocks.
+
+=== QUERY CONTEXT ===
+Host: {rec.host}:{rec.port}
+Database: {rec.database_name or 'unknown'}
+PostgreSQL User: {payload.user_name or 'unknown'}
+SQL: {payload.sql_text}
+
+=== PERFORMANCE METRICS ===
+Execution Count: {payload.calls:,}
+Average Execution Time: {payload.mean_exec_time_ms:.2f} ms
+Maximum Execution Time: {payload.max_exec_time_ms:.2f} ms
+Total Cumulative Time: {payload.total_exec_time_ms:.2f} ms
+Rows Returned: {payload.rows:,}
+Shared Blocks Hit (cache): {payload.shared_blks_hit:,}
+Shared Blocks Read (disk): {payload.shared_blks_read:,}
+Cache Hit Rate: {payload.cache_hit_pct:.1f}%
+
+=== EXPLAIN ANALYZE OUTPUT ===
+{explain_text}
+
+Return this exact JSON structure:
+{{
+  "severity": "critical|high|medium|low",
+  "severity_reason": "why this severity was assigned",
+  "summary": "one-sentence description of what the query does and why it is slow",
+  "root_cause": "detailed root cause — what exactly is making this query slow",
+  "issues": [
+    {{
+      "type": "SEQ_SCAN|MISSING_INDEX|INEFFICIENT_JOIN|SORT_SPILL|HIGH_DISK_READ|TEMP_TABLE|N_PLUS_1|LOCK_CONTENTION|LARGE_RESULT_SET|OTHER",
+      "table": "affected table name or null",
+      "description": "detailed description of the issue",
+      "severity": "critical|high|medium|low",
+      "evidence": "exact value from EXPLAIN or metrics that proves this issue"
+    }}
+  ],
+  "index_recommendations": [
+    {{
+      "table": "table_name",
+      "columns": ["col1", "col2"],
+      "index_type": "BTREE|GIN|GIST|HASH|BRIN",
+      "create_sql": "CREATE INDEX CONCURRENTLY idx_name ON table_name (col1, col2);",
+      "reason": "why this specific index will help",
+      "estimated_improvement": "e.g. eliminates sequential scan, 99% row reduction"
+    }}
+  ],
+  "query_rewrite": {{
+    "applicable": true,
+    "optimized_sql": "rewritten query or empty string if not applicable",
+    "changes_made": ["list", "of", "changes"],
+    "explanation": "what was changed and why it will be faster",
+    "expected_gain": "e.g. 10x-50x faster"
+  }},
+  "schema_suggestions": [
+    "Any table design or schema changes that would help"
+  ],
+  "priority_actions": [
+    "1. Most impactful thing to do first",
+    "2. Second action",
+    "3. Third action"
+  ],
+  "business_impact": "impact on application performance and end users",
+  "estimated_overall_improvement": "overall expected improvement after all fixes",
+  "validation_queries": [
+    "SQL query to verify the optimization worked"
+  ]
+}}"""
+
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=3000,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        analysis = json.loads(raw.strip())
+        return {"status": "success", "analysis": analysis}
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+class PgExplainRequest(BaseModel):
+    sql_text: str
+    database: Optional[str] = None   # target DB to run EXPLAIN in (auto-detected if omitted)
+
+
+def _flatten_plan(plan, depth=0):
+    nodes = []
+    nodes.append({
+        "depth": depth,
+        "node_type": plan.get("Node Type", ""),
+        "relation": plan.get("Relation Name"),
+        "alias": plan.get("Alias"),
+        "startup_cost": plan.get("Startup Cost"),
+        "total_cost": plan.get("Total Cost"),
+        "plan_rows": plan.get("Plan Rows"),
+        "actual_startup_time": plan.get("Actual Startup Time"),
+        "actual_total_time": plan.get("Actual Total Time"),
+        "actual_rows": plan.get("Actual Rows"),
+        "actual_loops": plan.get("Actual Loops"),
+        "shared_hit_blocks": plan.get("Shared Hit Blocks", 0),
+        "shared_read_blocks": plan.get("Shared Read Blocks", 0),
+        "filter": plan.get("Filter"),
+        "join_type": plan.get("Join Type"),
+        "sort_key": plan.get("Sort Key"),
+        "sort_method": plan.get("Sort Method"),
+    })
+    for sub in plan.get("Plans", []):
+        nodes.extend(_flatten_plan(sub, depth + 1))
+    return nodes
+
+
+def _pg_explain_hints(nodes, planning_time, execution_time):
+    hints = []
+    seen_disk = False
+    for node in nodes:
+        nt = node.get("node_type", "")
+        rel = node.get("relation") or node.get("alias") or "table"
+        actual_rows = node.get("actual_rows") or 0
+        actual_time = node.get("actual_total_time") or 0
+        disk_read = node.get("shared_read_blocks") or 0
+
+        if "Seq Scan" in nt:
+            hints.append({
+                "level": "critical" if actual_rows > 10000 else "warning",
+                "type": "SEQ_SCAN",
+                "title": f"Sequential scan on '{rel}'",
+                "text": f"Full table scan reading ~{actual_rows:,} rows — no index used.",
+                "fix": f"Add an index on the WHERE/JOIN columns of '{rel}'.",
+            })
+        if "Sort" in nt and actual_time > 50:
+            hints.append({
+                "level": "warning",
+                "type": "SORT",
+                "title": f"Expensive sort ({actual_time:.0f} ms)",
+                "text": f"Sort method: {node.get('sort_method','unknown')}. Sort key: {node.get('sort_key','?')}.",
+                "fix": "Add an index that matches the ORDER BY / GROUP BY columns.",
+            })
+        if disk_read > 0 and not seen_disk:
+            seen_disk = True
+            hints.append({
+                "level": "warning",
+                "type": "DISK_READ",
+                "title": f"Disk I/O detected ({disk_read:,} blocks from disk)",
+                "text": "Data was read from disk rather than memory cache (shared_buffers).",
+                "fix": "Increase shared_buffers, or check if the working set fits in memory.",
+            })
+        if "Hash Join" in nt and actual_time > 500:
+            hints.append({
+                "level": "warning",
+                "type": "HASH_JOIN",
+                "title": f"Slow hash join ({actual_time:.0f} ms)",
+                "text": "Hash join is building a large hash table.",
+                "fix": "Ensure join columns are indexed on both sides.",
+            })
+    return hints
+
+
+@router.post("/{conn_id}/pg-slow-queries/explain-analyze")
+def pg_explain_and_analyze(
+    conn_id: int,
+    payload: PgExplainRequest,
+    db: Session = Depends(get_db),
+):
+    """Run EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) and return structured plan + hints.
+    Parameterized queries ($1, $2 ...) from pg_stat_statements are handled by
+    replacing placeholders with NULL so EXPLAIN can parse the query safely.
+    """
+    import re
+
+    rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
+    if not rec:
+        return {"status": "error", "error": "Connection not found"}
+
+    try:
+        engine = _pg_engine(rec)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+    # Step 1 — Replace $1,$2 placeholders with NULL
+    sql_clean = re.sub(r'\$\d+', 'NULL', payload.sql_text.strip())
+
+    # Step 2 — Strip EXPLAIN wrapper if pg_stat_statements captured an EXPLAIN statement.
+    # Running EXPLAIN on an EXPLAIN produces invalid SQL like "EXPLAIN (FORMAT JSON) EXPLAIN ANALYZE SELECT ..."
+    _explain_re = re.compile(
+        r'^EXPLAIN\s*(?:\(\s*[^)]*\))?\s*',
+        re.IGNORECASE | re.DOTALL
+    )
+    inner = _explain_re.sub('', sql_clean).strip()
+    if inner and inner.upper() != sql_clean.upper():
+        sql_clean = inner  # use the bare SQL, not the EXPLAIN wrapper
+
+    plan_json   = None
+    analyzed    = False
+    used_db     = payload.database or rec.database_name or "postgres"
+
+    def _run_explain(conn, analyze: bool):
+        opts = "ANALYZE, BUFFERS, FORMAT JSON" if analyze else "FORMAT JSON"
+        if analyze:
+            conn.execute(text("SET LOCAL statement_timeout = '6s'"))
+        row = conn.execute(text(f"EXPLAIN ({opts}) {sql_clean}")).fetchone()
+        return row[0]
+
+    def _try_explain(eng, with_analyze: bool) -> bool:
+        nonlocal plan_json, analyzed
+        try:
+            with eng.connect() as conn:
+                plan_json = _run_explain(conn, analyze=with_analyze)
+                analyzed = with_analyze
+                return True
+        except Exception:
+            return False
+
+    # Build ordered list of databases to try: explicit > detected from pg_stat_statements > default
+    dbs_to_try: list = []
+    if payload.database:
+        dbs_to_try.append(payload.database)
+
+    # Auto-detect from pg_stat_statements JOIN pg_database
+    try:
+        with engine.connect() as conn:
+            # Search by the first 80 chars of the ORIGINAL sql_text (before stripping EXPLAIN)
+            original_prefix = payload.sql_text.strip()[:80].replace("%", "%%")
+            rows_db = conn.execute(text(
+                "SELECT DISTINCT d.datname FROM pg_stat_statements s "
+                "JOIN pg_database d ON d.oid = s.dbid "
+                "WHERE s.query LIKE :prefix "
+                "ORDER BY d.datname LIMIT 5"
+            ), {"prefix": original_prefix + "%"}).fetchall()
+            for r in rows_db:
+                if r[0] not in dbs_to_try:
+                    dbs_to_try.append(r[0])
+    except Exception:
+        pass
+
+    # Always include the connection's own database as last resort
+    default_db = rec.database_name or "postgres"
+    if default_db not in dbs_to_try:
+        dbs_to_try.append(default_db)
+
+    # Try each candidate database — EXPLAIN ANALYZE first, then plain EXPLAIN
+    for db_name in dbs_to_try:
+        eng = _pg_engine_db(rec, db_name) if db_name != default_db else engine
+        if _try_explain(eng, True) or _try_explain(eng, False):
+            used_db = db_name
+            break
+
+    if plan_json is None:
+        tried = ", ".join(f"'{d}'" for d in dbs_to_try)
+        return {
+            "status": "error",
+            "error": (
+                f"EXPLAIN could not run in any of the tried databases ({tried}).\n\n"
+                "The query references tables that aren't accessible from this connection. "
+                "Possible reasons:\n"
+                "• The tables were in a database this user cannot connect to\n"
+                "• The tables have been dropped since the query was recorded\n"
+                "• A schema search_path mismatch (table exists but isn't visible)\n\n"
+                "Fix: In ActMon, edit connection settings and set the Database field to "
+                "the exact database where this query runs."
+            ),
+            "tried_databases": dbs_to_try,
+        }
+
+    try:
+        if isinstance(plan_json, str):
+            plan_json = json.loads(plan_json)
+
+        top = plan_json[0] if isinstance(plan_json, list) else plan_json
+        plan_node = top.get("Plan", top)
+        planning_time  = top.get("Planning Time", 0)
+        execution_time = top.get("Execution Time", 0)
+
+        nodes = _flatten_plan(plan_node)
+        hints = _pg_explain_hints(nodes, planning_time, execution_time)
+
+        return {
+            "status":        "success",
+            "analyzed":      analyzed,
+            "planning_time": planning_time,
+            "execution_time":execution_time,
+            "nodes":  nodes,
+            "hints":  hints,
+            "raw":    plan_json,
+            "used_db": used_db,
+            "inner_sql": sql_clean,
+        }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:300]}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  pg-error-logs  GET /{conn_id}/pg-error-logs
+#  Strategy (in order):
+#    1. Direct filesystem read of CSV logs from SHOW data_directory + log_directory
+#       Handles Windows paths like C:\Program Files\PostgreSQL\17\data\log\
+#    2. pg_ls_logdir() + pg_read_file() via SQL (needs pg_monitor role)
+#    3. pg_stat_activity live fallback
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get("/{conn_id}/pg-error-logs")
+def pg_error_logs(conn_id: int, limit: int = 300, db: Session = Depends(get_db)):
+    import csv, io, re as _re
+
+    try:
+        conn = db.query(ConnectionMaster).filter(
+            ConnectionMaster.id == conn_id,
+            ConnectionMaster.db_type == "postgresql"
+        ).first()
+        if not conn:
+            raise HTTPException(status_code=404, detail="PostgreSQL connection not found")
+        try:
+            engine = _pg_engine(conn)
+        except Exception as e:
+            return {"status": "error", "error": f"Cannot build engine: {e}", "logs": [],
+                    "counts": {}, "db_stats": {}, "total": 0, "source": "none", "note": ""}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:300], "logs": [],
+                "counts": {}, "db_stats": {}, "total": 0, "source": "none", "note": ""}
+
+    SEV_ORDER = ["FATAL", "PANIC", "ERROR", "WARNING", "LOG", "INFO", "DEBUG", "NOTICE", "DETAIL"]
+
+    def _classify(sev: str) -> str:
+        s = (sev or "").upper()
+        if s in ("FATAL", "PANIC"):    return "FATAL"
+        if s == "ERROR":               return "ERROR"
+        if s in ("WARNING", "WARN"):   return "WARNING"
+        if s == "LOG":                 return "LOG"
+        if s in ("INFO", "NOTICE"):    return "INFO"
+        if s == "DEBUG":               return "DEBUG"
+        return "LOG"
+
+    # ── CSV column order for pg 12-16 (23 cols) and pg 14+ (26 cols) ──────────
+    CSV_COLS_BASE = [
+        "log_time","user_name","database_name","process_id","connection_from",
+        "session_id","session_line_num","command_tag","session_start_time",
+        "virtual_transaction_id","transaction_id","error_severity","sql_state_code",
+        "message","detail","hint","internal_query","internal_query_pos",
+        "context","query","query_pos","location","application_name",
+    ]
+    CSV_COLS_EXT  = CSV_COLS_BASE + ["backend_type","leader_pid","query_id"]
+
+    def _parse_csv_content(content: str) -> list:
+        entries = []
+        try:
+            reader = csv.reader(io.StringIO(content))
+            for row in reader:
+                try:
+                    cols = CSV_COLS_EXT if len(row) >= 26 else CSV_COLS_BASE
+                    rec  = dict(zip(cols, row))
+                    sev  = _classify(rec.get("error_severity", ""))
+                    entries.append({
+                        "timestamp":   rec.get("log_time", ""),
+                        "severity":    sev,
+                        "raw_severity":rec.get("error_severity", ""),
+                        "database":    rec.get("database_name", ""),
+                        "user":        rec.get("user_name", ""),
+                        "pid":         rec.get("process_id", ""),
+                        "sql_state":   rec.get("sql_state_code", ""),
+                        "message":     rec.get("message", ""),
+                        "detail":      rec.get("detail", ""),
+                        "hint":        rec.get("hint", ""),
+                        "query":       rec.get("query", "") or rec.get("internal_query", ""),
+                        "context":     rec.get("context", ""),
+                        "location":    rec.get("location", ""),
+                        "command_tag": rec.get("command_tag", ""),
+                        "application": rec.get("application_name", ""),
+                        "session_id":  rec.get("session_id", ""),
+                    })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return entries
+
+    def _parse_stderr_content(content: str) -> list:
+        """Parse lines like: 2024-01-15 10:30:00.000 UTC [1234] ERROR:  message"""
+        pat = _re.compile(
+            r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)? \w+)\s+'
+            r'\[(\d+)\]\s+'
+            r'(FATAL|PANIC|ERROR|WARNING|LOG|INFO|NOTICE|DEBUG|DETAIL):\s+(.*)',
+            _re.MULTILINE
+        )
+        entries = []
+        for m in pat.finditer(content):
+            sev = _classify(m.group(3))
+            entries.append({
+                "timestamp": m.group(1),
+                "severity":  sev,
+                "raw_severity": m.group(3),
+                "pid":       m.group(2),
+                "message":   m.group(4),
+                "database": "", "user": "", "sql_state": "",
+                "detail": "", "hint": "", "query": "",
+                "context": "", "location": "", "command_tag": "",
+                "application": "", "session_id": "",
+            })
+        return entries
+
+    # ── Method 1: Direct filesystem read ─────────────────────────────────────
+    # Most reliable on Windows — the Python process reads log files directly
+    log_path = ""
+    source   = "none"
+    logs     = []
+    note     = ""
+
+    try:
+        with engine.connect() as c:
+            data_dir_row = c.execute(text("SHOW data_directory")).fetchone()
+            log_dir_row  = c.execute(text("SHOW log_directory")).fetchone()
+            data_dir = (data_dir_row[0] if data_dir_row else "").replace("/", os.sep)
+            log_dir  = (log_dir_row[0]  if log_dir_row  else "log").replace("/", os.sep)
+
+        if os.path.isabs(log_dir):
+            full_log_dir = log_dir
+        else:
+            full_log_dir = os.path.join(data_dir, log_dir)
+
+        if os.path.isdir(full_log_dir):
+            csv_files = sorted(
+                [f for f in os.listdir(full_log_dir) if f.endswith(".csv")],
+                reverse=True
+            )
+            if not csv_files:
+                log_files = sorted(
+                    [f for f in os.listdir(full_log_dir) if f.endswith(".log")],
+                    reverse=True
+                )
+                chosen_file = log_files[0] if log_files else None
+                is_csv = False
+            else:
+                chosen_file = csv_files[0]
+                is_csv = True
+
+            if chosen_file:
+                full_path = os.path.join(full_log_dir, chosen_file)
+                log_path  = full_path
+                # Read last 1 MB of the log file
+                with open(full_path, "rb") as fh:
+                    fh.seek(0, 2)
+                    fsize = fh.tell()
+                    read_size = min(fsize, 1_048_576)
+                    fh.seek(max(0, fsize - read_size))
+                    raw_bytes = fh.read()
+                # Decode, skipping the potentially partial first line
+                content = raw_bytes.decode("utf-8", errors="replace")
+                if fsize > read_size:
+                    nl = content.find("\n")
+                    if nl != -1:
+                        content = content[nl + 1:]
+
+                if is_csv:
+                    logs   = _parse_csv_content(content)
+                    source = "csv_log"
+                else:
+                    logs   = _parse_stderr_content(content)
+                    source = "stderr_log"
+        else:
+            note = f"Log directory not accessible from backend: {full_log_dir}"
+    except Exception as e:
+        note = f"Filesystem read failed: {str(e)[:300]}"
+
+    # ── Method 2: pg_ls_logdir() + pg_read_file() (SQL-based) ────────────────
+    if not logs:
+        try:
+            with engine.connect() as c:
+                try:
+                    file_rows = c.execute(text("""
+                        SELECT name, size, modification
+                        FROM pg_ls_logdir()
+                        ORDER BY modification DESC
+                        LIMIT 10
+                    """)).fetchall()
+                except Exception as e:
+                    file_rows = []
+                    note = (note + " | pg_ls_logdir: " + str(e)[:200]).strip(" | ")
+
+                chosen = None
+                is_csv = False
+                for fr in file_rows:
+                    if fr[0].endswith(".csv"):
+                        chosen = fr; is_csv = True; break
+                if not chosen:
+                    for fr in file_rows:
+                        if fr[0].endswith((".log", ".txt")):
+                            chosen = fr; break
+                if not chosen and file_rows:
+                    chosen = file_rows[0]
+
+                if chosen:
+                    fname  = chosen[0]
+                    fsize  = chosen[1] or 0
+                    log_path = f"log/{fname}"
+                    read_size = min(fsize, 786432)
+                    offset    = max(0, fsize - read_size)
+                    try:
+                        row = c.execute(
+                            text("SELECT pg_read_file(:p, :off, :sz)"),
+                            {"p": log_path, "off": int(offset), "sz": int(read_size)}
+                        ).fetchone()
+                        content = row[0] if row else ""
+                        if is_csv:
+                            logs   = _parse_csv_content(content)
+                            source = "csv_log"
+                        else:
+                            logs   = _parse_stderr_content(content)
+                            source = "stderr_log"
+                    except Exception as e:
+                        note = (note + " | pg_read_file: " + str(e)[:200]).strip(" | ")
+        except Exception as e:
+            note = (note + " | SQL log access: " + str(e)[:200]).strip(" | ")
+
+    # ── Method 3: pg_stat_activity fallback ──────────────────────────────────
+    if not logs:
+        source = "pg_stat_activity"
+        try:
+            with engine.connect() as c:
+                rows = c.execute(text("""
+                    SELECT
+                        now()                               AS log_time,
+                        usename                             AS user_name,
+                        datname                             AS database_name,
+                        pid                                 AS process_id,
+                        client_addr::text                   AS connection_from,
+                        application_name,
+                        state,
+                        wait_event_type,
+                        wait_event,
+                        query_start,
+                        state_change,
+                        query
+                    FROM pg_stat_activity
+                    WHERE state IS NOT NULL
+                      AND state != 'idle'
+                    ORDER BY query_start DESC NULLS LAST
+                    LIMIT :lim
+                """), {"lim": limit}).fetchall()
+
+                for r in rows:
+                    d   = dict(r._mapping)
+                    msg = d.get("query") or ""
+                    sev = "ERROR" if d.get("wait_event_type") == "Lock" else \
+                          "WARNING" if d.get("wait_event_type") else "LOG"
+                    logs.append({
+                        "timestamp":   str(d.get("log_time", ""))[:23],
+                        "severity":    sev,
+                        "raw_severity": sev,
+                        "database":    d.get("database_name", "") or "",
+                        "user":        d.get("user_name", "") or "",
+                        "pid":         str(d.get("process_id", "") or ""),
+                        "sql_state":   "",
+                        "message":     f"[{d.get('state','').upper()}] {msg[:200]}",
+                        "detail":      f"wait_event={d.get('wait_event_type')}/{d.get('wait_event')}",
+                        "hint":        "",
+                        "query":       msg,
+                        "context":     "",
+                        "location":    "",
+                        "command_tag": "",
+                        "application": d.get("application_name", "") or "",
+                        "session_id":  "",
+                    })
+        except Exception as e:
+            note = (note + " | pg_stat_activity: " + str(e)[:200]).strip(" | ")
+
+    # ── Collect pg_stat_database stats ───────────────────────────────────────
+    db_stats = {}
+    try:
+        with engine.connect() as c:
+            row = c.execute(text("""
+                SELECT datname, numbackends, xact_commit, xact_rollback,
+                       deadlocks, checksum_failures
+                FROM pg_stat_database
+                WHERE datname = current_database()
+            """)).fetchone()
+            if row:
+                m = dict(row._mapping)
+                db_stats = {
+                    "datname":           str(m.get("datname") or ""),
+                    "numbackends":       int(m.get("numbackends") or 0),
+                    "xact_commit":       int(m.get("xact_commit") or 0),
+                    "xact_rollback":     int(m.get("xact_rollback") or 0),
+                    "deadlocks":         int(m.get("deadlocks") or 0),
+                    "checksum_failures": int(m.get("checksum_failures") or 0),
+                }
+    except Exception:
+        db_stats = {}
+
+    # ── Sort + limit ──────────────────────────────────────────────────────────
+    logs = [l for l in logs if l.get("message")]
+    logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    logs = logs[:limit]
+
+    counts = {sev: sum(1 for l in logs if l["severity"] == sev)
+              for sev in ["FATAL", "ERROR", "WARNING", "LOG", "INFO", "DEBUG"]}
+
+    return {
+        "status":   "success",
+        "source":   source,
+        "log_path": str(log_path),
+        "note":     note,
+        "logs":     logs,
+        "counts":   counts,
+        "db_stats": db_stats,
+        "total":    len(logs),
+    }
+
+
+def _safe_int(v):
+    """Convert to int safely, return 0 on failure."""
+    try:
+        return int(v) if v is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  pg-analyze-error  POST /{conn_id}/pg-analyze-error
+#  Groq-powered error analysis — returns structured root-cause + fix guidance
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ErrorAnalysisRequest(BaseModel):
+    message:     str
+    severity:    str = ""
+    sql_state:   str = ""
+    detail:      str = ""
+    hint:        str = ""
+    query:       str = ""
+    context:     str = ""
+    location:    str = ""
+    database:    str = ""
+    user:        str = ""
+    application: str = ""
+    pid:         str = ""
+
+
+@router.post("/{conn_id}/pg-analyze-error")
+def pg_analyze_error(
+    conn_id: int,
+    payload: ErrorAnalysisRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Analyze a PostgreSQL error log entry with Groq AI.
+    Returns structured: what, root_cause, immediate_fix, sql_fix,
+                        prevention, severity_note, related_errors.
+    """
+    # Verify the connection exists (no engine needed — purely AI)
+    conn = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id,
+        ConnectionMaster.db_type == "postgresql"
+    ).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="PostgreSQL connection not found")
+
+    try:
+        from groq import Groq
+    except ImportError:
+        return {"status": "error",
+                "error": "Groq library not installed. Run: pip install groq"}
+
+    api_key = os.getenv("GROQ_API_KEY", "")
+    if not api_key:
+        return {"status": "error",
+                "error": "GROQ_API_KEY environment variable is not set on the backend server."}
+
+    # ── Build analysis context ──────────────────────────────────────────────
+    ctx_lines = [
+        "PostgreSQL 17 Error Log Entry",
+        "=" * 40,
+        f"Severity    : {payload.severity or 'UNKNOWN'}",
+        f"SQL State   : {payload.sql_state or 'N/A'}",
+        f"Database    : {payload.database or 'N/A'}",
+        f"User        : {payload.user or 'N/A'}",
+        f"Application : {payload.application or 'N/A'}",
+        f"PID         : {payload.pid or 'N/A'}",
+        "",
+        f"Message: {payload.message}",
+    ]
+    if payload.detail:
+        ctx_lines.append(f"Detail : {payload.detail}")
+    if payload.hint:
+        ctx_lines.append(f"Hint   : {payload.hint}")
+    if payload.context:
+        ctx_lines.append(f"Context: {payload.context}")
+    if payload.location:
+        ctx_lines.append(f"Location: {payload.location}")
+    if payload.query:
+        ctx_lines += ["", "SQL Query that caused the error:", payload.query[:1500]]
+    error_context = "\n".join(ctx_lines)
+
+    system_prompt = """You are an expert PostgreSQL 17 DBA analyst embedded in ActMon — an enterprise database monitoring platform.
+
+Analyze the PostgreSQL error log entry and return ONLY a valid JSON object with this exact structure:
+{
+  "what": "1-2 clear sentences explaining what this error means in plain terms",
+  "root_cause": "Specific technical explanation of WHY this error occurred (3-5 sentences, mention relevant PostgreSQL internals)",
+  "immediate_fix": "Numbered step-by-step actions to resolve this error right now",
+  "sql_fix": "Exact SQL commands or postgresql.conf changes to fix it — null if not applicable",
+  "prevention": "How to prevent this error from recurring in future (specific settings, code changes, design patterns)",
+  "severity_note": "Business impact assessment: data risk, performance impact, urgency level",
+  "related_errors": "Other PostgreSQL errors or issues this commonly triggers or is related to"
+}
+
+Rules:
+- Be specific and technical — this is for experienced DBAs
+- Reference PostgreSQL 17 features/views when relevant
+- For SQL fix, use proper PostgreSQL 17 syntax
+- If the query in the log reveals a design issue, mention it
+- Urgency: CRITICAL (data loss risk / crash), HIGH (service degradation), MEDIUM (performance), LOW (informational)
+- Return ONLY the JSON object, no markdown, no explanation outside JSON"""
+
+    try:
+        client = Groq(api_key=api_key)
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": error_context},
+            ],
+            max_tokens=1800,
+            temperature=0.25,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content or "{}"
+        analysis = json.loads(raw)
+        return {"status": "success", "analysis": analysis}
+
+    except json.JSONDecodeError:
+        # Model returned non-JSON — wrap it
+        return {
+            "status": "success",
+            "analysis": {
+                "what":          raw[:800] if raw else "Analysis failed",
+                "root_cause":    "",
+                "immediate_fix": "",
+                "sql_fix":       None,
+                "prevention":    "",
+                "severity_note": "",
+                "related_errors":"",
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:400]}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  PG17 EXTENDED MONITORING ENDPOINTS
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _pg_conn(conn_id: int, db: Session):
+    """Shared helper: fetch connection record + build engine."""
+    conn = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id,
+        ConnectionMaster.db_type == "postgresql"
+    ).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="PostgreSQL connection not found")
+    return conn, _pg_engine(conn)
+
+
+# ── WAL Statistics (pg_stat_wal – PG 14+) ────────────────────────────────────
+@router.get("/{conn_id}/pg-wal-stats")
+def pg_wal_stats(conn_id: int, db: Session = Depends(get_db)):
+    """WAL activity from pg_stat_wal (PostgreSQL 14+)."""
+    conn, engine = _pg_conn(conn_id, db)
+    try:
+        rows = _rows(engine, "SELECT * FROM pg_stat_wal")
+        if not rows:
+            return {"status": "success", "wal": {}, "note": "pg_stat_wal returned no rows"}
+        w = rows[0]
+        wal = {
+            "wal_records":        int(w.get("wal_records") or 0),
+            "wal_fpi":            int(w.get("wal_fpi") or 0),
+            "wal_bytes":          int(w.get("wal_bytes") or 0),
+            "wal_bytes_mb":       round(int(w.get("wal_bytes") or 0) / (1024 * 1024), 3),
+            "wal_buffers_full":   int(w.get("wal_buffers_full") or 0),
+            "wal_write":          int(w.get("wal_write") or 0),
+            "wal_sync":           int(w.get("wal_sync") or 0),
+            "wal_write_time":     float(w.get("wal_write_time") or 0),
+            "wal_sync_time":      float(w.get("wal_sync_time") or 0),
+            "stats_reset":        str(w.get("stats_reset") or ""),
+        }
+        # Current WAL LSN and insertion point
+        try:
+            lsn_row = _rows(engine,
+                "SELECT pg_current_wal_lsn()::text AS lsn, "
+                "pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')::bigint AS lsn_bytes")
+            if lsn_row:
+                wal["current_lsn"]      = lsn_row[0].get("lsn", "")
+                wal["lsn_bytes_total"]  = int(lsn_row[0].get("lsn_bytes") or 0)
+        except Exception:
+            pass
+        # WAL config
+        try:
+            for var in ("wal_level", "wal_buffers", "max_wal_size", "min_wal_size",
+                        "wal_compression", "wal_log_hints", "synchronous_commit",
+                        "wal_writer_delay", "wal_writer_flush_after"):
+                try:
+                    wal[f"cfg_{var}"] = _val(engine, f"SHOW {var}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return {"status": "success", "wal": wal}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:300], "wal": {}}
+
+
+# ── Checkpoint Statistics (pg_stat_checkpointer – PG 17) ─────────────────────
+@router.get("/{conn_id}/pg-checkpoint-stats")
+def pg_checkpoint_stats(conn_id: int, db: Session = Depends(get_db)):
+    """
+    Checkpoint statistics.
+    Uses pg_stat_checkpointer (PG17) with fallback to pg_stat_bgwriter (PG<=16).
+    """
+    conn, engine = _pg_conn(conn_id, db)
+    result = {}
+    source = "unknown"
+
+    # PG17 — pg_stat_checkpointer
+    try:
+        rows = _rows(engine, "SELECT * FROM pg_stat_checkpointer")
+        if rows:
+            cp = rows[0]
+            result = {
+                "num_timed":      int(cp.get("num_timed") or 0),
+                "num_requested":  int(cp.get("num_requested") or 0),
+                "num_done":       int(cp.get("num_done") or 0),  # PG18 preview; safe to try
+                "restartpoints_timed":     int(cp.get("restartpoints_timed") or 0),
+                "restartpoints_requested": int(cp.get("restartpoints_requested") or 0),
+                "restartpoints_done":      int(cp.get("restartpoints_done") or 0),
+                "write_time":     float(cp.get("write_time") or 0),
+                "sync_time":      float(cp.get("sync_time") or 0),
+                "buffers_written": int(cp.get("buffers_written") or 0),
+                "stats_reset":    str(cp.get("stats_reset") or ""),
+            }
+            source = "pg_stat_checkpointer"
+    except Exception:
+        pass
+
+    # PG16 and earlier — pg_stat_bgwriter (has checkpoint cols)
+    if not result:
+        try:
+            rows = _rows(engine, "SELECT * FROM pg_stat_bgwriter")
+            if rows:
+                bg = rows[0]
+                result = {
+                    "num_timed":       int(bg.get("checkpoints_timed") or 0),
+                    "num_requested":   int(bg.get("checkpoints_req") or 0),
+                    "write_time":      float(bg.get("checkpoint_write_time") or 0),
+                    "sync_time":       float(bg.get("checkpoint_sync_time") or 0),
+                    "buffers_written": int(bg.get("buffers_checkpoint") or 0),
+                    "stats_reset":     str(bg.get("stats_reset") or ""),
+                }
+                source = "pg_stat_bgwriter"
+        except Exception as e:
+            return {"status": "error", "error": str(e)[:300], "checkpoints": {}, "source": source}
+
+    # BGWriter stats (always from pg_stat_bgwriter)
+    bgwriter = {}
+    try:
+        rows = _rows(engine, "SELECT * FROM pg_stat_bgwriter")
+        if rows:
+            bg = rows[0]
+            bgwriter = {
+                "buffers_clean":    int(bg.get("buffers_clean") or 0),
+                "maxwritten_clean": int(bg.get("maxwritten_clean") or 0),
+                "buffers_backend":  int(bg.get("buffers_backend") or 0),
+                "buffers_alloc":    int(bg.get("buffers_alloc") or 0),
+                "stats_reset":      str(bg.get("stats_reset") or ""),
+            }
+    except Exception:
+        pass
+
+    # Config
+    cfg = {}
+    for var in ("checkpoint_completion_target", "checkpoint_timeout",
+                "checkpoint_warning", "max_wal_size"):
+        try:
+            cfg[var] = _val(engine, f"SHOW {var}")
+        except Exception:
+            pass
+
+    return {
+        "status":      "success",
+        "source":      source,
+        "checkpoints": result,
+        "bgwriter":    bgwriter,
+        "config":      cfg,
+    }
+
+
+# ── Session Details (pg_stat_activity – PG17 fields) ─────────────────────────
+@router.get("/{conn_id}/pg-session-details")
+def pg_session_details(conn_id: int, db: Session = Depends(get_db)):
+    """
+    Full pg_stat_activity snapshot with all PG17 fields.
+    Returns per-session detail + aggregated summary.
+    """
+    conn, engine = _pg_conn(conn_id, db)
+    try:
+        sessions = _rows(engine, """
+            SELECT
+                pid,
+                usename,
+                datname,
+                application_name,
+                client_addr::text           AS client_addr,
+                client_hostname,
+                client_port,
+                backend_start::text         AS backend_start,
+                xact_start::text            AS xact_start,
+                query_start::text           AS query_start,
+                state_change::text          AS state_change,
+                wait_event_type,
+                wait_event,
+                state,
+                backend_xid::text           AS backend_xid,
+                backend_xmin::text          AS backend_xmin,
+                query_id::text              AS query_id,
+                left(query, 500)            AS query,
+                backend_type,
+                EXTRACT(EPOCH FROM (now() - query_start))::int  AS query_age_sec,
+                EXTRACT(EPOCH FROM (now() - xact_start))::int   AS xact_age_sec,
+                EXTRACT(EPOCH FROM (now() - backend_start))::int AS backend_age_sec
+            FROM pg_stat_activity
+            WHERE pid <> pg_backend_pid()
+            ORDER BY query_start DESC NULLS LAST
+        """)
+        sessions = [dict(s) for s in sessions]
+        for s in sessions:
+            s["query_age_sec"]   = int(s.get("query_age_sec") or 0)
+            s["xact_age_sec"]    = int(s.get("xact_age_sec") or 0)
+            s["backend_age_sec"] = int(s.get("backend_age_sec") or 0)
+
+        # Summary counts
+        summary = {
+            "total":       len(sessions),
+            "active":      sum(1 for s in sessions if s.get("state") == "active"),
+            "idle":        sum(1 for s in sessions if s.get("state") == "idle"),
+            "idle_in_tx":  sum(1 for s in sessions if (s.get("state") or "").startswith("idle in transaction")),
+            "waiting":     sum(1 for s in sessions if s.get("wait_event_type") == "Lock"),
+            "client":      sum(1 for s in sessions if s.get("backend_type") == "client backend"),
+            "background":  sum(1 for s in sessions if s.get("backend_type") != "client backend"),
+            "long_running":sum(1 for s in sessions if int(s.get("query_age_sec") or 0) > 60),
+        }
+
+        # Lock waits
+        blockers = []
+        try:
+            blockers = _rows(engine, """
+                SELECT
+                    blocked.pid        AS blocked_pid,
+                    blocked.usename    AS blocked_user,
+                    blocked.query      AS blocked_query,
+                    blocker.pid        AS blocking_pid,
+                    blocker.usename    AS blocking_user,
+                    blocker.query      AS blocking_query,
+                    bl.mode            AS lock_mode,
+                    EXTRACT(EPOCH FROM (now() - blocked.query_start))::int AS wait_sec
+                FROM pg_stat_activity blocked
+                JOIN pg_locks bl ON bl.pid = blocked.pid AND NOT bl.granted
+                JOIN pg_locks gl ON gl.locktype = bl.locktype
+                    AND gl.relation IS NOT DISTINCT FROM bl.relation
+                    AND gl.granted
+                JOIN pg_stat_activity blocker ON blocker.pid = gl.pid
+                ORDER BY wait_sec DESC
+            """)
+            blockers = [dict(b) for b in blockers]
+            for b in blockers:
+                b["wait_sec"] = int(b.get("wait_sec") or 0)
+        except Exception:
+            pass
+
+        return {
+            "status":   "success",
+            "sessions": sessions,
+            "summary":  summary,
+            "blockers": blockers,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:300], "sessions": [], "summary": {}}
+
+
+# ── Replication Detail (pg_stat_replication + slots + WAL) ───────────────────
+@router.get("/{conn_id}/pg-replication-detail")
+def pg_replication_detail(conn_id: int, db: Session = Depends(get_db)):
+    """
+    Full replication picture:
+    - pg_stat_replication (streaming standbys)
+    - pg_replication_slots
+    - pg_stat_archiver
+    - pg_stat_wal (WAL activity)
+    - is_primary / is_recovery
+    """
+    conn, engine = _pg_conn(conn_id, db)
+
+    is_recovery = False
+    try:
+        is_recovery = bool(_val(engine, "SELECT pg_is_in_recovery()"))
+    except Exception:
+        pass
+
+    standbys = []
+    try:
+        standbys = _rows(engine, """
+            SELECT
+                pid::text, usename, application_name,
+                client_addr::text  AS client_addr,
+                state,
+                sent_lsn::text     AS sent_lsn,
+                write_lsn::text    AS write_lsn,
+                flush_lsn::text    AS flush_lsn,
+                replay_lsn::text   AS replay_lsn,
+                write_lag::text    AS write_lag,
+                flush_lag::text    AS flush_lag,
+                replay_lag::text   AS replay_lag,
+                sync_state,
+                sync_priority,
+                reply_time::text   AS reply_time,
+                pg_wal_lsn_diff(sent_lsn, replay_lsn)::bigint AS lag_bytes
+            FROM pg_stat_replication
+            ORDER BY lag_bytes DESC NULLS LAST
+        """)
+        standbys = [dict(s) for s in standbys]
+        for s in standbys:
+            s["lag_bytes"] = int(s.get("lag_bytes") or 0)
+            s["lag_mb"]    = round(s["lag_bytes"] / (1024 * 1024), 3)
+    except Exception:
+        pass
+
+    slots = []
+    try:
+        slots = _rows(engine, """
+            SELECT
+                slot_name, plugin, slot_type, database,
+                active, active_pid,
+                xmin::text AS xmin, catalog_xmin::text AS catalog_xmin,
+                restart_lsn::text AS restart_lsn,
+                confirmed_flush_lsn::text AS confirmed_flush_lsn,
+                wal_status, safe_wal_size, two_phase,
+                pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint AS lag_bytes
+            FROM pg_replication_slots
+            ORDER BY active DESC, slot_name
+        """)
+        slots = [dict(s) for s in slots]
+        for s in slots:
+            s["active"]    = bool(s.get("active"))
+            s["lag_bytes"] = int(s.get("lag_bytes") or 0)
+            s["lag_mb"]    = round(s["lag_bytes"] / (1024 * 1024), 3)
+    except Exception:
+        pass
+
+    archiver = {}
+    try:
+        rows = _rows(engine, "SELECT * FROM pg_stat_archiver")
+        if rows:
+            a = rows[0]
+            archiver = {
+                "archived_count":   int(a.get("archived_count") or 0),
+                "last_archived_wal":str(a.get("last_archived_wal") or ""),
+                "last_archived_time":str(a.get("last_archived_time") or ""),
+                "failed_count":     int(a.get("failed_count") or 0),
+                "last_failed_wal":  str(a.get("last_failed_wal") or ""),
+                "last_failed_time": str(a.get("last_failed_time") or ""),
+                "stats_reset":      str(a.get("stats_reset") or ""),
+            }
+    except Exception:
+        pass
+
+    wal_summary = {}
+    try:
+        rows = _rows(engine, "SELECT * FROM pg_stat_wal")
+        if rows:
+            w = rows[0]
+            wal_summary = {
+                "wal_bytes_mb":   round(int(w.get("wal_bytes") or 0) / (1024 * 1024), 3),
+                "wal_records":    int(w.get("wal_records") or 0),
+                "wal_write":      int(w.get("wal_write") or 0),
+                "wal_sync":       int(w.get("wal_sync") or 0),
+                "wal_write_time": float(w.get("wal_write_time") or 0),
+                "wal_sync_time":  float(w.get("wal_sync_time") or 0),
+            }
+    except Exception:
+        pass
+
+    return {
+        "status":      "success",
+        "is_primary":  not is_recovery,
+        "is_recovery": is_recovery,
+        "standbys":    standbys,
+        "slots":       slots,
+        "archiver":    archiver,
+        "wal":         wal_summary,
+    }
+
+
+# ── SLRU Cache Statistics (pg_stat_slru – PG 13+) ────────────────────────────
+@router.get("/{conn_id}/pg-slru-stats")
+def pg_slru_stats(conn_id: int, db: Session = Depends(get_db)):
+    """SLRU (Simple Least Recently Used) cache statistics from pg_stat_slru."""
+    conn, engine = _pg_conn(conn_id, db)
+    try:
+        rows = _rows(engine, """
+            SELECT
+                name,
+                blks_zeroed,
+                blks_hit,
+                blks_read,
+                blks_written,
+                blks_exists,
+                flushes,
+                truncates,
+                stats_reset::text AS stats_reset
+            FROM pg_stat_slru
+            ORDER BY blks_hit + blks_read DESC
+        """)
+        slru = [dict(r) for r in rows]
+        for s in slru:
+            total = int(s.get("blks_hit") or 0) + int(s.get("blks_read") or 0)
+            s["hit_pct"] = round(int(s.get("blks_hit") or 0) / total * 100, 2) if total > 0 else 0.0
+        return {"status": "success", "slru": slru}
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:300], "slru": []}
+
+
+# ── SSL Statistics (pg_stat_ssl) ──────────────────────────────────────────────
+@router.get("/{conn_id}/pg-ssl-stats")
+def pg_ssl_stats(conn_id: int, db: Session = Depends(get_db)):
+    """SSL connection statistics from pg_stat_ssl."""
+    conn, engine = _pg_conn(conn_id, db)
+    try:
+        rows = _rows(engine, """
+            SELECT
+                s.pid,
+                s.ssl,
+                s.version,
+                s.cipher,
+                s.bits,
+                s.client_dn,
+                s.client_serial::text AS client_serial,
+                s.issuer_dn,
+                a.usename,
+                a.datname,
+                a.application_name,
+                a.client_addr::text AS client_addr,
+                a.state
+            FROM pg_stat_ssl s
+            JOIN pg_stat_activity a ON s.pid = a.pid
+            ORDER BY s.ssl DESC, a.usename
+        """)
+        conns = [dict(r) for r in rows]
+        ssl_count    = sum(1 for c in conns if c.get("ssl"))
+        non_ssl_count = sum(1 for c in conns if not c.get("ssl"))
+        ciphers = {}
+        for c in conns:
+            if c.get("ssl") and c.get("cipher"):
+                ciphers[c["cipher"]] = ciphers.get(c["cipher"], 0) + 1
+        return {
+            "status":       "success",
+            "connections":  conns,
+            "ssl_count":    ssl_count,
+            "non_ssl_count":non_ssl_count,
+            "ciphers":      ciphers,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)[:300], "connections": []}
+
+
+# ── Query Analytics (pg_stat_statements comprehensive) ───────────────────────
+@router.get("/{conn_id}/pg-query-analytics")
+def pg_query_analytics(conn_id: int, sort: str = "mean_exec_time",
+                        limit: int = 100, db: Session = Depends(get_db)):
+    """
+    Comprehensive query analytics from pg_stat_statements.
+    sort: mean_exec_time | total_exec_time | calls | rows | blks
+    """
+    conn, engine = _pg_conn(conn_id, db)
+
+    valid_sorts = {
+        "mean_exec_time":  "mean_exec_time DESC",
+        "total_exec_time": "total_exec_time DESC",
+        "calls":           "calls DESC",
+        "rows":            "rows DESC",
+        "blks":            "(shared_blks_hit + shared_blks_read) DESC",
+        "stddev":          "stddev_exec_time DESC",
+    }
+    order_clause = valid_sorts.get(sort, "mean_exec_time DESC")
+
+    try:
+        rows = _rows(engine, f"""
+            SELECT
+                queryid::text               AS query_id,
+                userid::regrole::text       AS username,
+                dbid::text                  AS db_oid,
+                query,
+                calls,
+                total_exec_time,
+                min_exec_time,
+                max_exec_time,
+                mean_exec_time,
+                stddev_exec_time,
+                rows,
+                shared_blks_hit,
+                shared_blks_read,
+                shared_blks_dirtied,
+                shared_blks_written,
+                local_blks_hit,
+                local_blks_read,
+                temp_blks_read,
+                temp_blks_written,
+                blk_read_time,
+                blk_write_time,
+                wal_records,
+                wal_fpi,
+                wal_bytes,
+                plans,
+                total_plan_time,
+                mean_plan_time
+            FROM pg_stat_statements
+            WHERE query NOT LIKE '%pg_stat_statements%'
+              AND calls > 0
+            ORDER BY {order_clause}
+            LIMIT :lim
+        """, {"lim": limit})
+
+        statements = [dict(r) for r in rows]
+        for s in statements:
+            s["calls"]            = int(s.get("calls") or 0)
+            s["rows"]             = int(s.get("rows") or 0)
+            s["total_exec_time"]  = round(float(s.get("total_exec_time") or 0), 3)
+            s["mean_exec_time"]   = round(float(s.get("mean_exec_time") or 0), 3)
+            s["max_exec_time"]    = round(float(s.get("max_exec_time") or 0), 3)
+            s["min_exec_time"]    = round(float(s.get("min_exec_time") or 0), 3)
+            s["stddev_exec_time"] = round(float(s.get("stddev_exec_time") or 0), 3)
+            s["shared_blks_hit"]  = int(s.get("shared_blks_hit") or 0)
+            s["shared_blks_read"] = int(s.get("shared_blks_read") or 0)
+            s["wal_bytes"]        = int(s.get("wal_bytes") or 0)
+            s["plans"]            = int(s.get("plans") or 0)
+            s["total_plan_time"]  = round(float(s.get("total_plan_time") or 0), 3)
+            # Hit ratio per statement
+            blks = s["shared_blks_hit"] + s["shared_blks_read"]
+            s["cache_hit_pct"] = round(s["shared_blks_hit"] / blks * 100, 2) if blks > 0 else 0.0
+
+        # Aggregate summary
+        total_calls = sum(s["calls"] for s in statements)
+        total_time  = sum(s["total_exec_time"] for s in statements)
+        return {
+            "status":        "success",
+            "sort":          sort,
+            "statements":    statements,
+            "total_queries": len(statements),
+            "summary": {
+                "total_calls":      total_calls,
+                "total_exec_time_ms": round(total_time, 2),
+                "avg_exec_time_ms": round(total_time / total_calls, 3) if total_calls > 0 else 0,
+                "unique_queries":   len(set(s.get("query_id", "") for s in statements)),
+            },
+        }
+    except Exception as e:
+        note = str(e)
+        if "pg_stat_statements" in note and "does not exist" in note:
+            return {
+                "status": "extension_missing",
+                "error":  "pg_stat_statements extension is not installed.",
+                "note":   "Run: CREATE EXTENSION pg_stat_statements; and add it to shared_preload_libraries.",
+                "statements": [], "summary": {},
+            }
+        return {"status": "error", "error": note[:300], "statements": [], "summary": {}}
+
+
+# ── Database Health Comprehensive (PG17 native views) ────────────────────────
+@router.get("/{conn_id}/pg-database-health")
+def pg_database_health(conn_id: int, db: Session = Depends(get_db)):
+    """
+    Comprehensive database health from PostgreSQL 17 native statistics views.
+    Returns: per-db stats, table bloat, index health, vacuum status, sequences.
+    """
+    conn, engine = _pg_conn(conn_id, db)
+
+    # Per-database statistics
+    db_stats = []
+    try:
+        db_stats = _rows(engine, """
+            SELECT
+                s.datname,
+                s.numbackends,
+                s.xact_commit,
+                s.xact_rollback,
+                s.blks_read,
+                s.blks_hit,
+                s.tup_returned,
+                s.tup_fetched,
+                s.tup_inserted,
+                s.tup_updated,
+                s.tup_deleted,
+                s.conflicts,
+                s.temp_files,
+                s.temp_bytes,
+                s.deadlocks,
+                s.checksum_failures,
+                s.blk_read_time,
+                s.blk_write_time,
+                s.session_time,
+                s.active_time,
+                s.idle_in_transaction_time,
+                s.sessions,
+                s.sessions_abandoned,
+                s.sessions_fatal,
+                s.sessions_killed,
+                pg_database_size(s.datname) AS size_bytes,
+                ROUND(
+                    CASE WHEN s.blks_hit + s.blks_read > 0
+                    THEN s.blks_hit::numeric / (s.blks_hit + s.blks_read) * 100
+                    ELSE 0 END, 2
+                ) AS cache_hit_pct
+            FROM pg_stat_database s
+            WHERE s.datname NOT IN ('template0', 'template1')
+            ORDER BY size_bytes DESC
+        """)
+        db_stats = [dict(d) for d in db_stats]
+        for d in db_stats:
+            d["size_bytes"] = int(d.get("size_bytes") or 0)
+            d["size_mb"]    = round(d["size_bytes"] / (1024 * 1024), 2)
+    except Exception as e:
+        db_stats = [{"error": str(e)}]
+
+    # Tables needing vacuum (high dead tuple ratio)
+    vacuum_needed = []
+    try:
+        vacuum_needed = _rows(engine, """
+            SELECT
+                schemaname, relname,
+                n_live_tup, n_dead_tup,
+                CASE WHEN n_live_tup + n_dead_tup > 0
+                     THEN ROUND(n_dead_tup::numeric / (n_live_tup + n_dead_tup) * 100, 2)
+                     ELSE 0 END AS dead_tup_pct,
+                last_vacuum::text,
+                last_autovacuum::text,
+                last_analyze::text,
+                last_autoanalyze::text,
+                n_mod_since_analyze,
+                seq_scan,
+                idx_scan,
+                pg_size_pretty(pg_total_relation_size(schemaname||'.'||relname)) AS total_size
+            FROM pg_stat_user_tables
+            WHERE n_dead_tup > 1000
+               OR (n_live_tup + n_dead_tup > 0
+                   AND n_dead_tup::float / (n_live_tup + n_dead_tup) > 0.1)
+            ORDER BY n_dead_tup DESC
+            LIMIT 30
+        """)
+        vacuum_needed = [dict(r) for r in vacuum_needed]
+        for t in vacuum_needed:
+            t["n_live_tup"] = int(t.get("n_live_tup") or 0)
+            t["n_dead_tup"] = int(t.get("n_dead_tup") or 0)
+    except Exception:
+        pass
+
+    # Index health summary
+    index_health = {}
+    try:
+        rows = _rows(engine, """
+            SELECT
+                COUNT(*) FILTER (WHERE idx_scan = 0 AND indexrelname NOT LIKE '%_pkey') AS unused_indexes,
+                COUNT(*) AS total_indexes,
+                SUM(idx_scan) AS total_scans,
+                SUM(idx_tup_read) AS total_tup_read,
+                pg_size_pretty(SUM(pg_relation_size(indexrelid))) AS total_index_size
+            FROM pg_stat_user_indexes
+        """)
+        if rows:
+            index_health = dict(rows[0])
+    except Exception:
+        pass
+
+    # Sequence exhaustion check
+    sequences = []
+    try:
+        sequences = _rows(engine, """
+            SELECT
+                schemaname, sequencename, last_value, start_value,
+                increment_by, max_value, min_value, cycle, cache_size,
+                CASE WHEN max_value > 0 AND last_value IS NOT NULL
+                     THEN ROUND((last_value - min_value)::numeric
+                                / NULLIF(max_value - min_value, 0) * 100, 2)
+                     ELSE 0 END AS used_pct
+            FROM pg_sequences
+            WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+            ORDER BY used_pct DESC NULLS LAST
+            LIMIT 50
+        """)
+        sequences = [dict(r) for r in sequences]
+    except Exception:
+        pass
+
+    return {
+        "status":        "success",
+        "databases":     db_stats,
+        "vacuum_needed": vacuum_needed,
+        "index_health":  index_health,
+        "sequences":     sequences,
+    }
+
+
+# ── Storage & Object Monitoring ────────────────────────────────────────────────
+@router.get("/{conn_id}/pg-storage-objects")
+def pg_storage_objects(conn_id: int, db: Session = Depends(get_db)):
+    """
+    Storage and object monitoring using PostgreSQL catalog + statistics views.
+    Returns: top tables by size, top indexes by size, toast tables, extensions.
+    """
+    conn, engine = _pg_conn(conn_id, db)
+
+    # Top tables by size
+    top_tables = []
+    try:
+        top_tables = _rows(engine, """
+            SELECT
+                n.nspname AS schema,
+                c.relname AS table_name,
+                c.reltuples::bigint AS estimated_rows,
+                pg_size_pretty(pg_table_size(c.oid))        AS table_size,
+                pg_size_pretty(pg_indexes_size(c.oid))       AS index_size,
+                pg_size_pretty(pg_total_relation_size(c.oid)) AS total_size,
+                pg_table_size(c.oid)                         AS table_size_bytes,
+                pg_total_relation_size(c.oid)                AS total_size_bytes,
+                s.seq_scan, s.idx_scan,
+                s.n_live_tup, s.n_dead_tup,
+                s.last_vacuum::text, s.last_autovacuum::text
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_stat_user_tables s ON s.relname = c.relname AND s.schemaname = n.nspname
+            WHERE c.relkind = 'r'
+              AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+            ORDER BY pg_total_relation_size(c.oid) DESC
+            LIMIT 50
+        """)
+        top_tables = [dict(r) for r in top_tables]
+        for t in top_tables:
+            t["total_size_bytes"] = int(t.get("total_size_bytes") or 0)
+            t["table_size_bytes"] = int(t.get("table_size_bytes") or 0)
+            t["estimated_rows"]   = int(t.get("estimated_rows") or 0)
+    except Exception as e:
+        top_tables = [{"error": str(e)}]
+
+    # Top indexes by size
+    top_indexes = []
+    try:
+        top_indexes = _rows(engine, """
+            SELECT
+                n.nspname AS schema,
+                t.relname AS table_name,
+                i.relname AS index_name,
+                ix.indisprimary AS is_primary,
+                ix.indisunique  AS is_unique,
+                pg_size_pretty(pg_relation_size(i.oid)) AS size,
+                pg_relation_size(i.oid)                 AS size_bytes,
+                s.idx_scan,
+                s.idx_tup_read,
+                s.idx_tup_fetch,
+                pg_get_indexdef(ix.indexrelid)          AS definition
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_class t ON t.oid = ix.indrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = ix.indexrelid
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+            ORDER BY pg_relation_size(i.oid) DESC
+            LIMIT 50
+        """)
+        top_indexes = [dict(r) for r in top_indexes]
+        for idx in top_indexes:
+            idx["size_bytes"]    = int(idx.get("size_bytes") or 0)
+            idx["idx_scan"]      = int(idx.get("idx_scan") or 0)
+            idx["is_primary"]    = bool(idx.get("is_primary"))
+            idx["is_unique"]     = bool(idx.get("is_unique"))
+    except Exception as e:
+        top_indexes = [{"error": str(e)}]
+
+    # Installed extensions
+    extensions = []
+    try:
+        extensions = _rows(engine, """
+            SELECT name, default_version, installed_version, comment
+            FROM pg_available_extensions
+            WHERE installed_version IS NOT NULL
+            ORDER BY name
+        """)
+        extensions = [dict(e) for e in extensions]
+    except Exception:
+        pass
+
+    # Database-level storage summary
+    storage_summary = {}
+    try:
+        rows = _rows(engine, """
+            SELECT
+                pg_size_pretty(SUM(pg_database_size(datname))) AS total_all_dbs,
+                SUM(pg_database_size(datname))                 AS total_bytes,
+                COUNT(*)                                       AS db_count
+            FROM pg_database
+            WHERE datname NOT IN ('template0', 'template1')
+        """)
+        if rows:
+            storage_summary = dict(rows[0])
+            storage_summary["total_bytes"] = int(storage_summary.get("total_bytes") or 0)
+    except Exception:
+        pass
+
+    return {
+        "status":          "success",
+        "top_tables":      top_tables,
+        "top_indexes":     top_indexes,
+        "extensions":      extensions,
+        "storage_summary": storage_summary,
     }

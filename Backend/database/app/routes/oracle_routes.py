@@ -155,7 +155,9 @@ def test_oracle_connection(connection_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Oracle connection not found")
     
     try:
-        connection_string = f"oracle+cx_Oracle://{connection.username}:{quote_plus(connection.password)}@{connection.host}:{connection.port}/{connection.database}"
+        pw = quote_plus(connection.password or "")
+        svc = getattr(connection, "service_name", None) or getattr(connection, "sid", None) or connection.database_name or ""
+        connection_string = f"oracle+oracledb://{connection.username}:{pw}@{connection.host}:{connection.port}/?service_name={svc}"
         engine = create_engine(connection_string, echo=False)
         with engine.connect() as conn:
             result = conn.execute(text("SELECT banner FROM v$version WHERE rownum = 1"))

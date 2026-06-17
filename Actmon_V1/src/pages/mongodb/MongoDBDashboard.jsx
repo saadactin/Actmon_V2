@@ -7,9 +7,10 @@ import {
   FileText, Zap, Terminal, GitBranch, Archive, RotateCcw,
   CheckCircle2, XCircle, ChevronRight, Heart, Users, Lock,
   TrendingUp, BarChart2, Table, Settings, Bell, ArrowUp,
-  ArrowDown, Minus, Search, Filter,
+  ArrowDown, Minus, Search, Filter, Brain, Lightbulb, Star,
   ChevronDown, ChevronUp, Code2, FolderOpen, Key, Link as LinkIcon,
   Copy, Wifi, WifiOff, Loader2, Package, List, Inbox,
+  Eye, X, Hash, Type, ToggleLeft, Calendar, Braces, Info,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -63,6 +64,7 @@ const TABS = [
   { id: 'wiredtiger',   label: 'WiredTiger',      icon: Cpu },
   { id: 'users',        label: 'Users',           icon: Users },
   { id: 'slowqueries',  label: 'Slow Queries',    icon: Clock },
+  { id: 'errorlogs',    label: 'Error Logs',      icon: FileText },
 ];
 
 const REFRESH_INTERVAL = 15;
@@ -296,6 +298,362 @@ function EmptyState({ icon: Icon = Inbox, message = 'No data available', sub = '
   );
 }
 
+/* ─── Copy-to-clipboard helper ─── */
+function CopyBtn({ text, size = 11 }) {
+  const [copied, setCopied] = React.useState(false);
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="flex-shrink-0 p-1 rounded hover:bg-white/20 transition-colors"
+      title="Copy">
+      {copied ? <CheckCircle2 size={size} className="text-green-400" /> : <Copy size={size} className="text-slate-400" />}
+    </button>
+  );
+}
+
+/* ─── Slide-over detail modal ─── */
+function DetailModal({ title, subtitle, onClose, children }) {
+  React.useEffect(() => {
+    const h = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex" style={{ backdropFilter: 'blur(2px)', background: 'rgba(0,0,0,0.45)' }}
+      onClick={onClose}>
+      <div className="ml-auto h-full flex flex-col bg-white shadow-2xl overflow-hidden"
+        style={{ width: 'min(720px, 96vw)' }}
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ background: `linear-gradient(135deg, #001E2B 0%, #0a2d1f 100%)` }}
+          className="px-6 py-4 text-white flex items-start justify-between flex-shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-lg font-black truncate">{title}</h2>
+            {subtitle && <p className="text-xs mt-0.5" style={{ color: '#00ED64' }}>{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="ml-4 p-1.5 rounded-lg hover:bg-white/10 flex-shrink-0">
+            <X size={18} />
+          </button>
+        </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 bg-slate-50">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── BSON type icon ─── */
+function TypeBadge({ type }) {
+  const map = {
+    string:  { label: 'str',    cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+    int:     { label: 'int',    cls: 'bg-green-50 text-green-700 border-green-200' },
+    double:  { label: 'dbl',    cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    boolean: { label: 'bool',   cls: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+    date:    { label: 'date',   cls: 'bg-purple-50 text-purple-700 border-purple-200' },
+    array:   { label: '[ ]',    cls: 'bg-orange-50 text-orange-700 border-orange-200' },
+    object:  { label: '{ }',    cls: 'bg-teal-50 text-teal-700 border-teal-200' },
+    null:    { label: 'null',   cls: 'bg-slate-50 text-slate-400 border-slate-200' },
+    binData: { label: 'bin',    cls: 'bg-red-50 text-red-600 border-red-200' },
+  };
+  const cfg = map[type] || { label: type, cls: 'bg-slate-50 text-slate-500 border-slate-200' };
+  return (
+    <span className={`px-1.5 py-0.5 text-[9px] font-bold rounded border font-mono ${cfg.cls}`}>{cfg.label}</span>
+  );
+}
+
+/* ─── Collection Detail Modal content ─── */
+function CollectionDetailPanel({ connId, dbName, collName, onViewSlowOps }) {
+  const [activeSection, setActiveSection] = React.useState('schema');
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['mongoCollDetail', connId, dbName, collName],
+    queryFn: () => client.get(`/connections/mongodb/${connId}/mongo-collection-detail/${dbName}/${collName}`).then(r => r.data),
+    staleTime: 30000,
+  });
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-20">
+      <div className="w-8 h-8 border-4 border-green-200 border-t-green-600 rounded-full animate-spin" />
+    </div>
+  );
+  if (isError || !data) return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">Failed to load collection details.</div>
+  );
+
+  const { stats = {}, indexes = [], schema_fields = {}, sample_count = 0 } = data;
+  const sections = [
+    { id: 'schema',  label: `Schema (${Object.keys(schema_fields).length} fields)` },
+    { id: 'indexes', label: `Indexes (${indexes.length})` },
+    { id: 'stats',   label: 'Stats' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Quick stats strip */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Documents',   value: fmtNum(stats.count || 0),                color: 'text-green-700',   bg: 'bg-green-50 border-green-200' },
+          { label: 'Data Size',   value: `${stats.size_mb ?? 0} MB`,              color: 'text-blue-700',    bg: 'bg-blue-50 border-blue-200' },
+          { label: 'Storage',     value: `${stats.storage_size_mb ?? 0} MB`,      color: 'text-purple-700',  bg: 'bg-purple-50 border-purple-200' },
+          { label: 'Avg Doc Size',value: `${fmtNum(stats.avgObjSize || 0)} B`,    color: 'text-orange-700',  bg: 'bg-orange-50 border-orange-200' },
+        ].map(s => (
+          <div key={s.label} className={`rounded-xl border p-3 ${s.bg}`}>
+            <p className="text-[9px] font-bold uppercase tracking-wide opacity-60">{s.label}</p>
+            <p className={`text-lg font-black mt-0.5 ${s.color}`}>{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Action strip */}
+      <div className="flex items-center gap-2">
+        <button onClick={onViewSlowOps}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl text-xs font-bold hover:bg-amber-100">
+          <Clock size={12} /> View Slow Ops
+        </button>
+        {stats.capped && (
+          <span className="px-2 py-1 bg-yellow-100 border border-yellow-200 text-yellow-700 rounded-xl text-xs font-bold">Capped Collection</span>
+        )}
+        <span className="ml-auto text-[10px] text-slate-400">Sampled {sample_count} docs</span>
+      </div>
+
+      {/* Section tabs */}
+      <div className="flex border-b border-slate-200">
+        {sections.map(s => (
+          <button key={s.id} onClick={() => setActiveSection(s.id)}
+            className={`px-4 py-2 text-xs font-bold border-b-2 transition-all ${
+              activeSection === s.id
+                ? 'border-green-500 text-green-700'
+                : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}>
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── SCHEMA ── */}
+      {activeSection === 'schema' && (
+        <div className="space-y-1">
+          {Object.keys(schema_fields).length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-8">No schema data (collection might be empty)</p>
+          ) : (
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 px-4 py-2 grid grid-cols-12 gap-2 border-b border-slate-200">
+                <span className="col-span-5 text-[10px] font-bold text-slate-400 uppercase">Field Path</span>
+                <span className="col-span-2 text-[10px] font-bold text-slate-400 uppercase">Type</span>
+                <span className="col-span-3 text-[10px] font-bold text-slate-400 uppercase">Presence</span>
+                <span className="col-span-2 text-[10px] font-bold text-slate-400 uppercase">Nullable</span>
+              </div>
+              <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
+                {Object.entries(schema_fields).map(([field, info]) => {
+                  const pct = Math.round((info.count / Math.max(sample_count, 1)) * 100);
+                  const dominantType = Object.entries(info.types || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || info.type;
+                  return (
+                    <div key={field} className="px-4 py-2 grid grid-cols-12 gap-2 items-center hover:bg-slate-50 text-xs">
+                      <span className="col-span-5 font-mono text-slate-700 truncate" title={field}>
+                        {field.startsWith('_') ? <span className="text-purple-500">{field}</span> : field}
+                      </span>
+                      <span className="col-span-2"><TypeBadge type={dominantType} /></span>
+                      <div className="col-span-3 flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-green-400" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="text-[10px] text-slate-400 w-7 text-right">{pct}%</span>
+                      </div>
+                      <span className="col-span-2">
+                        {pct < 100
+                          ? <span className="text-[9px] font-bold text-orange-500 bg-orange-50 border border-orange-200 px-1.5 py-0.5 rounded">nullable</span>
+                          : <span className="text-[9px] text-slate-300">—</span>}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── INDEXES ── */}
+      {activeSection === 'indexes' && (
+        <div className="space-y-3">
+          {indexes.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-8">No indexes found</p>
+          ) : indexes.map((idx, i) => (
+            <div key={i} className={`bg-white rounded-xl border p-4 ${idx.unique ? 'border-green-200' : 'border-slate-200'}`}>
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div>
+                  <span className="font-bold text-sm text-slate-800">{idx.name}</span>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    {idx.unique && <span className="px-1.5 py-0.5 bg-green-100 text-green-700 border border-green-200 text-[9px] font-bold rounded">UNIQUE</span>}
+                    {idx.sparse && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 border border-blue-200 text-[9px] font-bold rounded">SPARSE</span>}
+                    {idx.expireAfterSeconds != null && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 border border-purple-200 text-[9px] font-bold rounded">TTL {idx.expireAfterSeconds}s</span>}
+                    {idx.partialFilterExpression && <span className="px-1.5 py-0.5 bg-teal-100 text-teal-700 border border-teal-200 text-[9px] font-bold rounded">PARTIAL</span>}
+                  </div>
+                </div>
+              </div>
+              <div className="font-mono text-[11px] bg-slate-50 rounded-lg px-3 py-2 text-slate-600 flex items-center gap-2">
+                <span className="flex-1">{JSON.stringify(idx.key)}</span>
+              </div>
+              {idx.create_cmd && (
+                <div className="mt-2 bg-slate-900 rounded-lg px-3 py-2 flex items-center gap-2">
+                  <code className="font-mono text-[10px] text-green-300 flex-1 overflow-x-auto whitespace-nowrap">{idx.create_cmd}</code>
+                  <CopyBtn text={idx.create_cmd} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── STATS ── */}
+      {activeSection === 'stats' && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="divide-y divide-slate-100">
+            {[
+              ['Documents',           fmtNum(stats.count || 0)],
+              ['Data Size',           `${stats.size_mb ?? 0} MB (${fmtBytes(stats.size || 0)})`],
+              ['Storage Size',        `${stats.storage_size_mb ?? 0} MB (${fmtBytes(stats.storageSize || 0)})`],
+              ['Avg Document Size',   `${fmtNum(stats.avgObjSize || 0)} bytes`],
+              ['Number of Indexes',   stats.nindexes ?? '—'],
+              ['Total Index Size',    `${stats.total_index_size_mb ?? 0} MB`],
+              ['Capped',              stats.capped ? 'Yes' : 'No'],
+              ['Capped Max Docs',     stats.max ? fmtNum(stats.max) : '—'],
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between items-center px-4 py-2.5 text-sm">
+                <span className="text-slate-500">{label}</span>
+                <span className="font-semibold text-slate-800 text-right">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Operation detail inline panel ─── */
+function OperationDetailPanel({ op, connId, onAnalyze }) {
+  return (
+    <div className="bg-slate-50 border-t border-slate-200 px-4 py-4 space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          ['Op ID',        op.opid || '—',          'font-mono text-xs'],
+          ['Type',         op.op || op.type || '—', ''],
+          ['Running',      op.secs_running != null ? `${op.secs_running}s` : '—', op.secs_running > 5 ? 'text-red-600 font-black' : op.secs_running > 1 ? 'text-orange-600 font-bold' : ''],
+          ['Waiting Lock', op.waitingForLock ? 'Yes' : 'No', op.waitingForLock ? 'text-orange-600 font-bold' : ''],
+          ['Namespace',    op.ns || '—',             'font-mono text-xs'],
+          ['Client',       op.client || '—',         'font-mono text-xs'],
+          ['App Name',     op.appName || '—',        ''],
+          ['Plan',         op.planSummary || '—',    'font-mono text-xs'],
+        ].map(([label, val, cls]) => (
+          <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
+            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className={`text-xs mt-1 text-slate-700 truncate ${cls}`}>{val}</p>
+          </div>
+        ))}
+      </div>
+      {(op.query || op.filter) && (
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Filter / Query</p>
+          <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-start gap-2">
+            <pre className="font-mono text-[11px] text-green-300 flex-1 overflow-x-auto whitespace-pre-wrap">
+              {typeof (op.query || op.filter) === 'string'
+                ? (op.query || op.filter)
+                : JSON.stringify(op.query || op.filter, null, 2)}
+            </pre>
+            <CopyBtn text={JSON.stringify(op.query || op.filter, null, 2)} />
+          </div>
+        </div>
+      )}
+      {op.locks && Object.keys(op.locks).length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Lock Info</p>
+          <div className="font-mono text-[11px] bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 text-yellow-800">
+            {JSON.stringify(op.locks)}
+          </div>
+        </div>
+      )}
+      {onAnalyze && (
+        <div className="flex justify-end">
+          <button onClick={onAnalyze}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white transition-all"
+            style={{ background: 'linear-gradient(135deg, #00684A 0%, #00ED64 100%)' }}>
+            <Brain size={13} /> Analyze with ActMon AI
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Index detail inline panel ─── */
+function IndexDetailPanel({ idx }) {
+  const dropCmd = `db.${(idx.ns || '').split('.').slice(1).join('.')}.dropIndex("${idx.name}")`;
+  return (
+    <div className="bg-slate-50 border-t border-slate-200 px-4 py-4 space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {[
+          ['Name',    idx.name || '—'],
+          ['Unique',  idx.unique ? 'Yes' : 'No'],
+          ['Sparse',  idx.sparse ? 'Yes' : 'No'],
+          ['TTL',     idx.expireAfterSeconds != null ? `${idx.expireAfterSeconds}s` : '—'],
+          ['Size',    idx.size ? fmtBytes(idx.size) : '—'],
+          ['Accesses',fmtNum(idx.accesses ?? 0)],
+        ].map(([label, val]) => (
+          <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
+            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className="text-xs mt-1 text-slate-700 font-semibold">{val}</p>
+          </div>
+        ))}
+      </div>
+      <div>
+        <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Key Definition</p>
+        <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-center gap-2">
+          <code className="font-mono text-[11px] text-green-300 flex-1">{JSON.stringify(idx.key || {})}</code>
+          <CopyBtn text={JSON.stringify(idx.key || {})} />
+        </div>
+      </div>
+      {idx.unused && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
+          <p className="text-xs font-bold text-orange-700 mb-2">⚠ Unused index — consider dropping to save space:</p>
+          <div className="bg-slate-900 rounded-lg px-3 py-2 flex items-center gap-2">
+            <code className="font-mono text-[10px] text-red-300 flex-1">{dropCmd}</code>
+            <CopyBtn text={dropCmd} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Clickable KPI metric card ─── */
+function ClickableKpi({ title, value, accent, onClick, hint }) {
+  const accMap = {
+    green:   'bg-green-50 border-green-200 text-green-700',
+    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+    red:     'bg-red-50 border-red-200 text-red-700',
+    orange:  'bg-orange-50 border-orange-200 text-orange-700',
+    blue:    'bg-blue-50 border-blue-200 text-blue-700',
+    purple:  'bg-purple-50 border-purple-200 text-purple-700',
+    yellow:  'bg-yellow-50 border-yellow-200 text-yellow-700',
+    slate:   'bg-slate-50 border-slate-200 text-slate-700',
+    teal:    'bg-teal-50 border-teal-200 text-teal-700',
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-xl border p-4 text-left transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer w-full group ${accMap[accent] || accMap.slate}`}>
+      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
+      <div className="flex items-center justify-between mt-1">
+        <p className="text-2xl font-black">{value ?? '—'}</p>
+        <ChevronRight size={14} className="opacity-0 group-hover:opacity-60 transition-opacity" />
+      </div>
+      {hint && <p className="text-[9px] opacity-50 mt-0.5">{hint}</p>}
+    </button>
+  );
+}
+
 /* ─── main component ─── */
 export default function MongoDBDashboard() {
   const { id } = useParams();
@@ -307,7 +665,14 @@ export default function MongoDBDashboard() {
   const [selDb, setSelDb]           = useState('');
   const [nsFilter, setNsFilter]     = useState('');
   const [msThreshold, setMsThreshold] = useState(100);
+  const [elSev, setElSev]           = useState('ALL');
+  const [elSearch, setElSearch]     = useState('');
   const countRef = useRef(null);
+
+  // Drill-down / detail state
+  const [selectedColl, setSelectedColl] = useState(null); // {dbName, name}
+  const [expandedOpId, setExpandedOpId] = useState(null);
+  const [expandedIdxId, setExpandedIdxId] = useState(null);
 
   /* ── Main dashboard query ── */
   const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery({
@@ -318,7 +683,7 @@ export default function MongoDBDashboard() {
   });
 
   /* ── Per-tab queries ── */
-  const { data: opsData, isLoading: opsLoading } = useQuery({
+  const { data: opsData, isLoading: opsLoading, refetch: refetchOps } = useQuery({
     queryKey: ['mongoOps', id],
     queryFn:  () => fetchOps(id),
     retry: false,
@@ -406,6 +771,14 @@ export default function MongoDBDashboard() {
     enabled: activeTab === 'users',
   });
 
+  const { data: errorLogsData, isLoading: errorLogsLoading, refetch: refetchErrorLogs } = useQuery({
+    queryKey: ['mongoErrorLogs', id],
+    queryFn:  () => fetchErrorLogs(id),
+    retry: false,
+    refetchInterval: 20000,
+    enabled: activeTab === 'errorlogs',
+  });
+
   /* ── Countdown timer ── */
   useEffect(() => {
     setCountdown(REFRESH_INTERVAL);
@@ -486,6 +859,21 @@ export default function MongoDBDashboard() {
   /* ─────────────────────────────────────────────────────────────── */
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+
+      {/* ─── Collection Detail Modal ─── */}
+      {selectedColl && (
+        <DetailModal
+          title={`${selectedColl.dbName}.${selectedColl.name}`}
+          subtitle="Collection detail — schema, indexes &amp; statistics"
+          onClose={() => setSelectedColl(null)}>
+          <CollectionDetailPanel
+            connId={id}
+            dbName={selectedColl.dbName}
+            collName={selectedColl.name}
+            onViewSlowOps={() => { setSelectedColl(null); setActiveTab('slowqueries'); setNsFilter(`${selectedColl.dbName}.${selectedColl.name}`); }}
+          />
+        </DetailModal>
+      )}
 
       {/* ─── HERO HEADER ─── */}
       <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #0a2d1f 50%, #003d2a 100%)` }}
@@ -576,16 +964,26 @@ export default function MongoDBDashboard() {
           return (
             <div className="space-y-4">
 
-              {/* KPI strip */}
+              {/* KPI strip - all clickable */}
               <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
                 <KpiCard icon={Server}    title="Version"     value={(health_summary.version || '—').split('-')[0]} accent="green" />
                 <KpiCard icon={Clock}     title="Uptime"      value={health_summary.uptime_str || fmtUptime(health_summary.uptime_seconds)} accent="teal" />
-                <KpiCard icon={Database}  title="Databases"   value={health_summary.total_databases ?? '—'} accent="blue" />
-                <KpiCard icon={Layers}    title="Collections" value={health_summary.total_collections ?? '—'} accent="purple" />
-                <KpiCard icon={Network}   title="Connections" value={`${connections.current ?? 0}/${(connections.current || 0) + (connections.available || 0)}`} accent={connPct > 80 ? 'red' : 'emerald'} />
+                <button onClick={() => setActiveTab('collections')} className="text-left hover:shadow-md transition-all rounded-xl">
+                  <KpiCard icon={Database}  title="Databases"   value={health_summary.total_databases ?? '—'} accent="blue" />
+                </button>
+                <button onClick={() => setActiveTab('collections')} className="text-left hover:shadow-md transition-all rounded-xl">
+                  <KpiCard icon={Layers}    title="Collections" value={health_summary.total_collections ?? '—'} accent="purple" />
+                </button>
+                <button onClick={() => setActiveTab('operations')} className="text-left hover:shadow-md transition-all rounded-xl">
+                  <KpiCard icon={Network}   title="Connections" value={`${connections.current ?? 0}/${(connections.current || 0) + (connections.available || 0)}`} accent={connPct > 80 ? 'red' : 'emerald'} />
+                </button>
                 <KpiCard icon={HardDrive} title="Mem (MB)"    value={memory.resident ?? '—'} accent="orange" />
-                <KpiCard icon={Cpu}       title="Repl State"  value={health_summary.replication_state || 'STANDALONE'} accent={health_summary.replication_state === 'PRIMARY' ? 'green' : 'slate'} />
-                <KpiCard icon={Activity}  title="Total Ops"   value={fmtNum(opRate)} accent="cyan" />
+                <button onClick={() => setActiveTab('replication')} className="text-left hover:shadow-md transition-all rounded-xl">
+                  <KpiCard icon={Cpu}       title="Repl State"  value={health_summary.replication_state || 'STANDALONE'} accent={health_summary.replication_state === 'PRIMARY' ? 'green' : 'slate'} />
+                </button>
+                <button onClick={() => setActiveTab('operations')} className="text-left hover:shadow-md transition-all rounded-xl">
+                  <KpiCard icon={Activity}  title="Total Ops"   value={fmtNum(opRate)} accent="cyan" />
+                </button>
               </div>
 
               {/* 4 Gauges */}
@@ -747,24 +1145,66 @@ export default function MongoDBDashboard() {
                 </Panel>
               </div>
 
-              {/* Top collections by size */}
+              {/* ── Quick Access to dedicated sub-pages ── */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: 'Slow Operations',     icon: Clock,    path: `/mongodb-dashboard/${id}/slow-operations`,     desc: 'Advanced slow op explorer', color: 'from-orange-500 to-red-500' },
+                  { label: 'Collection Analysis', icon: BarChart2, path: `/mongodb-dashboard/${id}/collection-analysis`, desc: 'Indexes & scan insights',     color: 'from-blue-500 to-indigo-600' },
+                  { label: 'Error Logs',          icon: FileText,  path: `/mongodb-dashboard/${id}/error-logs`,          desc: 'Severity-filtered log view', color: 'from-red-500 to-rose-600' },
+                  { label: 'Backup & Restore',    icon: Archive,   path: `/mongodb-dashboard/${id}/backup`,              desc: 'mongodump command builder', color: 'from-green-600 to-emerald-700' },
+                ].map(p => (
+                  <button key={p.label} onClick={() => navigate(p.path)}
+                    className="text-left bg-white border border-slate-200 rounded-2xl p-4 hover:shadow-md hover:-translate-y-0.5 transition-all group flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${p.color} flex items-center justify-center flex-shrink-0`}>
+                      <p.icon size={16} className="text-white" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-800 text-sm truncate">{p.label}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5 truncate">{p.desc}</p>
+                    </div>
+                    <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-500 flex-shrink-0 ml-auto transition-colors" />
+                  </button>
+                ))}
+              </div>
+
+              {/* Top collections by size — click any to open detail */}
               {topCollsBySize.length > 0 && (
-                <ChartCard title="Top Collections by Size (MB)">
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart layout="vertical"
-                      data={topCollsBySize.map(c => ({ name: `${c.db || ''}.${c.name || c.collection || ''}`, size_mb: c.size_mb || 0 }))}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
-                      <YAxis width={160} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
-                      <Tooltip formatter={v => `${v} MB`} cursor={{ fill: '#f8fafc' }} />
-                      <Bar dataKey="size_mb" radius={[0, 5, 5, 0]}>
-                        {topCollsBySize.map((_, i) => (
-                          <Cell key={i} fill={[C.green, C.emerald, C.teal, C.blue, C.purple, C.orange, C.cyan, C.yellow][i % 8]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </ChartCard>
+                <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                  <h3 className="font-bold text-slate-700 text-sm mb-4">Top Collections by Size — click to inspect</h3>
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart layout="vertical"
+                        data={topCollsBySize.map(c => ({ name: `${c.db || ''}.${c.name || c.collection || ''}`, size_mb: c.size_mb || 0, _c: c }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                        <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
+                        <YAxis width={160} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                        <Tooltip formatter={v => `${v} MB`} cursor={{ fill: '#f8fafc' }} />
+                        <Bar dataKey="size_mb" radius={[0, 5, 5, 0]}>
+                          {topCollsBySize.map((_, i) => (
+                            <Cell key={i} fill={[C.green, C.emerald, C.teal, C.blue, C.purple, C.orange, C.cyan, C.yellow][i % 8]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                    <div className="space-y-1">
+                      {topCollsBySize.map((c, i) => {
+                        const dbName = c.db || c.dbName || '';
+                        const collName = c.name || c.collection || '';
+                        const COLORS = [C.green, C.emerald, C.teal, C.blue, C.purple, C.orange, C.cyan, C.yellow];
+                        return (
+                          <button key={i}
+                            onClick={() => setSelectedColl({ dbName, name: collName })}
+                            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition-all text-left group">
+                            <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: COLORS[i % 8] }} />
+                            <span className="font-mono text-xs text-slate-700 flex-1 truncate">{dbName}.{collName}</span>
+                            <span className="text-xs font-bold text-slate-500">{(c.size_mb || 0).toFixed(3)} MB</span>
+                            <Eye size={11} className="text-green-500 opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
               )}
 
             </div>
@@ -781,17 +1221,17 @@ export default function MongoDBDashboard() {
           return (
             <div className="space-y-5">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <MetricKpi title="Total Ops"    value={ops.length}       accent="blue" />
-                <MetricKpi title="Active"       value={activeOps.length} accent="green" />
-                <MetricKpi title="Waiting Lock" value={waitingOps.length} accent={waitingOps.length > 0 ? 'orange' : 'slate'} />
-                <MetricKpi title="Slow (>1s)"   value={slowOps.length}   accent={slowOps.length > 0 ? 'red' : 'green'} />
+                <ClickableKpi title="Total Ops"    value={ops.length}        accent="blue"   hint="All current operations" onClick={() => {}} />
+                <ClickableKpi title="Active"       value={activeOps.length}  accent="green"  hint="Click to highlight active" onClick={() => setExpandedOpId(activeOps[0]?.opid || null)} />
+                <ClickableKpi title="Waiting Lock" value={waitingOps.length} accent={waitingOps.length > 0 ? 'orange' : 'slate'} hint="Click to see lock-waiters" onClick={() => setExpandedOpId(waitingOps[0]?.opid || null)} />
+                <ClickableKpi title="Slow (>1s)"   value={slowOps.length}    accent={slowOps.length > 0 ? 'red' : 'green'} hint="Click to see slowest" onClick={() => setExpandedOpId(slowOps[0]?.opid || null)} />
               </div>
 
               {slowOps.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <AlertTriangle className="text-red-500" size={16} />
-                    <span className="font-bold text-red-700 text-sm">{slowOps.length} Slow Operation{slowOps.length > 1 ? 's' : ''} (running > 1s)</span>
+                    <span className="font-bold text-red-700 text-sm">{slowOps.length} Slow Operation{slowOps.length > 1 ? 's' : ''} (running &gt; 1s)</span>
                   </div>
                   {slowOps.slice(0, 3).map((op, i) => (
                     <div key={i} className="bg-white rounded-xl border border-red-100 px-3 py-2 text-xs mb-2">
@@ -807,9 +1247,9 @@ export default function MongoDBDashboard() {
 
               <Panel title={`Current Operations (${ops.length})`}
                 action={
-                  <button onClick={() => { /* refetch opsData */ }}
+                  <button onClick={() => refetchOps()}
                     className="text-xs text-green-600 font-semibold hover:text-green-800 flex items-center gap-1">
-                    <RefreshCw size={11} /> Refresh
+                    <RefreshCw size={11} className={opsLoading ? 'animate-spin' : ''} /> Refresh
                   </button>
                 }>
                 <div className="overflow-x-auto">
@@ -820,30 +1260,53 @@ export default function MongoDBDashboard() {
                       ))}</tr>
                     </thead>
                     <tbody>
-                      {ops.map((op, i) => (
-                        <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${(op.secs_running || 0) > 5 ? 'bg-red-50/40' : (op.secs_running || 0) > 1 ? 'bg-yellow-50/40' : ''}`}>
-                          <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500">{op.opid}</td>
-                          <td className="px-3 py-2.5">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold"
-                              style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
-                              {op.op || op.type || '—'}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 font-mono text-xs text-slate-600 max-w-[180px] truncate">{op.ns || '—'}</td>
-                          <td className={`px-3 py-2.5 font-bold text-sm ${(op.secs_running || 0) > 5 ? 'text-red-600' : (op.secs_running || 0) > 1 ? 'text-orange-600' : 'text-slate-600'}`}>
-                            {op.secs_running ?? 0}s
-                          </td>
-                          <td className="px-3 py-2.5">
-                            {op.waitingForLock
-                              ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold rounded-full">Yes</span>
-                              : <span className="text-[10px] text-slate-300">No</span>
-                            }
-                          </td>
-                          <td className="px-3 py-2.5 text-xs text-slate-400 max-w-[120px] truncate">{op.client || '—'}</td>
-                          <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
-                          <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{op.appName || '—'}</td>
-                        </tr>
-                      ))}
+                      {ops.map((op, i) => {
+                        const isExpanded = expandedOpId === op.opid;
+                        return (
+                          <React.Fragment key={i}>
+                            <tr
+                              className={`border-t border-slate-100 cursor-pointer transition-colors ${isExpanded ? 'bg-green-50' : (op.secs_running || 0) > 5 ? 'bg-red-50/40 hover:bg-red-50' : (op.secs_running || 0) > 1 ? 'bg-yellow-50/40 hover:bg-yellow-50' : 'hover:bg-slate-50'}`}
+                              onClick={() => setExpandedOpId(isExpanded ? null : op.opid)}>
+                              <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500">
+                                <div className="flex items-center gap-1">
+                                  {isExpanded ? <ChevronUp size={10} className="text-green-600" /> : <ChevronDown size={10} className="text-slate-300" />}
+                                  {op.opid}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                  style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
+                                  {op.op || op.type || '—'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-xs text-slate-600 max-w-[180px] truncate">{op.ns || '—'}</td>
+                              <td className={`px-3 py-2.5 font-bold text-sm ${(op.secs_running || 0) > 5 ? 'text-red-600' : (op.secs_running || 0) > 1 ? 'text-orange-600' : 'text-slate-600'}`}>
+                                {op.secs_running ?? 0}s
+                              </td>
+                              <td className="px-3 py-2.5">
+                                {op.waitingForLock
+                                  ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold rounded-full">Yes</span>
+                                  : <span className="text-[10px] text-slate-300">No</span>
+                                }
+                              </td>
+                              <td className="px-3 py-2.5 text-xs text-slate-400 max-w-[120px] truncate">{op.client || '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{op.appName || '—'}</td>
+                            </tr>
+                            {isExpanded && (
+                              <tr className="bg-slate-50">
+                                <td colSpan={8} className="p-0">
+                                  <OperationDetailPanel
+                                    op={op}
+                                    connId={id}
+                                    onAnalyze={() => { navigate(`/mongodb-dashboard/${id}/slow-operations`); }}
+                                  />
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                       {ops.length === 0 && (
                         <tr><td colSpan={8} className="text-center py-10 text-slate-400">No active operations</td></tr>
                       )}
@@ -980,8 +1443,11 @@ export default function MongoDBDashboard() {
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
                 <MetricKpi title="Collections"  value={filtered.length}        accent="green" />
-                <MetricKpi title="Total Docs"   value={fmtNum(totalDocs)}       accent="emerald" />
-                <MetricKpi title="Total Size"   value={`${totalSizeMB} MB`}    accent="orange" />
+                <MetricKpi title="Total Docs"   value={fmtNum(totalDocs)}      accent="emerald" />
+                <MetricKpi title="Total Size"   value={`${totalSizeMB} MB`}   accent="orange" />
+              </div>
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2 flex items-center gap-2 text-emerald-700 text-xs font-semibold">
+                <Eye size={13} /> Click any collection row to explore its schema, indexes &amp; statistics
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">
@@ -1010,9 +1476,14 @@ export default function MongoDBDashboard() {
                     </thead>
                     <tbody>
                       {filtered.slice(0, 100).map((c, i) => (
-                        <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                        <tr key={i}
+                          className="border-t border-slate-100 hover:bg-green-50 cursor-pointer transition-colors group"
+                          onClick={() => setSelectedColl({ dbName: c.dbName, name: c.name })}>
                           <td className="px-3 py-2.5 text-slate-500 font-mono text-[10px]">{c.dbName}</td>
-                          <td className="px-3 py-2.5 font-bold" style={{ color: C.darkGreen }}>{c.name}</td>
+                          <td className="px-3 py-2.5 font-bold flex items-center gap-1.5" style={{ color: C.darkGreen }}>
+                            {c.name}
+                            <Eye size={11} className="opacity-0 group-hover:opacity-60 text-green-600 transition-opacity flex-shrink-0" />
+                          </td>
                           <td className="px-3 py-2.5 font-mono">{fmtNum(c.count || 0)}</td>
                           <td className="px-3 py-2.5">
                             <div className="flex items-center gap-2">
@@ -1120,39 +1591,57 @@ export default function MongoDBDashboard() {
                       ))}</tr>
                     </thead>
                     <tbody>
-                      {filtered.slice(0, 150).map((idx, i) => (
-                        <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${idx.unused ? 'bg-yellow-50/40' : ''}`}>
-                          <td className="px-3 py-2.5 font-bold" style={{ color: idx.unused ? C.orange : C.darkGreen }}>
-                            {idx.ns || `${idx.db}.${idx.collection}` || '—'}
-                          </td>
-                          <td className="px-3 py-2.5 font-mono text-xs">{idx.name}</td>
-                          <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[150px] truncate">
-                            {JSON.stringify(idx.key || {})}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            {idx.unique
-                              ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,237,100,0.12)', color: C.darkGreen }}>Yes</span>
-                              : <span className="text-[10px] text-slate-300">No</span>
-                            }
-                          </td>
-                          <td className="px-3 py-2.5">
-                            {idx.sparse
-                              ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">Yes</span>
-                              : <span className="text-[10px] text-slate-300">No</span>
-                            }
-                          </td>
-                          <td className="px-3 py-2.5 font-mono text-[10px]">
-                            {idx.expireAfterSeconds != null ? idx.expireAfterSeconds : '—'}
-                          </td>
-                          <td className="px-3 py-2.5 font-mono">{idx.size ? fmtBytes(idx.size) : '—'}</td>
-                          <td className={`px-3 py-2.5 font-bold font-mono ${idx.unused ? 'text-orange-500' : 'text-slate-700'}`}>
-                            {fmtNum(idx.accesses ?? 0)}
-                          </td>
-                          <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">
-                            {idx.last_access ? new Date(idx.last_access).toLocaleDateString() : '—'}
-                          </td>
-                        </tr>
-                      ))}
+                      {filtered.slice(0, 150).map((idx, i) => {
+                        const idxKey = `${idx.ns}-${idx.name}`;
+                        const isExpandedIdx = expandedIdxId === idxKey;
+                        return (
+                          <React.Fragment key={i}>
+                            <tr
+                              className={`border-t border-slate-100 cursor-pointer transition-colors ${isExpandedIdx ? 'bg-green-50' : idx.unused ? 'bg-yellow-50/40 hover:bg-yellow-50' : 'hover:bg-slate-50'}`}
+                              onClick={() => setExpandedIdxId(isExpandedIdx ? null : idxKey)}>
+                              <td className="px-3 py-2.5 font-bold" style={{ color: idx.unused ? C.orange : C.darkGreen }}>
+                                <div className="flex items-center gap-1">
+                                  {isExpandedIdx ? <ChevronUp size={10} className="text-green-600" /> : <ChevronDown size={10} className="text-slate-300" />}
+                                  {idx.ns || `${idx.db}.${idx.collection}` || '—'}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-xs">{idx.name}</td>
+                              <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[150px] truncate">
+                                {JSON.stringify(idx.key || {})}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                {idx.unique
+                                  ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,237,100,0.12)', color: C.darkGreen }}>Yes</span>
+                                  : <span className="text-[10px] text-slate-300">No</span>
+                                }
+                              </td>
+                              <td className="px-3 py-2.5">
+                                {idx.sparse
+                                  ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">Yes</span>
+                                  : <span className="text-[10px] text-slate-300">No</span>
+                                }
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-[10px]">
+                                {idx.expireAfterSeconds != null ? idx.expireAfterSeconds : '—'}
+                              </td>
+                              <td className="px-3 py-2.5 font-mono">{idx.size ? fmtBytes(idx.size) : '—'}</td>
+                              <td className={`px-3 py-2.5 font-bold font-mono ${idx.unused ? 'text-orange-500' : 'text-slate-700'}`}>
+                                {fmtNum(idx.accesses ?? 0)}
+                              </td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">
+                                {idx.last_access ? new Date(idx.last_access).toLocaleDateString() : '—'}
+                              </td>
+                            </tr>
+                            {isExpandedIdx && (
+                              <tr>
+                                <td colSpan={9} className="p-0">
+                                  <IndexDetailPanel idx={idx} />
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                       {filtered.length === 0 && (
                         <tr><td colSpan={9}><EmptyState icon={Key} message="No index data available" /></td></tr>
                       )}
@@ -1866,7 +2355,459 @@ export default function MongoDBDashboard() {
           );
         })()}
 
+        {/* ══ ERROR LOGS ════════════════════════════════════════════════ */}
+        {activeTab === 'errorlogs' && (() => {
+          if (errorLogsLoading) return <TabLoader />;
+          const el     = errorLogsData || {};
+          const logs   = el.all_logs    || [];
+          const sevCounts = el.severity_counts || {};
+
+          const SEV_CFG = {
+            F: { label: 'Fatal',   color: 'text-red-700',   bg: 'bg-red-100',   border: 'border-red-300',   strip: 'bg-red-600'  },
+            E: { label: 'Error',   color: 'text-red-600',   bg: 'bg-red-50',    border: 'border-red-200',   strip: 'bg-red-400'  },
+            W: { label: 'Warning', color: 'text-amber-600', bg: 'bg-amber-50',  border: 'border-amber-200', strip: 'bg-amber-400'},
+            I: { label: 'Info',    color: 'text-blue-600',  bg: 'bg-blue-50',   border: 'border-blue-200',  strip: 'bg-blue-400' },
+            D: { label: 'Debug',   color: 'text-slate-500', bg: 'bg-slate-50',  border: 'border-slate-200', strip: 'bg-slate-300'},
+          };
+          const filtered = logs.filter(l => {
+            const matchSev = elSev === 'ALL' || l.severity === elSev;
+            const q = elSearch.toLowerCase();
+            const matchQ = !q || (l.message || '').toLowerCase().includes(q)
+              || (l.component || '').toLowerCase().includes(q)
+              || (l.context || '').toLowerCase().includes(q);
+            return matchSev && matchQ;
+          });
+
+          const errorsCount = (sevCounts.E || 0) + (sevCounts.F || 0);
+          const warnCount   = sevCounts.W || 0;
+
+          return (
+            <div className="space-y-4">
+              {/* Severity KPI cards */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { key: 'F', val: sevCounts.F || 0, label: 'Fatal'   },
+                  { key: 'E', val: sevCounts.E || 0, label: 'Errors'  },
+                  { key: 'W', val: sevCounts.W || 0, label: 'Warnings'},
+                  { key: 'I', val: sevCounts.I || 0, label: 'Info'    },
+                  { key: 'D', val: sevCounts.D || 0, label: 'Debug'   },
+                ].map(s => {
+                  const cfg = SEV_CFG[s.key] || SEV_CFG.I;
+                  const isActive = elSev === s.key;
+                  return (
+                    <button key={s.key} onClick={() => setElSev(isActive ? 'ALL' : s.key)}
+                      className={`text-left p-4 rounded-2xl border transition-all ${isActive ? `${cfg.bg} ${cfg.border} ring-2 ring-offset-1` : 'bg-white border-slate-200 hover:shadow-sm'}`}>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">{s.label}</p>
+                      <p className={`text-2xl font-black mt-1 ${s.val > 0 && (s.key === 'E' || s.key === 'F') ? 'text-red-600' : s.val > 0 && s.key === 'W' ? 'text-amber-600' : 'text-slate-700'}`}>{s.val}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {errorsCount > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
+                  <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm font-semibold text-red-800">
+                    {errorsCount} error{errorsCount > 1 ? 's' : ''} detected
+                    {warnCount > 0 ? ` · ${warnCount} warnings` : ''}
+                    {' '}in the last {logs.length} log lines.
+                  </p>
+                </div>
+              )}
+
+              {/* Filter bar */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-wrap items-center gap-3">
+                <div className="relative flex-1 min-w-[200px] max-w-sm">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input value={elSearch} onChange={e => setElSearch(e.target.value)}
+                    placeholder="Search message, component, context..."
+                    className="h-9 w-full pl-8 pr-4 rounded-xl border border-slate-200 text-sm outline-none focus:border-green-400" />
+                </div>
+                <div className="flex gap-1">
+                  {['ALL', 'F', 'E', 'W', 'I', 'D'].map(s => {
+                    const lbl = s === 'ALL' ? 'All' : (SEV_CFG[s]?.label || s);
+                    return (
+                      <button key={s} onClick={() => setElSev(s)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${elSev === s ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                        {lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button onClick={() => refetchErrorLogs()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors ml-auto">
+                  <RefreshCw size={11} className={errorLogsLoading ? 'animate-spin' : ''} /> Refresh
+                </button>
+                <span className="text-xs text-slate-400">{filtered.length}/{logs.length}</span>
+              </div>
+
+              {/* Log table */}
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr>{['', 'Sev', 'Timestamp', 'Component', 'Context', 'Message', 'Attributes'].map(h => (
+                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody>
+                      {filtered.slice(0, 200).map((log, i) => {
+                        const cfg = SEV_CFG[log.severity] || SEV_CFG.I;
+                        return (
+                          <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${log.severity === 'E' || log.severity === 'F' ? 'bg-red-50/30' : log.severity === 'W' ? 'bg-amber-50/20' : ''}`}>
+                            <td className="pl-3 py-2 w-2">
+                              <div className={`w-1 h-6 rounded-full ${cfg.strip}`} />
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${cfg.bg} ${cfg.color} ${cfg.border}`}>{log.severity}</span>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[9px] text-slate-400 whitespace-nowrap">
+                              {log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-slate-600 font-semibold">{log.component || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-slate-400 max-w-[100px] truncate">{log.context || '—'}</td>
+                            <td className="px-3 py-2 text-xs text-slate-700 max-w-[340px]">
+                              <p className="truncate">{log.message || '—'}</p>
+                              {log.tags && log.tags.length > 0 && (
+                                <div className="flex gap-1 mt-0.5">
+                                  {log.tags.slice(0, 3).map((t, ti) => (
+                                    <span key={ti} className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-semibold">{t}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[9px] text-slate-400 max-w-[200px] truncate">{log.attr || '—'}</td>
+                          </tr>
+                        );
+                      })}
+                      {filtered.length === 0 && (
+                        <tr><td colSpan={7}>
+                          <EmptyState icon={FileText} message="No log entries"
+                            sub={el.note || 'Adjust filter or click Refresh'} />
+                        </td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {filtered.length > 200 && (
+                  <div className="text-center py-3 text-xs text-slate-400 border-t border-slate-100">
+                    Showing 200 of {filtered.length} — use the dedicated Error Logs page for full view
+                  </div>
+                )}
+              </div>
+
+              <button onClick={() => navigate(`/mongodb-dashboard/${id}/error-logs`)}
+                className="w-full py-3 rounded-2xl border border-dashed border-slate-300 text-sm text-slate-500 font-semibold hover:bg-slate-50 hover:border-slate-400 transition-all flex items-center justify-center gap-2">
+                <FileText size={14} /> Open Dedicated Error Logs Page
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* AI Analysis is embedded in the Slow Operations dedicated page */}
+        {activeTab === 'aianalysis_removed' && (() => {
+          const slowOpsCount   = (slowData?.all_ops || []).length;
+          const replState      = health_summary.replication_state || 'STANDALONE';
+          const replLag        = (replData?.members || [])
+            .filter(m => m.stateStr !== 'PRIMARY')
+            .reduce((max, m) => Math.max(max, m.lag || 0), 0);
+          const usersWithRoot  = (usersData?.users || [])
+            .filter(u => (u.roles || []).some(r => r.role.includes('root') || r.role.includes('__system')));
+          const oplogWindowHrs = oplogData?.oplog_window_hours || 0;
+          const glQueue        = global_lock?.currentQueue || {};
+
+          const recs = [];
+
+          if (connPct >= 90) recs.push({
+            sev: 'critical', icon: Network, title: 'Connection pool at capacity',
+            msg: `Connection usage is ${connPct}% (${connections.current ?? 0} active). Risk of connection refusal.`,
+            fix: 'Increase maxIncomingConnections or deploy a connection pooler. Review driver pool sizing.',
+          });
+          else if (connPct >= 70) recs.push({
+            sev: 'warning', icon: Network, title: 'High connection usage',
+            msg: `Connection usage is ${connPct}%. Saturating the pool causes timeouts under burst load.`,
+            fix: 'Review application connection pool sizing and idle timeout settings.',
+          });
+
+          if (cacheHitPct > 0 && cacheHitPct < 70) recs.push({
+            sev: 'critical', icon: Cpu, title: 'Poor WiredTiger cache hit rate',
+            msg: `Cache hit rate is ${cacheHitPct}%. Most reads are hitting disk — severe performance impact.`,
+            fix: 'Increase cacheSizeGB in mongod.conf. Aim for 50–60% of system RAM.',
+          });
+          else if (cacheHitPct > 0 && cacheHitPct < 85) recs.push({
+            sev: 'warning', icon: Cpu, title: 'Suboptimal WiredTiger cache hit rate',
+            msg: `Cache hit rate is ${cacheHitPct}%. Optimal is >95%.`,
+            fix: 'Grow the WiredTiger cache or review working set size vs available RAM.',
+          });
+
+          if (wtCachePct >= 90) recs.push({
+            sev: 'critical', icon: HardDrive, title: 'WiredTiger cache near full',
+            msg: `Cache is ${wtCachePct}% full. Eviction pressure will slow all operations.`,
+            fix: 'Increase cacheSizeGB in mongod.conf, or archive stale data to reduce working set.',
+          });
+
+          if (slowOpsCount >= 10) recs.push({
+            sev: 'critical', icon: Clock, title: `${slowOpsCount} slow operations detected`,
+            msg: 'High number of slow ops increases lock contention and degrades throughput.',
+            fix: 'Review the Slow Queries tab and Profiler. Add indexes on frequently scanned fields.',
+          });
+          else if (slowOpsCount > 0) recs.push({
+            sev: 'warning', icon: Clock, title: `${slowOpsCount} slow operation${slowOpsCount > 1 ? 's' : ''} detected`,
+            msg: 'Some operations are running slower than expected.',
+            fix: 'Use the Profiler tab to identify full collection scans and add appropriate indexes.',
+          });
+
+          if (replState !== 'STANDALONE' && replState !== 'PRIMARY' && replState !== 'SECONDARY') recs.push({
+            sev: 'critical', icon: GitBranch, title: `Replication state: ${replState}`,
+            msg: 'Node is not in a healthy PRIMARY or SECONDARY state. Data availability at risk.',
+            fix: 'Check rs.status() and mongod logs. Investigate network connectivity between replica members.',
+          });
+          else if (replLag > 30) recs.push({
+            sev: 'critical', icon: GitBranch, title: `Replication lag: ${replLag}s`,
+            msg: `Secondary is ${replLag}s behind primary. Risk of data loss on failover.`,
+            fix: 'Investigate secondary load, network bandwidth, disk I/O. Reduce write rate on primary.',
+          });
+          else if (replLag > 10) recs.push({
+            sev: 'warning', icon: GitBranch, title: `Replication lag: ${replLag}s`,
+            msg: `Secondary is slightly behind primary (${replLag}s lag).`,
+            fix: 'Monitor for trends. If lag grows consistently, check secondary hardware resources.',
+          });
+
+          if (oplogWindowHrs > 0 && oplogWindowHrs < 24) recs.push({
+            sev: 'warning', icon: Archive, title: `Short oplog window: ${oplogWindowHrs.toFixed(1)}h`,
+            msg: 'Short window reduces point-in-time recovery options and secondary re-sync window.',
+            fix: 'Increase storage.oplogSizeMB in mongod.conf or reduce write volume.',
+          });
+
+          if (usersWithRoot.length > 1) recs.push({
+            sev: 'warning', icon: Lock, title: `${usersWithRoot.length} root-privileged users`,
+            msg: `Multiple root users: ${usersWithRoot.slice(0, 3).map(u => u.username).join(', ')}`,
+            fix: 'Apply least-privilege — grant dbAdmin or readWrite. Reserve root for emergencies.',
+          });
+
+          if ((glQueue.total || 0) > 5) recs.push({
+            sev: 'warning', icon: Lock, title: 'Global lock queue building up',
+            msg: `${glQueue.total} operations waiting (${glQueue.writers} writers queued).`,
+            fix: 'Investigate long-running writes. Break large writes into smaller batches.',
+          });
+
+          if ((memory.resident || 0) > 0 && (memory.virtual || 0) > 0) {
+            const vmRatio = memory.virtual / Math.max(memory.resident, 1);
+            if (vmRatio > 4) recs.push({
+              sev: 'warning', icon: MemoryStick, title: 'High virtual/resident memory ratio',
+              msg: `Virtual memory is ${vmRatio.toFixed(1)}× resident. May indicate swap usage.`,
+              fix: 'Ensure mongod has dedicated RAM. Swap degrades performance severely.',
+            });
+          }
+
+          const criticals = recs.filter(r => r.sev === 'critical');
+          const warnings  = recs.filter(r => r.sev === 'warning');
+
+          const S = {
+            critical: {
+              wrap: 'border-l-4 border-red-500 bg-red-50', badge: 'bg-red-500 text-white',
+              iconBg: 'bg-red-100', iconCls: 'text-red-500', border: 'border-red-100', label: 'CRITICAL',
+            },
+            warning: {
+              wrap: 'border-l-4 border-amber-400 bg-amber-50', badge: 'bg-amber-400 text-white',
+              iconBg: 'bg-amber-100', iconCls: 'text-amber-500', border: 'border-amber-100', label: 'WARNING',
+            },
+          };
+
+          const RecCard = ({ rec }) => {
+            const s = S[rec.sev];
+            const Icon = rec.icon;
+            return (
+              <div className={`rounded-2xl p-5 ${s.wrap}`}>
+                <div className="flex items-start gap-4">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${s.iconBg}`}>
+                    <Icon size={16} className={s.iconCls} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${s.badge}`}>{s.label}</span>
+                      <p className="font-bold text-slate-800 text-sm">{rec.title}</p>
+                    </div>
+                    <p className="text-xs text-slate-600 mt-1 leading-relaxed">{rec.msg}</p>
+                    <div className={`mt-3 bg-white/70 rounded-xl px-4 py-3 border ${s.border}`}>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Recommended Action</p>
+                      <p className="text-xs text-slate-700">{rec.fix}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="space-y-5">
+
+              {/* Hero */}
+              <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #0a2d1f 100%)` }}
+                className="rounded-2xl p-6 text-white">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center"
+                    style={{ background: 'rgba(0,237,100,0.15)', border: '1px solid rgba(0,237,100,0.3)' }}>
+                    <Brain size={20} style={{ color: C.green }} />
+                  </div>
+                  <div>
+                    <h2 className="font-black text-lg">AI Health Analysis</h2>
+                    <p className="text-xs mt-0.5" style={{ color: C.green }}>
+                      Computed from live metrics · {recs.length} recommendation{recs.length !== 1 ? 's' : ''} generated
+                    </p>
+                  </div>
+                  <div className="ml-auto"><HealthBadge score={healthScore} /></div>
+                </div>
+                <div className="flex gap-3 flex-wrap">
+                  {[
+                    { count: criticals.length, label: 'Critical', icon: XCircle, active: criticals.length > 0, cls: 'bg-red-500/20 border-red-400/30 text-red-400' },
+                    { count: warnings.length,  label: 'Warning',  icon: AlertTriangle, active: warnings.length > 0, cls: 'bg-amber-400/20 border-amber-400/30 text-amber-400' },
+                    { count: Math.max(0, 10 - recs.length), label: 'Checks OK', icon: CheckCircle2, active: false, cls: 'bg-green-500/20 border-green-400/30 text-green-400' },
+                  ].map(chip => {
+                    const Icon = chip.icon;
+                    return (
+                      <div key={chip.label}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-xl border ${chip.active ? chip.cls : 'bg-white/5 border-white/10'}`}>
+                        <Icon size={14} className={chip.active ? '' : 'text-slate-400'} />
+                        <span className="text-sm font-bold">{chip.count} {chip.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Metric snapshot */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: 'Connection %',  value: `${connPct}%`,     bad: connPct > 90, warn: connPct > 70, icon: Network },
+                  { label: 'Cache Hit %',   value: `${cacheHitPct}%`, bad: cacheHitPct > 0 && cacheHitPct < 70, warn: cacheHitPct > 0 && cacheHitPct < 85, icon: Cpu },
+                  { label: 'WT Cache Used', value: `${wtCachePct}%`,  bad: wtCachePct > 90, warn: wtCachePct > 70, icon: HardDrive },
+                  { label: 'Repl Lag',      value: replLag > 0 ? `${replLag}s` : replState === 'STANDALONE' ? 'Standalone' : 'OK', bad: replLag > 30, warn: replLag > 10, icon: GitBranch },
+                ].map(m => {
+                  const bg = m.bad ? 'bg-red-50 border-red-200' : m.warn ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200';
+                  const tc = m.bad ? 'text-red-700' : m.warn ? 'text-amber-700' : 'text-green-700';
+                  const Icon = m.icon;
+                  return (
+                    <div key={m.label} className={`rounded-2xl border p-4 ${bg}`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase text-slate-400 tracking-wide">{m.label}</p>
+                          <p className={`text-2xl font-black mt-1 ${tc}`}>{m.value}</p>
+                        </div>
+                        <Icon size={18} className={tc} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* All good */}
+              {recs.length === 0 && (
+                <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+                  <CheckCircle2 size={48} className="text-green-400 mx-auto mb-4" />
+                  <p className="font-black text-xl text-slate-800">All Systems Healthy</p>
+                  <p className="text-slate-400 text-sm mt-2 max-w-md mx-auto">
+                    No anomalies detected. Connection usage, cache performance, and replication are all within optimal ranges.
+                  </p>
+                </div>
+              )}
+
+              {/* Criticals */}
+              {criticals.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="font-bold text-sm text-red-700 flex items-center gap-2">
+                    <XCircle size={14} /> Critical Issues ({criticals.length})
+                  </h3>
+                  {criticals.map((rec, i) => <RecCard key={i} rec={rec} />)}
+                </div>
+              )}
+
+              {/* Warnings */}
+              {warnings.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="font-bold text-sm text-amber-700 flex items-center gap-2">
+                    <AlertTriangle size={14} /> Warnings ({warnings.length})
+                  </h3>
+                  {warnings.map((rec, i) => <RecCard key={i} rec={rec} />)}
+                </div>
+              )}
+
+              {/* Performance insights */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-5">
+                <h3 className="font-bold text-slate-800 text-sm mb-4 flex items-center gap-2">
+                  <Lightbulb size={14} style={{ color: C.green }} /> Performance Insights
+                </h3>
+                <div className="space-y-0">
+                  {[
+                    {
+                      label: 'Query Performance',
+                      insight: slowOpsCount === 0
+                        ? 'No slow operations detected — query patterns appear healthy.'
+                        : `${slowOpsCount} slow ops found. Enable profiling (db.setProfilingLevel(1, 100)) to capture detailed traces.`,
+                      good: slowOpsCount === 0,
+                    },
+                    {
+                      label: 'Storage Engine (WiredTiger)',
+                      insight: `Cache ${wtCachePct}% full · Hit rate ${cacheHitPct}%. ${cacheHitPct >= 90 ? 'Excellent cache efficiency.' : cacheHitPct >= 70 ? 'Acceptable — monitor under load.' : 'High cache miss rate — increase cacheSizeGB.'}`,
+                      good: cacheHitPct >= 85,
+                    },
+                    {
+                      label: 'Replication',
+                      insight: replState === 'STANDALONE'
+                        ? 'Single-node. Consider a replica set for HA and read scaling.'
+                        : `${replState} · ${replLag > 0 ? `Lag: ${replLag}s — monitor trend.` : 'Secondaries in sync.'}`,
+                      good: (replState === 'PRIMARY' || replState === 'STANDALONE') && replLag <= 5,
+                    },
+                    {
+                      label: 'Connection Management',
+                      insight: connPct <= 50
+                        ? `Healthy — ${connPct}% of pool in use.`
+                        : `${connPct}% pool usage. Ensure maxPoolSize is set per driver configuration and idle connections are reclaimed.`,
+                      good: connPct <= 50,
+                    },
+                    {
+                      label: 'Operational Baseline',
+                      insight: `Op rate ${fmtNum(opRate)}/s · ${health_summary.total_databases || 0} DBs · ${health_summary.total_collections || 0} collections · MongoDB ${(health_summary.version || '—').split('-')[0]}`,
+                      good: true,
+                    },
+                  ].map((item, i) => (
+                    <div key={i} className="flex items-start gap-3 py-3 border-b border-slate-100 last:border-0">
+                      <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${item.good ? 'bg-green-400' : 'bg-amber-400'}`} />
+                      <div>
+                        <p className="text-xs font-bold text-slate-700">{item.label}</p>
+                        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{item.insight}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick links */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: 'Slow Operations',     icon: Clock,     path: `/mongodb-dashboard/${id}/slow-operations`, color: 'from-orange-500 to-red-500' },
+                  { label: 'Collection Analysis', icon: BarChart2, path: `/mongodb-dashboard/${id}/collection-analysis`, color: 'from-blue-500 to-indigo-600' },
+                  { label: 'Error Logs',          icon: FileText,  path: `/mongodb-dashboard/${id}/error-logs`, color: 'from-red-500 to-rose-600' },
+                  { label: 'Backup & Restore',    icon: Archive,   path: `/mongodb-dashboard/${id}/backup`, color: 'from-green-600 to-emerald-700' },
+                ].map(p => (
+                  <button key={p.label} onClick={() => navigate(p.path)}
+                    className="text-left bg-white border border-slate-200 rounded-2xl p-4 hover:shadow-md hover:-translate-y-0.5 transition-all group flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${p.color} flex items-center justify-center flex-shrink-0`}>
+                      <p.icon size={16} className="text-white" />
+                    </div>
+                    <p className="font-bold text-slate-800 text-sm truncate flex-1">{p.label}</p>
+                    <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-500 flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
+
+            </div>
+          );
+        })()}
+
       </div>
     </div>
   );
 }
+

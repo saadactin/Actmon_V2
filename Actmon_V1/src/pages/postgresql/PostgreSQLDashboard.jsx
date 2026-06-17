@@ -9,6 +9,7 @@ import {
   TrendingUp, Table, Search, ArrowUp, ArrowDown, Shield,
   Circle, Wifi, WifiOff, AlertCircle, Info, Radio, Copy, CheckCheck,
   ArrowRight, Crown, Signal, SignalHigh, SignalLow, SignalZero, Settings,
+  BarChart3, X, ExternalLink, Pencil,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -2230,6 +2231,804 @@ function analyzeAgo(t) {
   return `${Math.round(hours/24)}d ago`;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   TABLE DEEP-DIVE MODAL  — full right-panel with 6 tabs
+══════════════════════════════════════════════════════════════════════════ */
+function TableDeepDiveModal({ connId, table, onClose }) {
+  const key = `${table.database}/${table.schemaname}/${table.relname}`;
+  const [tab, setTab] = React.useState('overview');
+
+  const { data: str, isLoading: strLoad, isError: strError, refetch: refetchStr } = useQuery({
+    queryKey: ['pgTableDeep', connId, key],
+    queryFn:  () => client.get(`/connections/postgresql/${connId}/table-structure`, {
+      params: { database: table.database, schema: table.schemaname, table: table.relname }
+    }).then(r => r.data),
+    staleTime: 60000,
+    retry: 1,
+  });
+
+  const meta    = str?.table_meta     || {};
+  const cols    = str?.columns        || [];
+  const idxs    = str?.indexes        || table.indexes || [];
+  const cons    = str?.constraints    || [];
+  const trigs   = str?.triggers       || [];
+  const parts   = str?.partitions     || [];
+  const pInfo   = str?.partition_info || {};
+  const cstats  = str?.col_stats      || [];
+  const topQ    = str?.top_queries    || [];
+  const slowQ   = str?.slow_queries   || [];
+  const hasPgSS = str?.has_pg_stat_statements;
+  const isPart  = meta.is_partitioned || pInfo.strategy;
+
+  const totalBytes   = meta.total_bytes   || table.total_bytes   || 0;
+  const heapBytes    = meta.heap_bytes    || table.heap_bytes    || 0;
+  const indexBytes   = meta.indexes_bytes || table.indexes_bytes || 0;
+  const toastBytes   = meta.toast_bytes   || 0;
+  // Use meta.live_rows (from pg_stat_user_tables) when available — more accurate than reltuples
+  const liveRows     = meta.live_rows != null ? meta.live_rows : (table.n_live_tup || 0);
+  const estRows      = meta.est_rows  != null ? meta.est_rows  : (str?.row_count   || 0);
+  const displayRows  = str?.row_count != null ? str.row_count : liveRows || estRows;
+  const statsUpdated = meta.stats_uptodate != null ? meta.stats_uptodate : liveRows > 0;
+  const deadRows     = table.n_dead_tup   || 0;
+  const deadPct      = table.dead_pct     || 0;
+  const unusedIdxs   = idxs.filter(ix => (parseInt(ix.idx_scan) || 0) === 0 && !ix.is_primary);
+
+  const TABS = [
+    { id:'overview',    label:'Overview',    icon: BarChart3 },
+    { id:'structure',   label:'Structure',   icon: Layers },
+    { id:'indexes',     label:`Indexes (${idxs.length})`, icon: Search },
+    ...(isPart   ? [{ id:'partitions', label:`Partitions (${pInfo.count||parts.length})`, icon: GitBranch }] : []),
+    { id:'queries',     label:'Queries',     icon: Activity },
+    { id:'maintenance', label:'Maintenance', icon: RefreshCw },
+  ];
+
+  const TYPE_COLOR = {
+    integer:'bg-blue-100 text-blue-700', bigint:'bg-blue-100 text-blue-700',
+    smallint:'bg-blue-100 text-blue-700', numeric:'bg-indigo-100 text-indigo-700',
+    'double precision':'bg-indigo-100 text-indigo-700', real:'bg-indigo-100 text-indigo-700',
+    text:'bg-emerald-100 text-emerald-700', varchar:'bg-emerald-100 text-emerald-700',
+    'character varying':'bg-emerald-100 text-emerald-700', char:'bg-emerald-100 text-emerald-700',
+    boolean:'bg-yellow-100 text-yellow-700',
+    date:'bg-orange-100 text-orange-700', timestamp:'bg-orange-100 text-orange-700',
+    'timestamp without time zone':'bg-orange-100 text-orange-700',
+    'timestamp with time zone':'bg-orange-100 text-orange-700',
+    interval:'bg-orange-100 text-orange-700',
+    uuid:'bg-violet-100 text-violet-700',
+    json:'bg-rose-100 text-rose-700', jsonb:'bg-rose-100 text-rose-700',
+    bytea:'bg-slate-100 text-slate-600', ARRAY:'bg-purple-100 text-purple-700',
+  };
+  const typeColor = dt => TYPE_COLOR[dt] || TYPE_COLOR[dt?.toLowerCase()] || 'bg-slate-100 text-slate-500';
+  const CON_CLS   = {
+    PRIMARY_KEY:'bg-amber-100 text-amber-700 border border-amber-300',
+    UNIQUE:'bg-indigo-100 text-indigo-700 border border-indigo-200',
+    FOREIGN_KEY:'bg-blue-100 text-blue-700 border border-blue-200',
+    CHECK:'bg-purple-100 text-purple-700 border border-purple-200',
+  };
+
+  // Close on Escape
+  React.useEffect(() => {
+    const h = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex" style={{fontFamily:'inherit'}}>
+      {/* backdrop */}
+      <div className="flex-1 bg-black/40 cursor-pointer" onClick={onClose}/>
+
+      {/* panel */}
+      <div className="w-[78vw] max-w-[1300px] bg-[#f4f5fb] flex flex-col shadow-2xl border-l border-slate-200 overflow-hidden">
+
+        {/* ── HEADER ── */}
+        <div className="bg-gradient-to-r from-indigo-700 via-violet-700 to-purple-700 px-6 py-4 flex-shrink-0">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center">
+                  <Table size={15} className="text-white"/>
+                </div>
+                <h2 className="text-white font-black text-[22px] leading-tight truncate">{table.relname}</h2>
+                {isPart && <span className="px-2 py-0.5 bg-white/20 text-white text-[10px] font-bold rounded-full border border-white/30">PARTITIONED</span>}
+              </div>
+              <p className="text-indigo-200 text-[12px] font-medium">
+                {table.database} / {table.schemaname}
+                {meta.table_comment && <span className="ml-2 text-white/60 italic">{meta.table_comment}</span>}
+              </p>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 rounded-xl bg-white/20 hover:bg-white/30 flex items-center justify-center text-white flex-shrink-0">
+              <X size={14}/>
+            </button>
+          </div>
+
+          {/* KPI row */}
+          <div className="flex gap-3 mt-4 flex-wrap">
+            {[
+              { label: liveRows > 0 ? 'Live Rows' : estRows > 0 ? 'Est. Rows' : 'Rows',
+                value: fmtNum(displayRows),
+                note: !statsUpdated && displayRows === 0 ? '!' : null },
+              { label:'Total Size',   value: meta.total_size || table.total_size || fmtBytes(totalBytes) },
+              { label:'Heap Size',    value: meta.heap_size  || table.heap_size  || fmtBytes(heapBytes) },
+              { label:'Index Size',   value: meta.indexes_size || table.indexes_size || fmtBytes(indexBytes) },
+              ...(toastBytes > 0 ? [{ label:'TOAST', value: meta.toast_size || fmtBytes(toastBytes) }] : []),
+              { label:'Dead Rows',    value: fmtNum(deadRows), warn: deadPct > 20 },
+              { label:'Dead %',       value: `${deadPct}%`,   warn: deadPct > 20 },
+              { label:'Indexes',      value: idxs.length },
+              { label:'Columns',      value: cols.length || '…' },
+            ].map(k => (
+              <div key={k.label} className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 border border-white/20 min-w-[80px]">
+                <p className={`text-[15px] font-black ${k.warn ? 'text-red-300' : 'text-white'} flex items-center gap-1`}>
+                  {k.value}
+                  {k.note && <span className="text-amber-300 text-[11px]">⚠</span>}
+                </p>
+                <p className="text-[9px] text-indigo-200 font-medium uppercase tracking-wide">{k.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── TAB BAR ── */}
+        <div className="bg-white border-b border-slate-200 px-5 flex gap-1 py-2.5 flex-shrink-0 overflow-x-auto">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border whitespace-nowrap transition-all
+                  ${tab === t.id
+                    ? 'border-indigo-400 bg-indigo-50 text-indigo-700'
+                    : 'border-transparent text-slate-500 hover:bg-slate-50 hover:border-slate-200'}`}>
+                <Icon size={12}/>
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* ── CONTENT ── */}
+        <div className="flex-1 overflow-y-auto">
+          {strError ? (
+            <div className="p-6">
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-6 flex items-start gap-4">
+                <AlertTriangle size={20} className="text-red-500 mt-0.5 flex-shrink-0"/>
+                <div className="flex-1">
+                  <p className="font-black text-red-800 text-base mb-1">Failed to load table details</p>
+                  <p className="text-[12px] text-red-600">The backend returned an error. Check that the database connection is active and the user has SELECT permissions on system catalogs.</p>
+                  <button onClick={refetchStr} className="mt-3 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl text-[12px] font-bold transition-colors flex items-center gap-2">
+                    <RefreshCw size={12}/> Retry
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : strLoad ? (
+            <div className="flex items-center justify-center py-32">
+              <div className="text-center">
+                <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
+                <p className="text-slate-500 font-semibold text-sm">Loading table details…</p>
+              </div>
+            </div>
+          ) : (
+
+          <div className="p-6 space-y-5">
+
+          {/* ══ OVERVIEW ══ */}
+          {tab === 'overview' && (<>
+
+            {/* Size breakdown */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-violet-50 to-indigo-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                <HardDrive size={13} className="text-violet-500"/>
+                <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Storage</h3>
+              </div>
+              <div className="p-5">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                  {[
+                    { label:'Total',   bytes: totalBytes,  color:'bg-violet-500' },
+                    { label:'Heap',    bytes: heapBytes,   color:'bg-indigo-400' },
+                    { label:'Indexes', bytes: indexBytes,  color:'bg-blue-400' },
+                    { label:'TOAST',   bytes: toastBytes,  color:'bg-slate-300' },
+                  ].map(s => (
+                    <div key={s.label} className="text-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <div className={`w-3 h-3 rounded-full ${s.color} mx-auto mb-1.5`}/>
+                      <p className="text-[16px] font-black text-slate-900">{fmtBytes(s.bytes)}</p>
+                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">{s.label}</p>
+                    </div>
+                  ))}
+                </div>
+                {/* Visual bar */}
+                {totalBytes > 0 && (
+                  <div className="h-4 bg-slate-100 rounded-full overflow-hidden flex">
+                    {heapBytes  > 0 && <div className="bg-indigo-400 h-full" style={{width:`${Math.round(heapBytes/totalBytes*100)}%`}} title={`Heap: ${fmtBytes(heapBytes)}`}/>}
+                    {indexBytes > 0 && <div className="bg-blue-400 h-full"   style={{width:`${Math.round(indexBytes/totalBytes*100)}%`}} title={`Indexes: ${fmtBytes(indexBytes)}`}/>}
+                    {toastBytes > 0 && <div className="bg-slate-300 h-full"  style={{width:`${Math.round(toastBytes/totalBytes*100)}%`}} title={`TOAST: ${fmtBytes(toastBytes)}`}/>}
+                  </div>
+                )}
+                {/* Storage options */}
+                {(meta.storage_options||[]).length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide self-center">Storage opts:</span>
+                    {(meta.storage_options||[]).map((o,i) => (
+                      <span key={i} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-mono font-bold">
+                        {o.key}={o.value}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Row stats + Activity */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+              {/* Row stats */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-emerald-50 to-teal-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Database size={13} className="text-emerald-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Row Statistics</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  {[
+                    { label: liveRows > 0 ? 'Live Rows (pg_stat)' : 'Est. Rows (reltuples)',
+                      value: fmtNum(displayRows),
+                      color: liveRows > 0 ? 'text-emerald-600' : 'text-amber-600' },
+                    { label:'Dead Rows',       value: fmtNum(deadRows),  color: deadRows>1000?'text-red-600':'text-slate-700' },
+                    { label:'Dead Tuple %',    value: `${deadPct}%`,     color: deadPct>20?'text-red-600':'text-slate-700' },
+                    { label:'Est. Rows (pg_class)', value: fmtNum(estRows || (str?.row_count||0)), color:'text-slate-500' },
+                  ].map(kv => (
+                    <div key={kv.label} className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-500 font-medium">{kv.label}</span>
+                      <span className={`text-[13px] font-black font-mono ${kv.color}`}>{kv.value}</span>
+                    </div>
+                  ))}
+                  {!statsUpdated && (
+                    <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-700 flex items-start gap-2">
+                      <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>
+                      <span>Statistics not yet collected. Row counts may show 0. Run <code className="bg-amber-100 px-1 rounded font-mono">ANALYZE {table.relname};</code> to update.</span>
+                    </div>
+                  )}
+                  {/* bloat bar */}
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">Bloat</span>
+                      <span className={`text-[10px] font-bold ${deadPct>20?'text-red-600':deadPct>10?'text-orange-500':'text-emerald-600'}`}>{deadPct}%</span>
+                    </div>
+                    <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${deadPct>20?'bg-red-400':deadPct>10?'bg-orange-400':'bg-emerald-400'}`}
+                           style={{width:`${Math.min(100,deadPct)}%`}}/>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Scan activity */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Activity size={13} className="text-blue-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Scan Activity</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  {[
+                    { label:'Sequential Scans', value: fmtNum(table.seq_scan),     warn: table.seq_scan > 1000 && table.idx_scan_pct < 50 },
+                    { label:'Index Scans',       value: fmtNum(table.idx_scan) },
+                    { label:'Index Scan %',      value: `${table.idx_scan_pct||0}%`, ok: (table.idx_scan_pct||0) >= 80 },
+                    { label:'Cache Hit %',       value: `${table.heap_cache_pct||0}%`, ok: (table.heap_cache_pct||0) >= 95 },
+                    { label:'Heap Blks Read',    value: fmtNum(table.heap_blks_read), warn: table.heap_blks_read > 5000 },
+                    { label:'Idx Blks Read',     value: fmtNum(table.idx_blks_read) },
+                  ].map(kv => (
+                    <div key={kv.label} className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-500 font-medium">{kv.label}</span>
+                      <span className={`text-[13px] font-black font-mono ${kv.warn?'text-red-600':kv.ok?'text-emerald-600':'text-slate-700'}`}>{kv.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* DML Activity */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-orange-50 to-amber-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                <Pencil size={13} className="text-orange-500"/>
+                <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">DML Activity</h3>
+              </div>
+              <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label:'Inserts',      value: fmtNum(table.n_tup_ins),     color:'text-emerald-600' },
+                  { label:'Updates',      value: fmtNum(table.n_tup_upd),     color:'text-blue-600' },
+                  { label:'HOT Updates',  value: fmtNum(table.n_tup_hot_upd), color:'text-cyan-600' },
+                  { label:'Deletes',      value: fmtNum(table.n_tup_del),     color:'text-red-500' },
+                ].map(kv => (
+                  <div key={kv.label} className="text-center p-3 rounded-xl bg-slate-50 border border-slate-100">
+                    <p className={`text-[20px] font-black ${kv.color}`}>{kv.value}</p>
+                    <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mt-0.5">{kv.label}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Unused index warning */}
+            {unusedIdxs.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                <AlertTriangle size={15} className="text-amber-500 mt-0.5 flex-shrink-0"/>
+                <div>
+                  <p className="font-black text-amber-800 text-[13px]">
+                    {unusedIdxs.length} unused index{unusedIdxs.length > 1 ? 'es' : ''} detected
+                  </p>
+                  <p className="text-[11px] text-amber-700 mt-0.5">
+                    {unusedIdxs.map(ix => ix.index_name || ix.indexname).join(', ')} — consider dropping these to save space and reduce write overhead.
+                  </p>
+                </div>
+              </div>
+            )}
+
+          </>)}
+
+          {/* ══ STRUCTURE ══ */}
+          {tab === 'structure' && (<>
+
+            {/* Columns table */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-indigo-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                <Layers size={13} className="text-indigo-500"/>
+                <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Columns ({cols.length})</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      {['#','Column','Type','Nullable','Default','Identity','Comment'].map(h => (
+                        <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cols.map((col, ci) => {
+                      const cs = cstats.find(s => s.column_name === col.column_name);
+                      return (
+                        <tr key={ci} className="border-t border-slate-100 hover:bg-indigo-50/20">
+                          <td className="px-3 py-2.5 text-slate-400 font-mono text-[10px]">{col.ordinal_position}</td>
+                          <td className="px-3 py-2.5">
+                            <div className="font-bold text-slate-800 font-mono">{col.column_name}</div>
+                            {cs && cs.null_frac > 0 && (
+                              <div className="text-[9px] text-slate-400 mt-0.5">
+                                null: {Math.round(cs.null_frac * 100)}%
+                                {cs.n_distinct !== 0 && <span className="ml-2">distinct: {cs.n_distinct < 0 ? `${Math.round(-cs.n_distinct*100)}%` : fmtNum(cs.n_distinct)}</span>}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${typeColor(col.data_type)}`}>
+                              {col.udt_name || col.data_type}
+                              {col.character_maximum_length ? `(${col.character_maximum_length})` :
+                               col.numeric_precision ? `(${col.numeric_precision}${col.numeric_scale ? ','+col.numeric_scale : ''})` : ''}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <span className={`text-[10px] font-bold ${col.is_nullable === 'YES' ? 'text-slate-400' : 'text-red-600'}`}>
+                              {col.is_nullable === 'YES' ? 'NULL' : 'NOT NULL'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-[10px] text-slate-400 max-w-[160px] truncate" title={col.column_default}>
+                            {col.column_default || '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-[10px] text-slate-500">
+                            {col.is_identity === 'YES'
+                              ? <span className="px-1.5 py-0.5 bg-violet-100 text-violet-700 rounded font-bold text-[9px]">{col.identity_generation}</span>
+                              : '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-[10px] text-slate-400 italic max-w-[180px] truncate" title={col.column_comment}>
+                            {col.column_comment || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {cols.length === 0 && (
+                      <tr><td colSpan={7} className="py-10 text-center text-slate-400 font-medium">No column data available</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Constraints */}
+            {cons.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-amber-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Shield size={13} className="text-amber-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Constraints ({cons.length})</h3>
+                </div>
+                <div className="p-5">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          {['Type','Name','Columns','References','On Update','On Delete'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cons.map((c, ci) => (
+                          <tr key={ci} className="border-t border-slate-50 hover:bg-slate-50/50">
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${CON_CLS[c.constraint_type] || 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                                {c.constraint_type}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 font-mono font-bold text-slate-800">{c.constraint_name}</td>
+                            <td className="px-3 py-2 font-mono text-slate-600">{c.columns || '—'}</td>
+                            <td className="px-3 py-2 text-slate-500">
+                              {c.foreign_table ? <span className="font-mono text-blue-600">{c.foreign_table}.{c.foreign_column}</span> : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-slate-400">{c.update_rule || '—'}</td>
+                            <td className="px-3 py-2 text-slate-400">{c.delete_rule || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Triggers */}
+            {trigs.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-purple-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Zap size={13} className="text-purple-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Triggers ({trigs.length})</h3>
+                </div>
+                <div className="p-4 space-y-2">
+                  {trigs.map((tg, ti) => (
+                    <div key={ti} className="flex items-start gap-3 px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="font-bold text-slate-800 text-[12px]">{tg.trigger_name}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[9px] font-black">{tg.action_timing} {tg.event_manipulation}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 text-[9px] font-bold">{tg.action_orientation}</span>
+                        </div>
+                        {tg.action_statement && (
+                          <pre className="text-[10px] font-mono text-slate-500 bg-white rounded-lg px-3 py-2 mt-1 overflow-x-auto border border-slate-100">
+                            {tg.action_statement}
+                          </pre>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          </>)}
+
+          {/* ══ INDEXES ══ */}
+          {tab === 'indexes' && (<>
+
+            {unusedIdxs.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                <AlertTriangle size={14} className="text-amber-500 mt-0.5"/>
+                <p className="text-[12px] text-amber-800">
+                  <strong>{unusedIdxs.length} unused index{unusedIdxs.length > 1 ? 'es' : ''}</strong> —
+                  zero scans since last stats reset. Consider <code className="bg-amber-100 px-1 rounded text-[11px]">DROP INDEX</code> to reclaim disk space.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {idxs.map((ix, ii) => {
+                const scans   = parseInt(ix.idx_scan) || 0;
+                const unused  = scans === 0 && !ix.is_primary;
+                const idxType = ix.index_def ? ix.index_def.match(/USING (\w+)/i)?.[1]?.toUpperCase() || 'BTREE' : 'BTREE';
+                return (
+                  <div key={ii} className={`bg-white rounded-2xl border-2 overflow-hidden shadow-sm ${
+                    ix.is_primary ? 'border-amber-200' :
+                    ix.is_unique  ? 'border-indigo-200' :
+                    unused        ? 'border-red-200'   : 'border-slate-200'}`}>
+                    <div className={`px-5 py-4 flex items-start justify-between gap-3 ${
+                      ix.is_primary ? 'bg-amber-50' :
+                      ix.is_unique  ? 'bg-indigo-50/40' :
+                      unused        ? 'bg-red-50'    : 'bg-slate-50/50'}`}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="font-mono font-black text-slate-800 text-[13px]">{ix.index_name || ix.indexname}</span>
+                          {ix.is_primary && <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-black border border-amber-300">PK</span>}
+                          {ix.is_unique && !ix.is_primary && <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-black border border-indigo-200">UNIQUE</span>}
+                          {ix.is_clustered && <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 text-[9px] font-black">CLUSTER</span>}
+                          {!ix.is_valid && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[9px] font-black">INVALID</span>}
+                          {unused && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-[9px] font-black border border-red-200">UNUSED</span>}
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[9px] font-bold">{idxType}</span>
+                        </div>
+                        {ix.columns && (
+                          <p className="text-[11px] text-slate-500 font-mono">
+                            Columns: <span className="font-bold text-slate-700">{ix.columns}</span>
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-[14px] font-black text-slate-700 font-mono">{ix.index_size || '—'}</p>
+                        <p className="text-[9px] text-slate-400 font-bold">SIZE</p>
+                      </div>
+                    </div>
+
+                    <div className="px-5 py-3 border-t border-slate-100">
+                      {ix.index_def && (
+                        <pre className="font-mono text-[10px] text-slate-500 bg-slate-50 rounded-lg px-3 py-2 overflow-x-auto mb-3 border border-slate-100">{ix.index_def}</pre>
+                      )}
+                      <div className="flex gap-6 text-[11px]">
+                        <div>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-0.5">Scans</p>
+                          <p className={`font-black text-[14px] font-mono ${unused ? 'text-red-600' : 'text-emerald-600'}`}>{fmtNum(scans)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-0.5">Rows Read</p>
+                          <p className="font-black text-[14px] font-mono text-slate-700">{fmtNum(ix.idx_tup_read || 0)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-0.5">Rows Fetched</p>
+                          <p className="font-black text-[14px] font-mono text-slate-700">{fmtNum(ix.idx_tup_fetch || 0)}</p>
+                        </div>
+                        {ix.index_bytes > 0 && (
+                          <div>
+                            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide mb-0.5">Size Bytes</p>
+                            <p className="font-black text-[12px] font-mono text-slate-500">{fmtNum(ix.index_bytes)}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {idxs.length === 0 && (
+                <div className="bg-white rounded-2xl border border-dashed border-slate-300 py-16 text-center">
+                  <Search size={28} className="text-slate-300 mx-auto mb-3"/>
+                  <p className="font-bold text-slate-500">No indexes on this table</p>
+                  <p className="text-slate-400 text-sm mt-1">Consider adding indexes on frequently-queried columns.</p>
+                </div>
+              )}
+            </div>
+
+          </>)}
+
+          {/* ══ PARTITIONS ══ */}
+          {tab === 'partitions' && (<>
+
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-teal-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-3">
+                <GitBranch size={13} className="text-teal-500"/>
+                <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Partition Strategy</h3>
+              </div>
+              <div className="p-5 flex gap-8">
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-1">Strategy</p>
+                  <span className="px-3 py-1.5 bg-teal-100 text-teal-700 rounded-xl text-[13px] font-black">{pInfo.strategy || '—'}</span>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-1">Partition Key</p>
+                  <span className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-xl text-[12px] font-mono font-bold">{pInfo.partition_key || '—'}</span>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-1">Total Partitions</p>
+                  <span className="text-[20px] font-black text-slate-900">{pInfo.count || parts.length}</span>
+                </div>
+              </div>
+            </div>
+
+            {parts.length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-teal-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Layers size={13} className="text-teal-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Partitions ({parts.length})</h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px]">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        {['Partition','Schema','Bound','Size','Live Rows','Dead Rows'].map(h => (
+                          <th key={h} className="px-4 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parts.map((p, pi) => {
+                        const maxPB = Math.max(...parts.map(x => x.total_bytes || 0), 1);
+                        const pct   = Math.round((p.total_bytes / maxPB) * 100);
+                        return (
+                          <tr key={pi} className="border-t border-slate-100 hover:bg-teal-50/20">
+                            <td className="px-4 py-3 font-mono font-bold text-slate-800">{p.partition_name}</td>
+                            <td className="px-4 py-3 text-slate-500">{p.schema_name}</td>
+                            <td className="px-4 py-3 font-mono text-[10px] text-slate-600 max-w-[200px] truncate" title={p.partition_bound}>{p.partition_bound}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-teal-400 rounded-full" style={{width:`${pct}%`}}/>
+                                </div>
+                                <span className="font-bold text-slate-700">{p.total_size}</span>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-emerald-600 font-bold">{fmtNum(p.n_live_tup)}</td>
+                            <td className="px-4 py-3 font-mono text-red-500 font-bold">{fmtNum(p.n_dead_tup)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+          </>)}
+
+          {/* ══ QUERIES ══ */}
+          {tab === 'queries' && (<>
+
+            {!hasPgSS ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 flex items-start gap-4">
+                <AlertTriangle size={20} className="text-amber-500 mt-0.5 flex-shrink-0"/>
+                <div>
+                  <p className="font-black text-amber-800 text-base">pg_stat_statements not enabled</p>
+                  <p className="text-[12px] text-amber-700 mt-1">
+                    Install the extension to track query statistics:
+                  </p>
+                  <pre className="mt-2 bg-amber-100 px-3 py-2 rounded-lg text-[11px] font-mono text-amber-900">
+                    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;{'\n'}
+                    {/* Then add to postgresql.conf: */}
+                    shared_preload_libraries = 'pg_stat_statements'
+                  </pre>
+                </div>
+              </div>
+            ) : topQ.length === 0 && slowQ.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-slate-300 py-16 text-center">
+                <Activity size={28} className="text-slate-300 mx-auto mb-3"/>
+                <p className="font-bold text-slate-500">No query data found for this table</p>
+                <p className="text-slate-400 text-sm mt-1">Table may not have been queried since the last stats reset.</p>
+              </div>
+            ) : (<>
+
+              {/* Top queries by calls */}
+              {topQ.length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-blue-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                    <BarChart3 size={13} className="text-blue-500"/>
+                    <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Top Queries by Frequency</h3>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {topQ.map((q, qi) => (
+                      <div key={qi} className="px-5 py-4">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
+                          <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black flex items-center justify-center flex-shrink-0">{qi+1}</span>
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-lg text-[10px] font-black">{fmtNum(q.calls)} calls</span>
+                          <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-lg text-[10px] font-black">{q.mean_time_ms.toFixed(1)} ms avg</span>
+                          <span className="px-2 py-0.5 bg-violet-100 text-violet-700 rounded-lg text-[10px] font-black">{q.total_time_ms.toFixed(0)} ms total</span>
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black">{fmtNum(q.rows)} rows</span>
+                          {q.cache_hit_pct > 0 && <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${q.cache_hit_pct>=90?'bg-emerald-100 text-emerald-700':'bg-orange-100 text-orange-700'}`}>{q.cache_hit_pct.toFixed(0)}% cache</span>}
+                        </div>
+                        <pre className="font-mono text-[11px] text-slate-600 bg-slate-50 rounded-xl px-4 py-3 overflow-x-auto border border-slate-100 whitespace-pre-wrap break-all">
+                          {q.query_text}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Slow queries by mean time */}
+              {slowQ.length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="bg-gradient-to-r from-red-50 to-slate-50 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                    <Clock size={13} className="text-red-500"/>
+                    <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Slowest Queries by Mean Time</h3>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {slowQ.map((q, qi) => (
+                      <div key={qi} className="px-5 py-4">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
+                          <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 text-[10px] font-black flex items-center justify-center flex-shrink-0">{qi+1}</span>
+                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${q.mean_time_ms>1000?'bg-red-100 text-red-700':q.mean_time_ms>100?'bg-orange-100 text-orange-700':'bg-yellow-100 text-yellow-700'}`}>
+                            {q.mean_time_ms >= 1000 ? `${(q.mean_time_ms/1000).toFixed(2)}s` : `${q.mean_time_ms.toFixed(1)}ms`} avg
+                          </span>
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-lg text-[10px] font-black">{fmtNum(q.calls)} calls</span>
+                          {q.stddev_ms > 0 && <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-lg text-[10px] font-medium">±{q.stddev_ms.toFixed(1)}ms σ</span>}
+                        </div>
+                        <pre className="font-mono text-[11px] text-slate-600 bg-slate-50 rounded-xl px-4 py-3 overflow-x-auto border border-slate-100 whitespace-pre-wrap break-all">
+                          {q.query_text}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </>)}
+
+          </>)}
+
+          {/* ══ MAINTENANCE ══ */}
+          {tab === 'maintenance' && (<>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+              {/* Vacuum history */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-orange-50 to-amber-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <RefreshCw size={13} className="text-orange-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Vacuum History</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  {[
+                    { label:'Last Manual Vacuum',   value: table.last_vacuum?.slice(0,19)||'Never',   warn: !table.last_vacuum },
+                    { label:'Last Autovacuum',       value: table.last_autovacuum?.slice(0,19)||'Never' },
+                    { label:'Manual Vacuum Count',   value: table.vacuum_count ?? '—' },
+                    { label:'Autovacuum Count',      value: table.autovacuum_count ?? '—' },
+                  ].map(kv => (
+                    <div key={kv.label} className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-500 font-medium">{kv.label}</span>
+                      <span className={`text-[12px] font-bold font-mono ${kv.warn ? 'text-red-600' : 'text-slate-700'}`}>{kv.value}</span>
+                    </div>
+                  ))}
+                  {table.needs_vacuum && (
+                    <div className="mt-2 px-3 py-2 rounded-xl bg-orange-50 border border-orange-200 text-[11px] text-orange-700 font-bold flex items-center gap-2">
+                      <AlertTriangle size={12}/>
+                      VACUUM RECOMMENDED — high dead tuple count
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Analyze history */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-yellow-50 to-amber-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Search size={13} className="text-yellow-600"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Analyze History</h3>
+                </div>
+                <div className="p-5 space-y-3">
+                  {[
+                    { label:'Last Manual Analyze',  value: table.last_analyze?.slice(0,19)||'Never', warn: !table.last_analyze },
+                    { label:'Last Autoanalyze',      value: table.last_autoanalyze?.slice(0,19)||'Never' },
+                    { label:'Analyze Count',         value: table.analyze_count ?? '—' },
+                    { label:'Autoanalyze Count',     value: table.autoanalyze_count ?? '—' },
+                    { label:'Mod Since Analyze',     value: fmtNum(table.n_mod_since_analyze), warn: table.needs_analyze },
+                  ].map(kv => (
+                    <div key={kv.label} className="flex items-center justify-between">
+                      <span className="text-[11px] text-slate-500 font-medium">{kv.label}</span>
+                      <span className={`text-[12px] font-bold font-mono ${kv.warn ? 'text-orange-600' : 'text-slate-700'}`}>{kv.value}</span>
+                    </div>
+                  ))}
+                  {table.needs_analyze && (
+                    <div className="mt-2 px-3 py-2 rounded-xl bg-yellow-50 border border-yellow-200 text-[11px] text-yellow-700 font-bold flex items-center gap-2">
+                      <AlertTriangle size={12}/>
+                      ANALYZE RECOMMENDED — statistics are stale
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Table-level storage options */}
+            {(meta.storage_options || []).length > 0 && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-slate-50 to-indigo-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
+                  <Settings size={13} className="text-slate-500"/>
+                  <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Table Storage Options</h3>
+                </div>
+                <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {(meta.storage_options || []).map((opt, oi) => (
+                    <div key={oi}>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">{opt.key}</p>
+                      <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-lg text-[11px] font-mono font-bold">{opt.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          </>)}
+
+          </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TableDetailPane({ connId, table }) {
   const key = `${table.database}/${table.schemaname}/${table.relname}`;
   const [detailTab, setDetailTab] = React.useState('stats');
@@ -2459,10 +3258,11 @@ function TableDetailPane({ connId, table }) {
 }
 
 function AdvancedTablesTab({ detail, isLoading, refetch, connId }) {
-  const [view,    setView]    = React.useState('size');
-  const [search,  setSearch]  = React.useState('');
-  const [selDb,   setSelDb]   = React.useState('__all__');
-  const [expand,  setExpand]  = React.useState(null);
+  const [view,          setView]          = React.useState('size');
+  const [search,        setSearch]        = React.useState('');
+  const [selDb,         setSelDb]         = React.useState('__all__');
+  const [expand,        setExpand]        = React.useState(null);
+  const [selectedTable, setSelectedTable] = React.useState(null);
 
   const d   = detail || {};
   const vw  = TABLE_VIEWS.find(v => v.id === view) || TABLE_VIEWS[0];
@@ -2496,6 +3296,15 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId }) {
 
   return (
     <div className="space-y-5">
+
+      {/* Deep-dive modal */}
+      {selectedTable && (
+        <TableDeepDiveModal
+          connId={connId}
+          table={selectedTable}
+          onClose={() => setSelectedTable(null)}
+        />
+      )}
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -2616,7 +3425,13 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId }) {
                           <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-bold border border-indigo-200 whitespace-nowrap">{t.database||'—'}</span>
                         </td>
                         <td className="px-3 py-2.5 font-mono text-slate-400 text-[10px]">{t.schemaname}</td>
-                        <td className="px-3 py-2.5 font-black text-indigo-700">{t.relname}</td>
+                        <td className="px-3 py-2.5">
+                          <button onClick={() => setSelectedTable(t)}
+                            className="font-black text-indigo-700 hover:text-indigo-500 hover:underline text-left flex items-center gap-1 group">
+                            {t.relname}
+                            <ExternalLink size={10} className="text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"/>
+                          </button>
+                        </td>
                         {/* Total size bar */}
                         <td className="px-3 py-2.5">
                           <div className="flex items-center gap-2">

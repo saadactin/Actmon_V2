@@ -231,6 +231,10 @@ def get_ch_dashboard(conn_id: int, db: Session = Depends(get_db)):
     disk usage, active queries, recent errors, top tables, top databases,
     merge queue size.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "ch_dashboard", db)
+    if _cached is not None:
+        return _cached
     conn = _get_connection_or_404(conn_id, db)
     results = {}
     errors = {}
@@ -487,6 +491,10 @@ def get_ch_queries(conn_id: int, db: Session = Depends(get_db)):
     query_id, user, elapsed, read_rows, read_bytes, result_rows,
     memory_usage, query truncated to 400 chars.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "ch_queries", db)
+    if _cached is not None:
+        return _cached
     conn = _get_connection_or_404(conn_id, db)
 
     sql = (

@@ -9,6 +9,10 @@ from app.models.connection_model import ConnectionMaster          # noqa: F401
 from app.models.os_server_model import OsServer, DatabaseInstance # noqa: F401
 from app.models.backup_model import BackupJob                     # noqa: F401
 from app.models.backup_schedule_model import BackupSchedule       # noqa: F401
+from app.models.agent_model import (                              # noqa: F401
+    Agent, AgentMetric, AgentTopSQL,
+    AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
+)
 
 # Routes
 from app.routes.server_routes import router as server_router
@@ -46,6 +50,8 @@ from app.routes.os_server_routes import router as os_server_router
 from app.routes.terminal_routes import router as terminal_router
 from app.routes.test_connection_routes import router as test_connection_router
 from app.routes.auth_routes import router as auth_router
+from app.routes.agent_routes import router as agent_router
+from app.routes.chatbot.chatbot_routes import router as chatbot_router
 
 # Create all tables in PostgreSQL (graceful — won't crash if DB is offline at import time)
 try:
@@ -65,7 +71,13 @@ async def lifespan(app_instance):
     start_pg_scheduler()
     from app.routes.mssql_backup_routes import start_mssql_scheduler
     start_mssql_scheduler()
+    # Start centralized agent collector (polls monitored DBs every 60s)
+    from app.services.agent_collector_service import start_agent_collector
+    start_agent_collector(interval_sec=60)
     yield
+    # Graceful shutdown
+    from app.services.agent_collector_service import stop_agent_collector
+    stop_agent_collector()
 
 app = FastAPI(
     title="ACTMON API",
@@ -125,6 +137,12 @@ app.include_router(os_server_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
 app.include_router(auth_router)
+
+# Centralized Agent routes
+app.include_router(agent_router)
+
+# ActMon AI Chatbot
+app.include_router(chatbot_router)
 
 
 @app.get("/")

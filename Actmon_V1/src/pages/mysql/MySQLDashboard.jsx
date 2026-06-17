@@ -9,7 +9,7 @@ import {
   TrendingUp, BarChart2, Table, Settings, Bell, ArrowUp,
   ArrowDown, Minus, Search, Filter,
   ChevronDown, ChevronUp, Code2, FolderOpen, Key, Link as LinkIcon,
-  Copy, Wifi, WifiOff, Loader2,
+  Copy, Wifi, WifiOff, Loader2, Eye, X,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -44,6 +44,11 @@ const fetchTableData      = (id, db, tbl) => client.get(`/connections/mysql/${id
 const fetchReplication    = (id) => client.get(`/connections/mysql/${id}/replication/status`).then(r => r.data);
 const fetchReplVars       = (id) => client.get(`/connections/mysql/${id}/replication/variables`).then(r => r.data);
 const fetchPerfDetail     = (id) => client.get(`/connections/mysql/${id}/performance-detail`).then(r => r.data);
+const fetchBinlogStatus   = (id) => client.get(`/connections/mysql/${id}/binlog/status`).then(r => r.data);
+const fetchBinlogs        = (id) => client.get(`/connections/mysql/${id}/binlogs`).then(r => r.data);
+const fetchBinlogLive     = (id) => client.get(`/connections/mysql/${id}/binlog/live`).then(r => r.data);
+const fetchBinlogEvents   = (id, logName, offset, limit) =>
+  client.get(`/connections/mysql/${id}/binlogs/${encodeURIComponent(logName)}/events`, { params: { offset, limit } }).then(r => r.data);
 
 const TABS = [
   { id: 'overview',    label: 'Overview',      icon: Activity },
@@ -60,6 +65,277 @@ const TABS = [
 ];
 
 const REFRESH_INTERVAL = 15; // seconds
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DIAGNOSIS CENTER — shown when MySQL connection fails
+   ═══════════════════════════════════════════════════════════════════════════ */
+function DiagnosisCenter({ id, error, data, refetch }) {
+  const navigate = useNavigate();
+  const [diagChecks, setDiagChecks] = React.useState({ running: false, done: false, results: [] });
+
+  const { data: logsData, isLoading: logsLoading, refetch: refetchLogs } = useQuery({
+    queryKey: ['mysqlDiagLogs', id],
+    queryFn: () => client.get(`/connections/mysql/${id}/error-logs`).then(r => r.data),
+    retry: false,
+    refetchInterval: 30000,
+  });
+
+  const errMsg  = data?.error || error?.message || 'Unknown connection error';
+  const errCode = (errMsg.match(/\((\d+),/) || [])[1] || null;
+  const logs    = (logsData?.logs || []).slice(0, 20);
+
+  const errorCauses = {
+    '2003': ['MySQL / MariaDB service is stopped', 'Port 3306 is blocked by firewall', 'Wrong host or port in connection config'],
+    '1130': ['DB user not granted for this host IP', 'Run: GRANT ALL ON db.* TO user@\'%\' IDENTIFIED BY \'pass\''],
+    '1045': ['Wrong username or password', 'User account may be locked'],
+    '2013': ['Server closed the connection (timeout or crash)', 'Check server memory / OOM killer'],
+  };
+  const causes = errorCauses[errCode] || [
+    'MySQL service may have crashed or stopped',
+    'Server is unreachable (network / VM offline)',
+    'OOM killer terminated mysqld',
+    'Disk full — check /var/lib/mysql',
+  ];
+
+  const SEV_STYLE = {
+    CRITICAL: 'border-l-red-500    bg-red-950/40   text-red-200',
+    ERROR:    'border-l-orange-500 bg-orange-950/30 text-orange-200',
+    WARNING:  'border-l-yellow-500 bg-yellow-950/20 text-yellow-200',
+    INFO:     'border-l-slate-600  bg-slate-800/40  text-slate-300',
+  };
+  const SEV_BADGE = {
+    CRITICAL: 'bg-red-500 text-white',
+    ERROR:    'bg-orange-500 text-white',
+    WARNING:  'bg-yellow-400 text-black',
+    INFO:     'bg-slate-600 text-white',
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+
+      {/* ── Header ──────────────────────────────────────────── */}
+      <div className="bg-gradient-to-r from-red-950 to-slate-900 border-b border-red-800/60 px-6 py-4 flex-shrink-0">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="w-4 h-4 bg-red-500 rounded-full" />
+              <div className="w-4 h-4 bg-red-500 rounded-full absolute inset-0 animate-ping opacity-60" />
+            </div>
+            <div>
+              <h1 className="font-bold text-xl text-white leading-tight">Server Offline — Diagnosis Center</h1>
+              <p className="text-red-300 text-xs mt-0.5">
+                Connection {id} · MySQL failed to respond
+                {errCode && <span className="ml-2 px-1.5 py-0.5 bg-red-900 border border-red-700 rounded text-red-300 font-mono">
+                  Error #{errCode}
+                </span>}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => refetch()}
+              className="flex items-center gap-2 px-4 py-2 bg-white/10 border border-white/20 rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors"
+            >
+              <RefreshCw size={14} /> Retry Connection
+            </button>
+            <button
+              onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)}
+              className="flex items-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-600 rounded-xl text-sm font-semibold transition-colors"
+            >
+              <FileText size={14} /> Error Logs
+            </button>
+            <button
+              onClick={() => navigate(`/mysql-dashboard/${id}/self-heal`)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-700 hover:bg-purple-600 rounded-xl text-sm font-semibold transition-colors"
+            >
+              <Heart size={14} /> Self-Heal
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Body ────────────────────────────────────────────── */}
+      <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        {/* Left column */}
+        <div className="space-y-4">
+
+          {/* Error message */}
+          <div className="bg-slate-900 border border-red-900/60 rounded-2xl p-5">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <XCircle size={13} className="text-red-500" /> Connection Error
+            </p>
+            <p className="text-red-200 text-xs font-mono leading-relaxed break-all bg-red-950/30 border border-red-900/40 rounded-xl p-3">
+              {errMsg}
+            </p>
+          </div>
+
+          {/* Possible causes */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <AlertTriangle size={13} className="text-yellow-500" /> Possible Causes
+            </p>
+            <ul className="space-y-2">
+              {causes.map((c, i) => (
+                <li key={i} className="flex gap-2 text-xs text-slate-300">
+                  <span className="text-yellow-500 mt-0.5 flex-shrink-0">▸</span>
+                  <span>{c}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Quick actions */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Zap size={13} className="text-cyan-400" /> Quick Actions
+            </p>
+            <div className="space-y-2">
+              {[
+                { icon: FileText, label: 'View Error Logs',    sub: 'SSH + journalctl',    color: 'text-red-400',    path: `/mysql-dashboard/${id}/error-logs` },
+                { icon: Heart,    label: 'Self-Heal Terminal', sub: 'SSH root commands',   color: 'text-pink-400',   path: `/mysql-dashboard/${id}/self-heal` },
+                { icon: Activity, label: 'Slow Query Analysis',sub: 'When server is up',  color: 'text-yellow-400', path: `/mysql-dashboard/${id}/slow-queries` },
+                { icon: Layers,   label: 'Index Analysis',     sub: 'Schema diagnostics',  color: 'text-violet-400', path: `/mysql-dashboard/${id}/index-analysis` },
+              ].map(({ icon: Icon, label, sub, color, path }) => (
+                <button
+                  key={path}
+                  onClick={() => navigate(path)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-colors group"
+                >
+                  <Icon size={16} className={color} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-white">{label}</p>
+                    <p className="text-[11px] text-slate-500">{sub}</p>
+                  </div>
+                  <ChevronRight size={14} className="text-slate-600 group-hover:text-slate-400 flex-shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Log summary counts */}
+          {logsData?.summary && (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Log Summary</p>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(logsData.summary.severities || {}).map(([sev, cnt]) => (
+                  <div key={sev} className="flex flex-col items-center py-3 bg-slate-800 rounded-xl">
+                    <span className={`text-xl font-bold ${
+                      sev === 'CRITICAL' ? 'text-red-400' :
+                      sev === 'ERROR'    ? 'text-orange-400' :
+                      sev === 'WARNING'  ? 'text-yellow-400' : 'text-slate-400'
+                    }`}>{cnt}</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">{sev}</span>
+                  </div>
+                ))}
+              </div>
+              {logsData.source && (
+                <p className="text-[11px] text-slate-500 mt-3 text-center">
+                  Source: <span className="text-cyan-500">{logsData.source}</span>
+                  {logsData.log_path && logsData.log_path !== 'none' && (
+                    <span className="ml-1 font-mono">{logsData.log_path}</span>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right 2-col: Error log feed */}
+        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Terminal size={15} className="text-cyan-400" />
+              <span className="font-semibold text-sm text-white">Last Known Server Logs</span>
+              {logsData?.source && (
+                <span className="text-[11px] px-2 py-0.5 bg-cyan-900/40 border border-cyan-800 text-cyan-400 rounded-full">
+                  {logsData.source}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => refetchLogs()}
+                className="p-1.5 hover:bg-slate-700 rounded-lg transition-colors"
+                title="Refresh logs"
+              >
+                <RefreshCw size={13} className="text-slate-400" />
+              </button>
+              <button
+                onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)}
+                className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+              >
+                Open full view →
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4">
+            {logsLoading ? (
+              <div className="flex flex-col items-center justify-center h-48 gap-3">
+                <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
+                <p className="text-slate-500 text-sm">Fetching logs via SSH…</p>
+              </div>
+            ) : logs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 gap-3">
+                <FileText size={32} className="text-slate-700" />
+                <p className="text-slate-500 text-sm text-center">
+                  {logsData?.source === 'none'
+                    ? 'Error logging is disabled on this server'
+                    : 'No log entries found'}
+                </p>
+                {logsData?.note && (
+                  <p className="text-slate-600 text-xs text-center max-w-sm">{logsData.note}</p>
+                )}
+                <button
+                  onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)}
+                  className="mt-2 px-4 py-2 bg-cyan-900/40 border border-cyan-800 text-cyan-400 rounded-xl text-xs hover:bg-cyan-900/60 transition-colors"
+                >
+                  Configure SSH + Enable Logging →
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {logs.map((log, i) => {
+                  const sev = log.severity || 'INFO';
+                  return (
+                    <div
+                      key={i}
+                      className={`px-3 py-2 rounded-lg text-[11px] font-mono border-l-2 ${SEV_STYLE[sev] || SEV_STYLE.INFO}`}
+                    >
+                      <div className="flex gap-2 items-start">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${SEV_BADGE[sev] || SEV_BADGE.INFO}`}>
+                          {sev}
+                        </span>
+                        {log.logged && (
+                          <span className="text-slate-500 flex-shrink-0 whitespace-nowrap">{log.logged}</span>
+                        )}
+                        <span className="break-all leading-relaxed">{log.message}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Footer hint */}
+          <div className="border-t border-slate-800 px-5 py-3 flex items-center justify-between flex-shrink-0">
+            <p className="text-[11px] text-slate-600">
+              {logs.length > 0 ? `Showing ${logs.length} most recent entries` : 'SSH credentials needed for remote log access'}
+            </p>
+            <button
+              onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)}
+              className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1 transition-colors"
+            >
+              <Zap size={11} /> AI Analysis + Self-Heal
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function MySQLDashboard() {
   const { id } = useParams();
@@ -79,11 +355,22 @@ export default function MySQLDashboard() {
   // Replication state
   const [replVarsOpen, setReplVarsOpen] = useState(false);
 
+  // Binary log state
+  const [selBinlog, setSelBinlog]       = useState(null);
+  const [binlogOffset, setBinlogOffset] = useState(0);
+  const [liveFilter, setLiveFilter]     = useState('all');
+  const BINLOG_PAGE = 100;
+
   // Performance tab state
   const [perfStmtSort, setPerfStmtSort] = useState({ key: 'sum_ms', asc: false });
   const [perfStmtSearch, setPerfStmtSearch] = useState('');
   const [perfSection, setPerfSection] = useState('all');
   const [perfSparklines, setPerfSparklines] = useState({ qps: [], hit: [], txns: [] });
+
+  // Drill-down / expand state
+  const [expandedProcId, setExpandedProcId] = useState(null);
+  const [expandedTxnId,  setExpandedTxnId]  = useState(null);
+  const [drillModal, setDrillModal]         = useState(null); // {title, subtitle, content}
 
   /* ── Main dashboard query ── */
   const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery({
@@ -171,6 +458,35 @@ export default function MySQLDashboard() {
     enabled: activeTab === 'replication' && replVarsOpen,
   });
 
+  /* ── Binlog queries (Logs tab) ── */
+  const { data: binlogStatusData } = useQuery({
+    queryKey: ['mysqlBinlogStatus', id],
+    queryFn:  () => fetchBinlogStatus(id),
+    retry: false,
+    refetchInterval: 15000,
+    enabled: activeTab === 'logs',
+  });
+  const { data: binlogsData, isLoading: binlogsLoading } = useQuery({
+    queryKey: ['mysqlBinlogs', id],
+    queryFn:  () => fetchBinlogs(id),
+    retry: false,
+    refetchInterval: 30000,
+    enabled: activeTab === 'logs',
+  });
+  const { data: binlogLiveData, isLoading: liveLoading } = useQuery({
+    queryKey: ['mysqlBinlogLive', id],
+    queryFn:  () => fetchBinlogLive(id),
+    retry: false,
+    refetchInterval: 5000,
+    enabled: activeTab === 'logs',
+  });
+  const { data: binlogEventsData, isLoading: eventsLoading } = useQuery({
+    queryKey: ['mysqlBinlogEvents', id, selBinlog, binlogOffset],
+    queryFn:  () => fetchBinlogEvents(id, selBinlog, binlogOffset, BINLOG_PAGE),
+    retry: false,
+    enabled: activeTab === 'logs' && !!selBinlog,
+  });
+
   /* ── Performance Detail query ── */
   const { data: perfData, isLoading: perfLoading, refetch: refetchPerf, dataUpdatedAt: perfUpdatedAt } = useQuery({
     queryKey: ['mysqlPerfDetail', id],
@@ -229,16 +545,7 @@ export default function MySQLDashboard() {
   );
 
   if (error || data?.status === 'error') return (
-    <div className="p-8">
-      <div className="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl max-w-2xl">
-        <AlertTriangle className="mb-2" size={24} />
-        <p className="font-bold text-lg">Connection Error</p>
-        <p className="text-sm mt-2">{data?.error || error?.message}</p>
-        <button onClick={() => refetch()} className="mt-4 px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700">
-          Retry
-        </button>
-      </div>
-    </div>
+    <DiagnosisCenter id={id} error={error} data={data} refetch={refetch} />
   );
 
   const {
@@ -265,6 +572,13 @@ export default function MySQLDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
+
+      {/* ─── Drill-down Modal ─── */}
+      {drillModal && (
+        <DetailModal title={drillModal.title} subtitle={drillModal.subtitle} onClose={() => setDrillModal(null)}>
+          {drillModal.content}
+        </DetailModal>
+      )}
 
       {/* ─── TOP HEADER ─── */}
       <div className="bg-gradient-to-r from-slate-900 via-cyan-900 to-teal-800 text-white shadow-xl">
@@ -351,16 +665,22 @@ export default function MySQLDashboard() {
           return (
           <div className="space-y-4">
 
-            {/* ── Row 1: KPI strip ── */}
+            {/* ── Row 1: KPI strip — all clickable ── */}
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
               <KpiCard icon={Clock}     title="Uptime"       value={health_summary.uptime}  accent="cyan" />
               <KpiCard icon={Server}    title="Version"      value={(health_summary.version||'').split('-')[0]} accent="blue" />
-              <KpiCard icon={Database}  title="Databases"    value={health_summary.total_databases}  accent="teal" />
-              <KpiCard icon={Layers}    title="Tables"       value={health_summary.total_tables}     accent="green" />
-              <KpiCard icon={HardDrive} title="DB Size"      value={health_summary.total_size_gb > 0.1 ? `${health_summary.total_size_gb} GB` : `${health_summary.total_size_mb || 0} MB`} accent="orange" />
-              <KpiCard icon={Activity}  title="Questions"    value={fmtNum(query_stats.Questions)}   accent="purple" />
-              <KpiCard icon={Network}   title="Conns"        value={`${health_summary.current_connections}/${health_summary.max_connections}`} accent={connPct > 80 ? 'red' : 'green'} />
-              <KpiCard icon={Cpu}       title="Slow Queries" value={fmtNum(query_stats.Slow_queries)} accent={Number(query_stats.Slow_queries) > 0 ? 'red' : 'slate'} />
+              <ClickableKpiCard icon={Database}  title="Databases"    value={health_summary.total_databases}  accent="teal"
+                onClick={() => setActiveTab('databases')} />
+              <ClickableKpiCard icon={Layers}    title="Tables"       value={health_summary.total_tables}     accent="green"
+                onClick={() => setActiveTab('tables')} />
+              <ClickableKpiCard icon={HardDrive} title="DB Size"      value={health_summary.total_size_gb > 0.1 ? `${health_summary.total_size_gb} GB` : `${health_summary.total_size_mb || 0} MB`} accent="orange"
+                onClick={() => setActiveTab('storage')} />
+              <ClickableKpiCard icon={Activity}  title="Questions"    value={fmtNum(query_stats.Questions)}   accent="purple"
+                onClick={() => setActiveTab('queries')} />
+              <ClickableKpiCard icon={Network}   title="Conns"        value={`${health_summary.current_connections}/${health_summary.max_connections}`} accent={connPct > 80 ? 'red' : 'green'}
+                onClick={() => setActiveTab('performance')} />
+              <ClickableKpiCard icon={Cpu}       title="Slow Queries" value={fmtNum(query_stats.Slow_queries)} accent={Number(query_stats.Slow_queries) > 0 ? 'red' : 'slate'}
+                onClick={() => { setActiveTab('queries'); }} />
             </div>
 
             {/* ── Row 2: Status badges ── */}
@@ -382,36 +702,31 @@ export default function MySQLDashboard() {
               )}
             </div>
 
-            {/* ── Row 3: Semi-circle gauges ── */}
+            {/* ── Row 3: Semi-circle gauges — click to navigate ── */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-              <GaugeCard
-                title="Connection Pool"
-                pct={connPct}
-                sub={`${health_summary.current_connections} / ${health_summary.max_connections} max`}
-                colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal}
-              />
-              <GaugeCard
-                title="InnoDB Cache Hit"
-                pct={cachePct}
-                sub="Buffer pool read efficiency"
-                colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green}
-              />
-              <GaugeCard
-                title="Active Threads"
-                pct={threadRunPct}
-                centerLabel={threads.running ?? '?'}
-                centerUnit=" active"
-                sub={`${threads.cached || 0} cached · ${fmtNum(threads.created || 0)} total created`}
-                colorFn={v => v > 50 ? C.orange : C.blue}
-              />
-              <GaugeCard
-                title="Slow Query Ratio"
-                pct={Math.min(100, slowPct * 10)}
-                centerLabel={fmtNum(query_stats.Slow_queries)}
-                centerUnit=" slow"
-                sub={`${slowPct}% of ${fmtNum(query_stats.Questions)} total`}
-                colorFn={v => v > 30 ? C.red : v > 5 ? C.orange : C.green}
-              />
+              <button onClick={() => setActiveTab('performance')} className="text-left hover:ring-2 hover:ring-cyan-300 rounded-2xl transition-all">
+                <GaugeCard title="Connection Pool" pct={connPct}
+                  sub={`${health_summary.current_connections} / ${health_summary.max_connections} max · click to detail`}
+                  colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal} />
+              </button>
+              <button onClick={() => setActiveTab('performance')} className="text-left hover:ring-2 hover:ring-green-300 rounded-2xl transition-all">
+                <GaugeCard title="InnoDB Cache Hit" pct={cachePct}
+                  sub="Buffer pool read efficiency · click to detail"
+                  colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green} />
+              </button>
+              <button onClick={() => setActiveTab('queries')} className="text-left hover:ring-2 hover:ring-blue-300 rounded-2xl transition-all">
+                <GaugeCard title="Active Threads" pct={threadRunPct}
+                  centerLabel={threads.running ?? '?'} centerUnit=" active"
+                  sub={`${threads.cached || 0} cached · click to see queries`}
+                  colorFn={v => v > 50 ? C.orange : C.blue} />
+              </button>
+              <button onClick={() => setActiveTab('queries')} className="text-left hover:ring-2 hover:ring-red-300 rounded-2xl transition-all">
+                <GaugeCard title="Slow Query Ratio"
+                  pct={Math.min(100, slowPct * 10)}
+                  centerLabel={fmtNum(query_stats.Slow_queries)} centerUnit=" slow"
+                  sub={`${slowPct}% of ${fmtNum(query_stats.Questions)} total · click to see`}
+                  colorFn={v => v > 30 ? C.red : v > 5 ? C.orange : C.green} />
+              </button>
             </div>
 
             {/* ── Row 4: Live sparklines ── */}
@@ -643,18 +958,22 @@ export default function MySQLDashboard() {
                     </button>
                   </div>
 
-                  {/* ── KPI BAR (8 cards) ── */}
+                  {/* ── KPI BAR (8 cards) — all clickable ── */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
                     {[
-                      { label:'QPS',              value: fmtNum(qq.qps||0),                 sub:'Queries/sec',        warn: false,        accent: 'blue'   },
-                      { label:'TPS',              value: fmtNum(qq.tps||0),                 sub:'Tx commits+rollbacks/sec', warn: false,   accent: 'teal'   },
-                      { label:'Buffer Hit',       value: `${bp.hit_ratio||0}%`,             sub:'InnoDB buffer pool', warn: (bp.hit_ratio||100)<90, accent: (bp.hit_ratio||100)>=95?'green':'orange' },
-                      { label:'Deadlocks',        value: fmtNum(lk.deadlocks||0),           sub:'Since last restart', warn: lk.deadlocks>0, accent: lk.deadlocks>0?'red':'green' },
-                      { label:'Lock Waits',       value: fmtNum(lk.lock_waits||0),          sub:'Row-level lock waits', warn: lk.lock_waits>1000, accent: lk.lock_waits>1000?'orange':'slate' },
-                      { label:'Full Scans',       value: fmtNum(hd.read_rnd_next||0),       sub:'read_rnd_next rows', warn: hd.read_rnd_next>100000, accent: 'slate' },
-                      { label:'Tmp On Disk',      value: `${tt.disk_pct||0}%`,              sub:`${tt.on_disk||0} / ${tt.total||0} tables`, warn: (tt.disk_pct||0)>25, accent: (tt.disk_pct||0)<10?'green':'orange' },
-                      { label:'Aborted Conn',     value: fmtNum(co.aborted_connects||0),    sub:'Failed connections', warn: co.aborted_connects>100, accent: co.aborted_connects>0?'orange':'green' },
-                    ].map(kpi => <Stat key={kpi.label} {...kpi}/>)}
+                      { label:'QPS',         value: fmtNum(qq.qps||0),          sub:'Queries/sec',              accent: 'blue',   onClick: () => setActiveTab('queries') },
+                      { label:'TPS',         value: fmtNum(qq.tps||0),          sub:'Tx commits+rollbacks/sec', accent: 'teal',   onClick: () => setActiveTab('queries') },
+                      { label:'Buffer Hit',  value: `${bp.hit_ratio||0}%`,      sub:'InnoDB buffer pool',       accent: (bp.hit_ratio||100)>=95?'green':'orange', onClick: () => setPerfSection('bufpool') },
+                      { label:'Deadlocks',   value: fmtNum(lk.deadlocks||0),    sub:'Since last restart',       accent: lk.deadlocks>0?'red':'green',   onClick: () => setActiveTab('locks') },
+                      { label:'Lock Waits',  value: fmtNum(lk.lock_waits||0),   sub:'Row-level lock waits',     accent: lk.lock_waits>1000?'orange':'slate', onClick: () => setActiveTab('locks') },
+                      { label:'Full Scans',  value: fmtNum(hd.read_rnd_next||0),sub:'read_rnd_next rows',       accent: hd.read_rnd_next>100000?'orange':'slate', onClick: () => setPerfSection('io') },
+                      { label:'Tmp On Disk', value: `${tt.disk_pct||0}%`,       sub:`${tt.on_disk||0} / ${tt.total||0} tables`, accent: (tt.disk_pct||0)<10?'green':'orange', onClick: () => setPerfSection('queries') },
+                      { label:'Aborted Conn',value: fmtNum(co.aborted_connects||0), sub:'Failed connections',  accent: co.aborted_connects>0?'orange':'green', onClick: () => setPerfSection('connections') },
+                    ].map(kpi => (
+                      <button key={kpi.label} onClick={kpi.onClick} className="text-left w-full group">
+                        <Stat label={kpi.label} value={kpi.value} sub={kpi.sub} warn={false} accent={kpi.accent} />
+                      </button>
+                    ))}
                   </div>
 
                   {/* ── SPARKLINES ── */}
@@ -1248,6 +1567,10 @@ export default function MySQLDashboard() {
               </div>
             )}
 
+            <div className="bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-2 flex items-center gap-2 text-cyan-700 text-xs font-semibold">
+              <Eye size={13} /> Click any row to see the full query and kill command
+            </div>
+
             <Panel title={`Full Process List (${process_list.length})`}>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -1257,26 +1580,41 @@ export default function MySQLDashboard() {
                     ))}</tr>
                   </thead>
                   <tbody>
-                    {process_list.map((p, i) => (
-                      <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${Number(p.Time) > 5 ? 'bg-yellow-50' : ''}`}>
-                        <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{p.Id}</td>
-                        <td className="px-4 py-2.5 font-semibold text-slate-800">{p.User}</td>
-                        <td className="px-4 py-2.5 text-xs text-slate-400">{p.Host}</td>
-                        <td className="px-4 py-2.5 text-xs">{p.db || '—'}</td>
-                        <td className="px-4 py-2.5 text-xs">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            p.Command === 'Sleep' ? 'bg-slate-100 text-slate-500'
-                            : 'bg-blue-100 text-blue-700'}`}>
-                            {p.Command}
-                          </span>
-                        </td>
-                        <td className={`px-4 py-2.5 font-bold text-sm ${Number(p.Time) > 5 ? 'text-red-600' : Number(p.Time) > 1 ? 'text-orange-600' : 'text-slate-600'}`}>
-                          {p.Time}
-                        </td>
-                        <td className="px-4 py-2.5 text-xs text-slate-400 max-w-[120px] truncate">{p.State || '—'}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-slate-500 max-w-[220px] truncate">{p.Info || '—'}</td>
-                      </tr>
-                    ))}
+                    {process_list.map((p, i) => {
+                      const isExp = expandedProcId === p.Id;
+                      return (
+                        <React.Fragment key={i}>
+                          <tr
+                            className={`border-t border-slate-100 cursor-pointer transition-colors ${isExp ? 'bg-cyan-50' : Number(p.Time) > 5 ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-slate-50'}`}
+                            onClick={() => setExpandedProcId(isExp ? null : p.Id)}>
+                            <td className="px-4 py-2.5 font-mono text-xs text-slate-500">
+                              <div className="flex items-center gap-1">
+                                {isExp ? <ChevronUp size={10} className="text-cyan-600" /> : <ChevronDown size={10} className="text-slate-300" />}
+                                {p.Id}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2.5 font-semibold text-slate-800">{p.User}</td>
+                            <td className="px-4 py-2.5 text-xs text-slate-400">{p.Host}</td>
+                            <td className="px-4 py-2.5 text-xs">{p.db || '—'}</td>
+                            <td className="px-4 py-2.5 text-xs">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.Command === 'Sleep' ? 'bg-slate-100 text-slate-500' : 'bg-blue-100 text-blue-700'}`}>
+                                {p.Command}
+                              </span>
+                            </td>
+                            <td className={`px-4 py-2.5 font-bold text-sm ${Number(p.Time) > 5 ? 'text-red-600' : Number(p.Time) > 1 ? 'text-orange-600' : 'text-slate-600'}`}>
+                              {p.Time}
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-slate-400 max-w-[120px] truncate">{p.State || '—'}</td>
+                            <td className="px-4 py-2.5 font-mono text-xs text-slate-500 max-w-[220px] truncate">{p.Info || '—'}</td>
+                          </tr>
+                          {isExp && (
+                            <tr>
+                              <td colSpan={8} className="p-0"><ProcessDetail p={p} /></td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                     {process_list.length === 0 && (
                       <tr><td colSpan={8} className="text-center py-10 text-slate-400">No active processes</td></tr>
                     )}
@@ -1286,15 +1624,27 @@ export default function MySQLDashboard() {
             </Panel>
 
             <div className="grid grid-cols-3 gap-4">
-              <MetricKpi title="Total Processes"  value={process_list.length}        accent="blue" />
-              <MetricKpi title="Long Running >1s" value={long_running_queries.length} accent={long_running_queries.length > 0 ? 'red' : 'green'} />
-              <MetricKpi title="Slow Queries"     value={fmtNum(query_stats.Slow_queries)} accent={Number(query_stats.Slow_queries) > 0 ? 'orange' : 'green'} />
+              <ClickableKpi title="Total Processes"  value={process_list.length}
+                accent="blue"  hint="All current connections"
+                onClick={() => setExpandedProcId(null)} />
+              <ClickableKpi title="Long Running >1s" value={long_running_queries.length}
+                accent={long_running_queries.length > 0 ? 'red' : 'green'}
+                hint={long_running_queries.length > 0 ? 'Click to highlight in table above' : 'None running'}
+                onClick={() => { if (long_running_queries[0]) setExpandedProcId(long_running_queries[0].Id); }} />
+              <ClickableKpi title="Slow Queries" value={fmtNum(query_stats.Slow_queries)}
+                accent={Number(query_stats.Slow_queries) > 0 ? 'orange' : 'green'}
+                hint="Click to open Slow Queries page"
+                onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)} />
             </div>
           </div>
         )}
 
         {/* ══ DATABASES ═════════════════════════════════════════════ */}
         {activeTab === 'databases' && (
+          <div className="space-y-3">
+            <div className="bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-2 flex items-center gap-2 text-cyan-700 text-xs font-semibold">
+              <Eye size={13} /> Click any database row to browse its tables
+            </div>
           <Panel title={`Databases (${databases.length})`}>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -1305,8 +1655,13 @@ export default function MySQLDashboard() {
                 </thead>
                 <tbody>
                   {databases.map((db, i) => (
-                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-5 py-4 font-bold text-cyan-700">{db.name}</td>
+                    <tr key={i}
+                      className="border-t border-slate-100 hover:bg-cyan-50 cursor-pointer transition-colors group"
+                      onClick={() => { setSelDb(db.name); setActiveTab('tables'); }}>
+                      <td className="px-5 py-4 font-bold text-cyan-700 flex items-center gap-1.5">
+                        {db.name}
+                        <Eye size={11} className="opacity-0 group-hover:opacity-60 text-cyan-500 transition-opacity flex-shrink-0" />
+                      </td>
                       <td className="px-5 py-4 font-mono text-sm">{db.tables_count}</td>
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-2">
@@ -1318,7 +1673,7 @@ export default function MySQLDashboard() {
                         </div>
                       </td>
                       <td className="px-5 py-4">
-                        <button onClick={() => setActiveTab('tables')}
+                        <button onClick={e => { e.stopPropagation(); setSelDb(db.name); setActiveTab('tables'); }}
                           className="px-3 h-8 bg-cyan-700 text-white text-xs font-semibold rounded-xl hover:bg-cyan-800">
                           View Tables
                         </button>
@@ -1332,6 +1687,7 @@ export default function MySQLDashboard() {
               </table>
             </div>
           </Panel>
+          </div>
         )}
 
         {/* ══ TABLES — advanced explorer ═══════════════════════════ */}
@@ -1623,13 +1979,29 @@ export default function MySQLDashboard() {
               return (
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <MetricKpi title="Deadlocks"       value={m.deadlocks}        accent={m.deadlocks > 0 ? 'red' : 'green'} />
-                    <MetricKpi title="Lock Waits"      value={fmtNum(m.lock_waits)} accent={m.lock_waits > 0 ? 'orange' : 'green'} />
-                    <MetricKpi title="Avg Lock Wait"   value={`${m.lock_time_avg_ms}ms`} accent="blue" />
-                    <MetricKpi title="Active Txns"     value={txns.length}         accent={txns.length > 5 ? 'orange' : 'green'} />
+                    <ClickableKpi title="Deadlocks"     value={m.deadlocks}
+                      accent={m.deadlocks > 0 ? 'red' : 'green'} hint="Total since last restart"
+                      onClick={() => setDrillModal({ title: 'Deadlock Info', subtitle: `${m.deadlocks} deadlock(s) detected`,
+                        content: <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 space-y-2">
+                          <p className="font-bold">{m.deadlocks} Deadlock(s) recorded since server restart.</p>
+                          <p>To inspect the last deadlock, run:</p>
+                          <code className="block bg-red-100 rounded px-3 py-2 font-mono text-xs">SHOW ENGINE INNODB STATUS\G</code>
+                          <p className="text-xs text-red-600">Fix: Review transaction ordering, add indexes to reduce lock scope, or use SELECT ... FOR UPDATE SKIP LOCKED.</p>
+                        </div>
+                      })} />
+                    <ClickableKpi title="Lock Waits"    value={fmtNum(m.lock_waits)}
+                      accent={m.lock_waits > 0 ? 'orange' : 'green'} hint="Row-level waits"
+                      onClick={() => setExpandedTxnId(txns.find(t => t.rows_locked > 0)?.trx_id || null)} />
+                    <ClickableKpi title="Avg Lock Wait" value={`${m.lock_time_avg_ms}ms`}
+                      accent="blue" hint="Average wait time"
+                      onClick={() => {}} />
+                    <ClickableKpi title="Active Txns"   value={txns.length}
+                      accent={txns.length > 5 ? 'orange' : 'green'} hint="Click to see longest-running"
+                      onClick={() => { const long = [...txns].sort((a,b)=>(b.rows_locked||0)-(a.rows_locked||0))[0]; if(long) setExpandedTxnId(long.trx_id); }} />
                   </div>
 
-                  <Panel title={`Active Transactions (${txns.length})`}>
+                  <Panel title={`Active Transactions (${txns.length})`}
+                    action={<span className="text-[10px] text-slate-400">Click row to expand details</span>}>
                     {txns.length === 0 ? (
                       <div className="text-center py-10">
                         <CheckCircle2 className="mx-auto text-green-400 mb-3" size={36} />
@@ -1644,21 +2016,35 @@ export default function MySQLDashboard() {
                             ))}</tr>
                           </thead>
                           <tbody>
-                            {txns.map((t, i) => (
-                              <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                                <td className="px-4 py-3 font-mono text-xs">{t.trx_id}</td>
-                                <td className="px-4 py-3">
-                                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                    t.state === 'RUNNING' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                    {t.state}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-3 text-xs text-slate-400">{t.started.slice(0,19)}</td>
-                                <td className="px-4 py-3 font-bold text-orange-600">{t.rows_locked}</td>
-                                <td className="px-4 py-3 text-slate-700">{t.rows_modified}</td>
-                                <td className="px-4 py-3 font-mono text-[10px] text-slate-500 max-w-[250px] truncate">{t.query || '—'}</td>
-                              </tr>
-                            ))}
+                            {txns.map((t, i) => {
+                              const isExpT = expandedTxnId === t.trx_id;
+                              return (
+                                <React.Fragment key={i}>
+                                  <tr
+                                    className={`border-t border-slate-100 cursor-pointer transition-colors ${isExpT ? 'bg-orange-50' : 'hover:bg-slate-50'}`}
+                                    onClick={() => setExpandedTxnId(isExpT ? null : t.trx_id)}>
+                                    <td className="px-4 py-3 font-mono text-xs">
+                                      <div className="flex items-center gap-1">
+                                        {isExpT ? <ChevronUp size={10} className="text-orange-600" /> : <ChevronDown size={10} className="text-slate-300" />}
+                                        {t.trx_id}
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.state === 'RUNNING' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                        {t.state}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-xs text-slate-400">{t.started?.slice(0,19)}</td>
+                                    <td className="px-4 py-3 font-bold text-orange-600">{t.rows_locked}</td>
+                                    <td className="px-4 py-3 text-slate-700">{t.rows_modified}</td>
+                                    <td className="px-4 py-3 font-mono text-[10px] text-slate-500 max-w-[250px] truncate">{t.query || '—'}</td>
+                                  </tr>
+                                  {isExpT && (
+                                    <tr><td colSpan={6} className="p-0"><TransactionDetail t={t} /></td></tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -1987,9 +2373,17 @@ export default function MySQLDashboard() {
             return (
               <div className="space-y-5">
                 <div className="grid grid-cols-3 gap-3">
-                  <MetricKpi title="Distinct Users"   value={users.length}            accent="blue" />
-                  <MetricKpi title="Active Sessions"  value={users.reduce((a,u)=>a+u.active,0)}   accent="green" />
-                  <MetricKpi title="Sleeping Sessions" value={users.reduce((a,u)=>a+u.sleeping,0)} accent="slate" />
+                  <MetricKpi title="Distinct Users"    value={users.length}                        accent="blue" />
+                  <ClickableKpi title="Active Sessions"  value={users.reduce((a,u)=>a+u.active,0)}
+                    accent="green" hint="Click to see active processes"
+                    onClick={() => { setActiveTab('queries'); }} />
+                  <ClickableKpi title="Sleeping Sessions" value={users.reduce((a,u)=>a+u.sleeping,0)}
+                    accent="slate" hint="Click to see sleeping processes"
+                    onClick={() => { setActiveTab('queries'); }} />
+                </div>
+
+                <div className="bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-2 flex items-center gap-2 text-cyan-700 text-xs font-semibold">
+                  <Eye size={13} /> Click any user row to see their process details
                 </div>
 
                 <Panel title="User Sessions">
@@ -2002,8 +2396,44 @@ export default function MySQLDashboard() {
                       </thead>
                       <tbody>
                         {users.map((u, i) => (
-                          <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                            <td className="px-4 py-3 font-bold text-cyan-700">{u.user}</td>
+                          <tr key={i}
+                            className="border-t border-slate-100 hover:bg-cyan-50 cursor-pointer transition-colors group"
+                            onClick={() => setDrillModal({
+                              title: `User: ${u.user}@${u.host}`,
+                              subtitle: `${u.connections} connection(s) · ${u.active} active · ${u.sleeping} sleeping`,
+                              content: (
+                                <div className="space-y-3">
+                                  <div className="grid grid-cols-3 gap-3">
+                                    {[['Connections', u.connections, 'blue'], ['Active', u.active, 'green'], ['Sleeping', u.sleeping, 'slate']].map(([l,v,a]) => (
+                                      <div key={l} className={`rounded-xl border p-4 bg-${a}-50 border-${a}-200 text-${a}-700`}>
+                                        <p className="text-[10px] font-bold uppercase">{l}</p>
+                                        <p className="text-2xl font-black mt-1">{v}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="bg-white border border-slate-200 rounded-xl p-4">
+                                    <p className="text-xs text-slate-500 mb-2">Processes from this user in the current process list:</p>
+                                    <div className="space-y-1">
+                                      {process_list.filter(p => p.User === u.user).map((p, pi) => (
+                                        <div key={pi} className="font-mono text-[10px] bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                                          <span className="font-bold text-cyan-700">ID:{p.Id}</span>
+                                          <span className="ml-2 text-orange-600">Time:{p.Time}s</span>
+                                          <span className="ml-2 text-slate-500">{p.Command}</span>
+                                          <span className="ml-2 text-slate-400 truncate">{String(p.Info || '').slice(0,100)}</span>
+                                        </div>
+                                      ))}
+                                      {process_list.filter(p => p.User === u.user).length === 0 && (
+                                        <p className="text-xs text-slate-400">No active processes for this user right now</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}>
+                            <td className="px-4 py-3 font-bold text-cyan-700 flex items-center gap-1.5">
+                              {u.user}
+                              <Eye size={11} className="opacity-0 group-hover:opacity-60 text-cyan-500 transition-opacity" />
+                            </td>
                             <td className="px-4 py-3 text-xs text-slate-400">{u.host}</td>
                             <td className="px-4 py-3 font-bold">{u.connections}</td>
                             <td className="px-4 py-3">
@@ -2047,9 +2477,61 @@ export default function MySQLDashboard() {
             return (
               <div className="space-y-5">
                 <div className="grid grid-cols-3 gap-3">
-                  <MetricKpi title="Total Size"  value={`${totalMB} MB`}  accent="orange" />
-                  <MetricKpi title="Data Size"   value={`${totalData} MB`} accent="blue" />
-                  <MetricKpi title="Index Size"  value={`${totalIdx} MB`} accent="purple" />
+                  <ClickableKpi title="Total Size"  value={`${totalMB} MB`}  accent="orange"
+                    hint="Click to see table breakdown"
+                    onClick={() => setDrillModal({
+                      title: 'Storage Breakdown by Table',
+                      subtitle: `${tables.length} tables · ${totalMB} MB total`,
+                      content: (
+                        <div className="space-y-2">
+                          {tables.sort((a,b) => b.total_mb - a.total_mb).map((t, i) => (
+                            <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-2.5 border border-slate-100">
+                              <span className="font-mono text-xs font-bold text-slate-700">{t.database}.{t.table}</span>
+                              <div className="flex items-center gap-3 text-xs">
+                                <span className="text-blue-600 font-semibold">Data: {t.data_mb} MB</span>
+                                <span className="text-purple-600 font-semibold">Index: {t.index_mb} MB</span>
+                                <span className="bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full">{t.total_mb} MB</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })} />
+                  <ClickableKpi title="Data Size"   value={`${totalData} MB`} accent="blue"
+                    hint="Click to see data size per table"
+                    onClick={() => setDrillModal({
+                      title: 'Data Size by Table',
+                      subtitle: `${totalData} MB data across ${tables.length} tables`,
+                      content: (
+                        <div className="space-y-2">
+                          {tables.sort((a,b) => b.data_mb - a.data_mb).map((t, i) => (
+                            <div key={i} className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-2.5 border border-blue-100">
+                              <span className="font-mono text-xs font-bold text-slate-700">{t.database}.{t.table}</span>
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-slate-400">Rows: {(t.rows||0).toLocaleString()}</span>
+                                <span className="bg-blue-200 text-blue-800 font-bold px-2 py-0.5 rounded-full">{t.data_mb} MB</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })} />
+                  <ClickableKpi title="Index Size"  value={`${totalIdx} MB`} accent="purple"
+                    hint="Click to see index size per table"
+                    onClick={() => setDrillModal({
+                      title: 'Index Size by Table',
+                      subtitle: `${totalIdx} MB index across ${tables.length} tables`,
+                      content: (
+                        <div className="space-y-2">
+                          {tables.sort((a,b) => b.index_mb - a.index_mb).map((t, i) => (
+                            <div key={i} className="flex items-center justify-between bg-purple-50 rounded-xl px-4 py-2.5 border border-purple-100">
+                              <span className="font-mono text-xs font-bold text-slate-700">{t.database}.{t.table}</span>
+                              <span className="bg-purple-200 text-purple-800 font-bold px-2 py-0.5 rounded-full text-xs">{t.index_mb} MB</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    })} />
                 </div>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
@@ -2065,6 +2547,37 @@ export default function MySQLDashboard() {
                         <Legend />
                       </BarChart>
                     </ResponsiveContainer>
+                    <div className="mt-3 space-y-1.5">
+                      {topTables.map((t, i) => (
+                        <button key={i}
+                          onClick={() => setDrillModal({
+                            title: `Table: ${t.database}.${t.table}`,
+                            subtitle: `${t.total_mb} MB total · ${(t.rows||0).toLocaleString()} rows`,
+                            content: (
+                              <div className="space-y-3">
+                                <div className="grid grid-cols-3 gap-3">
+                                  {[['Total', `${t.total_mb} MB`, 'orange'], ['Data', `${t.data_mb} MB`, 'blue'], ['Index', `${t.index_mb} MB`, 'purple']].map(([l,v,a]) => (
+                                    <div key={l} className={`rounded-xl border p-4 bg-${a}-50 border-${a}-200 text-${a}-700`}>
+                                      <p className="text-[10px] font-bold uppercase">{l}</p>
+                                      <p className="text-xl font-black mt-1">{v}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2 text-sm">
+                                  <div className="flex justify-between"><span className="text-slate-400">Engine</span><span className="font-mono font-bold">{t.engine || '—'}</span></div>
+                                  <div className="flex justify-between"><span className="text-slate-400">Rows</span><span className="font-bold">{(t.rows||0).toLocaleString()}</span></div>
+                                  <div className="flex justify-between"><span className="text-slate-400">Avg Row Length</span><span className="font-bold">{t.avg_row_length || '—'} bytes</span></div>
+                                  <div className="flex justify-between"><span className="text-slate-400">Collation</span><span className="font-mono text-xs">{t.collation || '—'}</span></div>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          className="w-full flex items-center justify-between text-xs bg-slate-50 hover:bg-cyan-50 border border-slate-100 hover:border-cyan-200 rounded-lg px-3 py-1.5 transition-colors group">
+                          <span className="font-mono font-bold text-slate-700">{i+1}. {t.table}</span>
+                          <span className="text-slate-400 group-hover:text-cyan-600">{t.total_mb} MB →</span>
+                        </button>
+                      ))}
+                    </div>
                   </ChartCard>
 
                   <ChartCard title="Database Size Distribution">
@@ -2076,6 +2589,16 @@ export default function MySQLDashboard() {
                         <Tooltip formatter={v => `${v} MB`} />
                       </PieChart>
                     </ResponsiveContainer>
+                    <div className="mt-3 space-y-1.5">
+                      {databases.filter(d=>d.size_mb>0).map((db, i) => (
+                        <button key={i}
+                          onClick={() => { setSelDb(db.name); setActiveTab('tables'); }}
+                          className="w-full flex items-center justify-between text-xs bg-slate-50 hover:bg-cyan-50 border border-slate-100 hover:border-cyan-200 rounded-lg px-3 py-1.5 transition-colors group">
+                          <span className="font-mono font-bold text-slate-700">{db.name}</span>
+                          <span className="text-slate-400 group-hover:text-cyan-600">{db.size_mb} MB → View Tables</span>
+                        </button>
+                      ))}
+                    </div>
                   </ChartCard>
                 </div>
               </div>
@@ -2183,11 +2706,22 @@ export default function MySQLDashboard() {
         {/* ══ LOGS ══════════════════════════════════════════════════ */}
         {activeTab === 'logs' && (
           <div className="space-y-5">
-            <div className="grid grid-cols-2 gap-3">
-              <MetricKpi title="Error Log Entries" value={error_log_count} accent={error_log_count > 0 ? 'red' : 'green'} />
-              <MetricKpi title="Slow Queries Total" value={fmtNum(query_stats.Slow_queries)} accent={Number(query_stats.Slow_queries) > 0 ? 'orange' : 'green'} />
+
+            {/* ── KPIs ── */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <ClickableKpi title="Error Log Entries"  value={error_log_count}
+                accent={error_log_count > 0 ? 'red' : 'green'}
+                hint="Click to view error logs"
+                onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)} />
+              <ClickableKpi title="Slow Queries Total" value={fmtNum(query_stats.Slow_queries)}
+                accent={Number(query_stats.Slow_queries) > 0 ? 'orange' : 'green'}
+                hint="Click to view slow queries"
+                onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)} />
+              <MetricKpi title="Binlog"             value={binlogStatusData?.binlog_enabled ? 'ON' : (binlogStatusData ? 'OFF' : '…')} accent={binlogStatusData?.binlog_enabled ? 'green' : 'red'} />
+              <MetricKpi title="Binlog Format"      value={binlogStatusData?.variables?.binlog_format || '—'} accent="blue" />
             </div>
 
+            {/* ── Log File Paths ── */}
             <Panel title="Log File Paths">
               <div className="space-y-2 text-sm">
                 <Row label="Error Log"        value={error_log_path || '—'} mono />
@@ -2195,7 +2729,7 @@ export default function MySQLDashboard() {
                 <Row label="Slow Log Enabled" value={slow_query_config.slow_query_log || '—'} />
                 <Row label="Long Query Time"  value={`${slow_query_config.long_query_time || '—'} seconds`} />
               </div>
-              <div className="flex gap-3 mt-5">
+              <div className="flex gap-3 mt-5 flex-wrap">
                 <button onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)}
                   className="px-4 h-9 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700 flex items-center gap-2">
                   <FileText size={13} /> Error Logs
@@ -2210,6 +2744,261 @@ export default function MySQLDashboard() {
                 </button>
               </div>
             </Panel>
+
+            {/* ── Binary Log Status ── */}
+            {binlogStatusData && (
+              <Panel title="Binary Log Status">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-2 text-sm">
+                    <Row label="Binary Logging"  value={binlogStatusData.binlog_enabled ? 'ON' : 'OFF'} />
+                    <Row label="Format"          value={binlogStatusData.variables?.binlog_format || '—'} mono />
+                    <Row label="Row Image"       value={binlogStatusData.variables?.binlog_row_image || '—'} />
+                    <Row label="sync_binlog"     value={binlogStatusData.variables?.sync_binlog || '—'} mono />
+                    <Row label="Expire (days)"   value={binlogStatusData.variables?.expire_logs_days || '—'} />
+                    <Row label="Max Size"        value={binlogStatusData.variables?.max_binlog_size ? fmtBytes(Number(binlogStatusData.variables.max_binlog_size)) : '—'} />
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <Row label="Current File"    value={binlogStatusData.master_status?.File || '—'} mono />
+                    <Row label="Position"        value={binlogStatusData.master_status?.Position || '—'} mono />
+                    <Row label="Basename"        value={binlogStatusData.binlog_basename || '—'} mono />
+                    <Row label="Is Replica"      value={binlogStatusData.is_replica ? 'YES' : 'NO'} />
+                    {binlogStatusData.master_error && (
+                      <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 font-mono break-all">
+                        ⚠ {binlogStatusData.master_error}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Panel>
+            )}
+
+            {/* ── Binary Log Files ── */}
+            <Panel title={`Binary Log Files${binlogsData?.data?.length ? ` (${binlogsData.data.length})` : ''}`}>
+              {binlogsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-400 py-4">
+                  <Loader2 size={14} className="animate-spin" /> Loading binary logs…
+                </div>
+              ) : binlogsData?.status === 'disabled' || binlogsData?.status === 'error' ? (
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+                  <p className="font-bold mb-1">Binary logging is not available</p>
+                  <pre className="text-xs font-mono whitespace-pre-wrap text-amber-700">{binlogsData.error}</pre>
+                </div>
+              ) : (binlogsData?.data?.length > 0) ? (
+                <>
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="px-4 py-2.5 text-left font-bold text-slate-500">Log File</th>
+                          <th className="px-4 py-2.5 text-right font-bold text-slate-500">Size</th>
+                          <th className="px-4 py-2.5 text-center font-bold text-slate-500">Encrypted</th>
+                          <th className="px-4 py-2.5 text-center font-bold text-slate-500">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {binlogsData.data.map((f, i) => {
+                          const isCurrent = f.log_name === binlogStatusData?.master_status?.File;
+                          const isSelected = f.log_name === selBinlog;
+                          return (
+                            <tr key={i}
+                              className={`border-t border-slate-100 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-4 border-l-cyan-500' : isCurrent ? 'bg-green-50' : 'hover:bg-slate-50'}`}
+                              onClick={() => { setSelBinlog(f.log_name); setBinlogOffset(0); }}
+                            >
+                              <td className="px-4 py-2.5 font-mono">
+                                {f.log_name}
+                                {isCurrent && <span className="ml-2 px-1.5 py-0.5 bg-green-100 text-green-700 text-[9px] font-bold rounded-full">CURRENT</span>}
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-mono text-slate-600">{f.size_human}</td>
+                              <td className="px-4 py-2.5 text-center text-slate-500">{f.encrypted}</td>
+                              <td className="px-4 py-2.5 text-center">
+                                <button
+                                  className="px-2.5 py-1 rounded-lg bg-slate-800 text-white text-[10px] font-bold hover:bg-slate-700 transition-colors"
+                                  onClick={(e) => { e.stopPropagation(); setSelBinlog(f.log_name); setBinlogOffset(0); }}
+                                >
+                                  View Events
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Events for selected file */}
+                  {selBinlog && (
+                    <div className="mt-4 space-y-3">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <h4 className="text-sm font-bold text-slate-700 font-mono">{selBinlog} — Events</h4>
+                        <div className="flex items-center gap-2">
+                          <button
+                            disabled={binlogOffset === 0}
+                            onClick={() => setBinlogOffset(o => Math.max(0, o - BINLOG_PAGE))}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition-colors"
+                          >← Prev</button>
+                          <span className="text-xs text-slate-400 font-mono">offset {binlogOffset}</span>
+                          <button
+                            disabled={!binlogEventsData?.data?.length || binlogEventsData.data.length < BINLOG_PAGE}
+                            onClick={() => setBinlogOffset(o => o + BINLOG_PAGE)}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition-colors"
+                          >Next →</button>
+                          <button
+                            onClick={() => setSelBinlog(null)}
+                            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors text-slate-600"
+                          >✕ Close</button>
+                        </div>
+                      </div>
+                      {eventsLoading ? (
+                        <div className="flex items-center gap-2 text-xs text-slate-400 py-3">
+                          <Loader2 size={12} className="animate-spin" /> Loading events…
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto rounded-xl border border-slate-200 max-h-72 overflow-y-auto">
+                          <table className="w-full text-[11px]">
+                            <thead className="bg-slate-800 text-white sticky top-0">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-bold">Pos</th>
+                                <th className="px-3 py-2 text-left font-bold">Event Type</th>
+                                <th className="px-3 py-2 text-left font-bold">End Pos</th>
+                                <th className="px-3 py-2 text-left font-bold">Server ID</th>
+                                <th className="px-3 py-2 text-left font-bold">Info</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(binlogEventsData?.data || []).map((ev, i) => {
+                                const evType = ev.event_type || '';
+                                const rowBg =
+                                  evType.includes('Write')  ? 'bg-green-50' :
+                                  evType.includes('Update') ? 'bg-amber-50' :
+                                  evType.includes('Delete') ? 'bg-red-50'   :
+                                  evType === 'Query'        ? 'bg-blue-50'  :
+                                  evType.includes('Gtid')   ? 'bg-purple-50': '';
+                                return (
+                                  <tr key={i} className={`border-t border-slate-100 ${rowBg}`}>
+                                    <td className="px-3 py-1.5 font-mono text-slate-600">{ev.pos}</td>
+                                    <td className="px-3 py-1.5">
+                                      <BinlogEventBadge type={evType} />
+                                    </td>
+                                    <td className="px-3 py-1.5 font-mono text-slate-500">{ev.end_log_pos}</td>
+                                    <td className="px-3 py-1.5 font-mono text-slate-500">{ev.server_id}</td>
+                                    <td className="px-3 py-1.5 font-mono text-slate-600 max-w-xs truncate" title={ev.info}>{ev.info}</td>
+                                  </tr>
+                                );
+                              })}
+                              {!(binlogEventsData?.data?.length) && (
+                                <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">No events found</td></tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-slate-400 py-4">No binary log files found.</p>
+              )}
+            </Panel>
+
+            {/* ── Live Binlog Events ── */}
+            <Panel title={
+              <div className="flex items-center gap-3">
+                <span>Live Binlog Events</span>
+                {liveLoading
+                  ? <Loader2 size={12} className="animate-spin text-slate-400" />
+                  : <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block animate-pulse" />
+                      LIVE · 5s
+                    </span>
+                }
+                {binlogLiveData?.current_log && (
+                  <span className="text-[10px] font-mono text-slate-400">{binlogLiveData.current_log} @ {binlogLiveData.current_pos}</span>
+                )}
+              </div>
+            }>
+              {binlogLiveData?.status === 'error' ? (
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
+                  <p className="font-bold mb-1">Binary logging not enabled or insufficient privileges</p>
+                  <p className="text-xs font-mono">{binlogLiveData.error}</p>
+                </div>
+              ) : (
+                <>
+                  {/* Filter pills */}
+                  <div className="flex gap-2 mb-3 flex-wrap">
+                    {[
+                      { key: 'all',    label: 'All Events' },
+                      { key: 'write',  label: 'Writes (INS/UPD/DEL)' },
+                      { key: 'gtid',   label: 'GTID' },
+                      { key: 'query',  label: 'DDL / Query' },
+                      { key: 'other',  label: 'Other' },
+                    ].map(({ key, label }) => (
+                      <button
+                        key={key}
+                        onClick={() => setLiveFilter(key)}
+                        className="px-3 py-1 rounded-full text-[10px] font-bold transition-all"
+                        style={liveFilter === key
+                          ? { background: '#0f172a', color: '#fff' }
+                          : { background: '#f1f5f9', color: '#475569' }}
+                      >{label}</button>
+                    ))}
+                    <span className="ml-auto text-[10px] text-slate-400 self-center">
+                      {binlogLiveData?.showing || 0} events shown
+                    </span>
+                  </div>
+
+                  {/* Events table */}
+                  <div className="overflow-x-auto rounded-xl border border-slate-200 max-h-80 overflow-y-auto">
+                    <table className="w-full text-[11px]">
+                      <thead className="bg-slate-800 text-white sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-bold">Pos</th>
+                          <th className="px-3 py-2 text-left font-bold">Event Type</th>
+                          <th className="px-3 py-2 text-left font-bold">End Pos</th>
+                          <th className="px-3 py-2 text-left font-bold">Server</th>
+                          <th className="px-3 py-2 text-left font-bold">Info</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          const evts = (binlogLiveData?.data || []).filter(ev => {
+                            if (liveFilter === 'all')   return true;
+                            if (liveFilter === 'write') return ev.is_write;
+                            if (liveFilter === 'gtid')  return ev.is_gtid;
+                            if (liveFilter === 'query') return ev.event_type === 'Query';
+                            return !ev.is_write && !ev.is_gtid && ev.event_type !== 'Query';
+                          });
+                          if (!evts.length) return (
+                            <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                              {binlogLiveData ? 'No events match the filter.' : 'Loading live events…'}
+                            </td></tr>
+                          );
+                          return evts.map((ev, i) => {
+                            const evType = ev.event_type || '';
+                            const rowBg =
+                              evType.includes('Write')    ? 'bg-green-50'  :
+                              evType.includes('Update')   ? 'bg-amber-50'  :
+                              evType.includes('Delete')   ? 'bg-red-50'    :
+                              evType === 'Query'          ? 'bg-blue-50'   :
+                              ev.is_gtid                  ? 'bg-purple-50' :
+                              ev.is_rotate                ? 'bg-slate-100' : '';
+                            return (
+                              <tr key={i} className={`border-t border-slate-100 ${rowBg}`}>
+                                <td className="px-3 py-1.5 font-mono text-slate-600">{ev.pos}</td>
+                                <td className="px-3 py-1.5"><BinlogEventBadge type={evType} /></td>
+                                <td className="px-3 py-1.5 font-mono text-slate-500">{ev.end_log_pos}</td>
+                                <td className="px-3 py-1.5 font-mono text-slate-500">{ev.server_id}</td>
+                                <td className="px-3 py-1.5 font-mono text-slate-600 max-w-xs truncate" title={ev.info}>{ev.info || '—'}</td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </Panel>
+
           </div>
         )}
 
@@ -2246,6 +3035,24 @@ function fmtNum(n) {
 }
 
 /* ─── small components ─── */
+function BinlogEventBadge({ type }) {
+  const t = type || '';
+  const cfg =
+    t.includes('Write')         ? { label: t, bg: 'bg-green-100',  text: 'text-green-700'  } :
+    t.includes('Update')        ? { label: t, bg: 'bg-amber-100',  text: 'text-amber-700'  } :
+    t.includes('Delete')        ? { label: t, bg: 'bg-red-100',    text: 'text-red-700'    } :
+    t === 'Query'               ? { label: t, bg: 'bg-blue-100',   text: 'text-blue-700'   } :
+    t.includes('Gtid')          ? { label: t, bg: 'bg-purple-100', text: 'text-purple-700' } :
+    t === 'Rotate'              ? { label: t, bg: 'bg-cyan-100',   text: 'text-cyan-700'   } :
+    t === 'Format_desc'         ? { label: t, bg: 'bg-slate-100',  text: 'text-slate-500'  } :
+    t === 'Stop'                ? { label: t, bg: 'bg-red-100',    text: 'text-red-600'    } :
+                                  { label: t || '—', bg: 'bg-slate-100', text: 'text-slate-500' };
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${cfg.bg} ${cfg.text} whitespace-nowrap`}>
+      {cfg.label}
+    </span>
+  );
+}
 function HealthBadge({ score }) {
   const color = score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-yellow-400' : 'bg-red-500';
   return (
@@ -2440,6 +3247,170 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
         <span>{first != null ? fmt(first) : '—'}</span>
         <span className="text-slate-400">{data.length} samples · 15s interval</span>
       </div>
+    </div>
+  );
+}
+
+/* ── Clickable metric KPI card ── */
+function ClickableKpi({ title, value, accent, onClick, hint }) {
+  const acc = {
+    green:  'bg-green-50 border-green-200 text-green-700',
+    red:    'bg-red-50 border-red-200 text-red-700',
+    orange: 'bg-orange-50 border-orange-200 text-orange-700',
+    blue:   'bg-blue-50 border-blue-200 text-blue-700',
+    purple: 'bg-purple-50 border-purple-200 text-purple-700',
+    teal:   'bg-teal-50 border-teal-200 text-teal-700',
+    slate:  'bg-slate-50 border-slate-200 text-slate-700',
+    cyan:   'bg-cyan-50 border-cyan-200 text-cyan-700',
+    yellow: 'bg-yellow-50 border-yellow-200 text-yellow-700',
+  };
+  return (
+    <button onClick={onClick}
+      className={`rounded-xl border p-4 text-left w-full transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] group cursor-pointer ${acc[accent] || acc.slate}`}>
+      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
+      <div className="flex items-center justify-between mt-1">
+        <p className="text-2xl font-black">{value ?? '—'}</p>
+        <ChevronRight size={14} className="opacity-0 group-hover:opacity-60 transition-opacity" />
+      </div>
+      {hint && <p className="text-[9px] opacity-50 mt-0.5">{hint}</p>}
+    </button>
+  );
+}
+
+/* ── Clickable KpiCard (top-strip variant) ── */
+function ClickableKpiCard({ icon: Icon, title, value, accent, onClick }) {
+  const acc = {
+    cyan:   'border-l-cyan-500',
+    teal:   'border-l-teal-500',
+    green:  'border-l-green-500',
+    blue:   'border-l-blue-500',
+    orange: 'border-l-orange-500',
+    red:    'border-l-red-500',
+    purple: 'border-l-purple-500',
+    slate:  'border-l-slate-400',
+  };
+  return (
+    <button onClick={onClick}
+      className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent]||acc.slate} p-4 hover:shadow-md transition-all hover:scale-[1.02] cursor-pointer w-full text-left group`}>
+      <div className="flex justify-between items-start">
+        <div>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
+          <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
+        </div>
+        <div className="flex items-center gap-1">
+          <Icon size={20} className="text-slate-300 mt-0.5" />
+          <ChevronRight size={12} className="text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/* ── Slide-over detail modal ── */
+function DetailModal({ title, subtitle, onClose, children }) {
+  React.useEffect(() => {
+    const h = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex" style={{ backdropFilter: 'blur(2px)', background: 'rgba(0,0,0,0.45)' }}
+      onClick={onClose}>
+      <div className="ml-auto h-full flex flex-col bg-white shadow-2xl overflow-hidden"
+        style={{ width: 'min(680px, 96vw)' }}
+        onClick={e => e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-slate-900 via-cyan-900 to-teal-800 px-6 py-4 text-white flex items-start justify-between flex-shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-lg font-black truncate">{title}</h2>
+            {subtitle && <p className="text-xs text-cyan-300 mt-0.5">{subtitle}</p>}
+          </div>
+          <button onClick={onClose} className="ml-4 p-1.5 rounded-lg hover:bg-white/10 flex-shrink-0"><X size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 bg-slate-50">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Process row detail ── */
+function ProcessDetail({ p, onNavigate }) {
+  return (
+    <div className="bg-slate-50 border-t border-slate-200 px-4 py-4 space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          ['Process ID', p.Id,                    'font-mono text-xs'],
+          ['User',       p.User,                   'font-semibold'],
+          ['Host',       p.Host,                   'font-mono text-xs'],
+          ['Database',   p.db || '—',              ''],
+          ['Command',    p.Command,                ''],
+          ['Time',       `${p.Time}s`,             Number(p.Time) > 5 ? 'text-red-600 font-black' : Number(p.Time) > 1 ? 'text-orange-600 font-bold' : ''],
+          ['State',      p.State || '—',           'text-slate-500'],
+        ].map(([label, val, cls]) => (
+          <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
+            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className={`text-xs mt-1 text-slate-700 truncate ${cls}`}>{val}</p>
+          </div>
+        ))}
+      </div>
+      {p.Info && p.Info !== 'NULL' && (
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Full Query</p>
+          <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-start gap-2">
+            <pre className="font-mono text-[11px] text-cyan-300 flex-1 overflow-x-auto whitespace-pre-wrap">{p.Info}</pre>
+            <button onClick={() => navigator.clipboard.writeText(p.Info)}
+              className="flex-shrink-0 p-1 rounded hover:bg-white/10 transition-colors">
+              <Copy size={11} className="text-slate-400" />
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 flex items-center gap-2">
+        <code className="font-mono text-[10px] text-orange-700 flex-1">KILL {p.Id};</code>
+        <button onClick={() => navigator.clipboard.writeText(`KILL ${p.Id};`)}
+          className="text-[9px] font-bold text-orange-600 hover:text-orange-800 px-2 py-0.5 bg-orange-100 rounded">
+          Copy KILL
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Transaction row detail ── */
+function TransactionDetail({ t }) {
+  return (
+    <div className="bg-slate-50 border-t border-slate-200 px-4 py-4 space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {[
+          ['Trx ID',        t.trx_id,              'font-mono text-xs'],
+          ['State',         t.state,               t.state === 'RUNNING' ? 'text-green-700 font-bold' : 'text-yellow-700 font-bold'],
+          ['Started',       t.started?.slice(0,19),'font-mono text-xs'],
+          ['Rows Locked',   t.rows_locked,          t.rows_locked > 0 ? 'text-red-600 font-bold' : ''],
+          ['Rows Modified', t.rows_modified,        ''],
+          ['Wait Time',     t.wait_time || '—',    ''],
+        ].map(([label, val, cls]) => (
+          <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
+            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className={`text-xs mt-1 text-slate-700 truncate ${cls}`}>{val ?? '—'}</p>
+          </div>
+        ))}
+      </div>
+      {t.query && (
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Active Query</p>
+          <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-start gap-2">
+            <pre className="font-mono text-[11px] text-cyan-300 flex-1 overflow-x-auto whitespace-pre-wrap">{t.query}</pre>
+            <button onClick={() => navigator.clipboard.writeText(t.query)}
+              className="flex-shrink-0 p-1 rounded hover:bg-white/10">
+              <Copy size={11} className="text-slate-400" />
+            </button>
+          </div>
+        </div>
+      )}
+      {t.rows_locked > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 font-semibold">
+          ⚠ This transaction is holding {t.rows_locked} row lock{t.rows_locked > 1 ? 's' : ''}. Long-running locks can block other writes.
+        </div>
+      )}
     </div>
   );
 }

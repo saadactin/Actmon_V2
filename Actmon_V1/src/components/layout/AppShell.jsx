@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import ChatbotWidget from '../../pages/chatbot/ChatbotWidget';
 
 export const AppShell = () => {
   return (
@@ -20,6 +21,9 @@ export const AppShell = () => {
           <Outlet />
         </main>
       </div>
+
+      {/* ActMon AI — global floating chatbot widget */}
+      <ChatbotWidget />
     </FluentProvider>
   );
 };

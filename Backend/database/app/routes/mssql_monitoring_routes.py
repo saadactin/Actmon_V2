@@ -100,6 +100,10 @@ def get_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
     Returns health summary, database list, wait stats, active queries,
     and top CPU queries in a single response.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mssql_monitoring_dashboard", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "mssql"
@@ -624,6 +628,10 @@ def get_mssql_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     Returns the top 50 slowest queries by average elapsed time from
     sys.dm_exec_query_stats, enriched with SQL text and execution metadata.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mssql_slow_queries", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "mssql"
@@ -832,6 +840,10 @@ def get_mssql_index_analysis(conn_id: int, db: Session = Depends(get_db)):
       - missing_indexes: suggested indexes based on query optimizer hints
       - duplicate_indexes: indexes on the same table with identical key ordinal counts
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mssql_index_analysis", db)
+    if _cached is not None:
+        return _cached
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "mssql"

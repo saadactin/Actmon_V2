@@ -25,7 +25,9 @@ def _mongo_client(conn):
     if conn.connection_uri:
         return MongoClient(conn.connection_uri, serverSelectionTimeoutMS=5000)
     pw = quote_plus(conn.password or "")
-    protocol = conn.mongo_protocol or "mongodb"
+    proto_raw = conn.mongo_protocol or "mongodb"
+    # Strip "://" suffix that may have been saved with the protocol name
+    protocol = proto_raw.split("://")[0] if "://" in proto_raw else proto_raw
     auth = f"{conn.username}:{pw}@" if conn.username else ""
     auth_source = f"?authSource={conn.auth_source}" if conn.auth_source else ""
     replica = f"&replicaSet={conn.replica_set}" if conn.replica_set else ""
@@ -81,6 +83,10 @@ def _get_conn_or_404(conn_id: int, db: Session):
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-dashboard")
 def mongo_dashboard(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mongo_dashboard", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -328,6 +334,10 @@ def mongo_dashboard(conn_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-ops")
 def mongo_ops(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mongo_ops", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -614,6 +624,10 @@ def mongo_slow_operations(conn_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-collections")
 def mongo_collections(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mongo_collections", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -689,6 +703,10 @@ def mongo_collections(conn_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-indexes")
 def mongo_indexes(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mongo_indexes", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -786,6 +804,10 @@ def mongo_indexes(conn_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.get("/{conn_id}/mongo-replication")
 def mongo_replication(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mongo_replication", db)
+    if _cached is not None:
+        return _cached
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -1568,6 +1590,254 @@ def mongo_collection_analysis(conn_id: int, db: Session = Depends(get_db)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB collection analysis error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Groq AI analysis for slow operations
+# ---------------------------------------------------------------------------
+from pydantic import BaseModel
+from typing import List, Optional, Any
+
+class MongoSlowOpGroqRequest(BaseModel):
+    ns: str = ""
+    op: str = ""
+    millis: float = 0.0
+    docs_examined: int = 0
+    keys_examined: int = 0
+    docs_returned: int = 0
+    plan_summary: str = ""
+    filter_json: str = ""
+    client: str = ""
+
+
+@router.post("/{conn_id}/mongo-slow-ops/analyze-groq")
+def mongo_analyze_slow_op_groq(
+    conn_id: int,
+    payload: MongoSlowOpGroqRequest,
+    db: Session = Depends(get_db),
+):
+    """Groq LLM analysis for a single MongoDB slow operation."""
+    import os
+    rec = _get_conn_or_404(conn_id, db)
+
+    try:
+        from groq import Groq
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        prompt = f"""You are a world-class MongoDB DBA expert. Analyze this slow MongoDB operation deeply and return ONLY valid JSON — no markdown, no code blocks.
+
+=== OPERATION CONTEXT ===
+Host: {rec.host}:{rec.port or 27017}
+Database: {rec.database_name or 'unknown'}
+Namespace: {payload.ns}
+Operation Type: {payload.op}
+
+=== PERFORMANCE METRICS ===
+Duration: {payload.millis:.2f} ms
+Documents Examined: {payload.docs_examined:,}
+Keys Examined: {payload.keys_examined:,}
+Documents Returned: {payload.docs_returned:,}
+Query Plan: {payload.plan_summary}
+Client: {payload.client}
+
+=== QUERY FILTER ===
+{payload.filter_json or '(not available)'}
+
+Return this exact JSON structure:
+{{
+  "severity": "critical|high|medium|low",
+  "severity_reason": "why this severity was assigned",
+  "summary": "one-sentence description of what this operation does and why it is slow",
+  "root_cause": "detailed root cause — what exactly makes this operation slow",
+  "issues": [
+    {{
+      "type": "COLLSCAN|MISSING_INDEX|UNSELECTIVE_INDEX|LARGE_DOCS_EXAMINED|LOCK_WAIT|SORT_IN_MEMORY|REGEX_NO_INDEX|ARRAY_INDEX|OTHER",
+      "collection": "affected collection name or null",
+      "description": "detailed description of the issue",
+      "severity": "critical|high|medium|low",
+      "evidence": "the metric or plan detail that proves this issue"
+    }}
+  ],
+  "index_recommendations": [
+    {{
+      "collection": "collection_name",
+      "fields": {{"field1": 1, "field2": -1}},
+      "create_cmd": "db.collection.createIndex({{field1: 1, field2: -1}}, {{background: true}})",
+      "reason": "why this index will help",
+      "estimated_improvement": "e.g. eliminates collection scan, 99% doc reduction"
+    }}
+  ],
+  "query_optimization": {{
+    "applicable": true,
+    "suggestions": ["list of query-level changes"],
+    "explanation": "what to change and why it will be faster",
+    "expected_gain": "e.g. 10x-50x faster"
+  }},
+  "schema_suggestions": [
+    "Any schema or data model changes that would help"
+  ],
+  "priority_actions": [
+    "1. Most impactful thing to do first",
+    "2. Second action",
+    "3. Third action"
+  ],
+  "business_impact": "impact on application performance and end users",
+  "estimated_overall_improvement": "overall expected improvement after all fixes",
+  "validation_queries": [
+    "MongoDB shell command to verify the optimization worked"
+  ]
+}}"""
+
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=3000,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        analysis = json.loads(raw.strip())
+        return {"status": "success", "analysis": analysis}
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Collection Detail  (schema sample + indexes + stats)
+# ---------------------------------------------------------------------------
+def _infer_bson_type(val) -> str:
+    import datetime as _dt
+    if val is None:                            return "null"
+    if isinstance(val, bool):                  return "boolean"
+    if isinstance(val, int):                   return "int"
+    if isinstance(val, float):                 return "double"
+    if isinstance(val, str):                   return "string"
+    if isinstance(val, _dt.datetime):          return "date"
+    if isinstance(val, (bytes, bytearray)):    return "binData"
+    if isinstance(val, list):                  return "array"
+    if isinstance(val, dict):                  return "object"
+    return type(val).__name__
+
+
+def _flatten_doc(doc, prefix="", max_depth=3) -> dict:
+    out = {}
+    if not isinstance(doc, dict) or max_depth <= 0:
+        return out
+    for k, v in doc.items():
+        key = f"{prefix}.{k}" if prefix else k
+        if isinstance(v, dict) and max_depth > 1:
+            out.update(_flatten_doc(v, key, max_depth - 1))
+        else:
+            out[key] = v
+    return out
+
+
+@router.get("/{conn_id}/mongo-collection-detail/{db_name}/{coll_name}")
+def mongo_collection_detail(conn_id: int, db_name: str, coll_name: str, db: Session = Depends(get_db)):
+    """Full detail for one collection: stats, indexes, schema inferred from sample."""
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        mdb = mc[db_name]
+        coll = mdb[coll_name]
+
+        # Stats
+        stats = mdb.command("collStats", coll_name)
+
+        # Indexes
+        indexes = []
+        try:
+            for iname, iinfo in coll.index_information().items():
+                indexes.append({
+                    "name":                  iname,
+                    "key":                   dict(iinfo.get("key", [])),
+                    "unique":                iinfo.get("unique", False),
+                    "sparse":                iinfo.get("sparse", False),
+                    "background":            iinfo.get("background", False),
+                    "expireAfterSeconds":    iinfo.get("expireAfterSeconds"),
+                    "partialFilterExpression": str(iinfo.get("partialFilterExpression", "")) or None,
+                    "create_cmd": "db.{}.createIndex({}, {})".format(
+                        coll_name,
+                        json.dumps(dict(iinfo.get("key", []))),
+                        json.dumps({k: v for k, v in {
+                            "name": iname,
+                            "unique": iinfo.get("unique"),
+                            "sparse": iinfo.get("sparse"),
+                        }.items() if v})
+                    ),
+                })
+        except Exception:
+            pass
+
+        # Schema inference from sample
+        schema_fields = {}
+        sample_count = 0
+        try:
+            sample_docs = list(coll.aggregate([{"$sample": {"size": 50}}, {"$limit": 50}]))
+            sample_count = len(sample_docs)
+            for doc in sample_docs:
+                for field_path, val in _flatten_doc(doc).items():
+                    btype = _infer_bson_type(val)
+                    if field_path not in schema_fields:
+                        schema_fields[field_path] = {"type": btype, "count": 0, "types": {}}
+                    schema_fields[field_path]["count"] += 1
+                    schema_fields[field_path]["types"][btype] = schema_fields[field_path]["types"].get(btype, 0) + 1
+
+            # Sort by occurrence descending
+            schema_fields = dict(
+                sorted(schema_fields.items(), key=lambda x: -x[1]["count"])
+            )
+        except Exception:
+            pass
+
+        # Validation schema
+        validator = None
+        try:
+            opts = coll.options()
+            if opts.get("validator"):
+                validator = str(opts["validator"])[:500]
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "db": db_name,
+            "collection": coll_name,
+            "stats": {
+                "count":             stats.get("count", 0),
+                "size":              stats.get("size", 0),
+                "size_mb":           round(_safe_float(stats.get("size", 0)) / 1048576, 4),
+                "storageSize":       stats.get("storageSize", 0),
+                "storage_size_mb":   round(_safe_float(stats.get("storageSize", 0)) / 1048576, 4),
+                "avgObjSize":        stats.get("avgObjSize", 0),
+                "nindexes":          stats.get("nindexes", 0),
+                "totalIndexSize":    stats.get("totalIndexSize", 0),
+                "total_index_size_mb": round(_safe_float(stats.get("totalIndexSize", 0)) / 1048576, 4),
+                "capped":            stats.get("capped", False),
+                "max":               stats.get("max", 0),
+                "scaleFactor":       stats.get("scaleFactor", 1),
+            },
+            "indexes":       indexes,
+            "schema_fields": schema_fields,
+            "sample_count":  sample_count,
+            "validator":     validator,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Collection detail error: {str(e)}")
     finally:
         if mc:
             try:

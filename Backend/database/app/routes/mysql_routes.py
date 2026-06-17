@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.exc import SQLAlchemyError
 import datetime
 
@@ -141,6 +142,10 @@ def get_mysql_dashboard(
     conn_id: int,
     db: Session = Depends(get_db)
 ):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_dashboard", db)
+    if _cached is not None:
+        return _cached
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "mysql"
@@ -176,7 +181,8 @@ def get_mysql_dashboard(
                 "connect_timeout": 15,
                 "read_timeout": 30,
                 "write_timeout": 30
-            }
+            },
+            poolclass=NullPool,
         )
         with engine.connect() as conn:
             status_dict = {}
@@ -240,11 +246,11 @@ def get_mysql_dashboard(
             conn_usage_pct = round((current_conns / max_conns) * 100, 2) if max_conns > 0 else 0.0
 
             # Buffer Cache Usage %
+            # read_requests = pages served from buffer pool (hits); reads = pages fetched from disk (misses)
             read_req = to_int(status_dict.get("Innodb_buffer_pool_read_requests", 0))
             reads = to_int(status_dict.get("Innodb_buffer_pool_reads", 0))
-            cache_usage_pct = 100.0
-            if read_req > 0:
-                cache_usage_pct = round((1 - (reads / read_req)) * 100, 2)
+            _bp_total = read_req + reads
+            cache_usage_pct = round(read_req / _bp_total * 100, 2) if _bp_total > 0 else 100.0
 
             # ── Query Databases ─────────────────────────────────
             databases_list = []
@@ -561,6 +567,10 @@ def get_mysql_dashboard(
 
 @router.get("/{conn_id}/backup-info")
 def get_backup_info(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_backup_info", db)
+    if _cached is not None:
+        return _cached
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "mysql"
@@ -576,7 +586,7 @@ def get_backup_info(conn_id: int, db: Session = Depends(get_db)):
     )
 
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30}, poolclass=NullPool)
         with eng.connect() as conn:
 
             def qval(sql):
@@ -690,6 +700,10 @@ def get_backup_info(conn_id: int, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────────────────────
 @router.get("/{conn_id}/table-stats")
 def get_table_stats(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_table_stats", db)
+    if _cached is not None:
+        return _cached
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -700,7 +714,7 @@ def get_table_stats(conn_id: int, db: Session = Depends(get_db)):
     mysql_url = (f"mysql+pymysql://{connection.username}:{encoded_password}"
                  f"@{connection.host}:{connection.port}/{connection.database_name or ''}")
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30}, poolclass=NullPool)
         with eng.connect() as conn:
             rows = conn.execute(text("""
                 SELECT
@@ -741,6 +755,10 @@ def get_table_stats(conn_id: int, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────────────────────
 @router.get("/{conn_id}/user-stats")
 def get_user_stats(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_user_stats", db)
+    if _cached is not None:
+        return _cached
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -751,7 +769,7 @@ def get_user_stats(conn_id: int, db: Session = Depends(get_db)):
     mysql_url = (f"mysql+pymysql://{connection.username}:{encoded_password}"
                  f"@{connection.host}:{connection.port}/{connection.database_name or ''}")
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30}, poolclass=NullPool)
         with eng.connect() as conn:
             # Active connections per user
             proc_rows = conn.execute(text("SHOW FULL PROCESSLIST")).fetchall()
@@ -793,6 +811,10 @@ def get_user_stats(conn_id: int, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────────────────────
 @router.get("/{conn_id}/innodb-metrics")
 def get_innodb_metrics(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_innodb", db)
+    if _cached is not None:
+        return _cached
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -808,7 +830,7 @@ def get_innodb_metrics(conn_id: int, db: Session = Depends(get_db)):
         except: return d
 
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30}, poolclass=NullPool)
         with eng.connect() as conn:
             status = {}
             try:
@@ -865,6 +887,10 @@ def get_innodb_metrics(conn_id: int, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────────────────────
 @router.get("/{conn_id}/performance-detail")
 def get_performance_detail(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_performance_detail", db)
+    if _cached is not None:
+        return _cached
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -884,7 +910,7 @@ def get_performance_detail(conn_id: int, db: Session = Depends(get_db)):
         except: return d
 
     try:
-        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30})
+        eng = create_engine(mysql_url, connect_args={"connect_timeout": 15, "read_timeout": 30, "write_timeout": 30}, poolclass=NullPool)
         with eng.connect() as conn:
 
             # ── 1. GLOBAL STATUS + VARIABLES ────────────────────────
@@ -912,7 +938,8 @@ def get_performance_detail(conn_id: int, db: Session = Depends(get_db)):
             bp_misc        = max(0, bp_total - bp_data - bp_free)
             bp_read_req    = ti(status.get("Innodb_buffer_pool_read_requests", 0))
             bp_reads       = ti(status.get("Innodb_buffer_pool_reads", 0))
-            bp_hit         = round((1 - bp_reads / max(bp_read_req, 1)) * 100, 2) if bp_read_req > 0 else 100.0
+            _bp_total      = bp_read_req + bp_reads
+            bp_hit         = round(bp_read_req / _bp_total * 100, 2) if _bp_total > 0 else 100.0
 
             buffer_pool = {
                 "size_bytes":       bp_size_bytes,

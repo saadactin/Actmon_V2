@@ -2,107 +2,114 @@ import React, { useState } from 'react';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useAuthStore } from '../../store/authStore';
-import { Bell, LogOut, X, Check, CheckSquare, AlertTriangle, AlertCircle, Info } from 'lucide-react';
-import { Avatar, Badge, Button, Popover, PopoverTrigger, PopoverSurface, Persona } from '@fluentui/react-components';
-import { formatTimeAgo } from '../../utils/formatters';
+import { Bell, BellRing, LogOut } from 'lucide-react';
+import { Avatar, Button, Popover, PopoverTrigger, PopoverSurface, Persona } from '@fluentui/react-components';
+import NotificationPopup  from '../notifications/NotificationPopup';
+import NotificationCenter from '../notifications/NotificationCenter';
 
 export const TopBar = () => {
-  const location = useLocation();
-  const navigate = useNavigate();
+  const location  = useLocation();
+  const navigate  = useNavigate();
   const { user, clearToken } = useAuthStore();
+
   const { notifications, unreadCount, markRead, markAllRead, isPending } = useNotifications();
-  
-  const [panelOpen, setPanelOpen] = useState(false);
 
-  // Logout handler
-  const handleLogout = () => {
-    clearToken();
-    navigate('/login');
+  // popup  = mini dropdown  (bell click)
+  // center = full side panel (popup "See all" click)
+  const [popupOpen,  setPopupOpen]  = useState(false);
+  const [centerOpen, setCenterOpen] = useState(false);
+
+  const handleLogout = () => { clearToken(); navigate('/login'); };
+
+  const togglePopup = () => {
+    setCenterOpen(false);
+    setPopupOpen((v) => !v);
   };
 
-  // Breadcrumbs generation
-  const pathnames = location.pathname.split('/').filter((x) => x);
-  
-  const getBreadcrumbLabel = (part) => {
-    if (part.toLowerCase() === 'dashboard') return 'Dashboard';
-    if (part.toLowerCase() === 'agents') return 'Agents';
-    if (part.toLowerCase() === 'connections') return 'Databases';
-    if (part.toLowerCase() === 'databases') return 'Databases';
-    if (part.toLowerCase() === 'cloud') return 'Cloud';
-    if (part.toLowerCase() === 'infra') return 'Infrastructure';
-    if (part.toLowerCase() === 'ml') return 'ML / AI';
-    if (part.toLowerCase() === 'alerts') return 'Alerts';
-    if (part.toLowerCase() === 'users') return 'Users';
-    if (part.toLowerCase() === 'settings') return 'Settings';
-    return part;
+  const openCenter = () => {
+    setPopupOpen(false);
+    setCenterOpen(true);
   };
 
-  const getSeverityIcon = (severity) => {
-    switch (severity?.toLowerCase()) {
-      case 'critical':
-        return <AlertCircle className="h-5 w-5 text-[#A4262C]" />;
-      case 'warning':
-        return <AlertTriangle className="h-5 w-5 text-[#D83B01]" />;
-      case 'info':
-      default:
-        return <Info className="h-5 w-5 text-[#0078D4]" />;
-    }
+  const LABEL = {
+    dashboard: 'Dashboard', agents: 'Agents', connections: 'Databases',
+    databases: 'Databases', cloud: 'Cloud', infra: 'Infrastructure',
+    ml: 'ML / AI', alerts: 'Alerts', users: 'Users', settings: 'Settings',
   };
+
+  const pathnames = location.pathname.split('/').filter(Boolean);
 
   return (
-    <header className="h-16 bg-white border-b border-brand-border flex items-center justify-between px-6 z-10 sticky top-0">
-      {/* Breadcrumbs */}
+    <header className="h-16 bg-white border-b border-brand-border flex items-center justify-between px-6 z-30 sticky top-0">
+
+      {/* ── Breadcrumbs ── */}
       <nav className="flex text-sm text-brand-text-secondary" aria-label="Breadcrumb">
         <ol className="inline-flex items-center space-x-1 md:space-x-2">
-          <li className="inline-flex items-center">
-            <Link to="/dashboard" className="hover:text-brand-primary font-medium">
-              ActMon
-            </Link>
+          <li>
+            <Link to="/dashboard" className="hover:text-brand-primary font-medium">ActMon</Link>
           </li>
           {pathnames.map((value, index) => {
-            const last = index === pathnames.length - 1;
-            const to = `/${pathnames.slice(0, index + 1).join('/')}`;
-
+            const last  = index === pathnames.length - 1;
+            const to    = `/${pathnames.slice(0, index + 1).join('/')}`;
+            const label = LABEL[value.toLowerCase()] || value;
             return (
               <li key={to} className="flex items-center">
                 <span className="mx-1 text-gray-400">/</span>
-                {last ? (
-                  <span className="font-semibold text-brand-text-primary">
-                    {getBreadcrumbLabel(value)}
-                  </span>
-                ) : (
-                  <Link to={to} className="hover:text-brand-primary font-medium">
-                    {getBreadcrumbLabel(value)}
-                  </Link>
-                )}
+                {last
+                  ? <span className="font-semibold text-brand-text-primary">{label}</span>
+                  : <Link to={to} className="hover:text-brand-primary font-medium">{label}</Link>
+                }
               </li>
             );
           })}
         </ol>
       </nav>
 
-      {/* Action Controls */}
-      <div className="flex items-center gap-4">
-        {/* Notification Bell */}
+      {/* ── Right controls ── */}
+      <div className="flex items-center gap-3">
+
+        {/* ── Bell + mini popup ── */}
         <div className="relative">
           <button
-            onClick={() => setPanelOpen(true)}
-            className="p-2 text-brand-text-secondary hover:text-brand-primary hover:bg-gray-100 rounded-full transition-all focus:outline-none"
-            aria-label="Notifications"
+            onClick={togglePopup}
+            className={`relative p-2 rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-slate-200 ${
+              popupOpen
+                ? 'bg-slate-100 text-slate-800'
+                : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+            }`}
+            aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
           >
-            <Bell className="h-5 w-5" />
+            {unreadCount > 0
+              ? <BellRing className="h-5 w-5" style={{ animation: 'bellShake 1s ease-in-out' }} />
+              : <Bell className="h-5 w-5" />
+            }
+
+            {/* Badge — drops to 0 the instant markRead() fires (optimistic update) */}
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#A4262C] text-[10px] font-bold text-white">
-                {unreadCount}
+              <span className="absolute top-0.5 right-0.5 flex h-[18px] min-w-[18px] px-0.5 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white shadow-sm">
+                {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
           </button>
+
+          {/* Mini popup */}
+          {popupOpen && (
+            <NotificationPopup
+              notifications={notifications}
+              unreadCount={unreadCount}
+              markRead={markRead}
+              markAllRead={markAllRead}
+              isPending={isPending}
+              onClose={() => setPopupOpen(false)}
+              onViewAll={openCenter}
+            />
+          )}
         </div>
 
-        {/* User Account Popover */}
+        {/* ── User account popover ── */}
         <Popover trapFocus>
           <PopoverTrigger disableButtonEnhancement>
-            <button className="flex items-center focus:outline-none">
+            <button className="flex items-center focus:outline-none focus:ring-2 focus:ring-slate-200 rounded-full">
               <Avatar
                 name={user?.username || 'Admin'}
                 color="brand"
@@ -120,11 +127,9 @@ export const TopBar = () => {
                 avatar={{ color: 'brand' }}
               />
               <div className="border-t border-brand-border my-1" />
-              <div className="flex flex-col gap-1">
-                <p className="text-xs text-brand-text-secondary px-2">
-                  Role: <span className="font-semibold">{user?.role || 'Admin'}</span>
-                </p>
-              </div>
+              <p className="text-xs text-brand-text-secondary px-2">
+                Role: <span className="font-semibold">{user?.role || 'Admin'}</span>
+              </p>
               <div className="border-t border-brand-border my-1" />
               <Button
                 icon={<LogOut className="h-4 w-4" />}
@@ -139,94 +144,21 @@ export const TopBar = () => {
         </Popover>
       </div>
 
-      {/* Slide-out Notification Drawer / Panel */}
-      {panelOpen && (
-        <>
-          {/* Backdrop Overlay */}
-          <div
-            className="fixed inset-0 bg-black/30 z-40 transition-opacity"
-            onClick={() => setPanelOpen(false)}
-          />
+      {/* ── Full notification side panel ── */}
+      <NotificationCenter open={centerOpen} onClose={() => setCenterOpen(false)} />
 
-          {/* Panel Container */}
-          <div className="fixed right-0 top-0 bottom-0 w-80 md:w-96 bg-white shadow-2xl z-50 flex flex-col border-l border-brand-border animate-in slide-in-from-right duration-200">
-            {/* Panel Header */}
-            <div className="p-4 border-b border-brand-border flex items-center justify-between bg-[#FAF9F8]">
-              <div className="flex items-center gap-2">
-                <Bell className="h-5 w-5 text-brand-primary" />
-                <span className="font-semibold text-brand-text-primary">Notifications</span>
-                {unreadCount > 0 && (
-                  <Badge color="danger" size="small">
-                    {unreadCount} new
-                  </Badge>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                {unreadCount > 0 && (
-                  <button
-                    onClick={markAllRead}
-                    disabled={isPending}
-                    title="Mark all as read"
-                    className="p-1.5 text-gray-500 hover:text-brand-primary hover:bg-gray-150 rounded"
-                  >
-                    <CheckSquare className="h-4 w-4" />
-                  </button>
-                )}
-                <button
-                  onClick={() => setPanelOpen(false)}
-                  className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Notifications List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {notifications.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-brand-text-secondary py-12">
-                  <Bell className="h-10 w-10 text-gray-300 mb-2" />
-                  <p className="text-sm font-medium">No notifications yet</p>
-                  <p className="text-xs text-gray-400">Everything looks green.</p>
-                </div>
-              ) : (
-                notifications.map((notif) => (
-                  <div
-                    key={notif.id}
-                    className={`p-3 rounded-lg border transition-all flex gap-3 items-start ${
-                      notif.is_read
-                        ? 'bg-white border-brand-border opacity-75'
-                        : 'bg-blue-50/55 border-blue-100 shadow-sm'
-                    }`}
-                  >
-                    <div className="mt-0.5 flex-shrink-0">
-                      {getSeverityIcon(notif.severity)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-brand-text-primary break-words leading-tight">
-                        {notif.message}
-                      </p>
-                      <p className="text-xs text-brand-text-secondary mt-1" title={notif.timestamp}>
-                        {formatTimeAgo(notif.timestamp)}
-                      </p>
-                    </div>
-                    {!notif.is_read && (
-                      <button
-                        onClick={() => markRead([notif.id])}
-                        disabled={isPending}
-                        className="p-1 text-gray-400 hover:text-brand-primary hover:bg-white rounded border border-transparent hover:border-gray-200"
-                        title="Mark read"
-                      >
-                        <Check className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </>
-      )}
+      <style>{`
+        @keyframes bellShake {
+          0%,100% { transform: rotate(0); }
+          12%      { transform: rotate(14deg); }
+          24%      { transform: rotate(-12deg); }
+          36%      { transform: rotate(9deg); }
+          48%      { transform: rotate(-6deg); }
+          60%      { transform: rotate(4deg); }
+          72%      { transform: rotate(-2deg); }
+          84%      { transform: rotate(0); }
+        }
+      `}</style>
     </header>
   );
 };

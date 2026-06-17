@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 from collections import defaultdict
 from urllib.parse import quote_plus
 
@@ -27,7 +28,7 @@ def _mysql_engine(conn):
         f"mysql+pymysql://{conn.username}:{pw}"
         f"@{conn.host}:{conn.port}/{conn.database_name or ''}"
     )
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(url, poolclass=NullPool)
 
 
 def _rows(conn, sql, params=None):
@@ -71,6 +72,10 @@ def _detect_duplicates(indexes_by_table):
 
 @router.get("/{conn_id}/index-analysis")
 def index_analysis(conn_id: int, db: Session = Depends(get_db)):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "mysql_index_analysis", db)
+    if _cached is not None:
+        return _cached
     conn = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not conn:
         return {"status": "error", "message": "Connection not found"}

@@ -163,9 +163,14 @@ def test_mongodb(req: TestRequest):
 def test_oracle(req: TestRequest):
     try:
         pw = quote_plus(req.password or "")
-        dsn = req.service_name or req.sid or req.database_name or req.host
-        url = f"oracle+cx_oracle://{req.username}:{pw}@{req.host}:{req.port}/?service_name={dsn}"
-        eng = create_engine(url, connect_args={"timeout": 5})
+        if req.service_name:
+            url = f"oracle+oracledb://{req.username}:{pw}@{req.host}:{req.port}/?service_name={req.service_name}"
+        elif req.sid:
+            url = f"oracle+oracledb://{req.username}:{pw}@{req.host}:{req.port}/{req.sid}"
+        else:
+            svc = req.database_name or ""
+            url = f"oracle+oracledb://{req.username}:{pw}@{req.host}:{req.port}/?service_name={svc}"
+        eng = create_engine(url)
         with eng.connect() as conn:
             row = conn.execute(text("SELECT BANNER FROM v$version WHERE ROWNUM=1")).fetchone()
             ver = str(row[0])[:80] if row else "?"

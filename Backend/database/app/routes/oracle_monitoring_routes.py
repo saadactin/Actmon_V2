@@ -24,21 +24,19 @@ def get_db():
 def _oracle_engine(conn):
     pw = quote_plus(conn.password or "")
     if conn.service_name:
-        dsn = f"{conn.host}:{conn.port}/?service_name={conn.service_name}"
+        url = f"oracle+oracledb://{conn.username}:{pw}@{conn.host}:{conn.port}/?service_name={conn.service_name}"
     elif conn.sid:
-        dsn = f"{conn.host}:{conn.port}/{conn.sid}"
+        url = f"oracle+oracledb://{conn.username}:{pw}@{conn.host}:{conn.port}/{conn.sid}"
     else:
-        dsn = f"{conn.host}:{conn.port}/{conn.database_name or ''}"
-    return create_engine(
-        f"oracle+cx_Oracle://{conn.username}:{pw}@{dsn}",
-        pool_pre_ping=True
-    )
+        svc = conn.database_name or ""
+        url = f"oracle+oracledb://{conn.username}:{pw}@{conn.host}:{conn.port}/?service_name={svc}"
+    return create_engine(url, pool_pre_ping=True)
 
 
 def _rows(engine, sql):
     with engine.connect() as c:
         r = c.execute(text(sql))
-        return [dict(row) for row in r.mappings().all()]
+        return [{k.upper(): v for k, v in row.items()} for row in r.mappings().all()]
 
 
 def _safe_float(val, default=0.0):
@@ -88,6 +86,10 @@ def oracle_dashboard(conn_id: int, db: Session = Depends(get_db)):
     Main dashboard: instance info, SGA/PGA, sessions, buffer cache,
     library cache hit, top waits, top SQL.
     """
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_dashboard", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
     errors = []
@@ -388,6 +390,10 @@ def oracle_dashboard(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-sga-detail")
 def oracle_sga_detail(conn_id: int, db: Session = Depends(get_db)):
     """SGA breakdown: Shared Pool, Buffer Cache, Large Pool, Java Pool, Streams Pool, Fixed SGA."""
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_sga_detail", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -445,6 +451,10 @@ def oracle_sga_detail(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-pga-detail")
 def oracle_pga_detail(conn_id: int, db: Session = Depends(get_db)):
     """PGA stats from v$pgastat."""
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_pga_detail", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -486,6 +496,10 @@ def oracle_pga_detail(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-sessions")
 def oracle_sessions(conn_id: int, db: Session = Depends(get_db)):
     """Sessions from v$session with status, type, wait event, blocking info."""
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_sessions", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -564,6 +578,10 @@ def oracle_sessions(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-top-sql")
 def oracle_top_sql(conn_id: int, db: Session = Depends(get_db)):
     """Top SQL from v$sql ordered by elapsed time."""
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_top_sql", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -620,6 +638,10 @@ def oracle_top_sql(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-wait-events")
 def oracle_wait_events(conn_id: int, db: Session = Depends(get_db)):
     """Wait events from v$system_event, excluding idle waits."""
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_wait_events", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -1686,4 +1708,242 @@ def oracle_index_analysis(conn_id: int, db: Session = Depends(get_db)):
             "high_fragmentation_gte50_pct": len([f for f in fragmented_indexes if f["fragmentation_pct"] >= 50.0]),
         },
         "errors": errors,
+    }
+
+
+# ──────────────────────────────────────────────────────────────
+#  NEW: LIVE QUERIES  GET /{conn_id}/oracle-live-queries
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/{conn_id}/oracle-live-queries")
+def oracle_live_queries(conn_id: int, db: Session = Depends(get_db)):
+    """Currently active sessions with SQL text — no caching, real-time."""
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+    queries = []
+    try:
+        raw = _rows(
+            engine,
+            """SELECT s.sid,
+                      s.serial#             AS serial_number,
+                      s.username,
+                      s.machine,
+                      s.program,
+                      s.module,
+                      s.status,
+                      s.state,
+                      s.event               AS wait_event,
+                      s.wait_class,
+                      s.seconds_in_wait,
+                      s.blocking_session,
+                      s.sql_id,
+                      ROUND(q.elapsed_time / NULLIF(q.executions,0) / 1000, 2) AS avg_elapsed_ms,
+                      ROUND(q.cpu_time     / NULLIF(q.executions,0) / 1000, 2) AS avg_cpu_ms,
+                      q.executions,
+                      q.disk_reads,
+                      q.buffer_gets,
+                      SUBSTR(q.sql_text, 1, 500) AS sql_text
+               FROM v$session s
+               LEFT JOIN v$sql q ON s.sql_id = q.sql_id
+               WHERE s.type = 'USER'
+                 AND s.status = 'ACTIVE'
+               ORDER BY s.seconds_in_wait DESC NULLS LAST"""
+        )
+        queries = [
+            {
+                "sid":             _safe_int(r.get("SID")),
+                "serial_number":   _safe_int(r.get("SERIAL_NUMBER")),
+                "username":        _safe_str(r.get("USERNAME")),
+                "machine":         _safe_str(r.get("MACHINE")),
+                "program":         _safe_str(r.get("PROGRAM")),
+                "module":          _safe_str(r.get("MODULE")),
+                "status":          _safe_str(r.get("STATUS")),
+                "state":           _safe_str(r.get("STATE")),
+                "wait_event":      _safe_str(r.get("WAIT_EVENT")),
+                "wait_class":      _safe_str(r.get("WAIT_CLASS")),
+                "seconds_in_wait": _safe_int(r.get("SECONDS_IN_WAIT")),
+                "blocking_session":_safe_int(r.get("BLOCKING_SESSION")) if r.get("BLOCKING_SESSION") else None,
+                "sql_id":          _safe_str(r.get("SQL_ID")),
+                "avg_elapsed_ms":  round(_safe_float(r.get("AVG_ELAPSED_MS")), 2),
+                "avg_cpu_ms":      round(_safe_float(r.get("AVG_CPU_MS")), 2),
+                "executions":      _safe_int(r.get("EXECUTIONS")),
+                "disk_reads":      _safe_int(r.get("DISK_READS")),
+                "buffer_gets":     _safe_int(r.get("BUFFER_GETS")),
+                "sql_text":        _safe_str(r.get("SQL_TEXT")),
+            }
+            for r in raw
+        ]
+    except Exception as exc:
+        return {"status": "error", "queries": [], "total": 0, "error": str(exc)}
+    return {"status": "success", "queries": queries, "total": len(queries)}
+
+
+# ──────────────────────────────────────────────────────────────
+#  NEW: LOCKS  GET /{conn_id}/oracle-locks
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/{conn_id}/oracle-locks")
+def oracle_locks(conn_id: int, db: Session = Depends(get_db)):
+    """Current lock waits and blocking chains."""
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+    lock_waits = []
+    enqueue_stats = []
+    try:
+        raw = _rows(
+            engine,
+            """SELECT w.sid          AS waiter_sid,
+                      ws.username    AS waiter_user,
+                      ws.machine     AS waiter_machine,
+                      ws.program     AS waiter_program,
+                      ws.seconds_in_wait,
+                      ws.event       AS wait_event,
+                      h.sid          AS holder_sid,
+                      hs.username    AS holder_user,
+                      hs.machine     AS holder_machine,
+                      SUBSTR(sq.sql_text,1,200) AS waiter_sql,
+                      l.type         AS lock_type,
+                      l.id1,
+                      l.id2,
+                      l.lmode,
+                      l.request
+               FROM v$lock w
+               JOIN v$lock h        ON (h.id1=w.id1 AND h.id2=w.id2 AND h.lmode>0 AND w.request>0)
+               JOIN v$session ws    ON ws.sid=w.sid
+               JOIN v$session hs    ON hs.sid=h.sid
+               LEFT JOIN v$sql sq   ON sq.sql_id=ws.sql_id
+               WHERE w.request > 0
+               ORDER BY ws.seconds_in_wait DESC"""
+        )
+        lock_waits = [
+            {
+                "waiter_sid":      _safe_int(r.get("WAITER_SID")),
+                "waiter_user":     _safe_str(r.get("WAITER_USER")),
+                "waiter_machine":  _safe_str(r.get("WAITER_MACHINE")),
+                "waiter_program":  _safe_str(r.get("WAITER_PROGRAM")),
+                "seconds_in_wait": _safe_int(r.get("SECONDS_IN_WAIT")),
+                "wait_event":      _safe_str(r.get("WAIT_EVENT")),
+                "holder_sid":      _safe_int(r.get("HOLDER_SID")),
+                "holder_user":     _safe_str(r.get("HOLDER_USER")),
+                "holder_machine":  _safe_str(r.get("HOLDER_MACHINE")),
+                "waiter_sql":      _safe_str(r.get("WAITER_SQL")),
+                "lock_type":       _safe_str(r.get("LOCK_TYPE")),
+                "id1":             _safe_int(r.get("ID1")),
+                "id2":             _safe_int(r.get("ID2")),
+                "lmode":           _safe_int(r.get("LMODE")),
+                "request":         _safe_int(r.get("REQUEST")),
+            }
+            for r in raw
+        ]
+    except Exception:
+        lock_waits = []
+
+    try:
+        raw2 = _rows(
+            engine,
+            """SELECT eq_type, total_req#, total_wait#, succ_req#, failed_req#,
+                      ROUND(cum_wait_time/1000,2) AS cum_wait_sec
+               FROM v$enqueue_statistics
+               WHERE total_wait# > 0
+               ORDER BY cum_wait_time DESC
+               FETCH FIRST 20 ROWS ONLY"""
+        )
+        enqueue_stats = [
+            {
+                "eq_type":      _safe_str(r.get("EQ_TYPE")),
+                "total_req":    _safe_int(r.get("TOTAL_REQ#")),
+                "total_wait":   _safe_int(r.get("TOTAL_WAIT#")),
+                "succ_req":     _safe_int(r.get("SUCC_REQ#")),
+                "failed_req":   _safe_int(r.get("FAILED_REQ#")),
+                "cum_wait_sec": round(_safe_float(r.get("CUM_WAIT_SEC")), 2),
+            }
+            for r in raw2
+        ]
+    except Exception:
+        enqueue_stats = []
+
+    return {
+        "status":        "success",
+        "lock_waits":    lock_waits,
+        "enqueue_stats": enqueue_stats,
+        "total_waits":   len(lock_waits),
+        "deadlock_risk": len(lock_waits) > 0,
+    }
+
+
+# ──────────────────────────────────────────────────────────────
+#  NEW: PARAMETERS  GET /{conn_id}/oracle-parameters
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/{conn_id}/oracle-parameters")
+def oracle_parameters(conn_id: int, db: Session = Depends(get_db)):
+    """Key Oracle initialization parameters from v$parameter."""
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+    KEY_PARAMS = [
+        'sga_target','pga_aggregate_target','db_cache_size','shared_pool_size',
+        'large_pool_size','java_pool_size','streams_pool_size','memory_target',
+        'memory_max_target','cpu_count','parallel_max_servers','sessions',
+        'processes','db_block_size','log_buffer','undo_retention',
+        'undo_tablespace','db_name','db_unique_name','instance_name',
+        'log_mode','archive_lag_target','db_recovery_file_dest',
+        'db_recovery_file_dest_size','optimizer_mode','optimizer_index_cost_adj',
+        'cursor_sharing','open_cursors','session_cached_cursors',
+        'sort_area_size','hash_area_size','audit_trail',
+        'enable_ddl_logging','enable_goldengate_replication',
+        'cluster_database','db_file_multiblock_read_count',
+        'parallel_degree_policy','max_dump_file_size',
+    ]
+    params = []
+    try:
+        placeholders = ','.join(f"'{p}'" for p in KEY_PARAMS)
+        raw = _rows(
+            engine,
+            f"""SELECT name, value, description, isdefault, ismodified, isinstance_modifiable
+                FROM v$parameter
+                WHERE LOWER(name) IN ({placeholders.lower()})
+                ORDER BY name"""
+        )
+        params = [
+            {
+                "name":         _safe_str(r.get("NAME")),
+                "value":        _safe_str(r.get("VALUE")),
+                "description":  _safe_str(r.get("DESCRIPTION")),
+                "isdefault":    _safe_str(r.get("ISDEFAULT")),
+                "ismodified":   _safe_str(r.get("ISMODIFIED")),
+                "modifiable":   _safe_str(r.get("ISINSTANCE_MODIFIABLE")),
+            }
+            for r in raw
+        ]
+    except Exception as exc:
+        return {"status": "error", "params": [], "error": str(exc)}
+
+    # Also return ALL params for searchable view
+    all_params = []
+    try:
+        raw2 = _rows(
+            engine,
+            """SELECT name, value, description, isdefault, ismodified, isinstance_modifiable
+               FROM v$parameter
+               ORDER BY name"""
+        )
+        all_params = [
+            {
+                "name":       _safe_str(r.get("NAME")),
+                "value":      _safe_str(r.get("VALUE")),
+                "description":_safe_str(r.get("DESCRIPTION")),
+                "isdefault":  _safe_str(r.get("ISDEFAULT")),
+                "ismodified": _safe_str(r.get("ISMODIFIED")),
+                "modifiable": _safe_str(r.get("ISINSTANCE_MODIFIABLE")),
+            }
+            for r in raw2
+        ]
+    except Exception:
+        pass
+
+    return {
+        "status":     "success",
+        "key_params": params,
+        "all_params": all_params,
+        "total":      len(all_params),
     }
