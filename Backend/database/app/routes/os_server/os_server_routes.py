@@ -1,0 +1,95 @@
+from typing import Optional
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.database.connection import SessionLocal
+from app.services.os_server.os_server_service import (
+    DbInstanceIn,  # noqa: F401
+    OsServerCreate,
+    OsServerUpdate,
+    SshTestRequest,
+    svc_create_os_server,
+    svc_delete_os_server,
+    svc_get_live_status,
+    svc_get_os_server,
+    svc_get_summary,
+    svc_link_instance_to_connection,
+    svc_list_os_servers,
+    svc_refresh_server,
+    svc_test_ssh,
+    svc_update_os_server,
+)
+
+router = APIRouter(prefix="/api/v1/os-servers", tags=["OS Servers"])
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@router.get("/live-status")
+def route_get_live_status(db: Session = Depends(get_db)):
+    return svc_get_live_status(db)
+
+
+@router.get("/summary")
+def route_get_summary(db: Session = Depends(get_db)):
+    return svc_get_summary(db)
+
+
+@router.get("/")
+def route_list_os_servers(
+    environment: Optional[str] = None,
+    os_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    return svc_list_os_servers(db, environment, os_type)
+
+
+@router.get("/{server_id}")
+def route_get_os_server(server_id: int, db: Session = Depends(get_db)):
+    return svc_get_os_server(server_id, db)
+
+
+@router.post("/")
+def route_create_os_server(request: OsServerCreate, db: Session = Depends(get_db)):
+    return svc_create_os_server(request, db)
+
+
+@router.put("/{server_id}")
+def route_update_os_server(
+    server_id: int,
+    request: OsServerUpdate,
+    db: Session = Depends(get_db),
+):
+    return svc_update_os_server(server_id, request, db)
+
+
+@router.delete("/{server_id}")
+def route_delete_os_server(server_id: int, db: Session = Depends(get_db)):
+    return svc_delete_os_server(server_id, db)
+
+
+@router.post("/test-ssh")
+def route_test_ssh(request: SshTestRequest):
+    return svc_test_ssh(request)
+
+
+@router.post("/{server_id}/refresh")
+def route_refresh_server(server_id: int, db: Session = Depends(get_db)):
+    return svc_refresh_server(server_id, db)
+
+
+@router.post("/{server_id}/instances/{instance_id}/link")
+def route_link_instance_to_connection(
+    server_id: int,
+    instance_id: int,
+    connection_id: int,
+    db: Session = Depends(get_db),
+):
+    return svc_link_instance_to_connection(server_id, instance_id, connection_id, db)

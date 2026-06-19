@@ -52,6 +52,7 @@ const fetchSlowQueries  = (id) => client.get(`/connections/oracle/${id}/oracle-s
 const fetchLiveQueries  = (id) => client.get(`/connections/oracle/${id}/oracle-live-queries`).then(r => r.data);
 const fetchLocks        = (id) => client.get(`/connections/oracle/${id}/oracle-locks`).then(r => r.data);
 const fetchParameters   = (id) => client.get(`/connections/oracle/${id}/oracle-parameters`).then(r => r.data);
+const fetchSchemaTables = (id, owner) => client.get(`/connections/oracle/${id}/oracle-schema-tables${owner ? `?owner=${owner}` : ''}`).then(r => r.data);
 
 const TABS = [
   { id: 'overview',     label: 'Overview',      icon: Activity },
@@ -60,6 +61,7 @@ const TABS = [
   { id: 'sql',          label: 'SQL',           icon: Zap },
   { id: 'tablespaces',  label: 'Tablespaces',   icon: HardDrive },
   { id: 'objects',      label: 'Objects',       icon: Boxes },
+  { id: 'schemabrowser',label: 'Tables',        icon: Table },
   { id: 'dataguard',    label: 'Data Guard',    icon: ShieldCheck },
   { id: 'redologs',     label: 'Redo Logs',     icon: RotateCcw },
   { id: 'processes',    label: 'Processes',     icon: Cpu },
@@ -90,6 +92,8 @@ export default function OracleDashboard() {
   const [expandedUser, setExpandedUser]     = useState(null);
   const [expandedSlow, setExpandedSlow]     = useState(null);
   const [drillModal, setDrillModal]         = useState(null);
+  const [schemaOwner, setSchemaOwner]       = useState('');
+  const [expandedTable, setExpandedTable]   = useState(null);
   const countRef = useRef(null);
 
   /* ── Main dashboard query ── */
@@ -117,6 +121,7 @@ export default function OracleDashboard() {
   const { data: liveData,   isLoading: liveLoading }   = useQuery({ queryKey: ['oracleLive', id],     queryFn: () => fetchLiveQueries(id),  retry: false, refetchInterval: 5000,  enabled: activeTab === 'liveQueries' });
   const { data: lockData,   isLoading: lockLoading }   = useQuery({ queryKey: ['oracleLocks', id],    queryFn: () => fetchLocks(id),        retry: false, refetchInterval: 10000, enabled: activeTab === 'locks' });
   const { data: paramData,  isLoading: paramLoading }  = useQuery({ queryKey: ['oracleParams', id],   queryFn: () => fetchParameters(id),   retry: false, staleTime: 120000,      enabled: activeTab === 'parameters' });
+  const { data: schemaData, isLoading: schemaLoading } = useQuery({ queryKey: ['oracleSchemaTables', id, schemaOwner], queryFn: () => fetchSchemaTables(id, schemaOwner), retry: false, staleTime: 60000, enabled: activeTab === 'schemabrowser' });
 
   /* ── Countdown timer ── */
   useEffect(() => {
@@ -233,6 +238,8 @@ export default function OracleDashboard() {
               { to: `/oracle-dashboard/${id}/slow-queries`,   label: 'Slow Queries' },
               { to: `/oracle-dashboard/${id}/error-logs`,     label: 'Error Logs' },
               { to: `/oracle-dashboard/${id}/index-analysis`, label: 'Index Analysis' },
+              { to: `/oracle-dashboard/${id}/reports`,        label: '📊 Reports' },
+              { to: `/oracle-dashboard/${id}/live-queries`,   label: '⚡ Live Queries' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
@@ -261,7 +268,7 @@ export default function OracleDashboard() {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              <button key={tab.id} onClick={() => tab.id === 'liveQueries' ? navigate(`/oracle-dashboard/${id}/live-queries`) : setActiveTab(tab.id)}
                 className="relative flex items-center gap-2 px-4 py-3 text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0"
                 style={active ? {
                   background: '#f1f5f9',
@@ -1639,6 +1646,177 @@ export default function OracleDashboard() {
                     </table>
                   </div>
                 </Panel>
+              </div>
+            );
+          })()
+        )}
+
+        {/* ══ SCHEMA / TABLE BROWSER ════════════════════════════════ */}
+        {activeTab === 'schemabrowser' && (
+          schemaLoading && !schemaData ? <TabLoader /> : (() => {
+            const schemas = schemaData?.schemas || [];
+            const tables  = schemaData?.tables  || [];
+            const owner   = schemaData?.owner   || '';
+            return (
+              <div className="space-y-4">
+                {/* Schema selector */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-xs font-bold text-slate-500 uppercase">Schema:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {schemas.slice(0, 20).map(s => (
+                      <button key={s}
+                        onClick={() => { setSchemaOwner(s); setExpandedTable(null); }}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
+                          owner === s
+                            ? 'bg-red-600 text-white border-red-600'
+                            : 'bg-white text-slate-600 border-slate-200 hover:border-red-300'
+                        }`}>{s}</button>
+                    ))}
+                    {schemas.length === 0 && <span className="text-xs text-slate-400">No user schemas found</span>}
+                  </div>
+                  <span className="ml-auto text-[11px] text-slate-400">{tables.length} tables in <strong>{owner}</strong></span>
+                </div>
+
+                {/* KPI strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    ['Tables',   tables.length,                                       C.blue],
+                    ['Total Rows', fmtNum(tables.reduce((s,t)=>s+(Number(t.num_rows)||0),0)), C.green],
+                    ['Total Size', `${(tables.reduce((s,t)=>s+(Number(t.size_mb)||0),0)).toFixed(1)} MB`, C.orange],
+                    ['Invalid',  tables.filter(t=>t.status!=='VALID').length,         C.red],
+                  ].map(([l,v,c])=>(
+                    <div key={l} className="bg-white rounded-xl border border-slate-200 p-3" style={{borderLeft:`3px solid ${c}`}}>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase">{l}</p>
+                      <p className="text-lg font-black mt-0.5" style={{color:c}}>{v}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Tables list */}
+                {tables.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-slate-200 text-center py-16">
+                    <Database size={32} className="mx-auto mb-3 text-slate-300" />
+                    <p className="font-bold text-slate-500">No tables found in schema {owner}</p>
+                    <p className="text-xs text-slate-400 mt-1">Select a different schema above or create tables</p>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="px-5 py-3 border-b border-slate-100" style={{borderLeft:'3px solid #C74634'}}>
+                      <h3 className="font-black text-slate-800 text-sm uppercase tracking-tight flex items-center gap-2">
+                        <Table size={14} style={{color:C.red}} /> Tables in {owner} ({tables.length})
+                      </h3>
+                    </div>
+                    {/* Header */}
+                    <div className="grid text-[10px] font-bold text-slate-400 uppercase tracking-wide bg-slate-50 border-b border-slate-200 px-4 py-2"
+                      style={{gridTemplateColumns:'200px 90px 80px 80px 80px 100px 80px 1fr'}}>
+                      <span>Table Name</span>
+                      <span>Rows</span>
+                      <span>Columns</span>
+                      <span>Indexes</span>
+                      <span>Size (MB)</span>
+                      <span>Last Analyzed</span>
+                      <span>Status</span>
+                      <span>Partitioned</span>
+                    </div>
+                    {tables.map((t, i) => {
+                      const isExp = expandedTable === i;
+                      return (
+                        <div key={i} className="border-b border-slate-100">
+                          <div
+                            className="grid items-center px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors text-xs"
+                            style={{gridTemplateColumns:'200px 90px 80px 80px 80px 100px 80px 1fr'}}
+                            onClick={() => setExpandedTable(isExp ? null : i)}>
+                            <span className="font-black text-red-700 flex items-center gap-1.5">
+                              <Table size={11} className="opacity-40 flex-shrink-0" />
+                              <span className="truncate">{t.table_name}</span>
+                            </span>
+                            <span className="font-mono text-slate-700">{fmtNum(t.num_rows)}</span>
+                            <span className="font-bold text-indigo-700">{t.col_count || '—'}</span>
+                            <span className={`font-bold ${t.idx_count > 0 ? 'text-green-600' : 'text-slate-400'}`}>{t.idx_count || 0}</span>
+                            <span className="font-mono text-slate-600">{t.size_mb != null ? t.size_mb : '—'}</span>
+                            <span className="text-[10px] text-slate-400">{t.last_analyzed ? String(t.last_analyzed).slice(0,10) : 'Not analyzed'}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold w-fit ${t.status==='VALID'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
+                              {t.status || '—'}
+                            </span>
+                            <span className="text-[10px] text-slate-400 flex items-center justify-between">
+                              {t.partitioned === 'YES' ? <span className="text-indigo-600 font-bold">Partitioned</span> : '—'}
+                              {isExp ? <ChevronUp size={13} className="text-slate-300" /> : <ChevronDown size={13} className="text-slate-300" />}
+                            </span>
+                          </div>
+                          {/* Expanded: columns + indexes */}
+                          {isExp && (
+                            <div className="px-4 pb-4 bg-slate-50 border-t border-slate-100">
+                              <div className="grid sm:grid-cols-2 gap-4 pt-3">
+                                {/* Columns */}
+                                <div>
+                                  <p className="text-[10px] font-black text-slate-500 uppercase mb-2 flex items-center gap-1.5">
+                                    <Code2 size={10} /> Columns ({t.columns?.length || 0})
+                                  </p>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-[10px]">
+                                      <thead>
+                                        <tr className="bg-white border-b border-slate-200">
+                                          {['#','Name','Type','Length','Null'].map(h=>(
+                                            <th key={h} className="px-2 py-1 text-left text-[9px] font-bold text-slate-400 uppercase">{h}</th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {(t.columns||[]).map((c,j)=>(
+                                          <tr key={j} className={`${j%2===0?'bg-white':'bg-slate-50/60'}`}>
+                                            <td className="px-2 py-1 text-slate-400">{c.column_id}</td>
+                                            <td className="px-2 py-1 font-bold text-slate-800">{c.column_name}</td>
+                                            <td className="px-2 py-1 text-indigo-600 font-mono">{c.data_type}</td>
+                                            <td className="px-2 py-1 text-slate-500">{c.data_length}</td>
+                                            <td className="px-2 py-1">
+                                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${c.nullable==='Y'?'bg-slate-100 text-slate-400':'bg-red-100 text-red-600'}`}>
+                                                {c.nullable==='Y'?'NULL':'NOT NULL'}
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                        {(!t.columns||t.columns.length===0)&&<tr><td colSpan={5} className="text-center py-3 text-slate-400">No column info</td></tr>}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                                {/* Indexes */}
+                                <div>
+                                  <p className="text-[10px] font-black text-slate-500 uppercase mb-2 flex items-center gap-1.5">
+                                    <Zap size={10} /> Indexes ({t.indexes?.length || 0})
+                                  </p>
+                                  {(t.indexes||[]).length === 0 ? (
+                                    <p className="text-[11px] text-slate-400 italic px-2">No indexes on this table</p>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {(t.indexes||[]).map((idx,j)=>(
+                                        <div key={j} className="bg-white border border-slate-200 rounded-lg px-3 py-2">
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="font-black text-[11px] text-indigo-700">{idx.index_name}</span>
+                                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${idx.uniqueness==='UNIQUE'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-500'}`}>
+                                              {idx.uniqueness}
+                                            </span>
+                                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${idx.status==='VALID'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
+                                              {idx.status}
+                                            </span>
+                                          </div>
+                                          <p className="text-[10px] text-slate-400 mt-0.5">
+                                            <span className="text-slate-500 font-bold">Type:</span> {idx.index_type} &nbsp;
+                                            <span className="text-slate-500 font-bold">Cols:</span> {idx.columns}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })()

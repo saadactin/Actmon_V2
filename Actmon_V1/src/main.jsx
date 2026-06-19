@@ -35,6 +35,8 @@ import OracleDashboard from './pages/oracle/OracleDashboard';
 import OracleSlowQueries from './pages/oracle/SlowQueries';
 import OracleErrorLogs from './pages/oracle/ErrorLogs';
 import OracleIndexAnalysis from './pages/oracle/IndexAnalysis';
+import OracleReportsPage from './pages/oracle/OracleReportsPage';
+import OracleLiveQueriesPage from './pages/oracle/OracleLiveQueriesPage';
 import MongoDBDashboard from './pages/mongodb/MongoDBDashboard';
 import MongoSlowOperations from './pages/mongodb/SlowOperations';
 import MongoErrorLogs from './pages/mongodb/ErrorLogs';
@@ -152,6 +154,8 @@ const router = createBrowserRouter([
       { path: 'oracle-dashboard/:id/slow-queries', element: <OracleSlowQueries /> },
       { path: 'oracle-dashboard/:id/error-logs', element: <OracleErrorLogs /> },
       { path: 'oracle-dashboard/:id/index-analysis', element: <OracleIndexAnalysis /> },
+      { path: 'oracle-dashboard/:id/reports', element: <OracleReportsPage /> },
+      { path: 'oracle-dashboard/:id/live-queries', element: <OracleLiveQueriesPage /> },
       // MongoDB
       { path: 'mongodb-dashboard/:id', element: <MongoDBDashboard /> },
       { path: 'mongodb-dashboard/:id/slow-operations', element: <MongoSlowOperations /> },

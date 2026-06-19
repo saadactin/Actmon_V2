@@ -1,0 +1,50 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.database.connection import SessionLocal
+from app.models.connection_schema import MongoDBConnectionCreate
+from app.services.mongo import mongo_connection_service
+
+router = APIRouter(prefix="/api/v1/connections/mongodb", tags=["MongoDB"])
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@router.get("/")
+def list_mongodb_connections(db: Session = Depends(get_db)):
+    return mongo_connection_service.list_connections(db)
+
+
+@router.post("/")
+def create_mongodb_connection(request: MongoDBConnectionCreate, db: Session = Depends(get_db)):
+    return mongo_connection_service.create_connection(request, db)
+
+
+@router.get("/{connection_id}")
+def get_mongodb_connection(connection_id: int, db: Session = Depends(get_db)):
+    return mongo_connection_service.get_connection(connection_id, db)
+
+
+@router.put("/{connection_id}")
+def update_mongodb_connection(
+    connection_id: int,
+    request: MongoDBConnectionCreate,
+    db: Session = Depends(get_db),
+):
+    return mongo_connection_service.update_connection(connection_id, request, db)
+
+
+@router.delete("/{connection_id}")
+def delete_mongodb_connection(connection_id: int, db: Session = Depends(get_db)):
+    return mongo_connection_service.delete_connection(connection_id, db)
+
+
+@router.post("/{connection_id}/test")
+def test_mongodb_connection(connection_id: int, db: Session = Depends(get_db)):
+    return mongo_connection_service.test_connection(connection_id, db)

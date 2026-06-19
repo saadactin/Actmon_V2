@@ -13,44 +13,48 @@ from app.models.agent_model import (                              # noqa: F401
     Agent, AgentMetric, AgentTopSQL,
     AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
 )
+from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
+from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
 
 # Routes
-from app.routes.server_routes import router as server_router
-from app.routes.mysql_routes import router as mysql_router
-from app.routes.oracle_routes import router as oracle_router
-from app.routes.postgres_routes import router as postgres_router
-from app.routes.mongo_routes import router as mongo_router
-from app.routes.clickhouse_routes import router as clickhouse_router
-from app.routes.mssql_routes import router as mssql_router
+from app.routes.os_server.server_routes import router as server_router
+from app.routes.mysql.mysql_routes import router as mysql_router
+from app.routes.oracle.oracle_routes import router as oracle_router
+from app.routes.postgres.postgres_routes import router as postgres_router
+from app.routes.mongo.mongo_routes import router as mongo_router
+from app.routes.clickhouse.clickhouse_routes import router as clickhouse_router
+from app.routes.mssql.mssql_routes import router as mssql_router
 
-from app.routes.postgres_error_analysis_routes import router as postgres_error_router
-from app.routes.postgres_monitoring_routes import router as postgres_monitoring_router
-from app.routes.mongo_error_analysis_routes import router as mongo_error_router
-from app.routes.clickhouse_error_analysis_routes import router as clickhouse_error_router
-from app.routes.clickhouse_monitoring_routes import router as clickhouse_monitoring_router
-from app.routes.mssql_error_analysis_routes import router as mssql_error_router
-from app.routes.mssql_monitoring_routes import router as mssql_monitoring_router
+from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
+from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
+from app.routes.mongo.mongo_error_analysis_routes import router as mongo_error_router
+from app.routes.clickhouse.clickhouse_error_analysis_routes import router as clickhouse_error_router
+from app.routes.clickhouse.clickhouse_monitoring_routes import router as clickhouse_monitoring_router
+from app.routes.mssql.mssql_error_analysis_routes import router as mssql_error_router
+from app.routes.mssql.mssql_monitoring_routes import router as mssql_monitoring_router
 
-from app.routes.mysql_slow_queries_routes import router as mysql_slow_queries_router
-from app.routes.mysql_explain_routes import router as mysql_explain_router
-from app.routes.mysql_error_logs_routes import router as mysql_error_logs_router
-from app.routes.mysql_index_analysis_routes import router as mysql_index_analysis_router
-from app.routes.mysql_backup_routes import router as mysql_backup_router
-from app.routes.mysql_schedule_routes import router as mysql_schedule_router
-from app.routes.mysql_table_routes import router as mysql_table_router
-from app.routes.mysql_replication_routes import router as mysql_replication_router
+from app.routes.mysql.mysql_slow_queries_routes import router as mysql_slow_queries_router
+from app.routes.mysql.mysql_explain_routes import router as mysql_explain_router
+from app.routes.mysql.mysql_error_logs_routes import router as mysql_error_logs_router
+from app.routes.mysql.mysql_index_analysis_routes import router as mysql_index_analysis_router
+from app.routes.mysql.mysql_backup_routes import router as mysql_backup_router
+from app.routes.mysql.mysql_schedule_routes import router as mysql_schedule_router
+from app.routes.mysql.mysql_table_routes import router as mysql_table_router
+from app.routes.mysql.mysql_replication_routes import router as mysql_replication_router
 
-from app.routes.oracle_monitoring_routes import router as oracle_monitoring_router
-from app.routes.mongo_monitoring_routes import router as mongo_monitoring_router
+from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
+from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
+from app.routes.smtp.smtp_config_routes import router as smtp_config_router
+from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
-from app.routes.postgres_backup_routes import router as postgres_backup_router
-from app.routes.mssql_backup_routes import router as mssql_backup_router
+from app.routes.postgres.postgres_backup_routes import router as postgres_backup_router
+from app.routes.mssql.mssql_backup_routes import router as mssql_backup_router
 
-from app.routes.os_server_routes import router as os_server_router
-from app.routes.terminal_routes import router as terminal_router
-from app.routes.test_connection_routes import router as test_connection_router
-from app.routes.auth_routes import router as auth_router
-from app.routes.agent_routes import router as agent_router
+from app.routes.os_server.os_server_routes import router as os_server_router
+from app.routes.os_server.terminal_routes import router as terminal_router
+from app.routes.os_server.test_connection_routes import router as test_connection_router
+from app.routes.auth.auth_routes import router as auth_router
+from app.routes.agent.agent_routes import router as agent_router
 from app.routes.chatbot.chatbot_routes import router as chatbot_router
 
 # Create all tables in PostgreSQL (graceful — won't crash if DB is offline at import time)
@@ -65,18 +69,21 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app_instance):
     # Start backup scheduler background threads on server startup
-    from app.routes.mysql_schedule_routes import start_scheduler
+    from app.routes.mysql.mysql_schedule_routes import start_scheduler
     start_scheduler()
-    from app.routes.postgres_backup_routes import start_pg_scheduler
+    from app.services.postgres.postgres_backup_service import start_pg_scheduler
     start_pg_scheduler()
-    from app.routes.mssql_backup_routes import start_mssql_scheduler
+    from app.services.mssql.mssql_backup_service import start_mssql_scheduler
     start_mssql_scheduler()
     # Start centralized agent collector (polls monitored DBs every 60s)
-    from app.services.agent_collector_service import start_agent_collector
+    from app.services.agent.agent_collector_service import start_agent_collector
     start_agent_collector(interval_sec=60)
+    # Start Oracle report email scheduler
+    from app.services.oracle.oracle_report_email_service import start_oracle_report_scheduler
+    start_oracle_report_scheduler()
     yield
     # Graceful shutdown
-    from app.services.agent_collector_service import stop_agent_collector
+    from app.services.agent.agent_collector_service import stop_agent_collector
     stop_agent_collector()
 
 app = FastAPI(
@@ -130,6 +137,8 @@ app.include_router(mssql_backup_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
+app.include_router(oracle_report_email_router)
+app.include_router(smtp_config_router)
 app.include_router(mongo_monitoring_router)
 
 # New OS server + terminal routes
