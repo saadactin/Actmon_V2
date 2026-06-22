@@ -54,8 +54,8 @@ class ExplainAnalysisRequest(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/{conn_id}/slow-queries")
-def get_slow_queries(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_slow_query_service.get_slow_queries(conn_id, db)
+def get_slow_queries(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_slow_query_service.get_slow_queries(conn_id, db, live=live)
 
 
 @router.get("/{conn_id}/ssh-config")

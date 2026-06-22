@@ -231,6 +231,7 @@ export default function PostgreSQLDashboard() {
               { to: `/postgresql-dashboard/${id}/error-logs`,     label: 'Error Logs' },
               { to: `/postgresql-dashboard/${id}/index-analysis`, label: 'Indexes' },
               { to: `/postgresql-dashboard/${id}/backup`,         label: '🛡 Backup & PITR' },
+              { to: `/postgresql-dashboard/${id}/reports`,        label: '📊 Reports' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
@@ -512,6 +513,7 @@ export default function PostgreSQLDashboard() {
                 { icon:<FileText className="text-red-500" size={22}/>,  title:'Error Logs',     desc:'View & classify errors',       action:()=>navigate(`/postgresql-dashboard/${id}/error-logs`) },
                 { icon:<Layers className="text-violet-500" size={22}/>, title:'Index Analysis', desc:'Unused, bloated & missing',    action:()=>navigate(`/postgresql-dashboard/${id}/index-analysis`) },
                 { icon:<RotateCcw className="text-teal-500" size={22}/>,title:'Vacuum Status',  desc:'Dead tuples & autovacuum',     action:()=>setActiveTab('tables') },
+                { icon:<BarChart3 className="text-blue-600" size={22}/>, title:'Reports',        desc:'Generate & email DB reports',  action:()=>navigate(`/postgresql-dashboard/${id}/reports`) },
               ].map(({ icon, title, desc, action }) => (
                 <button key={title} onClick={action}
                   className="bg-white rounded-2xl border border-slate-200 p-5 text-left hover:shadow-md hover:border-slate-300 transition-all group">

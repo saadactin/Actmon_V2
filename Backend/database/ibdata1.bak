@@ -1,7 +1,0 @@
-[mysqld]
-port = 3306
-socket = /tmp/mysql.sock
-key_buffer_size = 16M
-max_allowed_packet = 1M
-max_connections = 151
-# Offending variable that prevents service start

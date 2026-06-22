@@ -607,6 +607,7 @@ export default function MySQLDashboard() {
               { to: `/mysql-dashboard/${id}/error-analysis`, label: 'AI Analysis' },
               { to: `/mysql-dashboard/${id}/index-analysis`, label: 'Indexes' },
               { to: `/mysql-dashboard/${id}/self-heal`,      label: 'Self-Heal' },
+              { to: `/mysql-dashboard/${id}/reports`,        label: 'Reports' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
                 className="px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-xs font-semibold text-white/80 hover:text-white">
@@ -884,12 +885,13 @@ export default function MySQLDashboard() {
             )}
 
             {/* ── Row 8: Quick actions ── */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
               <ActionCard icon={<Zap className="text-yellow-500" size={24} />}    title="Slow Queries"   desc="Identify expensive SQL"   onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)} />
               <ActionCard icon={<FileText className="text-red-500" size={24} />}  title="Error Logs"     desc="View & classify errors"    onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)} />
               <ActionCard icon={<Layers className="text-violet-500" size={24} />} title="Index Analysis" desc="Unused, dupe & missing"    onClick={() => navigate(`/mysql-dashboard/${id}/index-analysis`)} />
               <ActionCard icon={<Heart className="text-pink-500" size={24} />}    title="Self-Heal"      desc="AI-powered remediation"    onClick={() => navigate(`/mysql-dashboard/${id}/self-heal`)} />
               <ActionCard icon={<Archive className="text-blue-500" size={24} />}  title="Backup & PITR"  desc="Recovery strategy check"  onClick={() => navigate(`/mysql-dashboard/${id}/backup`)} />
+              <ActionCard icon={<FileText className="text-green-500" size={24} />} title="Reports"       desc="Open full DB report"       onClick={() => navigate(`/mysql-dashboard/${id}/reports`)} />
             </div>
 
           </div>

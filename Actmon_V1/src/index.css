@@ -56,9 +56,19 @@ body {
      so parent containers stay in layout but are invisible.
      position:absolute (NOT fixed) so content flows across multiple pages. */
   * { visibility: hidden !important; }
-  #oracle-report, #oracle-report * { visibility: visible !important; }
+  #oracle-report, #oracle-report *,
+  #pg-report, #pg-report *,
+  #mysql-report, #mysql-report *,
+  #mssql-report, #mssql-report *,
+  #clickhouse-report, #clickhouse-report *,
+  #mongo-report, #mongo-report * { visibility: visible !important; }
 
-  #oracle-report {
+  #oracle-report,
+  #pg-report,
+  #mysql-report,
+  #mssql-report,
+  #clickhouse-report,
+  #mongo-report {
     position: absolute !important;
     top: 0 !important;
     left: 0 !important;

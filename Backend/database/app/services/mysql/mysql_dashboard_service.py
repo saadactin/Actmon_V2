@@ -95,11 +95,12 @@ def delete_connection(conn_id: int, db: Session) -> dict:
 #  Dashboard
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_dashboard(conn_id: int, db: Session) -> dict:
+def get_dashboard(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_dashboard", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_dashboard", db)
+        if cached is not None:
+            return cached
 
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
@@ -345,11 +346,12 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
 #  Backup info
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_backup_info(conn_id: int, db: Session) -> dict:
+def get_backup_info(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_backup_info", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_backup_info", db)
+        if cached is not None:
+            return cached
 
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
@@ -450,11 +452,12 @@ def get_backup_info(conn_id: int, db: Session) -> dict:
 #  Table stats
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_table_stats(conn_id: int, db: Session) -> dict:
+def get_table_stats(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_table_stats", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_table_stats", db)
+        if cached is not None:
+            return cached
 
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
@@ -497,11 +500,12 @@ def get_table_stats(conn_id: int, db: Session) -> dict:
 #  User stats
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_user_stats(conn_id: int, db: Session) -> dict:
+def get_user_stats(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_user_stats", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_user_stats", db)
+        if cached is not None:
+            return cached
 
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
@@ -547,11 +551,12 @@ def get_user_stats(conn_id: int, db: Session) -> dict:
 #  InnoDB metrics
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_innodb_metrics(conn_id: int, db: Session) -> dict:
+def get_innodb_metrics(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_innodb", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_innodb", db)
+        if cached is not None:
+            return cached
 
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
@@ -613,11 +618,12 @@ def get_innodb_metrics(conn_id: int, db: Session) -> dict:
 #  Performance detail
 # ═════════════════════════════════════════════════════════════════════════════
 
-def get_performance_detail(conn_id: int, db: Session) -> dict:
+def get_performance_detail(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_performance_detail", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_performance_detail", db)
+        if cached is not None:
+            return cached
 
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"

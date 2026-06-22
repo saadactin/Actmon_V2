@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -35,30 +35,30 @@ def delete_mysql_connection(conn_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{conn_id}/dashboard")
-def get_mysql_dashboard(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.get_dashboard(conn_id, db)
+def get_mysql_dashboard(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_dashboard_service.get_dashboard(conn_id, db, live=live)
 
 
 @router.get("/{conn_id}/backup-info")
-def get_backup_info(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.get_backup_info(conn_id, db)
+def get_backup_info(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_dashboard_service.get_backup_info(conn_id, db, live=live)
 
 
 @router.get("/{conn_id}/table-stats")
-def get_table_stats(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.get_table_stats(conn_id, db)
+def get_table_stats(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_dashboard_service.get_table_stats(conn_id, db, live=live)
 
 
 @router.get("/{conn_id}/user-stats")
-def get_user_stats(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.get_user_stats(conn_id, db)
+def get_user_stats(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_dashboard_service.get_user_stats(conn_id, db, live=live)
 
 
 @router.get("/{conn_id}/innodb-metrics")
-def get_innodb_metrics(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.get_innodb_metrics(conn_id, db)
+def get_innodb_metrics(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_dashboard_service.get_innodb_metrics(conn_id, db, live=live)
 
 
 @router.get("/{conn_id}/performance-detail")
-def get_performance_detail(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.get_performance_detail(conn_id, db)
+def get_performance_detail(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_dashboard_service.get_performance_detail(conn_id, db, live=live)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -19,5 +19,5 @@ def get_db():
 
 
 @router.get("/{conn_id}/index-analysis")
-def index_analysis(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_index_service.get_index_analysis(conn_id, db)
+def index_analysis(conn_id: int, live: bool = Query(False), db: Session = Depends(get_db)):
+    return mysql_index_service.get_index_analysis(conn_id, db, live=live)

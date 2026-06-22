@@ -14,6 +14,8 @@ from app.models.agent_model import (                              # noqa: F401
     AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
 )
 from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
+from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
+from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
 
 # Routes
@@ -44,6 +46,8 @@ from app.routes.mysql.mysql_replication_routes import router as mysql_replicatio
 
 from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
 from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
+from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
+from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
 from app.routes.smtp.smtp_config_routes import router as smtp_config_router
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
@@ -81,6 +85,12 @@ async def lifespan(app_instance):
     # Start Oracle report email scheduler
     from app.services.oracle.oracle_report_email_service import start_oracle_report_scheduler
     start_oracle_report_scheduler()
+    # Start MySQL report email scheduler
+    from app.services.mysql.mysql_report_email_service import start_mysql_report_scheduler
+    start_mysql_report_scheduler()
+    # Start PostgreSQL report email scheduler
+    from app.services.postgres.postgres_report_email_service import start_postgres_report_scheduler
+    start_postgres_report_scheduler()
     yield
     # Graceful shutdown
     from app.services.agent.agent_collector_service import stop_agent_collector
@@ -138,6 +148,8 @@ app.include_router(mssql_backup_router)
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
 app.include_router(oracle_report_email_router)
+app.include_router(mysql_report_email_router)
+app.include_router(postgres_report_email_router)
 app.include_router(smtp_config_router)
 app.include_router(mongo_monitoring_router)
 

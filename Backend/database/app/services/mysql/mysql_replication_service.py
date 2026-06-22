@@ -166,11 +166,12 @@ def _compute_health(r: dict):
 
 # ── Service functions (called by route handlers) ──────────────────────────────
 
-def get_replication_status(conn_id: int, db: Session) -> dict:
+def get_replication_status(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_replication_status", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_replication_status", db)
+        if cached is not None:
+            return cached
 
     conn = _get_conn(conn_id, db)
     result = {
@@ -331,11 +332,12 @@ def get_replication_status(conn_id: int, db: Session) -> dict:
     return result
 
 
-def get_replication_variables(conn_id: int, db: Session) -> dict:
+def get_replication_variables(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_replication_variables", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_replication_variables", db)
+        if cached is not None:
+            return cached
 
     conn = _get_conn(conn_id, db)
     try:

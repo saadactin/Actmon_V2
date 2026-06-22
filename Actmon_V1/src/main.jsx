@@ -20,8 +20,10 @@ import ErrorAnalysis from './pages/mysql/ErrorAnalysis';
 import MySQLSelfHeal from './pages/mysql/MySQLSelfHeal';
 import IndexAnalysis from './pages/mysql/IndexAnalysis';
 import MySQLBackupPage from './pages/mysql/MySQLBackupPage';
+import MySQLReportsPage from './pages/mysql/MySQLReportsPage';
 import PostgreSQLDashboard from './pages/postgresql/PostgreSQLDashboard';
 import PostgreSQLBackupPage from './pages/postgresql/PostgreSQLBackupPage';
+import PostgreSQLReportsPage from './pages/postgres/PostgreSQLReportsPage';
 import PGSlowQueries from './pages/postgresql/SlowQueries';
 import PGQueryDetail from './pages/postgresql/QueryDetailPage';
 import PGErrorLogs from './pages/postgresql/ErrorLogs';
@@ -136,6 +138,10 @@ const router = createBrowserRouter([
         path: 'mysql-dashboard/:id/backup',
         element: <MySQLBackupPage />,
       },
+      {
+        path: 'mysql-dashboard/:id/reports',
+        element: <MySQLReportsPage />,
+      },
       // PostgreSQL
       { path: 'postgresql-dashboard/:id', element: <PostgreSQLDashboard /> },
       { path: 'postgresql-dashboard/:id/slow-queries', element: <PGSlowQueries /> },
@@ -143,6 +149,7 @@ const router = createBrowserRouter([
       { path: 'postgresql-dashboard/:id/error-logs', element: <PGErrorLogs /> },
       { path: 'postgresql-dashboard/:id/index-analysis', element: <PGIndexAnalysis /> },
       { path: 'postgresql-dashboard/:id/backup', element: <PostgreSQLBackupPage /> },
+      { path: 'postgresql-dashboard/:id/reports', element: <PostgreSQLReportsPage /> },
       // MSSQL
       { path: 'mssql-dashboard/:id', element: <MSSQLDashboard /> },
       { path: 'mssql-dashboard/:id/slow-queries', element: <MSSQLSlowQueries /> },

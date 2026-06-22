@@ -115,11 +115,12 @@ def _parse_slow_log_content(content: str, default_db: str) -> list:
 
 # ── Service functions ─────────────────────────────────────────────────────────
 
-def get_slow_queries(conn_id: int, db: Session) -> dict:
+def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_slow_queries", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_slow_queries", db)
+        if cached is not None:
+            return cached
 
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:

@@ -51,11 +51,12 @@ def _detect_duplicates(indexes_by_table: dict) -> list:
     return duplicates
 
 
-def get_index_analysis(conn_id: int, db: Session) -> dict:
+def get_index_analysis(conn_id: int, db: Session, live: bool = False) -> dict:
     from app.utils.agent_cache import get_snapshot as _get_snap
-    cached = _get_snap(conn_id, "mysql_index_analysis", db)
-    if cached is not None:
-        return cached
+    if not live:
+        cached = _get_snap(conn_id, "mysql_index_analysis", db)
+        if cached is not None:
+            return cached
 
     conn = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not conn:
