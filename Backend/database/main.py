@@ -58,6 +58,7 @@ from app.routes.os_server.os_server_routes import router as os_server_router
 from app.routes.os_server.terminal_routes import router as terminal_router
 from app.routes.os_server.test_connection_routes import router as test_connection_router
 from app.routes.auth.auth_routes import router as auth_router
+from app.routes.admin.admin_crud_routes import admin_crud_routers
 from app.routes.agent.agent_routes import router as agent_router
 from app.routes.chatbot.chatbot_routes import router as chatbot_router
 
@@ -158,6 +159,11 @@ app.include_router(os_server_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
 app.include_router(auth_router)
+
+# Administration / Access Control (roles, permissions, modules, pages, orgs,
+# departments, designations, employees, users, statuses, audit-logs — all generic)
+for _admin_router in admin_crud_routers:
+    app.include_router(_admin_router)
 
 # Centralized Agent routes
 app.include_router(agent_router)

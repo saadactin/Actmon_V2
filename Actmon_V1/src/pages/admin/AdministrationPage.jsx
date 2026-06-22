@@ -1,8 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, KeyRound, Boxes, FileText, Lock, UserCog, Users, ChevronRight } from 'lucide-react';
+import { Shield, KeyRound, Boxes, FileText, Lock, UserCog, Users, ChevronRight, Building2, Network, IdCard, ScrollText } from 'lucide-react';
 
 const CARDS = [
+  { to: '/organizations',    icon: Building2, title: 'Organizations',   desc: 'Companies / tenants',                     color: 'from-sky-500 to-blue-600' },
+  { to: '/departments',      icon: Network,   title: 'Departments',     desc: 'Organization departments',                color: 'from-teal-500 to-emerald-600' },
+  { to: '/designations',     icon: IdCard,    title: 'Designations',    desc: 'Job titles / designations',               color: 'from-fuchsia-500 to-purple-600' },
   { to: '/roles',            icon: Shield,   title: 'Roles',            desc: 'Define access roles',                    color: 'from-indigo-500 to-indigo-600' },
   { to: '/permissions',      icon: KeyRound, title: 'Permissions',      desc: 'Permission types & bitmask values',       color: 'from-violet-500 to-violet-600' },
   { to: '/modules',          icon: Boxes,    title: 'Modules',          desc: 'Top-level application modules',           color: 'from-blue-500 to-blue-600' },
@@ -10,6 +13,7 @@ const CARDS = [
   { to: '/role-permissions', icon: Lock,     title: 'Role Page Permissions', desc: 'Grant permissions per role & page',  color: 'from-rose-500 to-rose-600' },
   { to: '/users',            icon: UserCog,  title: 'User Master',      desc: 'Application user accounts',               color: 'from-emerald-500 to-emerald-600' },
   { to: '/employees',        icon: Users,    title: 'Employees',        desc: 'Organization employee records',           color: 'from-amber-500 to-amber-600' },
+  { to: '/audit-logs',       icon: ScrollText, title: 'Audit Logs',     desc: 'Track every data change',                 color: 'from-slate-600 to-slate-800' },
 ];
 
 export default function AdministrationPage() {

@@ -27,7 +27,7 @@ const initialsOf = (s) => {
  *              required?, options?[{value,label}], help? }
  */
 export default function AdminResourcePage({ config }) {
-  const { title, subtitle, icon: Icon, api, idKey, columns, fields, searchKeys = [] } = config;
+  const { title, subtitle, icon: Icon, api, idKey, columns, fields, searchKeys = [], readOnly = false } = config;
   const navigate = useNavigate();
 
   const [rows, setRows]       = useState([]);
@@ -109,10 +109,12 @@ export default function AdminResourcePage({ config }) {
                 className="h-10 w-10 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-white hover:bg-white/20 transition-all">
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
               </button>
-              <button onClick={openAdd}
-                className="h-10 px-4 sm:px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-all">
-                <Plus size={16} /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
-              </button>
+              {!readOnly && (
+                <button onClick={openAdd}
+                  className="h-10 px-4 sm:px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-all">
+                  <Plus size={16} /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -122,7 +124,13 @@ export default function AdminResourcePage({ config }) {
           <div className="relative flex-1 max-w-md">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${title.toLowerCase()}…`}
-              className="w-full h-10 pl-9 pr-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+              className="w-full h-10 pl-9 pr-9 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+            {search && (
+              <button onClick={() => setSearch('')} title="Clear search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-600">
+                <X size={14} />
+              </button>
+            )}
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-bold ml-auto px-3 py-1.5 rounded-full bg-slate-100">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />{filtered.length} record{filtered.length !== 1 ? 's' : ''}
@@ -142,8 +150,18 @@ export default function AdminResourcePage({ config }) {
         ) : filtered.length === 0 ? (
           <div className="bg-white rounded-3xl border border-slate-200 shadow-sm py-16 text-center">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-100 flex items-center justify-center mb-3">{Icon && <Icon className="text-slate-300" size={26} />}</div>
-            <p className="text-slate-500 font-bold">No records found</p>
-            <p className="text-slate-400 text-sm mt-1">Click <b>Add New</b> to create the first one.</p>
+            {search ? (
+              <>
+                <p className="text-slate-500 font-bold">No matches for "{search}"</p>
+                <button onClick={() => setSearch('')} className="text-indigo-600 text-sm font-bold mt-1 hover:underline">Clear search</button>
+                <span className="text-slate-400 text-sm"> · {rows.length} total record{rows.length !== 1 ? 's' : ''}</span>
+              </>
+            ) : (
+              <>
+                <p className="text-slate-500 font-bold">No records found</p>
+                <p className="text-slate-400 text-sm mt-1">Click <b>Add New</b> to create the first one.</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -187,8 +205,8 @@ export default function AdminResourcePage({ config }) {
                   {/* footer actions */}
                   <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/40 flex items-center justify-end gap-1">
                     <IconBtn title="View" onClick={() => openView(row)} cls="hover:bg-blue-50 hover:text-blue-600"><Eye size={15} /></IconBtn>
-                    <IconBtn title="Edit" onClick={() => openEdit(row)} cls="hover:bg-indigo-50 hover:text-indigo-600"><Pencil size={15} /></IconBtn>
-                    <IconBtn title="Delete" onClick={() => setConfirm(row)} cls="hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></IconBtn>
+                    {!readOnly && <IconBtn title="Edit" onClick={() => openEdit(row)} cls="hover:bg-indigo-50 hover:text-indigo-600"><Pencil size={15} /></IconBtn>}
+                    {!readOnly && <IconBtn title="Delete" onClick={() => setConfirm(row)} cls="hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></IconBtn>}
                   </div>
                 </div>
               );
@@ -252,8 +270,20 @@ function FormModal({ config, mode, initial, saving, onClose, onSave }) {
   const { title, fields, idKey, icon: Icon } = config;
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
+  const [dynOpts, setDynOpts] = useState({});   // fieldKey → [{value,label}] (async FK dropdowns)
   const readOnly = mode === 'view';
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // load async dropdown options (loadOptions) when the form opens
+  useEffect(() => {
+    let alive = true;
+    fields.filter((f) => typeof f.loadOptions === 'function').forEach((f) => {
+      Promise.resolve(f.loadOptions()).then((opts) => {
+        if (alive) setDynOpts((o) => ({ ...o, [f.key]: opts || [] }));
+      }).catch(() => {});
+    });
+    return () => { alive = false; };
+  }, [fields]);
   const singular = title.replace(/s$/, '');
   const heading = mode === 'add' ? `Add ${singular}` : mode === 'edit' ? `Edit ${singular}` : `${singular} Details`;
   const sub = mode === 'add' ? 'Create a new record' : mode === 'edit' ? 'Update the record below' : 'Read-only view';
@@ -292,7 +322,7 @@ function FormModal({ config, mode, initial, saving, onClose, onSave }) {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">
                 {fields.map((f) => (
-                  <Field key={f.key} f={f} value={form[f.key]} onChange={(v) => set(f.key, v)} error={errors[f.key]} readOnly={readOnly} />
+                  <Field key={f.key} f={f} value={form[f.key]} onChange={(v) => set(f.key, v)} error={errors[f.key]} readOnly={readOnly} options={f.options || dynOpts[f.key]} />
                 ))}
               </div>
             </div>
@@ -316,12 +346,13 @@ function FormModal({ config, mode, initial, saving, onClose, onSave }) {
   );
 }
 
-function Field({ f, value, onChange, error, readOnly }) {
+function Field({ f, value, onChange, error, readOnly, options }) {
   const ro = readOnly || f.readOnly;     // per-field lock (e.g. auto bitmask) OR whole-form view mode
   const full = f.type === 'textarea' || f.type === 'permissions';
   const has = value !== '' && value !== null && value !== undefined;
+  const opts = options || f.options || [];
   const base = `w-full h-11 px-3.5 rounded-xl border text-sm transition-all focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 ${error ? 'border-red-300 ring-2 ring-red-100' : 'border-slate-200'} ${ro ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : 'bg-white hover:border-slate-300'}`;
-  const selected = (f.options || []).find((o) => String(o.value) === String(value));
+  const selected = opts.find((o) => String(o.value) === String(value));
   return (
     <div className={full ? 'md:col-span-2' : ''}>
       <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">
@@ -347,7 +378,7 @@ function Field({ f, value, onChange, error, readOnly }) {
             onChange={(e) => onChange(e.target.value === '' ? '' : (isNaN(+e.target.value) ? e.target.value : +e.target.value))}
             className={`${base} appearance-none pr-10 font-semibold ${has ? 'text-slate-800' : 'text-slate-400'}`}>
             <option value="">— Select {f.label} —</option>
-            {(f.options || []).map((o) => <option key={o.value} value={o.value} className="text-slate-800">{o.label}</option>)}
+            {opts.map((o) => <option key={o.value} value={o.value} className="text-slate-800">{o.label}</option>)}
           </select>
           <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           {has && selected && (
@@ -370,6 +401,10 @@ function Field({ f, value, onChange, error, readOnly }) {
           </div>
           <p className="text-[11px] text-slate-400 mt-2.5">Bitmask value: <b className="text-slate-600">{Number(value) || 0}</b></p>
         </div>
+      ) : f.type === 'json' ? (
+        <pre className="w-full max-h-56 overflow-auto rounded-xl border border-slate-200 bg-slate-900 text-slate-100 text-[11px] p-3 font-mono whitespace-pre-wrap">
+          {value ? JSON.stringify(value, null, 2) : '—'}
+        </pre>
       ) : (
         <input type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
           value={value ?? ''} disabled={ro}

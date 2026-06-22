@@ -1,19 +1,26 @@
-import { Shield, KeyRound, Boxes, FileText, Lock, UserCog, Users } from 'lucide-react';
+import { Shield, KeyRound, Boxes, FileText, UserCog, Users, Building2, Network, IdCard, ScrollText } from 'lucide-react';
 import {
-  rolesApi, permissionsApi, modulesApi, pagesApi, grppApi, usersApi, employeesApi,
-  lookups, nameFromOptions,
-} from './_shared/mockDb';
+  rolesApi, permissionsApi, modulesApi, pagesApi,
+  organizationsApi, departmentsApi, designationsApi, employeesApi, usersApi,
+  statusesApi, auditLogsApi, optionLoader,
+} from '../../api/admin';
+
+const ACTION_COLORS = { INSERT: 'bg-emerald-50 text-emerald-700', UPDATE: 'bg-amber-50 text-amber-700', DELETE: 'bg-red-50 text-red-700' };
+const actionBadge = (a) => (
+  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${ACTION_COLORS[a] || 'bg-slate-100 text-slate-600'}`}>{a}</span>
+);
 
 const statusCol = (key = 'is_active') => ({ key, label: 'Status', type: 'status', width: '120px' });
 
 /* ── Roles → role ── */
 export const rolesConfig = {
   key: 'roles', title: 'Roles', subtitle: 'Define access roles for the organization',
-  icon: Shield, api: rolesApi, idKey: 'role_id', searchKeys: ['role_name', 'role_description'],
+  icon: Shield, api: rolesApi, idKey: 'role_id', searchKeys: ['role_name', 'role_description', 'org_name'],
   columns: [
     { key: 'role_id', label: 'ID', width: '70px' },
     { key: 'role_name', label: 'Role Name' },
     { key: 'role_description', label: 'Description' },
+    { key: 'org_name', label: 'Organization' },
     statusCol(),
   ],
   fields: [
@@ -37,11 +44,7 @@ export const permissionsConfig = {
     { key: 'permission_name', label: 'Permission Name', type: 'text', required: true },
     {
       key: 'permission_value', label: 'Bitmask Value', type: 'number', readOnly: true,
-      // Auto-generate the next power-of-two from existing rows (non-editable).
-      autoValue: (rows) => {
-        const max = Math.max(0, ...rows.map((r) => Number(r.permission_value) || 0));
-        return max < 1 ? 1 : max * 2;
-      },
+      autoValue: (rows) => { const max = Math.max(0, ...rows.map((r) => Number(r.permission_value) || 0)); return max < 1 ? 1 : max * 2; },
       help: 'Auto-generated next power of two (1, 2, 4, 8, 16 …)',
     },
     { key: 'is_active', label: 'Active', type: 'checkbox' },
@@ -79,13 +82,13 @@ export const pagesConfig = {
     { key: 'page_id', label: 'ID', width: '70px' },
     { key: 'page_name', label: 'Page' },
     { key: 'page_url', label: 'URL' },
-    { key: 'module_id', label: 'Module', render: (r) => nameFromOptions(lookups.modules(), r.module_id) },
-    { key: 'parent_id', label: 'Parent', width: '80px' },
+    { key: 'module_id', label: 'Module', render: (r) => r.module_name || r.module_id },
+    { key: 'parent_id', label: 'Parent', render: (r) => r.parent_name || (r.parent_id ? `#${r.parent_id}` : '—'), width: '120px' },
     { key: 'is_menu', label: 'Menu', type: 'status', width: '110px' },
     statusCol(),
   ],
   fields: [
-    { key: 'module_id', label: 'Module', type: 'select', required: true, options: lookups.modules() },
+    { key: 'module_id', label: 'Module', type: 'select', required: true, loadOptions: optionLoader(modulesApi, 'module_id', 'module_name') },
     { key: 'parent_id', label: 'Parent Page ID (0 = top)', type: 'number' },
     { key: 'page_name', label: 'Page Name', type: 'text', required: true },
     { key: 'page_url', label: 'Page URL', type: 'text' },
@@ -98,47 +101,72 @@ export const pagesConfig = {
   ],
 };
 
-/* ── Group Role Page Permissions → group_role_page_permission ── */
-export const grppConfig = {
-  key: 'role-permissions', title: 'Group Role Page Permissions',
-  subtitle: 'Assign permission bitmasks per role & page',
-  icon: Lock, api: grppApi, idKey: 'page_permission_id', searchKeys: ['permission_description'],
+/* ── Organizations → organization_master ── */
+export const organizationsConfig = {
+  key: 'organizations', title: 'Organizations', subtitle: 'Companies / tenants',
+  icon: Building2, api: organizationsApi, idKey: 'org_id', searchKeys: ['org_name', 'org_code', 'city_name'],
   columns: [
-    { key: 'page_permission_id', label: 'ID', width: '70px' },
-    { key: 'role_id', label: 'Role', render: (r) => nameFromOptions(lookups.roles(), r.role_id) },
-    { key: 'page_id', label: 'Page', render: (r) => nameFromOptions(lookups.pages(), r.page_id) },
-    { key: 'permission', label: 'Permissions', type: 'permissions' },
+    { key: 'org_id', label: 'ID', width: '70px' },
+    { key: 'org_code', label: 'Code' },
+    { key: 'org_name', label: 'Organization' },
+    { key: 'city_name', label: 'City' },
+    { key: 'status_name', label: 'Status' },
     statusCol(),
   ],
   fields: [
-    { key: 'role_id', label: 'Role', type: 'select', required: true, options: lookups.roles() },
-    { key: 'page_id', label: 'Page', type: 'select', required: true, options: lookups.pages() },
-    { key: 'permission', label: 'Permissions', type: 'permissions' },
-    { key: 'permission_description', label: 'Description', type: 'text' },
+    { key: 'org_code', label: 'Org Code', type: 'text', required: true },
+    { key: 'org_name', label: 'Organization Name', type: 'text', required: true },
+    { key: 'legal_name', label: 'Legal Name', type: 'text' },
+    { key: 'email_id', label: 'Email', type: 'text' },
+    { key: 'contact_no', label: 'Contact No', type: 'text' },
+    { key: 'contact_person_name', label: 'Contact Person', type: 'text' },
+    { key: 'gst_number', label: 'GST Number', type: 'text' },
+    { key: 'pan_number', label: 'PAN Number', type: 'text' },
+    { key: 'website_url', label: 'Website', type: 'text' },
+    { key: 'country_name', label: 'Country', type: 'text' },
+    { key: 'state_name', label: 'State', type: 'text' },
+    { key: 'city_name', label: 'City', type: 'text' },
+    { key: 'address_line1', label: 'Address', type: 'textarea' },
+    { key: 'pincode', label: 'Pincode', type: 'text' },
+    { key: 'status_id', label: 'Status', type: 'select', loadOptions: optionLoader(statusesApi, 'status_id', 'status_name') },
     { key: 'is_active', label: 'Active', type: 'checkbox' },
   ],
 };
 
-/* ── User Master → user_master ── */
-export const usersConfig = {
-  key: 'users', title: 'User Master', subtitle: 'Application user accounts',
-  icon: UserCog, api: usersApi, idKey: 'user_id', searchKeys: ['user_name'],
+/* ── Departments → department_master ── */
+export const departmentsConfig = {
+  key: 'departments', title: 'Departments', subtitle: 'Organization departments',
+  icon: Network, api: departmentsApi, idKey: 'department_id', searchKeys: ['department_name', 'department_code'],
   columns: [
-    { key: 'user_id', label: 'ID', width: '70px' },
-    { key: 'user_name', label: 'Username' },
-    { key: 'role_id', label: 'Role', render: (r) => nameFromOptions(lookups.roles(), r.role_id) },
-    { key: 'employee_id', label: 'Employee', render: (r) => nameFromOptions(lookups.employees(), r.employee_id) },
-    { key: 'account_locked', label: 'Locked', render: (r) => r.account_locked
-        ? <span className="text-[11px] font-bold text-red-600">Locked</span>
-        : <span className="text-[11px] text-slate-400">No</span> },
+    { key: 'department_id', label: 'ID', width: '70px' },
+    { key: 'department_code', label: 'Code' },
+    { key: 'department_name', label: 'Department' },
+    { key: 'org_name', label: 'Organization' },
     statusCol(),
   ],
   fields: [
-    { key: 'user_name', label: 'Username', type: 'text', required: true },
-    { key: 'password_hash', label: 'Password', type: 'text' },
-    { key: 'role_id', label: 'Role', type: 'select', required: true, options: lookups.roles() },
-    { key: 'employee_id', label: 'Employee', type: 'select', required: true, options: lookups.employees() },
-    { key: 'account_locked', label: 'Account Locked', type: 'checkbox' },
+    { key: 'department_code', label: 'Department Code', type: 'text', required: true },
+    { key: 'department_name', label: 'Department Name', type: 'text', required: true },
+    { key: 'description', label: 'Description', type: 'textarea' },
+    { key: 'is_active', label: 'Active', type: 'checkbox' },
+  ],
+};
+
+/* ── Designations → designation_master ── */
+export const designationsConfig = {
+  key: 'designations', title: 'Designations', subtitle: 'Job titles / designations',
+  icon: IdCard, api: designationsApi, idKey: 'designation_id', searchKeys: ['designation_name', 'designation_code'],
+  columns: [
+    { key: 'designation_id', label: 'ID', width: '70px' },
+    { key: 'designation_code', label: 'Code' },
+    { key: 'designation_name', label: 'Designation' },
+    { key: 'org_name', label: 'Organization' },
+    statusCol(),
+  ],
+  fields: [
+    { key: 'designation_code', label: 'Designation Code', type: 'text', required: true },
+    { key: 'designation_name', label: 'Designation Name', type: 'text', required: true },
+    { key: 'description', label: 'Description', type: 'textarea' },
     { key: 'is_active', label: 'Active', type: 'checkbox' },
   ],
 };
@@ -152,8 +180,8 @@ export const employeesConfig = {
     { key: 'employee_code', label: 'Code' },
     { key: 'employee_name', label: 'Name' },
     { key: 'email_id', label: 'Email' },
-    { key: 'department_id', label: 'Department', render: (r) => nameFromOptions(lookups.departments(), r.department_id) },
-    { key: 'designation_id', label: 'Designation', render: (r) => nameFromOptions(lookups.designations(), r.designation_id) },
+    { key: 'department_id', label: 'Department', render: (r) => r.department_name || '—' },
+    { key: 'designation_id', label: 'Designation', render: (r) => r.designation_name || '—' },
     statusCol(),
   ],
   fields: [
@@ -161,21 +189,74 @@ export const employeesConfig = {
     { key: 'employee_name', label: 'Full Name', type: 'text', required: true },
     { key: 'email_id', label: 'Email', type: 'text' },
     { key: 'mobile_no', label: 'Mobile No', type: 'text' },
-    { key: 'department_id', label: 'Department', type: 'select', options: lookups.departments() },
-    { key: 'designation_id', label: 'Designation', type: 'select', options: lookups.designations() },
+    { key: 'department_id', label: 'Department', type: 'select', loadOptions: optionLoader(departmentsApi, 'department_id', 'department_name') },
+    { key: 'designation_id', label: 'Designation', type: 'select', loadOptions: optionLoader(designationsApi, 'designation_id', 'designation_name') },
     { key: 'joining_date', label: 'Joining Date', type: 'date' },
-    { key: 'reporting_manager_id', label: 'Reporting Manager', type: 'select', options: lookups.employees() },
-    { key: 'employment_status_id', label: 'Employment Status', type: 'select', options: lookups.statuses() },
+    { key: 'reporting_manager_id', label: 'Reporting Manager', type: 'select', loadOptions: optionLoader(employeesApi, 'employee_id', 'employee_name') },
+    { key: 'employment_status_id', label: 'Employment Status', type: 'select', loadOptions: optionLoader(statusesApi, 'status_id', 'status_name') },
     { key: 'is_active', label: 'Active', type: 'checkbox' },
+  ],
+};
+
+/* ── User Master → user_master ── */
+export const usersConfig = {
+  key: 'users', title: 'User Master', subtitle: 'Application user accounts',
+  icon: UserCog, api: usersApi, idKey: 'user_id', searchKeys: ['user_name'],
+  columns: [
+    { key: 'user_id', label: 'ID', width: '70px' },
+    { key: 'user_name', label: 'Username' },
+    { key: 'role_id', label: 'Role', render: (r) => r.role_name || r.role_id },
+    { key: 'employee_id', label: 'Employee', render: (r) => r.employee_name || r.employee_id },
+    { key: 'account_locked', label: 'Locked', render: (r) => r.account_locked
+        ? <span className="text-[11px] font-bold text-red-600">Locked</span>
+        : <span className="text-[11px] text-slate-400">No</span> },
+    statusCol(),
+  ],
+  fields: [
+    { key: 'user_name', label: 'Username', type: 'text', required: true },
+    { key: 'password_hash', label: 'Password', type: 'text', help: 'Leave blank to keep existing (edit mode)' },
+    { key: 'role_id', label: 'Role', type: 'select', required: true, loadOptions: optionLoader(rolesApi, 'role_id', 'role_name') },
+    { key: 'employee_id', label: 'Employee', type: 'select', required: true, loadOptions: optionLoader(employeesApi, 'employee_id', 'employee_name') },
+    { key: 'account_locked', label: 'Account Locked', type: 'checkbox' },
+    { key: 'is_active', label: 'Active', type: 'checkbox' },
+  ],
+};
+
+/* ── Audit Logs → audit_log (read-only) ── */
+export const auditLogsConfig = {
+  key: 'audit-logs', title: 'Audit Logs', subtitle: 'Every insert / update / delete across master data',
+  icon: ScrollText, api: auditLogsApi, idKey: 'audit_id', readOnly: true,
+  searchKeys: ['table_name', 'action_type', 'user_name', 'ip_address'],
+  columns: [
+    { key: 'audit_id', label: 'ID', width: '70px' },
+    { key: 'created_at', label: 'When', render: (r) => (r.created_at || '').toString().slice(0, 19).replace('T', ' ') },
+    { key: 'table_name', label: 'Table' },
+    { key: 'action_type', label: 'Action', render: (r) => actionBadge(r.action_type) },
+    { key: 'record_id', label: 'Record', width: '90px' },
+    { key: 'user_name', label: 'User', render: (r) => r.user_name || `#${r.user_id || '—'}` },
+    { key: 'ip_address', label: 'IP' },
+  ],
+  fields: [
+    { key: 'table_name', label: 'Table', type: 'text', readOnly: true },
+    { key: 'action_type', label: 'Action', type: 'text', readOnly: true },
+    { key: 'record_id', label: 'Record ID', type: 'text', readOnly: true },
+    { key: 'user_name', label: 'User', type: 'text', readOnly: true },
+    { key: 'ip_address', label: 'IP Address', type: 'text', readOnly: true },
+    { key: 'created_at', label: 'Timestamp', type: 'text', readOnly: true },
+    { key: 'old_data', label: 'Old Data', type: 'json' },
+    { key: 'new_data', label: 'New Data', type: 'json' },
   ],
 };
 
 export const ADMIN_CONFIGS = {
   roles: rolesConfig,
+  'audit-logs': auditLogsConfig,
   permissions: permissionsConfig,
   modules: modulesConfig,
   pages: pagesConfig,
-  'role-permissions': grppConfig,
-  users: usersConfig,
+  organizations: organizationsConfig,
+  departments: departmentsConfig,
+  designations: designationsConfig,
   employees: employeesConfig,
+  users: usersConfig,
 };
