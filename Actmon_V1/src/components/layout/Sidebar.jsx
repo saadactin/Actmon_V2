@@ -37,7 +37,8 @@ export const Sidebar = () => {
     { icon: HardDrive, label: 'Infrastructure', route: '/infra', adminOnly: false },
     { icon: Brain, label: 'ML / AI', route: '/ml', adminOnly: false },
     { icon: Bell, label: 'Alerts', route: '/alerts', adminOnly: false },
-    { icon: Users, label: 'Users', route: '/users', adminOnly: true },
+    // adminOnly will be replaced by real RBAC (group_role_page_permission) later
+    { icon: Shield, label: 'Administration', route: '/administration', adminOnly: false },
     { icon: Settings, label: 'Settings', route: '/settings', adminOnly: false },
   ];
 

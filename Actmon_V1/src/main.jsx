@@ -55,11 +55,14 @@ import ServerDetail from './pages/databases/ServerDetail';
 import { CloudPage } from './pages/cloud/CloudPage';
 import { MLPage } from './pages/ml/MLPage';
 import { AlertsPage } from './pages/alerts/AlertsPage';
-import { UsersPage } from './pages/users/UsersPage';
 import { InfraPage } from './pages/infra/InfraPage';
 import { SettingsPage } from './pages/settings/SettingsPage';
 import { NotFound } from './pages/NotFound';
 import ChatbotPage from './pages/chatbot/ChatbotPage';
+import AdministrationPage from './pages/admin/AdministrationPage';
+import AdminResourcePage from './pages/admin/_shared/AdminResourcePage';
+import GroupRolePagePermission from './pages/admin/GroupRolePagePermission';
+import { ADMIN_CONFIGS } from './pages/admin/adminConfigs';
 import './index.css';
 
 // Create a client
@@ -110,8 +113,22 @@ const router = createBrowserRouter([
         path: 'connections/add',
         element: <AddConnectionPage />,
       },
+      // Per-technology SERVER LIST routes (Databases page, locked to one tech).
+      // Flow: /databases (tech grid) → /{tech}-servers → /{tech}-dashboard/:id
+      { path: 'mysql-servers', element: <DatabaseServersPage tech="mysql" /> },
+      { path: 'postgresql-servers', element: <DatabaseServersPage tech="postgresql" /> },
+      { path: 'oracle-servers', element: <DatabaseServersPage tech="oracle" /> },
+      { path: 'mssql-servers', element: <DatabaseServersPage tech="mssql" /> },
+      { path: 'mongodb-servers', element: <DatabaseServersPage tech="mongodb" /> },
+      { path: 'clickhouse-servers', element: <DatabaseServersPage tech="clickhouse" /> },
       {
         path: 'mysql-dashboard/:id',
+        element: <MySQLDashboard />,
+      },
+      // Dashboard tabs as routes: /mysql-dashboard/:id/overview, /performance, /queries, …
+      // (the explicit pages below — slow-queries, error-logs, etc. — outrank :tab)
+      {
+        path: 'mysql-dashboard/:id/:tab',
         element: <MySQLDashboard />,
       },
       {
@@ -150,12 +167,14 @@ const router = createBrowserRouter([
       { path: 'postgresql-dashboard/:id/index-analysis', element: <PGIndexAnalysis /> },
       { path: 'postgresql-dashboard/:id/backup', element: <PostgreSQLBackupPage /> },
       { path: 'postgresql-dashboard/:id/reports', element: <PostgreSQLReportsPage /> },
+      { path: 'postgresql-dashboard/:id/:tab', element: <PostgreSQLDashboard /> },
       // MSSQL
       { path: 'mssql-dashboard/:id', element: <MSSQLDashboard /> },
       { path: 'mssql-dashboard/:id/slow-queries', element: <MSSQLSlowQueries /> },
       { path: 'mssql-dashboard/:id/error-logs', element: <MSSQLErrorLogs /> },
       { path: 'mssql-dashboard/:id/index-analysis', element: <MSSQLIndexAnalysis /> },
       { path: 'mssql-dashboard/:id/backup', element: <MSSQLBackupPage /> },
+      { path: 'mssql-dashboard/:id/:tab', element: <MSSQLDashboard /> },
       // Oracle
       { path: 'oracle-dashboard/:id', element: <OracleDashboard /> },
       { path: 'oracle-dashboard/:id/slow-queries', element: <OracleSlowQueries /> },
@@ -163,17 +182,20 @@ const router = createBrowserRouter([
       { path: 'oracle-dashboard/:id/index-analysis', element: <OracleIndexAnalysis /> },
       { path: 'oracle-dashboard/:id/reports', element: <OracleReportsPage /> },
       { path: 'oracle-dashboard/:id/live-queries', element: <OracleLiveQueriesPage /> },
+      { path: 'oracle-dashboard/:id/:tab', element: <OracleDashboard /> },
       // MongoDB
       { path: 'mongodb-dashboard/:id', element: <MongoDBDashboard /> },
       { path: 'mongodb-dashboard/:id/slow-operations', element: <MongoSlowOperations /> },
       { path: 'mongodb-dashboard/:id/error-logs', element: <MongoErrorLogs /> },
       { path: 'mongodb-dashboard/:id/collection-analysis', element: <MongoCollectionAnalysis /> },
       { path: 'mongodb-dashboard/:id/backup', element: <MongoDBBackupPage /> },
+      { path: 'mongodb-dashboard/:id/:tab', element: <MongoDBDashboard /> },
       // ClickHouse
       { path: 'clickhouse-dashboard/:id', element: <ClickHouseDashboard /> },
       { path: 'clickhouse-dashboard/:id/slow-queries', element: <CHSlowQueries /> },
       { path: 'clickhouse-dashboard/:id/error-logs', element: <CHErrorLogs /> },
       { path: 'clickhouse-dashboard/:id/table-analysis', element: <CHTableAnalysis /> },
+      { path: 'clickhouse-dashboard/:id/:tab', element: <ClickHouseDashboard /> },
       {
         path: 'databases',
         element: <DatabaseServersPage />,
@@ -207,14 +229,17 @@ const router = createBrowserRouter([
         path: 'alerts',
         element: <AlertsPage />,
       },
-      {
-        path: 'users',
-        element: (
-          <ProtectedRoute adminOnly>
-            <UsersPage />
-          </ProtectedRoute>
-        ),
-      },
+      // ── Administration (frontend-only CRUD UI; backend SPs come later) ──
+      { path: 'administration', element: <AdministrationPage /> },
+      { path: 'roles', element: <AdminResourcePage config={ADMIN_CONFIGS.roles} /> },
+      { path: 'permissions', element: <AdminResourcePage config={ADMIN_CONFIGS.permissions} /> },
+      { path: 'modules', element: <AdminResourcePage config={ADMIN_CONFIGS.modules} /> },
+      { path: 'pages', element: <AdminResourcePage config={ADMIN_CONFIGS.pages} /> },
+      { path: 'role-permissions', element: <GroupRolePagePermission /> },
+      { path: 'role-permissions/:orgId', element: <GroupRolePagePermission /> },
+      { path: 'role-permissions/:orgId/:roleId', element: <GroupRolePagePermission /> },
+      { path: 'users', element: <AdminResourcePage config={ADMIN_CONFIGS.users} /> },
+      { path: 'employees', element: <AdminResourcePage config={ADMIN_CONFIGS.employees} /> },
       {
         path: 'settings',
         element: <SettingsPage />,

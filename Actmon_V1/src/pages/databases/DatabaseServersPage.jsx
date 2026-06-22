@@ -319,10 +319,14 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate }) {
 /* ══════════════════════════════════════════════════════
    PAGE
 ══════════════════════════════════════════════════════ */
-export default function DatabaseServersPage() {
+export default function DatabaseServersPage({ tech = null }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const [selectedTech, setSelectedTech]     = useState(null);
+  // The selected technology is driven by the ROUTE (tech prop), not internal
+  // state — so /databases shows the grid and /{tech}-servers shows that tech.
+  const selectedTech = tech;
+  // Navigate to a technology's server-list route (or back to the grid for null).
+  const goToTech = (id) => navigate(id ? `/${id}-servers` : '/databases');
   const [envFilter, setEnvFilter]           = useState('All');
   const [search, setSearch]                 = useState('');
   const [terminalServer, setTerminalServer] = useState(null);
@@ -413,7 +417,7 @@ export default function DatabaseServersPage() {
       <TechSelectorScreen
         techCounts={techCounts}
         summary={summary}
-        onSelect={setSelectedTech}
+        onSelect={goToTech}
         navigate={navigate}
       />
     );
@@ -450,9 +454,9 @@ export default function DatabaseServersPage() {
 
         {/* breadcrumb */}
         <div className="relative flex items-center gap-2 text-xs text-slate-500 mb-5">
-          <button onClick={() => setSelectedTech(null)} className="hover:text-slate-300 cursor-pointer transition-colors">ActMon</button>
+          <button onClick={() => goToTech(null)} className="hover:text-slate-300 cursor-pointer transition-colors">ActMon</button>
           <ChevronRight size={11}/>
-          <button onClick={() => setSelectedTech(null)} className="hover:text-slate-300 cursor-pointer transition-colors">Databases</button>
+          <button onClick={() => goToTech(null)} className="hover:text-slate-300 cursor-pointer transition-colors">Databases</button>
           <ChevronRight size={11}/>
           <span className="text-slate-300 font-semibold">{techConfig.name}</span>
         </div>
@@ -461,7 +465,7 @@ export default function DatabaseServersPage() {
         <div className="relative flex flex-col md:flex-row md:items-start justify-between gap-5 mb-6">
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setSelectedTech(null)}
+              onClick={() => goToTech(null)}
               className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-white transition-all flex-shrink-0"
               title="Back to technologies"
             >
@@ -545,7 +549,7 @@ export default function DatabaseServersPage() {
             {TECH_CONFIG.map(t => (
               <button
                 key={t.id}
-                onClick={() => { setSelectedTech(t.id); setSearch(''); }}
+                onClick={() => { setSearch(''); goToTech(t.id); }}
                 className={`h-7 px-3 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1.5 ${
                   t.id === selectedTech
                     ? `${t.accent} text-white shadow`

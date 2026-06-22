@@ -656,9 +656,12 @@ function ClickableKpi({ title, value, accent, onClick, hint }) {
 
 /* ─── main component ─── */
 export default function MongoDBDashboard() {
-  const { id } = useParams();
+  const { id, tab } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab]   = useState('overview');
+  // Tab is URL-driven: /mongodb-dashboard/:id/:tab → every tab has its own route.
+  const activeTab = tab || 'overview';
+  const setActiveTab = (t) =>
+    navigate(`/mongodb-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
   const [countdown, setCountdown]   = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines] = useState({ conn: [], cache: [], ops: [] });
   const [collSearch, setCollSearch] = useState('');

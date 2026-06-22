@@ -52,9 +52,12 @@ const TABS = [
 const REFRESH_INTERVAL = 15;
 
 export default function PostgreSQLDashboard() {
-  const { id } = useParams();
+  const { id, tab } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab]         = useState('overview');
+  // Tab is URL-driven: /postgresql-dashboard/:id/:tab → every tab has its own route.
+  const activeTab = tab || 'overview';
+  const setActiveTab = (t) =>
+    navigate(`/postgresql-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
   const [countdown, setCountdown]         = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines]       = useState({ conn: [], cache: [], tps: [] });
   const [querySearch, setQuerySearch]     = useState('');

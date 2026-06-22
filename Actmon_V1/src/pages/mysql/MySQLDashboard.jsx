@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Database, Server, Activity, HardDrive, RefreshCw, Clock,
@@ -338,9 +338,14 @@ function DiagnosisCenter({ id, error, data, refetch }) {
 }
 
 export default function MySQLDashboard() {
-  const { id } = useParams();
+  const { id, tab } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab]     = useState('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ── Tab is URL-driven: /mysql-dashboard/:id/:tab → every tab has its own route.
+  // setActiveTab keeps its old signature but now navigates instead of setState.
+  const activeTab = tab || 'overview';
+  const setActiveTab = (t) =>
+    navigate(`/mysql-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
   const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines]   = useState({ conn: [], cache: [], qps: [] });
   const [tableSearch, setTableSearch] = useState('');
@@ -364,7 +369,13 @@ export default function MySQLDashboard() {
   // Performance tab state
   const [perfStmtSort, setPerfStmtSort] = useState({ key: 'sum_ms', asc: false });
   const [perfStmtSearch, setPerfStmtSearch] = useState('');
-  const [perfSection, setPerfSection] = useState('all');
+  // Performance sub-section is URL-driven too (?section=bufpool, io, …).
+  const perfSection = searchParams.get('section') || 'all';
+  const setPerfSection = (s) => {
+    const sp = new URLSearchParams(searchParams);
+    if (!s || s === 'all') sp.delete('section'); else sp.set('section', s);
+    setSearchParams(sp, { replace: true });
+  };
   const [perfSparklines, setPerfSparklines] = useState({ qps: [], hit: [], txns: [] });
 
   // Drill-down / expand state

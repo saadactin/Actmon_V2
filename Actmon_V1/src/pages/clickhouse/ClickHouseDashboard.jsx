@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Database, Server, Activity, HardDrive, RefreshCw, Clock,
@@ -57,8 +57,12 @@ const TABS = [
 const RI = 15;
 
 export default function ClickHouseDashboard() {
-  const { id } = useParams();
-  const [tab, setTab]           = useState('overview');
+  const { id, tab: tabParam } = useParams();
+  const navigate = useNavigate();
+  // Tab is URL-driven: /clickhouse-dashboard/:id/:tab → every tab has its own route.
+  const tab = tabParam || 'overview';
+  const setTab = (t) =>
+    navigate(`/clickhouse-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
   const [countdown, setCountdown] = useState(RI);
   const [sparklines, setSpark]  = useState({ mem:[], qps:[], parts:[] });
   const [tblSearch, setTblSearch] = useState('');
