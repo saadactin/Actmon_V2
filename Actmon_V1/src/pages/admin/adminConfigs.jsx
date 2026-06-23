@@ -1,9 +1,14 @@
-import { Shield, KeyRound, Boxes, FileText, UserCog, Users, Building2, Network, IdCard, ScrollText } from 'lucide-react';
+import { Shield, KeyRound, Boxes, FileText, UserCog, Users, Building2, Network, IdCard, ScrollText, History, MonitorSmartphone, KeySquare } from 'lucide-react';
 import {
   rolesApi, permissionsApi, modulesApi, pagesApi,
   organizationsApi, departmentsApi, designationsApi, employeesApi, usersApi,
-  statusesApi, auditLogsApi, optionLoader,
+  statusesApi, auditLogsApi, loginHistoryApi, userSessionsApi, passwordHistoryApi, optionLoader,
 } from '../../api/admin';
+
+const fmtTime = (v) => (v ? String(v).slice(0, 19).replace('T', ' ') : '—');
+const boolBadge = (v, [on, off] = ['Yes', 'No']) => (
+  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${v ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{v ? on : off}</span>
+);
 
 const ACTION_COLORS = { INSERT: 'bg-emerald-50 text-emerald-700', UPDATE: 'bg-amber-50 text-amber-700', DELETE: 'bg-red-50 text-red-700' };
 const actionBadge = (a) => (
@@ -248,9 +253,78 @@ export const auditLogsConfig = {
   ],
 };
 
+/* ── Login History → login_history (read-only) ── */
+export const loginHistoryConfig = {
+  key: 'login-history', title: 'Login History', subtitle: 'User login / logout activity',
+  icon: History, api: loginHistoryApi, idKey: 'login_history_id', readOnly: true,
+  searchKeys: ['user_name', 'ip_address', 'browser_name', 'operating_system'],
+  columns: [
+    { key: 'login_history_id', label: 'ID', width: '70px' },
+    { key: 'user_name', label: 'User', render: (r) => r.user_name || `#${r.user_id || '—'}` },
+    { key: 'login_status', label: 'Status', render: (r) => boolBadge(r.login_status, ['Success', 'Failed']) },
+    { key: 'login_time', label: 'Login', render: (r) => fmtTime(r.login_time) },
+    { key: 'logout_time', label: 'Logout', render: (r) => fmtTime(r.logout_time) },
+    { key: 'ip_address', label: 'IP' },
+    { key: 'browser_name', label: 'Browser' },
+    { key: 'operating_system', label: 'OS' },
+  ],
+  fields: [
+    { key: 'user_name', label: 'User', type: 'text', readOnly: true },
+    { key: 'login_time', label: 'Login Time', type: 'text', readOnly: true },
+    { key: 'logout_time', label: 'Logout Time', type: 'text', readOnly: true },
+    { key: 'ip_address', label: 'IP Address', type: 'text', readOnly: true },
+    { key: 'device_name', label: 'Device', type: 'text', readOnly: true },
+    { key: 'browser_name', label: 'Browser', type: 'text', readOnly: true },
+    { key: 'operating_system', label: 'Operating System', type: 'text', readOnly: true },
+  ],
+};
+
+/* ── User Sessions → user_session (read-only) ── */
+export const userSessionsConfig = {
+  key: 'user-sessions', title: 'User Sessions', subtitle: 'Active & past login sessions',
+  icon: MonitorSmartphone, api: userSessionsApi, idKey: 'session_id', readOnly: true,
+  searchKeys: ['user_name', 'ip_address', 'device_name'],
+  columns: [
+    { key: 'session_id', label: 'ID', width: '70px' },
+    { key: 'user_name', label: 'User', render: (r) => r.user_name || `#${r.user_id || '—'}` },
+    { key: 'is_live', label: 'Live', render: (r) => boolBadge(r.is_live, ['Live', 'Ended']) },
+    { key: 'login_time', label: 'Started', render: (r) => fmtTime(r.login_time) },
+    { key: 'expiry_time', label: 'Expires', render: (r) => fmtTime(r.expiry_time) },
+    { key: 'ip_address', label: 'IP' },
+    { key: 'device_name', label: 'Device' },
+  ],
+  fields: [
+    { key: 'user_name', label: 'User', type: 'text', readOnly: true },
+    { key: 'login_time', label: 'Login Time', type: 'text', readOnly: true },
+    { key: 'expiry_time', label: 'Expiry Time', type: 'text', readOnly: true },
+    { key: 'ip_address', label: 'IP Address', type: 'text', readOnly: true },
+    { key: 'device_name', label: 'Device', type: 'text', readOnly: true },
+  ],
+};
+
+/* ── Password History → password_history (read-only, hash masked) ── */
+export const passwordHistoryConfig = {
+  key: 'password-history', title: 'Password History', subtitle: 'When users changed passwords',
+  icon: KeySquare, api: passwordHistoryApi, idKey: 'password_history_id', readOnly: true,
+  searchKeys: ['user_name'],
+  columns: [
+    { key: 'password_history_id', label: 'ID', width: '70px' },
+    { key: 'user_name', label: 'User', render: (r) => r.user_name || `#${r.user_id || '—'}` },
+    { key: 'employee_name', label: 'Employee' },
+    { key: 'created_at', label: 'Changed At', render: (r) => fmtTime(r.created_at) },
+  ],
+  fields: [
+    { key: 'user_name', label: 'User', type: 'text', readOnly: true },
+    { key: 'created_at', label: 'Changed At', type: 'text', readOnly: true },
+  ],
+};
+
 export const ADMIN_CONFIGS = {
   roles: rolesConfig,
   'audit-logs': auditLogsConfig,
+  'login-history': loginHistoryConfig,
+  'user-sessions': userSessionsConfig,
+  'password-history': passwordHistoryConfig,
   permissions: permissionsConfig,
   modules: modulesConfig,
   pages: pagesConfig,

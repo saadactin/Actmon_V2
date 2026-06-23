@@ -13,6 +13,7 @@ from typing import Optional, List
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
+from app.services.auth.tenant_context import tenant_ctx, scope_org_id
 from app.services.chatbot.ai_engine import (
     build_system_prompt,
     stream_chat,
@@ -61,8 +62,11 @@ class QuickQueryRequest(BaseModel):
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _conn_list(db: Session) -> list:
-    rows = db.query(ConnectionMaster).all()
+def _conn_list(db: Session, org_id: Optional[int] = None) -> list:
+    q = db.query(ConnectionMaster)
+    if org_id is not None:
+        q = q.filter(ConnectionMaster.org_id == org_id)
+    rows = q.all()
     return [
         {
             "id": r.id,
@@ -90,14 +94,39 @@ def _build_messages(system: str, history: List[ChatMessageItem], user_msg: str) 
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/chat/stream")
-async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
+async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
     """
     Main SSE streaming chat. Frontend reads this with fetch + ReadableStream.
     Events: {type:"token", text:"..."} | {type:"done", suggestions:[...], actions:[...]} | {type:"error"}
     """
-    connections = _conn_list(db)
+    connections = _conn_list(db, scope_org_id(ctx))
     system_prompt = build_system_prompt(connections, payload.context or {})
     messages = _build_messages(system_prompt, payload.history, payload.message)
+
+    # ── Live grounding: if the user asks about a node's health/status, fetch its
+    #    real-time dashboard data and feed it to the model so it reports actual numbers. ──
+    from app.services.chatbot import health_tool
+    ctx_conn = None
+    if payload.context and payload.context.get("connection_id"):
+        ctx_conn = next((c for c in connections if c["id"] == payload.context["connection_id"]), None)
+    if health_tool.detect_health_intent(payload.message):
+        conn = health_tool.find_connection(db, payload.message, scope_org_id(ctx))
+        if conn is None and ctx_conn:  # fall back to the node the user is currently viewing
+            conn = db.query(ConnectionMaster).filter(ConnectionMaster.id == ctx_conn["id"]).first()
+        if conn is not None:
+            live = health_tool.compact(health_tool.get_live_health(db, conn))
+            live_block = (
+                "You are answering with LIVE REAL-TIME DATA for the requested node — captured just now. "
+                "Use ONLY these numbers; never invent values. Do NOT output any SQL, code blocks, or ``` fences. "
+                "Reply as a real-time DB HEALTH REPORT in markdown with these sections and nothing else:\n"
+                "### Overall Status\n(healthy / degraded / critical — one line)\n"
+                "### Key Metrics\n(bullet list using the actual values: uptime, connections, cache hit, slow queries, sizes, replication, etc.)\n"
+                "### Concerns\n(anything risky, or 'None')\n"
+                "### Recommendations\n(actionable bullets, or 'None — operating normally')\n"
+                f"Node: {conn.connection_name} — {(conn.db_type or '').upper()} @ {conn.host}\n"
+                f"LIVE DATA JSON:\n{json.dumps(live, default=str)[:6500]}"
+            )
+            messages.insert(0, {"role": "system", "content": live_block})
 
     def generate():
         yield from stream_chat(messages)
@@ -118,9 +147,9 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.get("/connections")
-def list_connections(db: Session = Depends(get_db)):
-    """Return all configured connections for the chatbot context selector."""
-    return {"connections": _conn_list(db)}
+def list_connections(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    """Return this org's configured connections for the chatbot context selector."""
+    return {"connections": _conn_list(db, scope_org_id(ctx))}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -128,9 +157,9 @@ def list_connections(db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.get("/report/connections")
-def report_connections(db: Session = Depends(get_db)):
-    """Download all connections as CSV."""
-    connections = _conn_list(db)
+def report_connections(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    """Download this org's connections as CSV."""
+    connections = _conn_list(db, scope_org_id(ctx))
     csv_data = generate_connections_csv(connections)
     return StreamingResponse(
         io.StringIO(csv_data),
@@ -140,9 +169,9 @@ def report_connections(db: Session = Depends(get_db)):
 
 
 @router.get("/report/health")
-def report_health(db: Session = Depends(get_db)):
-    """Download health summary CSV for all connections."""
-    connections = _conn_list(db)
+def report_health(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    """Download health summary CSV for this org's connections."""
+    connections = _conn_list(db, scope_org_id(ctx))
     csv_data = generate_health_summary_csv(connections)
     return StreamingResponse(
         io.StringIO(csv_data),
@@ -152,12 +181,16 @@ def report_health(db: Session = Depends(get_db)):
 
 
 @router.get("/report/slow-queries/{conn_id}")
-def report_slow_queries(conn_id: int, db_type: str = Query("mysql"), db: Session = Depends(get_db)):
+def report_slow_queries(conn_id: int, db_type: str = Query("mysql"), db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
     """
     Download slow queries CSV for a given connection.
     Fetches from pg_stat_statements (PG) or performance_schema (MySQL).
     """
-    rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
+    q = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id)
+    _org = scope_org_id(ctx)
+    if _org is not None:
+        q = q.filter(ConnectionMaster.org_id == _org)
+    rec = q.first()
     if not rec:
         return StreamingResponse(io.StringIO("error,Connection not found"), media_type="text/csv")
 

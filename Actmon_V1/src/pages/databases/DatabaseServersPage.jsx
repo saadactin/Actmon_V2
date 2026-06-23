@@ -11,6 +11,7 @@ import {
   listOsServers, getServerSummary, refreshServerStatus, deleteOsServer, getLiveStatus,
 } from '../../api/servers';
 import { listConnections } from '../../api/connections';
+import { usePermissions } from '../../hooks/usePermissions';
 
 /* ══════════════════════════════════════════════════════
    TECHNOLOGY CONFIGURATION
@@ -174,7 +175,7 @@ function dbColor(s) { return DB_COLORS[(s||'').toLowerCase()] || 'bg-slate-100 t
 /* ══════════════════════════════════════════════════════
    TECH SELECTOR SCREEN
 ══════════════════════════════════════════════════════ */
-function TechSelectorScreen({ onSelect, techCounts, summary, navigate }) {
+function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true }) {
   return (
     <div className="min-h-screen bg-[#f1f4f9]">
       {/* Hero */}
@@ -214,12 +215,14 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate }) {
                 </span>
               </div>
             </div>
-            <button
-              onClick={() => navigate('/databases/add-os-server')}
-              className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
-            >
-              <Plus size={15}/> Add Server
-            </button>
+            {canAdd && (
+              <button
+                onClick={() => navigate('/databases/add-os-server')}
+                className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
+              >
+                <Plus size={15}/> Add Server
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -229,11 +232,18 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate }) {
         <div className="flex items-center gap-3 mb-7">
           <h2 className="text-[18px] font-black text-slate-800">Choose Technology</h2>
           <div className="flex-1 h-px bg-slate-200"/>
-          <span className="text-xs text-slate-400 font-medium">{TECH_CONFIG.length} technologies monitored</span>
+          <span className="text-xs text-slate-400 font-medium">{techs.length} technolog{techs.length !== 1 ? 'ies' : 'y'} available</span>
         </div>
 
+        {techs.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-16 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4"><Database size={28} className="text-slate-300"/></div>
+            <h3 className="text-lg font-black text-slate-700">No database access</h3>
+            <p className="text-slate-400 text-sm mt-1">Your role hasn't been granted access to any database technology yet.</p>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {TECH_CONFIG.map((tech) => {
+          {techs.map((tech) => {
             const counts = techCounts[tech.id] || { servers: 0, connections: 0 };
             return (
               <button
@@ -291,6 +301,7 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate }) {
             );
           })}
         </div>
+        )}
 
         {/* global summary strip */}
         <div className="mt-8 bg-white rounded-2xl border border-slate-100 shadow-sm px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -322,6 +333,9 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate }) {
 export default function DatabaseServersPage({ tech = null }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { can, canHere } = usePermissions();
+  // Only the technologies the user's role can view (hub shows just these).
+  const allowedTechs = TECH_CONFIG.filter((t) => can(`/${t.id}-servers`, 'view'));
   // The selected technology is driven by the ROUTE (tech prop), not internal
   // state — so /databases shows the grid and /{tech}-servers shows that tech.
   const selectedTech = tech;
@@ -419,6 +433,8 @@ export default function DatabaseServersPage({ tech = null }) {
         summary={summary}
         onSelect={goToTech}
         navigate={navigate}
+        techs={allowedTechs}
+        canAdd={canHere('add')}
       />
     );
   }
@@ -498,12 +514,14 @@ export default function DatabaseServersPage({ tech = null }) {
                 <p className="text-slate-400 text-[10px] mt-0.5">servers online</p>
               </div>
             </div>
-            <button
-              onClick={() => navigate('/databases/add-os-server')}
-              className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
-            >
-              <Plus size={15}/> Add Server
-            </button>
+            {canHere('add') && (
+              <button
+                onClick={() => navigate('/databases/add-os-server')}
+                className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
+              >
+                <Plus size={15}/> Add Server
+              </button>
+            )}
           </div>
         </div>
 
@@ -546,7 +564,7 @@ export default function DatabaseServersPage({ tech = null }) {
 
           {/* tech switcher pills */}
           <div className="flex items-center gap-1 ml-2 pl-2 border-l border-slate-200 flex-wrap">
-            {TECH_CONFIG.map(t => (
+            {allowedTechs.map(t => (
               <button
                 key={t.id}
                 onClick={() => { setSearch(''); goToTech(t.id); }}
@@ -589,7 +607,7 @@ export default function DatabaseServersPage({ tech = null }) {
             <p className="text-slate-400 text-sm mb-6">
               {search ? 'Try a different search term.' : `Add a server with ${techConfig.name} installed to start monitoring.`}
             </p>
-            {!search && (
+            {!search && canHere('add') && (
               <button onClick={() => navigate('/databases/add-os-server')}
                 className="h-10 px-6 rounded-xl bg-slate-900 text-white font-bold text-sm hover:bg-slate-700 shadow transition-all">
                 + Add OS Server

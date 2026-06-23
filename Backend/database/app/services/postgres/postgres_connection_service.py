@@ -112,14 +112,17 @@ def _get_conn_or_404(connection_id: int, db: Session):
 #  CRUD
 # ──────────────────────────────────────────────────────────────
 
-def svc_list_connections(db: Session):
-    connections = db.query(ConnectionMaster).filter(
+def svc_list_connections(db: Session, org_id=None):
+    query = db.query(ConnectionMaster).filter(
         ConnectionMaster.db_type == "postgresql"
-    ).all()
+    )
+    if org_id is not None:
+        query = query.filter(ConnectionMaster.org_id == org_id)
+    connections = query.all()
     return {"status": "success", "data": connections}
 
 
-def svc_create_connection(request: PostgreSQLConnectionCreate, db: Session):
+def svc_create_connection(request: PostgreSQLConnectionCreate, db: Session, org_id=1):
     try:
         engine = _pg_engine(request)
         with engine.connect() as c:
@@ -128,6 +131,7 @@ def svc_create_connection(request: PostgreSQLConnectionCreate, db: Session):
         new_conn = ConnectionMaster(
             connection_name=request.connection_name,
             db_type="postgresql",
+            org_id=org_id,
             registration_mode="standard",
             environment="Production",
             host=request.host,

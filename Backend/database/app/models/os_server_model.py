@@ -8,6 +8,7 @@ class OsServer(Base):
     __tablename__ = "os_servers"
 
     id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, nullable=False, default=1, index=True)  # tenant scope
     server_name = Column(String(255), nullable=False)
     hostname = Column(String(500))
     ip_address = Column(String(100), nullable=False)
@@ -43,6 +44,7 @@ class DatabaseInstance(Base):
     __tablename__ = "database_instances"
 
     id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, nullable=False, default=1, index=True)  # tenant scope
     server_id = Column(Integer, ForeignKey("os_servers.id"), nullable=False)
     db_type = Column(String(100))
     db_version = Column(String(100))

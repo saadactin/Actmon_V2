@@ -7,17 +7,21 @@ from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import OracleConnectionCreate
 
 
-def list_connections(db: Session):
-    connections = db.query(ConnectionMaster).filter(
+def list_connections(db: Session, org_id=None):
+    query = db.query(ConnectionMaster).filter(
         ConnectionMaster.db_type == "oracle"
-    ).all()
+    )
+    if org_id is not None:
+        query = query.filter(ConnectionMaster.org_id == org_id)
+    connections = query.all()
     return {"status": "success", "data": connections}
 
 
-def create_connection(request: OracleConnectionCreate, db: Session):
+def create_connection(request: OracleConnectionCreate, db: Session, org_id=1):
     try:
         new_connection = ConnectionMaster(
             db_type="oracle",
+            org_id=org_id,
             connection_name=request.connection_name,
             host=request.host,
             port=request.port,

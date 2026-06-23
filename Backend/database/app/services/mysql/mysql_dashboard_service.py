@@ -43,14 +43,17 @@ def _engine(conn: ConnectionMaster):
 #  Connection CRUD
 # ═════════════════════════════════════════════════════════════════════════════
 
-def list_connections(db: Session) -> dict:
-    connections = db.query(ConnectionMaster).filter(
+def list_connections(db: Session, org_id=None) -> dict:
+    query = db.query(ConnectionMaster).filter(
         ConnectionMaster.db_type == "mysql"
-    ).all()
+    )
+    if org_id is not None:
+        query = query.filter(ConnectionMaster.org_id == org_id)
+    connections = query.all()
     return {"status": "success", "data": connections}
 
 
-def create_connection(request: MySQLConnectionCreate, db: Session) -> dict:
+def create_connection(request: MySQLConnectionCreate, db: Session, org_id=1) -> dict:
     encoded  = quote_plus(request.password)
     url      = (
         f"mysql+pymysql://{request.username}:{encoded}"
@@ -66,6 +69,7 @@ def create_connection(request: MySQLConnectionCreate, db: Session) -> dict:
     new_conn = ConnectionMaster(
         connection_name=request.connection_name,
         db_type="mysql",
+        org_id=org_id,
         host=request.host,
         port=request.port,
         username=request.username,

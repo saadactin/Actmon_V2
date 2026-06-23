@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal
 from app.models.connection_schema import ClickHouseConnectionCreate
 from app.services.clickhouse import clickhouse_connection_service
+from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
 
 router = APIRouter(
     prefix="/api/v1/connections/clickhouse",
@@ -20,13 +21,13 @@ def get_db():
 
 
 @router.get("/")
-def list_clickhouse_connections(db: Session = Depends(get_db)):
-    return clickhouse_connection_service.list_connections(db)
+def list_clickhouse_connections(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return clickhouse_connection_service.list_connections(db, scope_org_id(ctx))
 
 
 @router.post("/")
-def create_clickhouse_connection(request: ClickHouseConnectionCreate, db: Session = Depends(get_db)):
-    return clickhouse_connection_service.create_connection(request, db)
+def create_clickhouse_connection(request: ClickHouseConnectionCreate, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return clickhouse_connection_service.create_connection(request, db, create_org_id(ctx))
 
 
 @router.get("/{connection_id}")

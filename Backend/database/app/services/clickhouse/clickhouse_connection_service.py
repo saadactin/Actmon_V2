@@ -5,17 +5,21 @@ from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import ClickHouseConnectionCreate
 
 
-def list_connections(db: Session) -> dict:
-    connections = db.query(ConnectionMaster).filter(
+def list_connections(db: Session, org_id=None) -> dict:
+    query = db.query(ConnectionMaster).filter(
         ConnectionMaster.db_type == "clickhouse"
-    ).all()
+    )
+    if org_id is not None:
+        query = query.filter(ConnectionMaster.org_id == org_id)
+    connections = query.all()
     return {"status": "success", "data": connections}
 
 
-def create_connection(request: ClickHouseConnectionCreate, db: Session) -> dict:
+def create_connection(request: ClickHouseConnectionCreate, db: Session, org_id=1) -> dict:
     try:
         new_conn = ConnectionMaster(
             db_type="clickhouse",
+            org_id=org_id,
             connection_name=request.connection_name,
             host=request.host,
             port=request.port,

@@ -42,6 +42,16 @@ export const TopBar = () => {
   return (
     <header className="h-16 bg-white border-b border-brand-border flex items-center justify-between px-6 z-30 sticky top-0">
 
+     <div className="flex items-center gap-4 min-w-0">
+      {/* ── Company logo (logged-in org) ── */}
+      {user?.org_logo && (
+        <div className="flex items-center gap-2 pr-4 border-r border-slate-200 flex-shrink-0" title={user?.org_name}>
+          <img src={encodeURI(user.org_logo)} alt={user?.org_name || 'Company'}
+            className="h-8 max-w-[130px] object-contain"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        </div>
+      )}
+
       {/* ── Breadcrumbs ── */}
       <nav className="flex text-sm text-brand-text-secondary" aria-label="Breadcrumb">
         <ol className="inline-flex items-center space-x-1 md:space-x-2">
@@ -64,6 +74,7 @@ export const TopBar = () => {
           })}
         </ol>
       </nav>
+     </div>
 
       {/* ── Right controls ── */}
       <div className="flex items-center gap-3">
@@ -121,14 +132,17 @@ export const TopBar = () => {
           <PopoverSurface className="w-64 p-4">
             <div className="flex flex-col gap-3">
               <Persona
-                name={user?.username || 'admin'}
-                secondaryText={user?.email || 'admin@actmon.local'}
+                name={user?.employee_name || user?.username || 'User'}
+                secondaryText={user?.email || `${user?.username || 'user'}@actmon.local`}
                 presence={{ status: 'available' }}
                 avatar={{ color: 'brand' }}
               />
               <div className="border-t border-brand-border my-1" />
               <p className="text-xs text-brand-text-secondary px-2">
-                Role: <span className="font-semibold">{user?.role || 'Admin'}</span>
+                Organization: <span className="font-semibold">{user?.org_name || '—'}</span>
+              </p>
+              <p className="text-xs text-brand-text-secondary px-2">
+                Role: <span className="font-semibold">{user?.role || user?.role_name || '—'}</span>
               </p>
               <div className="border-t border-brand-border my-1" />
               <Button

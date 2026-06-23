@@ -7,6 +7,7 @@ from urllib.parse import quote_plus
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import MSSQLConnectionCreate
+from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
 
 router = APIRouter(
     prefix="/api/v1/connections/mssql",
@@ -22,11 +23,15 @@ def get_db():
 
 # GET ALL MSSQL CONNECTIONS
 @router.get("/")
-def list_mssql_connections(db: Session = Depends(get_db)):
-    connections = db.query(ConnectionMaster).filter(
+def list_mssql_connections(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    query = db.query(ConnectionMaster).filter(
         ConnectionMaster.db_type == "mssql"
-    ).all()
-    
+    )
+    org_id = scope_org_id(ctx)
+    if org_id is not None:
+        query = query.filter(ConnectionMaster.org_id == org_id)
+    connections = query.all()
+
     return {
         "status": "success",
         "data": connections
@@ -36,7 +41,8 @@ def list_mssql_connections(db: Session = Depends(get_db)):
 @router.post("/")
 def create_mssql_connection(
     request: MSSQLConnectionCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    ctx: dict = Depends(tenant_ctx)
 ):
     try:
         # Test connection
@@ -53,6 +59,7 @@ def create_mssql_connection(
         # Save connection
         new_connection = ConnectionMaster(
             db_type="mssql",
+            org_id=create_org_id(ctx),
             connection_name=request.connection_name,
             host=request.host,
             port=request.port,

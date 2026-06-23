@@ -12,7 +12,7 @@ Adding an entity = one ENTITIES row + its SPs/view. No new files.
 """
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ def _ctx(request: Request) -> dict:
 
 from app.database.connection import SessionLocal
 from app.services.admin import crud_service as svc
+from app.services.auth.tenant_context import tenant_ctx
 
 
 def get_db():
@@ -34,6 +35,13 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# Genuinely per-company entities — non-super users only ever see/create their own org's rows.
+# (modules / pages / permissions are GLOBAL app structure & catalog → shared by every org.)
+TENANT_PATHS = {"roles", "organizations", "departments", "designations", "employees", "users"}
+# Tenant entities that carry an org_id FK we stamp on create (organizations' org_id is its own PK).
+ORG_FK_PATHS = {"roles", "departments", "designations", "employees", "users"}
 
 
 # entity registry — view + pk + order + stored-procedure names
@@ -72,10 +80,17 @@ ENTITIES = [
 def make_router(cfg: dict) -> APIRouter:
     r = APIRouter(prefix=f"/api/v1/admin/{cfg['path']}", tags=[f"Admin - {cfg['title']}"])
     pk, view, order = cfg["pk"], cfg["view"], cfg["order"]
+    is_tenant = cfg["path"] in TENANT_PATHS
+    stamps_org = cfg["path"] in ORG_FK_PATHS
 
     @r.get("")
-    def list_all(org_id: Optional[int] = None, db: Session = Depends(get_db)):
-        scope = org_id if cfg["org_scoped"] else None
+    def list_all(org_id: Optional[int] = None, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+        # Per-company entity: super admin may filter by a chosen org (or see all);
+        # everyone else is locked to their own org. Global config is never filtered.
+        if is_tenant:
+            scope = org_id if ctx.get("is_super") else ctx.get("org_id")
+        else:
+            scope = None
         return {"data": svc.list_rows(db, view, order, scope)}
 
     @r.get("/{item_id}")
@@ -83,13 +98,19 @@ def make_router(cfg: dict) -> APIRouter:
         return svc.get_row(db, view, pk, item_id)
 
     @r.post("")
-    def create(request: Request, body: dict = Body(...), db: Session = Depends(get_db)):
-        svc.call_sp(db, cfg["sp_insert"], {**body, "created_by": body.get("created_by", 1)}, _ctx(request))
+    def create(request: Request, body: dict = Body(...), db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+        payload = {**body, "created_by": body.get("created_by", 1)}
+        if stamps_org and not ctx.get("is_super"):
+            payload["org_id"] = ctx.get("org_id")  # force creator's org
+        svc.call_sp(db, cfg["sp_insert"], payload, _ctx(request))
         return {"status": "success", "message": f"{cfg['title']} created successfully"}
 
     @r.put("/{item_id}")
-    def update(item_id: int, request: Request, body: dict = Body(...), db: Session = Depends(get_db)):
-        svc.call_sp(db, cfg["sp_update"], {**body, pk: item_id, "modified_by": body.get("modified_by", 1)}, _ctx(request))
+    def update(item_id: int, request: Request, body: dict = Body(...), db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+        payload = {**body, pk: item_id, "modified_by": body.get("modified_by", 1)}
+        if stamps_org and not ctx.get("is_super"):
+            payload["org_id"] = ctx.get("org_id")
+        svc.call_sp(db, cfg["sp_update"], payload, _ctx(request))
         return {"status": "success", "message": f"{cfg['title']} updated successfully"}
 
     @r.delete("/{item_id}")
@@ -133,3 +154,83 @@ def list_audit(limit: int = 300, table_name: str = None, db: Session = Depends(g
 
 
 admin_crud_routers.append(audit_router)
+
+
+# ── read-only security logs (Phase 4) ──
+def _readonly_list_router(path: str, view: str, order_pk: str, title: str, limit_default: int = 300):
+    rr = APIRouter(prefix=f"/api/v1/admin/{path}", tags=[f"Admin - {title}"])
+
+    @rr.get("")
+    def _list(limit: int = limit_default, db: Session = Depends(get_db)):
+        rows = db.execute(text(f"SELECT * FROM {view} ORDER BY {order_pk} DESC LIMIT :l"),
+                          {"l": limit}).mappings().all()
+        return {"data": [dict(r) for r in rows]}
+
+    return rr
+
+
+admin_crud_routers.append(_readonly_list_router("login-history", "vw_login_history", "login_history_id", "Login History"))
+admin_crud_routers.append(_readonly_list_router("user-sessions", "vw_user_session", "session_id", "User Sessions"))
+admin_crud_routers.append(_readonly_list_router("password-history", "vw_password_history", "password_history_id", "Password History"))
+
+
+# ── Group Role Page Permission (real CRUD on group_role_page_permission) ──
+rp_router = APIRouter(prefix="/api/v1/admin/role-permissions", tags=["Admin - Role Permissions"])
+
+
+@rp_router.get("")
+def list_role_permissions(org_id: int, role_id: Optional[int] = None, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    if not ctx.get("is_super"):
+        org_id = ctx.get("org_id")  # org admins can only inspect their own org's permissions
+    sql = "SELECT * FROM vw_role_page_permission WHERE org_id = :o"
+    params = {"o": org_id}
+    if role_id is not None:
+        sql += " AND role_id = :r"
+        params["r"] = role_id
+    sql += " ORDER BY role_id, page_id"
+    rows = db.execute(text(sql), params).mappings().all()
+    return {"data": [dict(r) for r in rows]}
+
+
+def _guard_not_own_role(ctx: dict, org_id, role_id):
+    """Forbid anyone from editing the permissions of the role they are logged in with
+    (prevents self privilege-escalation)."""
+    if (ctx.get("role_id") is not None
+            and int(role_id) == int(ctx["role_id"])
+            and int(org_id) == int(ctx.get("org_id") or -1)):
+        raise HTTPException(status_code=403, detail="You cannot change the permissions of your own role.")
+
+
+def _grpp_org_role(db: Session, page_permission_id: int):
+    row = db.execute(text(
+        "SELECT org_id, role_id FROM group_role_page_permission WHERE page_permission_id = :i"
+    ), {"i": page_permission_id}).mappings().first()
+    return (row["org_id"], row["role_id"]) if row else (None, None)
+
+
+@rp_router.post("")
+def create_role_permission(request: Request, body: dict = Body(...), db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    _guard_not_own_role(ctx, body.get("org_id", 1), body.get("role_id"))
+    svc.call_sp(db, "sp_insertrolepermission", {**body, "created_by": body.get("created_by", 1)}, _ctx(request))
+    return {"status": "success", "message": "Permission assigned successfully"}
+
+
+@rp_router.put("/{item_id}")
+def update_role_permission(item_id: int, request: Request, body: dict = Body(...), db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    o, rl = _grpp_org_role(db, item_id)
+    if rl is not None:
+        _guard_not_own_role(ctx, o, rl)
+    svc.call_sp(db, "sp_updaterolepermission", {**body, "page_permission_id": item_id, "modified_by": 1}, _ctx(request))
+    return {"status": "success", "message": "Permission updated successfully"}
+
+
+@rp_router.delete("/{item_id}")
+def delete_role_permission(item_id: int, request: Request, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    o, rl = _grpp_org_role(db, item_id)
+    if rl is not None:
+        _guard_not_own_role(ctx, o, rl)
+    svc.call_sp(db, "sp_deleterolepermission", {"page_permission_id": item_id, "deleted_by": 1}, _ctx(request))
+    return {"status": "success", "message": "Permission removed successfully"}
+
+
+admin_crud_routers.append(rp_router)

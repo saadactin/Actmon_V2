@@ -271,12 +271,13 @@ function RichText({ content }) {
     .split('\n')
     .map(l => {
       const t = l.trim();
-      if (!t) return '<div class="h-1.5"/>';
-      if (t.startsWith('<')) return t;
-      return `<span>${t}</span>`;
+      if (!t) return '';                       // collapse blank lines (gap comes from spacing)
+      if (t.startsWith('<')) return t;          // already a block element (heading/bullet)
+      return `<div>${t}</div>`;                 // plain line → block (clean vertical flow, no overlap)
     })
-    .join('\n');
-  return <div className="text-[13px] text-slate-700 leading-relaxed space-y-0.5" dangerouslySetInnerHTML={{ __html: html }}/>;
+    .filter(Boolean)
+    .join('');
+  return <div className="text-[13px] text-slate-700 leading-relaxed space-y-1 break-words" dangerouslySetInnerHTML={{ __html: html }}/>;
 }
 
 function NavigateBtn({ nav, navigate, onClose }) {

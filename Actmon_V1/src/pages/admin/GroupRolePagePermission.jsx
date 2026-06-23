@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import {
-  grppApi, rolesApi, pagesApi, permissionsApi, organizationsApi, decodePermission,
-} from './_shared/mockDb';
+  rolesApi, pagesApi, permissionsApi, organizationsApi, rolePermissionsApi, modulesApi,
+} from '../../api/admin';
 
 const ACCENTS = [
   { bar: 'from-indigo-500 to-blue-600',    text: 'text-indigo-600',  soft: 'bg-indigo-500',  ring: 'group-hover:border-indigo-300' },
@@ -33,23 +33,28 @@ export default function GroupRolePagePermission() {
   const navigate = useNavigate();
   const { orgId, roleId } = useParams();
   const { user } = useAuthStore();
-  // TODO: drive from real auth/RBAC. Forced on during development so the full
-  // Organizations → Roles → Permissions drill-down is visible.
-  const DEV_FORCE_SUPER_ADMIN = true;
-  const superAdmin = DEV_FORCE_SUPER_ADMIN || !!user?.is_superuser;
+  // Only the real super admin (role 1 + org 1) sees the org picker; everyone else
+  // is locked to their own organization (backend enforces this too).
+  const superAdmin = !!user?.is_superuser;
   const myOrgId = user?.org_id || user?.active_org_id || 1;
 
   const [records, setRecords] = useState([]);
   const [orgs, setOrgs] = useState([]);
   const [roles, setRoles] = useState([]);
   const [pages, setPages] = useState([]);
+  const [modules, setModules] = useState([]);
   const [permissions, setPermissions] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // cascading page picker (Add form): module → parent page → child page
+  const [pickModule, setPickModule] = useState('');
+  const [pickParent, setPickParent] = useState('');
 
   const [formVisible, setFormVisible] = useState(false);
   const [editId, setEditId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [treeStack, setTreeStack] = useState([]); // drill path: [{page_id, page_name}]
   const [toast, setToast] = useState(null);
   const [selectedPerms, setSelectedPerms] = useState([]);
   const [form, setForm] = useState({ org_id: '', role_id: '', page_id: '', permission: 0 });
@@ -65,15 +70,29 @@ export default function GroupRolePagePermission() {
 
   const flash = (msg, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 2400); };
 
+  // master data (orgs / roles / pages / permissions) — load once
   const loadAll = async () => {
     setLoading(true);
-    const [rec, og, rl, pg, pm] = await Promise.all([
-      grppApi.list(), organizationsApi.list(), rolesApi.list(), pagesApi.list(), permissionsApi.list(),
+    const [og, rl, pg, pm, md] = await Promise.all([
+      organizationsApi.list(), rolesApi.list(), pagesApi.list(), permissionsApi.list(), modulesApi.list(),
     ]);
-    setRecords(rec); setOrgs(og); setRoles(rl); setPages(pg); setPermissions(pm);
+    setOrgs(og); setRoles(rl); setPages(pg); setPermissions(pm); setModules(md);
     setLoading(false);
   };
   useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, []);
+
+  // grpp records are org-scoped — (re)load whenever an org is selected
+  const loadRecords = async () => {
+    if (!orgId) { setRecords([]); return; }
+    try { setRecords(await rolePermissionsApi.list(orgId)); } catch { setRecords([]); }
+  };
+  useEffect(() => { loadRecords(); /* eslint-disable-next-line */ }, [orgId]);
+
+  // decode a bitmask → permission names (from the real permission catalog, excl. Full Access)
+  const decodePermission = (mask) => permissions
+    .filter((p) => p.permission_name?.toLowerCase() !== 'full access' && (Number(mask) & p.permission_value) === p.permission_value)
+    .map((p) => p.permission_name);
+  const selectablePerms = permissions.filter((p) => Number(p.permission_value) !== 255 && p.permission_name?.toLowerCase() !== 'full access');
 
   // Org admins skip the org level → redirect to their org.
   useEffect(() => {
@@ -94,10 +113,14 @@ export default function GroupRolePagePermission() {
   const orgStats  = useMemo(() => { const m = {}; roles.forEach((r) => { m[r.org_id] = (m[r.org_id] || 0) + 1; }); return m; }, [roles]);
   const roleStats = useMemo(() => { const m = {}; records.forEach((r) => { m[`${r.org_id}-${r.role_id}`] = (m[`${r.org_id}-${r.role_id}`] || 0) + 1; }); return m; }, [records]);
 
+  // Hide the user's OWN role — nobody may edit the permissions of the role they're logged in with.
+  const isOwnRole = (r) => Number(r.role_id) === Number(user?.role_id) && Number(r.org_id) === Number(user?.org_id);
   const orgRoles = useMemo(
-    () => (selectedOrg ? roles.filter((r) => Number(r.org_id) === Number(selectedOrg.org_id)) : []),
-    [roles, selectedOrg],
+    () => (selectedOrg ? roles.filter((r) => Number(r.org_id) === Number(selectedOrg.org_id) && !isOwnRole(r)) : []),
+    [roles, selectedOrg, user],
   );
+  // True when the currently-opened role is the logged-in user's own role (e.g. via direct URL).
+  const ownRoleOpen = !!(selectedRole && isOwnRole(selectedRole));
 
   const roleRecords = useMemo(() => {
     if (!selectedOrg || !selectedRole) return [];
@@ -110,6 +133,61 @@ export default function GroupRolePagePermission() {
     () => new Set(records.filter((r) => Number(r.org_id) === Number(selectedOrg?.org_id) && Number(r.role_id) === Number(selectedRole?.role_id)).map((r) => Number(r.page_id))),
     [records, selectedOrg, selectedRole],
   );
+
+  /* ── Hierarchical drill-down (parent → child → sub-child) ───────────────── */
+  // page_master.parent_id points to another page_id (0 = top-level).
+  // full granted set for this role, ignoring the search box (the tree is built from this)
+  const grantedAll = useMemo(() => {
+    if (!selectedOrg || !selectedRole) return [];
+    return records.filter((r) => Number(r.org_id) === Number(selectedOrg.org_id) && Number(r.role_id) === Number(selectedRole.role_id));
+  }, [records, selectedOrg, selectedRole]);
+
+  const pageById = useMemo(() => { const m = {}; pages.forEach((p) => { m[Number(p.page_id)] = p; }); return m; }, [pages]);
+  const grantedIds = useMemo(() => new Set(grantedAll.map((r) => Number(r.page_id))), [grantedAll]);
+  // A record's effective parent = its parent_id IF that parent is also granted; otherwise it floats to root (0)
+  // so nothing ever disappears when a child is granted without its parent.
+  const effParent = (r) => { const pid = Number(pageById[Number(r.page_id)]?.parent_id || 0); return pid && grantedIds.has(pid) ? pid : 0; };
+  const childCountOf = useMemo(() => {
+    const m = {};
+    grantedAll.forEach((r) => { const ep = effParent(r); m[ep] = (m[ep] || 0) + 1; });
+    return m;
+  }, [grantedAll, grantedIds, pageById]);
+
+  const curParent = treeStack.length ? Number(treeStack[treeStack.length - 1].page_id) : 0;
+  const searching = !!searchText.trim();
+
+  // Cards shown at the current level (or flat results while searching).
+  const levelRecords = useMemo(() => {
+    if (searching) {
+      const q = searchText.toLowerCase();
+      return grantedAll.filter((r) => pageName(r.page_id).toLowerCase().includes(q));
+    }
+    return grantedAll.filter((r) => effParent(r) === curParent);
+  }, [grantedAll, searching, searchText, curParent, grantedIds, pageById]);
+
+  // all-pages parent→children map (used to cascade a parent grant down to its children)
+  const childrenByParent = useMemo(() => {
+    const m = {};
+    pages.forEach((p) => { const pid = Number(p.parent_id || 0); (m[pid] = m[pid] || []).push(p); });
+    return m;
+  }, [pages]);
+  const descendantsOf = (pageId) => {
+    const out = []; const stack = [...(childrenByParent[Number(pageId)] || [])];
+    while (stack.length) { const p = stack.pop(); out.push(p); stack.push(...(childrenByParent[Number(p.page_id)] || [])); }
+    return out;
+  };
+
+  // ── cascading page picker options (Add form) ──
+  const moduleId = (p) => Number(p.module_id || 0);
+  const parentPagesOf = (modId) => pages.filter((p) => moduleId(p) === Number(modId) && !Number(p.parent_id || 0));
+  const childPagesOf = (parentId) => pages.filter((p) => Number(p.parent_id || 0) === Number(parentId));
+  const isGranted = (pageId) => grantedAll.some((r) => Number(r.page_id) === Number(pageId));
+
+  const drillInto = (r) => setTreeStack((s) => [...s, { page_id: Number(r.page_id), page_name: pageName(r.page_id) }]);
+  const drillTo = (idx) => setTreeStack((s) => s.slice(0, idx)); // idx = number of crumbs to keep (0 = root)
+
+  // reset drill path when switching role / org
+  useEffect(() => { setTreeStack([]); setSearchText(''); }, [roleId, orgId]);
 
   /* ── permission tag handlers (bitwise) ── */
   const sumPerms = (list) => list.reduce((s, p) => s + Number(p.permission_value), 0);
@@ -134,6 +212,7 @@ export default function GroupRolePagePermission() {
   const openAdd = () => {
     setEditId(null);
     setForm({ org_id: selectedOrg.org_id, role_id: selectedRole.role_id, page_id: '', permission: 0 });
+    setPickModule(''); setPickParent('');
     setSelectedPerms([]); setPermOpen(false); setFormVisible(true);
   };
   const openEdit = (rec) => {
@@ -148,24 +227,45 @@ export default function GroupRolePagePermission() {
     if (!form.org_id || !form.role_id || !form.page_id) { flash('Select all required fields', false); return; }
     setSaving(true);
     try {
-      const permission_description = selectedPerms.map((p) => p.permission_name).join('/') || 'No access';
-      if (isEditMode) { await grppApi.update(editId, { permission: form.permission, permission_description }); flash('Permission updated'); }
-      else { await grppApi.create({ org_id: +form.org_id, role_id: +form.role_id, page_id: +form.page_id, permission: form.permission, permission_description }); flash('Permission added'); }
-      setFormVisible(false); setEditId(null); await loadAll();
+      const permission_description = selectedPerms.map((p) => p.permission_name).join(' + ') || 'No access';
+      const base = { org_id: +form.org_id, role_id: +form.role_id, permission: form.permission, permission_description };
+      // upsert: update if this role already has the page, else create — never a duplicate.
+      const upsert = (pageId) => {
+        const existing = grantedAll.find((r) => Number(r.page_id) === Number(pageId));
+        return existing
+          ? rolePermissionsApi.update(existing.page_permission_id, { permission: form.permission, permission_description })
+          : rolePermissionsApi.create({ ...base, page_id: Number(pageId) });
+      };
+
+      // Save the page itself
+      if (isEditMode) await rolePermissionsApi.update(editId, { permission: form.permission, permission_description });
+      else await upsert(+form.page_id);
+
+      // Cascade the SAME permission down to every child / sub-child page (upsert each).
+      const kids = descendantsOf(+form.page_id);
+      if (kids.length) await Promise.allSettled(kids.map((k) => upsert(k.page_id)));
+
+      flash(kids.length
+        ? `${isEditMode ? 'Updated' : 'Added'} — cascaded to ${kids.length} child page${kids.length !== 1 ? 's' : ''}`
+        : (isEditMode ? 'Permission updated' : 'Permission added'));
+      setFormVisible(false); setEditId(null); await loadRecords();
     } catch (err) { flash(err.message || 'Save failed', false); }
     finally { setSaving(false); }
   };
 
   const del = async (id) => {
-    if (!window.confirm('Delete this permission?')) return;
-    await grppApi.remove(id); flash('Deleted'); await loadAll();
+    if (!window.confirm('Remove this page permission?')) return;
+    try { await rolePermissionsApi.remove(id); flash('Removed'); await loadRecords(); }
+    catch (err) { flash(err.message || 'Delete failed', false); }
   };
 
   const crumb = selectedRole ? `${orgName(selectedOrg.org_id)} → ${selectedRole.role_name}`
     : selectedOrg ? `${selectedOrg.org_name} → Roles` : 'Organizations';
   const goBack = () => {
+    // role permissions table → back to that org's role list
     if (roleId) navigate(`/role-permissions/${orgId}`);
-    else if (orgId && superAdmin) navigate('/role-permissions');
+    // role list (org chosen in Administration) → back to that org's Administration grid
+    else if (orgId) navigate(`/administration/${orgId}`);
     else navigate('/administration');
   };
 
@@ -196,7 +296,7 @@ export default function GroupRolePagePermission() {
               <button onClick={loadAll} className="h-10 w-10 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-white hover:bg-white/20">
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
               </button>
-              {selectedRole && (
+              {selectedRole && !ownRoleOpen && (
                 <button onClick={openAdd} className="h-10 px-4 sm:px-5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg">
                   <Plus size={16} /> <span className="hidden sm:inline">Add Page Permission</span><span className="sm:hidden">Add</span>
                 </button>
@@ -271,28 +371,58 @@ export default function GroupRolePagePermission() {
         {/* LEVEL 2 — Page-permission cards */}
         {selectedOrg && selectedRole && (
           <>
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 mb-4 flex items-center gap-3">
-              <div className="relative flex-1 max-w-md">
+            {ownRoleOpen && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 mb-4 flex items-start gap-3">
+                <Lock size={18} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-black text-amber-800 text-sm">This is your own role</p>
+                  <p className="text-amber-700 text-xs mt-0.5">For security, you can view but not change the permissions of the role you're signed in with. Ask a super admin to adjust it.</p>
+                </div>
+              </div>
+            )}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 mb-4 flex items-center gap-3 flex-wrap">
+              <div className="relative flex-1 min-w-[220px] max-w-md">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search page name…"
+                <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search all pages…"
                   className="w-full h-10 pl-9 pr-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-400" />
               </div>
               <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-bold ml-auto px-3 py-1.5 rounded-full bg-slate-100">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />{roleRecords.length} record{roleRecords.length !== 1 ? 's' : ''}
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />{grantedAll.length} page{grantedAll.length !== 1 ? 's' : ''} granted
               </span>
             </div>
 
-            {roleRecords.length === 0 ? (
+            {/* ── Drill breadcrumb (hidden while searching) ── */}
+            {!searching && (
+              <div className="flex items-center gap-1.5 flex-wrap mb-4 text-sm">
+                <button onClick={() => drillTo(0)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-colors ${treeStack.length ? 'text-indigo-600 hover:bg-indigo-50' : 'bg-slate-800 text-white'}`}>
+                  <Lock size={13} /> All Pages
+                </button>
+                {treeStack.map((c, idx) => (
+                  <React.Fragment key={c.page_id}>
+                    <ChevronRight size={15} className="text-slate-300" />
+                    <button onClick={() => drillTo(idx + 1)}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-colors ${idx === treeStack.length - 1 ? 'bg-slate-800 text-white' : 'text-indigo-600 hover:bg-indigo-50'}`}>
+                      {c.page_name}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+
+            {levelRecords.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200 shadow-sm py-16 text-center">
                 <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-100 flex items-center justify-center mb-3"><FileText className="text-slate-300" size={26} /></div>
-                <p className="text-slate-500 font-bold">No page permissions yet</p>
-                <p className="text-slate-400 text-sm mt-1">Click <b>Add Page Permission</b> to grant access.</p>
+                <p className="text-slate-500 font-bold">{searching ? 'No matching pages' : grantedAll.length === 0 ? 'No page permissions yet' : 'No sub-pages here'}</p>
+                <p className="text-slate-400 text-sm mt-1">{grantedAll.length === 0 ? <>Click <b>Add Page Permission</b> to grant access.</> : searching ? 'Try a different search term.' : 'This page has no further child pages.'}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                {roleRecords.map((r, i) => {
+                {levelRecords.map((r, i) => {
                   const a = ACCENTS[i % ACCENTS.length];
                   const perms = decodePermission(r.permission);
+                  const kids = childCountOf[Number(r.page_id)] || 0;
+                  const canDrill = !searching && kids > 0;
                   return (
                     <div key={r.page_permission_id}
                       className={`group relative bg-white rounded-2xl border border-slate-200 ${a.ring} overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300`}>
@@ -305,6 +435,11 @@ export default function GroupRolePagePermission() {
                             <h3 className="font-black text-slate-800 truncate leading-tight">{pageName(r.page_id)}</h3>
                             <span className="text-[11px] font-mono text-slate-400 truncate block">{pageUrl(r.page_id) || `Page #${r.page_id}`}</span>
                           </div>
+                          {canDrill && (
+                            <span className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                              {kids} sub
+                            </span>
+                          )}
                         </div>
                         <div className="mt-4">
                           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Permissions</p>
@@ -315,11 +450,18 @@ export default function GroupRolePagePermission() {
                           </div>
                         </div>
                       </div>
+                      {canDrill && (
+                        <button onClick={() => drillInto(r)}
+                          className="w-full px-5 py-2.5 border-t border-slate-100 flex items-center justify-between text-sm font-bold text-indigo-600 hover:bg-indigo-50/60 transition-colors">
+                          <span>View {kids} sub-page{kids !== 1 ? 's' : ''}</span>
+                          <ChevronRight size={16} />
+                        </button>
+                      )}
                       <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/40 flex items-center justify-between">
                         <span className="text-[11px] font-mono text-slate-400">bitmask {r.permission}</span>
                         <div className="flex items-center gap-1">
-                          <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"><Pencil size={15} /></button>
-                          <button onClick={() => del(r.page_permission_id)} title="Delete" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button>
+                          {!ownRoleOpen && <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"><Pencil size={15} /></button>}
+                          {!ownRoleOpen && <button onClick={() => del(r.page_permission_id)} title="Delete" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button>}
                         </div>
                       </div>
                     </div>
@@ -357,25 +499,58 @@ export default function GroupRolePagePermission() {
                     <span className="w-1 h-5 rounded-full bg-gradient-to-b from-rose-500 to-pink-500" />
                     <h3 className="text-sm font-black text-slate-700 uppercase tracking-wider">Scope</h3>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
                     <Ghost label="Organization" value={orgName(form.org_id)} />
                     <Ghost label="Role" value={roleName(form.role_id)} />
-                    <div>
-                      <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Page <span className="text-red-500">*</span></label>
-                      {isEditMode ? <Ghost value={pageName(form.page_id)} bare /> : (
-                        <div className="relative">
-                          <select value={form.page_id} onChange={(e) => setForm((f) => ({ ...f, page_id: e.target.value }))} required
-                            className={`w-full h-11 px-3.5 pr-10 rounded-xl border border-slate-200 bg-white text-sm font-semibold appearance-none transition-all focus:outline-none focus:ring-4 focus:ring-rose-100 focus:border-rose-400 hover:border-slate-300 ${form.page_id ? 'text-slate-800' : 'text-slate-400'}`}>
-                            <option value="">Select Page</option>
-                            {pages.filter((p) => !assignedPageIds.has(Number(p.page_id))).map((p) => (
-                              <option key={p.page_id} value={p.page_id} className="text-slate-800">{p.page_name}{p.page_url ? ` (${p.page_url})` : ''}</option>
-                            ))}
-                          </select>
-                          <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                        </div>
-                      )}
-                    </div>
                   </div>
+
+                  {isEditMode ? (
+                    <div className="mt-5">
+                      <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Page</label>
+                      <Ghost value={pageName(form.page_id)} bare />
+                    </div>
+                  ) : (
+                    <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-5">
+                      {/* 1) Module */}
+                      <div>
+                        <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Module <span className="text-red-500">*</span></label>
+                        <Picker value={pickModule} placeholder="Select Module"
+                          onChange={(v) => { setPickModule(v); setPickParent(''); setForm((f) => ({ ...f, page_id: '' })); }}>
+                          {modules.map((m) => <option key={m.module_id} value={m.module_id} className="text-slate-800">{m.module_name}</option>)}
+                        </Picker>
+                      </div>
+                      {/* 2) Parent page (parent_id = 0) */}
+                      <div>
+                        <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Parent Page <span className="text-red-500">*</span></label>
+                        <Picker value={pickParent} disabled={!pickModule} placeholder={pickModule ? 'Select Parent Page' : 'Select module first'}
+                          onChange={(v) => { setPickParent(v); setForm((f) => ({ ...f, page_id: v })); }}>
+                          {parentPagesOf(pickModule).map((p) => (
+                            <option key={p.page_id} value={p.page_id} className="text-slate-800">{p.page_name}{isGranted(p.page_id) ? ' ✓' : ''}</option>
+                          ))}
+                        </Picker>
+                      </div>
+                      {/* 3) Child page (parent_id = selected parent) — optional */}
+                      <div>
+                        <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Child Page</label>
+                        <Picker value={String(form.page_id) === String(pickParent) ? '' : form.page_id} disabled={!pickParent}
+                          placeholder={pickParent ? '↳ Whole parent + all children' : 'Select parent first'}
+                          onChange={(v) => setForm((f) => ({ ...f, page_id: v || pickParent }))}>
+                          {childPagesOf(pickParent).map((p) => (
+                            <option key={p.page_id} value={p.page_id} className="text-slate-800">{p.page_name}{isGranted(p.page_id) ? ' ✓' : ''}</option>
+                          ))}
+                        </Picker>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isEditMode && pickParent && (
+                    <p className="mt-4 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex items-start gap-2">
+                      <Check size={14} className="text-emerald-500 mt-0.5 flex-shrink-0" />
+                      {String(form.page_id) === String(pickParent)
+                        ? <span>Granting <b>{pageName(pickParent)}</b> will apply the same permission to its <b>{descendantsOf(pickParent).length}</b> child page{descendantsOf(pickParent).length !== 1 ? 's' : ''}.</span>
+                        : <span>Granting <b>{pageName(form.page_id)}</b>{descendantsOf(form.page_id).length ? <> and its <b>{descendantsOf(form.page_id).length}</b> sub-page(s)</> : null}. Already-granted pages are updated, not duplicated.</span>}
+                    </p>
+                  )}
                 </div>
 
                 {/* permissions card */}
@@ -393,21 +568,23 @@ export default function GroupRolePagePermission() {
                     </button>
                     {permOpen && (
                       <div className="absolute z-30 mt-2 w-full bg-white rounded-2xl border border-slate-200 shadow-2xl p-1.5 max-h-72 overflow-y-auto">
-                        {permissions.map((p) => {
-                          const on = selectedPerms.some((s) => s.permission_id === p.permission_id);
-                          return (
-                            <button type="button" key={p.permission_id} onClick={() => togglePerm(p)}
-                              className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors ${on ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
+                        {(() => {
+                          // Only show permissions NOT already selected — the chosen ones live in the chips below.
+                          const available = selectablePerms.filter((p) => !selectedPerms.some((s) => s.permission_id === p.permission_id));
+                          if (available.length === 0) {
+                            return <p className="px-3 py-4 text-sm text-slate-400 text-center">All permissions selected</p>;
+                          }
+                          return available.map((p) => (
+                            <button type="button" key={p.permission_id} onClick={() => { addPerm(p.permission_value); }}
+                              className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors hover:bg-slate-50">
                               <span className="flex items-center gap-2.5">
-                                <span className={`w-5 h-5 rounded-md flex items-center justify-center border ${on ? 'bg-gradient-to-br from-indigo-600 to-violet-600 border-transparent text-white' : 'border-slate-300 bg-white'}`}>
-                                  {on && <Check size={13} />}
-                                </span>
-                                <span className={`font-semibold ${on ? 'text-indigo-700' : 'text-slate-700'}`}>{p.permission_name}</span>
+                                <span className="w-5 h-5 rounded-md flex items-center justify-center border border-slate-300 bg-white" />
+                                <span className="font-semibold text-slate-700">{p.permission_name}</span>
                               </span>
                               <span className="text-[11px] font-mono text-slate-400">{p.permission_value}</span>
                             </button>
-                          );
-                        })}
+                          ));
+                        })()}
                       </div>
                     )}
                   </div>
@@ -452,6 +629,20 @@ function Ghost({ label, value, bare }) {
     <div>
       {!bare && label && <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">{label}</label>}
       <input value={value} disabled className="w-full h-10 px-3 rounded-xl border border-slate-200 bg-slate-100 text-slate-500 text-sm font-semibold" />
+    </div>
+  );
+}
+
+// styled <select> with chevron, used by the cascading page picker
+function Picker({ value, onChange, disabled, placeholder, children }) {
+  return (
+    <div className="relative">
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}
+        className={`w-full h-11 px-3.5 pr-10 rounded-xl border bg-white text-sm font-semibold appearance-none transition-all focus:outline-none focus:ring-4 focus:ring-rose-100 focus:border-rose-400 hover:border-slate-300 disabled:bg-slate-100 disabled:cursor-not-allowed ${value ? 'text-slate-800 border-slate-200' : 'text-slate-400 border-slate-200'}`}>
+        <option value="">{placeholder}</option>
+        {children}
+      </select>
+      <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
     </div>
   );
 }

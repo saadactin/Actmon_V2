@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
+from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
 from app.services.os_server.os_server_service import (
     DbInstanceIn,  # noqa: F401
     OsServerCreate,
@@ -33,13 +34,13 @@ def get_db():
 
 
 @router.get("/live-status")
-def route_get_live_status(db: Session = Depends(get_db)):
-    return svc_get_live_status(db)
+def route_get_live_status(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return svc_get_live_status(db, scope_org_id(ctx))
 
 
 @router.get("/summary")
-def route_get_summary(db: Session = Depends(get_db)):
-    return svc_get_summary(db)
+def route_get_summary(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return svc_get_summary(db, scope_org_id(ctx))
 
 
 @router.get("/")
@@ -47,18 +48,19 @@ def route_list_os_servers(
     environment: Optional[str] = None,
     os_type: Optional[str] = None,
     db: Session = Depends(get_db),
+    ctx: dict = Depends(tenant_ctx),
 ):
-    return svc_list_os_servers(db, environment, os_type)
+    return svc_list_os_servers(db, environment, os_type, scope_org_id(ctx))
 
 
 @router.get("/{server_id}")
-def route_get_os_server(server_id: int, db: Session = Depends(get_db)):
-    return svc_get_os_server(server_id, db)
+def route_get_os_server(server_id: int, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return svc_get_os_server(server_id, db, scope_org_id(ctx))
 
 
 @router.post("/")
-def route_create_os_server(request: OsServerCreate, db: Session = Depends(get_db)):
-    return svc_create_os_server(request, db)
+def route_create_os_server(request: OsServerCreate, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return svc_create_os_server(request, db, create_org_id(ctx))
 
 
 @router.put("/{server_id}")

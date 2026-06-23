@@ -1,62 +1,64 @@
 import { useState } from 'react';
 import { useAuthStore } from '../store/authStore';
-import { login as apiLogin, getMe } from '../api/auth';
+import { login as apiLogin, verifyOtp as apiVerifyOtp, resendOtp as apiResendOtp, logout as apiLogout } from '../api/auth';
 
 export const useAuth = () => {
-  const { token, user, setToken, clearToken } = useAuthStore();
+  const { token, user, setAuth, clearToken } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  /** Step 1: validate credentials → triggers OTP email. Returns OTP context. */
   const login = async (username, password) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiLogin(username, password);
-      
-      // Store token and temporary profile
-      // In FastAPI OAuth2, the login response contains token, role, etc.
-      // We also do a follow-up request or construct MeResponse from token details.
-      // To ensure we get the full database representation (e.g. email, status), we can make a direct call to getMe()
-      // using the token we just received (by temporarily saving it or passing it)
-      localStorage.setItem('actmon_token', response.access_token);
-      
-      try {
-        const fullUserProfile = await getMe();
-        setToken(response.access_token, fullUserProfile);
-      } catch (meError) {
-        // Fallback profile if getMe() fails
-        const fallbackProfile = {
-          id: 0,
-          username: response.username,
-          email: `${response.username}@actmon.local`,
-          role: response.role,
-          is_active: true,
-          is_superuser: response.role === 'Admin',
-        };
-        setToken(response.access_token, fallbackProfile);
-      }
-      
-      return true;
+      const res = await apiLogin(username, password);
+      // 2-step: never a token here, only OTP context
+      return {
+        otpRequired: !!res.otp_required,
+        otpToken: res.otp_token,
+        email: res.email_masked,
+        expiresIn: res.expires_in,
+        devOtp: res.dev_otp,   // present only when backend OTP_DEBUG is on
+      };
     } catch (err) {
       setError(err.message || 'Invalid username or password.');
-      localStorage.removeItem('actmon_token');
-      return false;
+      return { error: err.message || 'Invalid username or password.' };
     } finally {
       setLoading(false);
     }
   };
 
-  const logout = () => {
+  /** Step 2: verify the OTP → establishes the session. */
+  const verifyOtp = async (otpToken, otp) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiVerifyOtp(otpToken, otp);
+      // store token + user + role + menu + permissions (RBAC)
+      setAuth(data.access_token, data);
+      return data; // caller uses data.menu to land on the first accessible page
+    } catch (err) {
+      setError(err.message || 'Incorrect OTP.');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resendOtp = async (otpToken) => {
+    try { return await apiResendOtp(otpToken); }
+    catch (err) { setError(err.message); return null; }
+  };
+
+  const logout = async () => {
+    await apiLogout();
     clearToken();
   };
 
   return {
-    token,
-    user,
-    isAuthenticated: !!token,
-    login,
-    logout,
-    loading,
-    error,
+    token, user, isAuthenticated: !!token,
+    login, verifyOtp, resendOtp, logout,
+    loading, error, setError,
   };
 };

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal
 from app.models.connection_schema import MySQLConnectionCreate
 from app.services.mysql import mysql_dashboard_service
+from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
 
 router = APIRouter(
     prefix="/api/v1/connections/mysql",
@@ -20,13 +21,13 @@ def get_db():
 
 
 @router.get("/")
-def list_mysql_connections(db: Session = Depends(get_db)):
-    return mysql_dashboard_service.list_connections(db)
+def list_mysql_connections(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return mysql_dashboard_service.list_connections(db, scope_org_id(ctx))
 
 
 @router.post("/")
-def create_mysql_connection(request: MySQLConnectionCreate, db: Session = Depends(get_db)):
-    return mysql_dashboard_service.create_connection(request, db)
+def create_mysql_connection(request: MySQLConnectionCreate, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return mysql_dashboard_service.create_connection(request, db, create_org_id(ctx))
 
 
 @router.delete("/{conn_id}")

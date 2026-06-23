@@ -17,6 +17,7 @@ import {
   AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
+import PgHostResources from './PgHostResources';
 
 /* ─── palette ─── */
 const C = {
@@ -339,6 +340,9 @@ export default function PostgreSQLDashboard() {
                 <SBadge ok={false} label="Autovacuum DISABLED" />
               )}
             </div>
+
+            {/* Host resources — click a gauge to drill: processes → queries → why */}
+            <PgHostResources connId={id} />
 
             {/* gauges */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">

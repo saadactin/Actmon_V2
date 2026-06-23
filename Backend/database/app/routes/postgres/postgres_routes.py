@@ -21,6 +21,7 @@ from app.services.postgres.postgres_connection_service import (
     svc_analyze,
     svc_analyze_error,
 )
+from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
 
 router = APIRouter(prefix="/api/v1/connections/postgresql", tags=["PostgreSQL"])
 
@@ -34,13 +35,13 @@ def get_db():
 
 
 @router.get("/")
-def list_postgresql_connections(db: Session = Depends(get_db)):
-    return svc_list_connections(db)
+def list_postgresql_connections(db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return svc_list_connections(db, scope_org_id(ctx))
 
 
 @router.post("/")
-def create_postgresql_connection(request: PostgreSQLConnectionCreate, db: Session = Depends(get_db)):
-    return svc_create_connection(request, db)
+def create_postgresql_connection(request: PostgreSQLConnectionCreate, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
+    return svc_create_connection(request, db, create_org_id(ctx))
 
 
 @router.get("/{connection_id}")

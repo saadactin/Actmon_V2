@@ -29,6 +29,7 @@ from app.routes.mssql.mssql_routes import router as mssql_router
 
 from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
 from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
+from app.routes.postgres.postgres_drilldown_routes import router as postgres_drilldown_router
 from app.routes.mongo.mongo_error_analysis_routes import router as mongo_error_router
 from app.routes.clickhouse.clickhouse_error_analysis_routes import router as clickhouse_error_router
 from app.routes.clickhouse.clickhouse_monitoring_routes import router as clickhouse_monitoring_router
@@ -83,6 +84,9 @@ async def lifespan(app_instance):
     # Start centralized agent collector (polls monitored DBs every 60s)
     from app.services.agent.agent_collector_service import start_agent_collector
     start_agent_collector(interval_sec=60)
+    # Start PostgreSQL resource history collector (logs CPU/RAM/Disk + spike evidence)
+    from app.services.postgres.postgres_resource_collector import start_resource_collector
+    start_resource_collector()
     # Start Oracle report email scheduler
     from app.services.oracle.oracle_report_email_service import start_oracle_report_scheduler
     start_oracle_report_scheduler()
@@ -124,6 +128,7 @@ app.include_router(server_router)
 # Error analysis routes
 app.include_router(postgres_error_router)
 app.include_router(postgres_monitoring_router)
+app.include_router(postgres_drilldown_router)
 app.include_router(mongo_error_router)
 app.include_router(clickhouse_error_router)
 app.include_router(clickhouse_monitoring_router)

@@ -8,6 +8,7 @@ class ConnectionMaster(Base):
 
     # PRIMARY
     id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(Integer, nullable=False, default=1, index=True)  # tenant scope
 
     # COMMON
     connection_name = Column(String(255))

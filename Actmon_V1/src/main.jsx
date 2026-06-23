@@ -231,6 +231,7 @@ const router = createBrowserRouter([
       },
       // ── Administration (frontend-only CRUD UI; backend SPs come later) ──
       { path: 'administration', element: <AdministrationPage /> },
+      { path: 'administration/:orgId', element: <AdministrationPage /> },
       { path: 'roles', element: <AdminResourcePage config={ADMIN_CONFIGS.roles} /> },
       { path: 'permissions', element: <AdminResourcePage config={ADMIN_CONFIGS.permissions} /> },
       { path: 'modules', element: <AdminResourcePage config={ADMIN_CONFIGS.modules} /> },
@@ -239,6 +240,9 @@ const router = createBrowserRouter([
       { path: 'departments', element: <AdminResourcePage config={ADMIN_CONFIGS.departments} /> },
       { path: 'designations', element: <AdminResourcePage config={ADMIN_CONFIGS.designations} /> },
       { path: 'audit-logs', element: <AdminResourcePage config={ADMIN_CONFIGS['audit-logs']} /> },
+      { path: 'login-history', element: <AdminResourcePage config={ADMIN_CONFIGS['login-history']} /> },
+      { path: 'user-sessions', element: <AdminResourcePage config={ADMIN_CONFIGS['user-sessions']} /> },
+      { path: 'password-history', element: <AdminResourcePage config={ADMIN_CONFIGS['password-history']} /> },
       { path: 'role-permissions', element: <GroupRolePagePermission /> },
       { path: 'role-permissions/:orgId', element: <GroupRolePagePermission /> },
       { path: 'role-permissions/:orgId/:roleId', element: <GroupRolePagePermission /> },

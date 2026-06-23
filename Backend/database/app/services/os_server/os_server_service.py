@@ -99,8 +99,11 @@ def _db_status_summary(instances) -> str:
 
 # ── Service functions ─────────────────────────────────────────────────────────
 
-def svc_get_live_status(db: Session):
-    servers = db.query(OsServer).all()
+def svc_get_live_status(db: Session, org_id: Optional[int] = None):
+    q = db.query(OsServer)
+    if org_id is not None:
+        q = q.filter(OsServer.org_id == org_id)
+    servers = q.all()
 
     def check_one(s):
         os_up = _tcp_check(s.ip_address, s.ssh_port or 22, timeout=2.0)
@@ -156,16 +159,27 @@ def svc_get_live_status(db: Session):
     return {"status": "success", "data": results}
 
 
-def svc_get_summary(db: Session):
-    total = db.query(func.count(OsServer.id)).scalar() or 0
-    connected = db.query(func.count(OsServer.id)).filter(OsServer.status == "Connected").scalar() or 0
-    warning = db.query(func.count(OsServer.id)).filter(OsServer.status == "Warning").scalar() or 0
-    disconnected = db.query(func.count(OsServer.id)).filter(OsServer.status == "Disconnected").scalar() or 0
+def svc_get_summary(db: Session, org_id: Optional[int] = None):
+    def _q(*filters):
+        q = db.query(func.count(OsServer.id))
+        if org_id is not None:
+            q = q.filter(OsServer.org_id == org_id)
+        for f in filters:
+            q = q.filter(f)
+        return q.scalar() or 0
 
-    clusters = db.query(OsServer.cluster_name).filter(
+    total = _q()
+    connected = _q(OsServer.status == "Connected")
+    warning = _q(OsServer.status == "Warning")
+    disconnected = _q(OsServer.status == "Disconnected")
+
+    cq = db.query(OsServer.cluster_name).filter(
         OsServer.cluster_name.isnot(None),
         OsServer.cluster_name != ""
-    ).distinct().count()
+    )
+    if org_id is not None:
+        cq = cq.filter(OsServer.org_id == org_id)
+    clusters = cq.distinct().count()
 
     return {
         "total": total,
@@ -176,9 +190,11 @@ def svc_get_summary(db: Session):
     }
 
 
-def svc_list_os_servers(db: Session, environment: Optional[str] = None, os_type: Optional[str] = None):
+def svc_list_os_servers(db: Session, environment: Optional[str] = None, os_type: Optional[str] = None, org_id: Optional[int] = None):
     query = db.query(OsServer)
 
+    if org_id is not None:
+        query = query.filter(OsServer.org_id == org_id)
     if environment and environment not in ("All", "all"):
         query = query.filter(OsServer.environment == environment)
     if os_type and os_type not in ("All OS", "All", "all"):
@@ -235,8 +251,11 @@ def svc_list_os_servers(db: Session, environment: Optional[str] = None, os_type:
     return {"status": "success", "data": result}
 
 
-def svc_get_os_server(server_id: int, db: Session):
-    server = db.query(OsServer).filter(OsServer.id == server_id).first()
+def svc_get_os_server(server_id: int, db: Session, org_id: Optional[int] = None):
+    q = db.query(OsServer).filter(OsServer.id == server_id)
+    if org_id is not None:
+        q = q.filter(OsServer.org_id == org_id)
+    server = q.first()
 
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -309,8 +328,9 @@ def svc_get_os_server(server_id: int, db: Session):
     }
 
 
-def svc_create_os_server(request: OsServerCreate, db: Session):
+def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
     server = OsServer(
+        org_id=org_id,
         server_name=request.server_name,
         hostname=request.hostname or request.ip_address,
         ip_address=request.ip_address,
@@ -334,6 +354,7 @@ def svc_create_os_server(request: OsServerCreate, db: Session):
     for svc in (request.database_services or []):
         if svc not in created_types:
             db.add(DatabaseInstance(
+                org_id=org_id,
                 server_id=server.id,
                 db_type=svc,
                 port=DEFAULT_PORTS.get(svc, 0),
@@ -344,6 +365,7 @@ def svc_create_os_server(request: OsServerCreate, db: Session):
     for inst_data in (request.db_instances or []):
         if inst_data.db_type not in created_types:
             db.add(DatabaseInstance(
+                org_id=org_id,
                 server_id=server.id,
                 db_type=inst_data.db_type,
                 db_version=inst_data.db_version,

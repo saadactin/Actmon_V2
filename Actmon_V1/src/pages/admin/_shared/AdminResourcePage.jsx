@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, Eye, X, Search, RefreshCw, Check, ChevronLeft, ChevronDown } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PERMISSION_BITS, decodePermission } from './mockDb';
+import { usePermissions } from '../../../hooks/usePermissions';
 
 // Accent palette — each record card gets a rotating gradient identity.
 const CARD_ACCENTS = [
@@ -29,6 +30,15 @@ const initialsOf = (s) => {
 export default function AdminResourcePage({ config }) {
   const { title, subtitle, icon: Icon, api, idKey, columns, fields, searchKeys = [], readOnly = false } = config;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Org context (set when opened from Administration → Organization → module)
+  const orgId = searchParams.get('org');
+  const orgName = searchParams.get('orgName');
+  // RBAC: gate actions by the user's permission on THIS page (public pages → allowed)
+  const { canHere } = usePermissions();
+  const allowAdd    = !readOnly && canHere('add');
+  const allowEdit   = !readOnly && canHere('edit');
+  const allowDelete = !readOnly && canHere('delete');
 
   const [rows, setRows]       = useState([]);
   const [loading, setLoading] = useState(true);
@@ -40,9 +50,9 @@ export default function AdminResourcePage({ config }) {
 
   const load = async () => {
     setLoading(true);
-    try { setRows(await api.list()); } finally { setLoading(false); }
+    try { setRows(await api.list(orgId)); } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [config]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [config, orgId]);
 
   const flash = (msg, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 2500); };
 
@@ -57,6 +67,7 @@ export default function AdminResourcePage({ config }) {
     const blank = blankRow(fields);
     // fields can auto-compute a value from existing rows (e.g. next bitmask)
     fields.forEach((f) => { if (f.autoValue) blank[f.key] = f.autoValue(rows); });
+    if (orgId) blank.org_id = Number(orgId);   // create within the selected organization
     setModal({ mode: 'add', data: blank });
   };
   const openEdit = async (row) => setModal({ mode: 'edit', data: await api.get(row[idKey]) });
@@ -65,8 +76,9 @@ export default function AdminResourcePage({ config }) {
   const save = async (form) => {
     setSaving(true);
     try {
-      if (modal.mode === 'add') { await api.create(form); flash('Record created'); }
-      else { await api.update(form[idKey], form); flash('Record updated'); }
+      const payload = orgId ? { ...form, org_id: form.org_id || Number(orgId) } : form;
+      if (modal.mode === 'add') { await api.create(payload); flash('Record created'); }
+      else { await api.update(form[idKey], payload); flash('Record updated'); }
       setModal(null); await load();
     } catch (e) { flash(e.message || 'Save failed', false); }
     finally { setSaving(false); }
@@ -92,7 +104,7 @@ export default function AdminResourcePage({ config }) {
             style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
           <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              <button onClick={() => navigate('/administration')}
+              <button onClick={() => navigate(orgId ? `/administration/${orgId}` : '/administration')}
                 className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-white hover:bg-white/20 transition-all flex-shrink-0">
                 <ChevronLeft size={18} />
               </button>
@@ -100,7 +112,10 @@ export default function AdminResourcePage({ config }) {
                 {Icon && <Icon size={22} />}
               </div>
               <div className="min-w-0">
-                <h1 className="text-lg sm:text-2xl font-black text-white tracking-tight leading-none truncate">{title}</h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-lg sm:text-2xl font-black text-white tracking-tight leading-none truncate">{title}</h1>
+                  {orgName && <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-indigo-200">🏢 {orgName}</span>}
+                </div>
                 {subtitle && <p className="text-slate-400 text-xs mt-1 truncate">{subtitle}</p>}
               </div>
             </div>
@@ -109,7 +124,7 @@ export default function AdminResourcePage({ config }) {
                 className="h-10 w-10 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-white hover:bg-white/20 transition-all">
                 <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
               </button>
-              {!readOnly && (
+              {allowAdd && (
                 <button onClick={openAdd}
                   className="h-10 px-4 sm:px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg transition-all">
                   <Plus size={16} /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
@@ -170,43 +185,45 @@ export default function AdminResourcePage({ config }) {
               const on = row[statusCol?.key] === true || row[statusCol?.key] === 'true';
               return (
                 <div key={row[idKey]}
-                  className={`group relative bg-white rounded-2xl border border-slate-200 ${a.ring} overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300`}>
-                  <div className={`h-1.5 bg-gradient-to-r ${a.bar}`} />
-                  <div className={`pointer-events-none absolute -top-10 -right-10 w-32 h-32 rounded-full bg-gradient-to-br ${a.bar} opacity-0 group-hover:opacity-[0.08] blur-3xl transition-opacity duration-500`} />
+                  className={`group relative bg-white rounded-2xl border border-slate-200/80 ${a.ring} overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:shadow-[0_24px_48px_-18px_rgba(15,23,42,0.28)] hover:-translate-y-1.5 transition-all duration-300`}>
+                  <div className={`h-1 bg-gradient-to-r ${a.bar}`} />
+                  <div className={`pointer-events-none absolute -top-12 -right-12 w-36 h-36 rounded-full bg-gradient-to-br ${a.bar} opacity-0 group-hover:opacity-[0.10] blur-3xl transition-opacity duration-500`} />
 
                   <div className="p-5">
                     {/* header */}
-                    <div className="flex items-start gap-3">
-                      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${a.bar} flex items-center justify-center text-white font-black text-sm shadow-lg flex-shrink-0 group-hover:scale-105 transition-transform`}>
+                    <div className="flex items-start gap-3.5">
+                      <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${a.bar} flex items-center justify-center text-white font-black text-[15px] tracking-tight shadow-lg ring-4 ring-white flex-shrink-0 group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-300`}>
                         {initialsOf(row[titleCol?.key])}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <h3 className="font-black text-slate-800 truncate leading-tight">{String(row[titleCol?.key] ?? '—')}</h3>
-                        <span className="text-[11px] font-bold text-slate-400">{idCol.label} #{row[idCol.key]}</span>
+                      <div className="min-w-0 flex-1 pt-0.5">
+                        <h3 className="text-[15px] font-extrabold text-slate-800 truncate leading-snug tracking-tight">{String(row[titleCol?.key] ?? '—')}</h3>
+                        <span className="inline-block mt-1 text-[10px] font-bold text-slate-400 font-mono bg-slate-100 px-1.5 py-0.5 rounded-md">{idCol.label} #{row[idCol.key]}</span>
                       </div>
                       {statusCol && (
-                        <span className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${on ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-emerald-500' : 'bg-slate-400'}`} />{on ? 'Active' : 'Inactive'}
+                        <span className={`flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide ${on ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100' : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />{on ? 'Active' : 'Inactive'}
                         </span>
                       )}
                     </div>
 
                     {/* detail rows */}
-                    <div className="mt-4 space-y-2">
-                      {detailCols.map((c) => (
-                        <div key={c.key} className="flex items-start justify-between gap-3 text-[12px]">
-                          <span className="text-slate-400 font-semibold flex-shrink-0">{c.label}</span>
-                          <span className="text-slate-700 font-medium text-right truncate max-w-[60%]">{renderCell(c, row)}</span>
-                        </div>
-                      ))}
-                    </div>
+                    {detailCols.length > 0 && (
+                      <div className="mt-4 rounded-xl bg-slate-50/70 ring-1 ring-slate-100 divide-y divide-slate-100/80">
+                        {detailCols.map((c) => (
+                          <div key={c.key} className="flex items-center justify-between gap-3 px-3 py-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex-shrink-0">{c.label}</span>
+                            <span className="text-[12.5px] font-semibold text-slate-700 text-right truncate max-w-[62%]">{renderCell(c, row)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* footer actions */}
-                  <div className="px-5 py-3 border-t border-slate-100 bg-slate-50/40 flex items-center justify-end gap-1">
-                    <IconBtn title="View" onClick={() => openView(row)} cls="hover:bg-blue-50 hover:text-blue-600"><Eye size={15} /></IconBtn>
-                    {!readOnly && <IconBtn title="Edit" onClick={() => openEdit(row)} cls="hover:bg-indigo-50 hover:text-indigo-600"><Pencil size={15} /></IconBtn>}
-                    {!readOnly && <IconBtn title="Delete" onClick={() => setConfirm(row)} cls="hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></IconBtn>}
+                  <div className="px-4 py-3 border-t border-slate-100 bg-gradient-to-b from-white to-slate-50/60 flex items-center justify-end gap-2">
+                    <ActionBtn title="View" onClick={() => openView(row)} tone="blue"><Eye size={15} /></ActionBtn>
+                    {allowEdit && <ActionBtn title="Edit" onClick={() => openEdit(row)} tone="indigo"><Pencil size={15} /></ActionBtn>}
+                    {allowDelete && <ActionBtn title="Delete" onClick={() => setConfirm(row)} tone="red"><Trash2 size={15} /></ActionBtn>}
                   </div>
                 </div>
               );
@@ -216,7 +233,7 @@ export default function AdminResourcePage({ config }) {
       </div>
 
       {modal && (
-        <FormModal config={config} mode={modal.mode} initial={modal.data}
+        <FormModal config={config} mode={modal.mode} initial={modal.data} orgId={orgId}
           saving={saving} onClose={() => setModal(null)} onSave={save} />
       )}
       {confirm && (
@@ -236,6 +253,20 @@ function IconBtn({ children, title, onClick, cls }) {
   return (
     <button title={title} onClick={onClick}
       className={`w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 transition-all ${cls}`}>
+      {children}
+    </button>
+  );
+}
+
+const ACTION_TONES = {
+  blue:   'hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600',
+  indigo: 'hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600',
+  red:    'hover:border-red-300 hover:bg-red-50 hover:text-red-600',
+};
+function ActionBtn({ children, title, onClick, tone = 'blue' }) {
+  return (
+    <button title={title} onClick={onClick}
+      className={`w-9 h-9 rounded-xl border border-slate-200 bg-white text-slate-400 flex items-center justify-center shadow-sm transition-all hover:shadow active:scale-95 ${ACTION_TONES[tone]}`}>
       {children}
     </button>
   );
@@ -266,7 +297,7 @@ function blankRow(fields) {
   return r;
 }
 
-function FormModal({ config, mode, initial, saving, onClose, onSave }) {
+function FormModal({ config, mode, initial, saving, onClose, onSave, orgId }) {
   const { title, fields, idKey, icon: Icon } = config;
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState({});
@@ -274,16 +305,16 @@ function FormModal({ config, mode, initial, saving, onClose, onSave }) {
   const readOnly = mode === 'view';
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  // load async dropdown options (loadOptions) when the form opens
+  // load async dropdown options (loadOptions) when the form opens — scoped to the org
   useEffect(() => {
     let alive = true;
     fields.filter((f) => typeof f.loadOptions === 'function').forEach((f) => {
-      Promise.resolve(f.loadOptions()).then((opts) => {
+      Promise.resolve(f.loadOptions(orgId)).then((opts) => {
         if (alive) setDynOpts((o) => ({ ...o, [f.key]: opts || [] }));
       }).catch(() => {});
     });
     return () => { alive = false; };
-  }, [fields]);
+  }, [fields, orgId]);
   const singular = title.replace(/s$/, '');
   const heading = mode === 'add' ? `Add ${singular}` : mode === 'edit' ? `Edit ${singular}` : `${singular} Details`;
   const sub = mode === 'add' ? 'Create a new record' : mode === 'edit' ? 'Update the record below' : 'Read-only view';

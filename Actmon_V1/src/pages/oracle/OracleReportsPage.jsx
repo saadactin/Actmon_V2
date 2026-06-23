@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { usePermissions } from '../../hooks/usePermissions';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, Download, RefreshCw, Activity, Clock, Calendar,
@@ -523,6 +524,7 @@ function EmailScheduleModal({ id, connName, capturedPdfB64, captureErrMsg, onClo
 /* ─── main component ─── */
 export default function OracleReportsPage() {
   const { id } = useParams();
+  const { canHere } = usePermissions();
   const [period, setPeriod]         = useState('live');
   const [genTime, setGenTime]       = useState(now);
   const [showEmailModal, setShowEmailModal] = useState(false);
@@ -874,18 +876,22 @@ export default function OracleReportsPage() {
               style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}>
               <RefreshCw size={13} /> Refresh
             </button>
-            <button onClick={openEmailModal} disabled={capturingPdf}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-60"
-              style={{ background: 'rgba(8,145,178,0.3)', border: '1px solid rgba(8,145,178,0.5)' }}>
-              {capturingPdf
-                ? <><Loader size={13} className="animate-spin" /> Preparing PDF…</>
-                : <><Mail size={13} /> Send / Schedule</>}
-            </button>
-            <button onClick={handlePrint}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all"
-              style={{ background: 'linear-gradient(135deg,#C74634,#9b2b1f)', border: '1px solid rgba(255,255,255,0.3)' }}>
-              <Download size={13} /> Download PDF
-            </button>
+            {canHere('execute') && (
+              <button onClick={openEmailModal} disabled={capturingPdf}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all disabled:opacity-60"
+                style={{ background: 'rgba(8,145,178,0.3)', border: '1px solid rgba(8,145,178,0.5)' }}>
+                {capturingPdf
+                  ? <><Loader size={13} className="animate-spin" /> Preparing PDF…</>
+                  : <><Mail size={13} /> Send / Schedule</>}
+              </button>
+            )}
+            {canHere('export') && (
+              <button onClick={handlePrint}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold transition-all"
+                style={{ background: 'linear-gradient(135deg,#C74634,#9b2b1f)', border: '1px solid rgba(255,255,255,0.3)' }}>
+                <Download size={13} /> Download PDF
+              </button>
+            )}
           </div>
         </div>
 
