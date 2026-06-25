@@ -216,6 +216,55 @@ def oracle_dashboard(conn_id: int, db: Session):
     except Exception as exc:
         errors.append(f"library_cache_hit: {exc}")
 
+    # ── CPU (host + cores) — Oracle exposes these natively, no OS access needed ──
+    cpu_count = 0
+    cpu_cores = 0
+    host_cpu_pct = 0.0
+    db_cpu_pct = 0.0
+    physical_mem_mb = 0.0
+    try:
+        rows = _rows(engine, "SELECT value FROM v$parameter WHERE name='cpu_count'")
+        cpu_count = _safe_int(rows[0].get("VALUE", 0)) if rows else 0
+    except Exception as exc:
+        errors.append(f"cpu_count: {exc}")
+    try:
+        rows = _rows(engine,
+            "SELECT metric_name, ROUND(value,2) AS val FROM v$sysmetric "
+            "WHERE metric_name IN ('Host CPU Utilization (%)','Database CPU Time Ratio') AND group_id=2")
+        for r in rows:
+            nm = _safe_str(r.get("METRIC_NAME"))
+            if nm == "Host CPU Utilization (%)":
+                host_cpu_pct = round(_safe_float(r.get("VAL", 0.0)), 2)
+            elif nm == "Database CPU Time Ratio":
+                db_cpu_pct = round(_safe_float(r.get("VAL", 0.0)), 2)
+    except Exception as exc:
+        errors.append(f"host_cpu_sysmetric: {exc}")
+
+    # v$sysmetric is empty on many instances (XE / MMON metrics off). Fall back to an INSTANT
+    # cumulative read from v$osstat (no sleep, so the dashboard never blocks). The live
+    # instantaneous % (busy/idle delta) is computed by the separate, async Host Resources
+    # drill-down call — keeping it off the dashboard's critical path.
+    if not host_cpu_pct:
+        try:
+            rs = _rows(engine, "SELECT stat_name, value FROM v$osstat WHERE stat_name IN ('BUSY_TIME','IDLE_TIME')")
+            m = {_safe_str(x.get("STAT_NAME")): _safe_float(x.get("VALUE", 0.0)) for x in rs}
+            busy, idle = m.get("BUSY_TIME", 0.0), m.get("IDLE_TIME", 0.0)
+            if (busy + idle) > 0:
+                host_cpu_pct = round(busy / (busy + idle) * 100, 1)
+        except Exception as exc:
+            errors.append(f"host_cpu_osstat: {exc}")
+    try:
+        rows = _rows(engine,
+            "SELECT stat_name, value FROM v$osstat "
+            "WHERE stat_name IN ('NUM_CPUS','NUM_CPU_CORES','PHYSICAL_MEMORY_BYTES')")
+        os_map = {_safe_str(r.get("STAT_NAME")): _safe_float(r.get("VALUE", 0.0)) for r in rows}
+        cpu_cores = int(os_map.get("NUM_CPU_CORES") or os_map.get("NUM_CPUS") or 0)
+        physical_mem_mb = round((os_map.get("PHYSICAL_MEMORY_BYTES") or 0.0) / 1048576.0, 1)
+        if not cpu_count:
+            cpu_count = int(os_map.get("NUM_CPUS") or 0)
+    except Exception as exc:
+        errors.append(f"osstat: {exc}")
+
     top_waits = []
     try:
         raw = _rows(
@@ -336,6 +385,11 @@ def oracle_dashboard(conn_id: int, db: Session):
         "db_size_gb":            db_size_gb,
         "buffer_cache_hit_pct":  buffer_cache_hit_pct,
         "library_cache_hit_pct": library_cache_hit_pct,
+        "cpu_count":             cpu_count,
+        "cpu_cores":             cpu_cores,
+        "host_cpu_pct":          host_cpu_pct,
+        "db_cpu_pct":            db_cpu_pct,
+        "physical_mem_mb":       physical_mem_mb,
     }
 
     return {

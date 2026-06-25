@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from app.database.connection import SessionLocal, engine
 from app.models.connection_model import ConnectionMaster
-from app.services.postgres import postgres_drilldown_service as dd
+from app.services import drilldown_service as dd
 
 INTERVAL_SECONDS = 60
 CPU_EVENT_PCT = 70.0
@@ -47,7 +47,16 @@ def _ensure_table():
             c.exec_driver_sql(stmt)
 
 
+def _tech_of(db_type: str) -> str:
+    t = (db_type or "").lower()
+    return "mysql" if t == "mariadb" else t
+
+
 def _sample_one(db, conn):
+    tech = _tech_of(conn.db_type)
+    cfg = dd.TECH.get(tech)
+    if not cfg:
+        return
     try:
         ssh = dd._ssh_connect(conn, db)   # resolves connection creds or matching OS server
     except Exception:
@@ -61,29 +70,22 @@ def _sample_one(db, conn):
         is_event = (cpu is not None and cpu >= CPU_EVENT_PCT) or (ram is not None and ram >= RAM_EVENT_PCT)
         if is_event:
             cores = dd._num(dd._run(ssh, "nproc"), int) or 1
-            procs = dd._collect_processes(ssh, cores)
-            evidence = {"top_processes": sorted(procs, key=lambda r: r.get("cpu_pct") or 0, reverse=True)[:15]}
+            procs = dd._collect(ssh, cores, cfg["procs"])
+            evidence = {"engine": tech, "top_processes": sorted(procs, key=lambda r: r.get("cpu_pct") or 0, reverse=True)[:15]}
     finally:
         ssh.close()
 
     if evidence is not None:
         try:
-            eng = dd._pg_engine(conn)
-            with eng.connect() as c2:
-                evidence["active_sessions_list"] = dd._safe_rows(
-                    c2, f"SELECT {dd._ACTIVITY_COLS} FROM pg_stat_activity "
-                        "WHERE state = 'active' AND pid <> pg_backend_pid() "
-                        "ORDER BY query_start NULLS LAST LIMIT 10")
-                evidence["cache_hit_pct"] = dd._safe_scalar(
-                    c2, "SELECT round(sum(blks_hit)*100.0/nullif(sum(blks_hit+blks_read),0),2) FROM pg_stat_database")
+            evidence["active_sessions_list"] = dd._active_sessions(tech, conn)[:10]
         except Exception:
             pass
 
     with engine.begin() as c:
         c.execute(text(
             "INSERT INTO resource_samples (org_id, connection_id, db_type, cpu_pct, ram_pct, disk_pct, is_event, evidence) "
-            "VALUES (:o, :cid, 'postgresql', :cpu, :ram, :disk, :ev, CAST(:evi AS jsonb))"
-        ), {"o": getattr(conn, "org_id", 1) or 1, "cid": conn.id,
+            "VALUES (:o, :cid, :dbt, :cpu, :ram, :disk, :ev, CAST(:evi AS jsonb))"
+        ), {"o": getattr(conn, "org_id", 1) or 1, "cid": conn.id, "dbt": (conn.db_type or "").lower(),
             "cpu": cpu, "ram": ram, "disk": disk,
             "ev": bool(evidence is not None),
             "evi": json.dumps(evidence, default=str) if evidence else None})
@@ -92,7 +94,7 @@ def _sample_one(db, conn):
 def _tick():
     db = SessionLocal()
     try:
-        conns = db.query(ConnectionMaster).filter(ConnectionMaster.db_type == "postgresql").all()
+        conns = db.query(ConnectionMaster).all()
         for conn in conns:
             try:
                 _sample_one(db, conn)

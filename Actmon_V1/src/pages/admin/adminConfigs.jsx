@@ -180,6 +180,8 @@ export const designationsConfig = {
 export const employeesConfig = {
   key: 'employees', title: 'Employees', subtitle: 'Organization employee records',
   icon: Users, api: employeesApi, idKey: 'employee_id', searchKeys: ['employee_code', 'employee_name', 'email_id'],
+  // After creating an employee, offer to create a login account (set password / confirm).
+  autoCreateLogin: true,
   columns: [
     { key: 'employee_id', label: 'ID', width: '70px' },
     { key: 'employee_code', label: 'Code' },
@@ -190,7 +192,7 @@ export const employeesConfig = {
     statusCol(),
   ],
   fields: [
-    { key: 'employee_code', label: 'Employee Code', type: 'text', required: true },
+    { key: 'employee_code', label: 'Employee Code', type: 'text', readOnly: true, help: 'Auto-generated on save (e.g. ACT005)' },
     { key: 'employee_name', label: 'Full Name', type: 'text', required: true },
     { key: 'email_id', label: 'Email', type: 'text' },
     { key: 'mobile_no', label: 'Mobile No', type: 'text' },

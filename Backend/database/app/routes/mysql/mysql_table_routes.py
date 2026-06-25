@@ -23,6 +23,11 @@ def list_databases(conn_id: int, db: Session = Depends(get_db)):
     return mysql_table_service.get_databases(conn_id, db)
 
 
+@router.get("/{conn_id}/all-tables")
+def list_all_tables(conn_id: int, db: Session = Depends(get_db)):
+    return mysql_table_service.get_all_tables(conn_id, db)
+
+
 @router.get("/{conn_id}/databases/{db_name}/tables")
 def list_tables(conn_id: int, db_name: str, db: Session = Depends(get_db)):
     return mysql_table_service.get_tables(conn_id, db_name, db)

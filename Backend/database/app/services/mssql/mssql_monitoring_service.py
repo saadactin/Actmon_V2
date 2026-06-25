@@ -106,7 +106,13 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
 
         server_info = {}
         try:
-            rows = _rows(engine, "SELECT @@SERVERNAME AS server_name, @@VERSION AS version, GETDATE() AS current_time")
+            rows = _rows(engine, """
+                SELECT @@SERVERNAME AS server_name,
+                       CAST(SERVERPROPERTY('ProductVersion') AS VARCHAR(50)) AS product_version,
+                       CAST(SERVERPROPERTY('ProductLevel')   AS VARCHAR(50)) AS product_level,
+                       CAST(SERVERPROPERTY('Edition')        AS VARCHAR(120)) AS edition,
+                       @@VERSION AS version
+            """)
             server_info = rows[0] if rows else {}
         except Exception as e:
             server_info = {"error": str(e)}
@@ -129,26 +135,40 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
 
         active_sessions = 0
         try:
-            row = _rows(engine, "SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1")
+            # Exclude ActMon's own monitoring connection (@@SPID) so this count equals the
+            # number of rows shown in the Active Sessions list.
+            row = _rows(engine, "SELECT COUNT(*) AS cnt FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND session_id <> @@SPID")
             active_sessions = _to_int(row[0].get("cnt", 0)) if row else 0
         except Exception:
             pass
 
-        max_connections = 0
+        max_connections_cfg = 0
         try:
             row = _rows(engine, "SELECT CAST(value_in_use AS INT) AS max_conn FROM sys.configurations WHERE name = 'max connections'")
-            max_connections = _to_int(row[0].get("max_conn", 0)) if row else 0
+            max_connections_cfg = _to_int(row[0].get("max_conn", 0)) if row else 0
         except Exception:
             pass
 
-        effective_max = max_connections if max_connections > 0 else 32767
+        # SQL Server's "max connections" = 0 means UNLIMITED — the effective ceiling is 32767.
+        # Report the effective number so the UI never shows "?".
+        max_connections_unlimited = (max_connections_cfg == 0)
+        effective_max = max_connections_cfg if max_connections_cfg > 0 else 32767
+        max_connections = effective_max
         connection_pct = round((active_sessions / effective_max) * 100, 2)
 
         buffer_cache_hit_pct = 0.0
         try:
-            rows = _rows(engine, "SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Buffer cache hit ratio' AND object_name LIKE '%Buffer Manager%'")
+            # SQL Server's 'Buffer cache hit ratio' is a RATIO counter — it must be divided
+            # by its '... base' counter and ×100, otherwise you get garbage like 1276%.
+            rows = _rows(engine, """
+                SELECT CAST(ROUND(100.0 * a.cntr_value / NULLIF(b.cntr_value, 0), 2) AS FLOAT) AS pct
+                FROM sys.dm_os_performance_counters a
+                JOIN sys.dm_os_performance_counters b ON a.object_name = b.object_name
+                WHERE a.counter_name = 'Buffer cache hit ratio'
+                  AND b.counter_name = 'Buffer cache hit ratio base'
+            """)
             if rows:
-                buffer_cache_hit_pct = _to_float(rows[0].get("cntr_value", 0))
+                buffer_cache_hit_pct = min(_to_float(rows[0].get("pct", 0)), 100.0)
         except Exception:
             pass
 
@@ -210,16 +230,25 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
 
         active_queries = []
         try:
+            # One row per user session — this is the exact set behind the "Active Sessions" count.
+            # @@SPID (ActMon's own monitoring connection) is excluded so the list matches what the
+            # user actually cares about. Aliases match the frontend (database_name / duration_ms / wait_type).
             active_queries = _rows(engine, """
-                SELECT TOP 20 s.session_id, s.login_name, s.host_name,
-                    DB_NAME(s.database_id) AS db_name, s.status,
+                SELECT TOP 100 s.session_id, s.login_name, s.host_name,
+                    DB_NAME(s.database_id) AS database_name,
+                    DB_NAME(s.database_id) AS db_name,
+                    s.status,
+                    ISNULL(r.total_elapsed_time, 0) AS duration_ms,
                     ISNULL(r.total_elapsed_time / 1000, 0) AS elapsed_sec,
-                    LEFT(ISNULL(t.text, ''), 200) AS query
+                    r.wait_type,
+                    LEFT(ISNULL(t.text, ''), 200) AS query,
+                    LEFT(ISNULL(t.text, ''), 200) AS sql_text
                 FROM sys.dm_exec_sessions s
                 LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
                 OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
                 WHERE s.is_user_process = 1
-                ORDER BY elapsed_sec DESC
+                  AND s.session_id <> @@SPID
+                ORDER BY duration_ms DESC
             """)
         except Exception as e:
             active_queries = [{"error": str(e)}]
@@ -275,6 +304,43 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
         except Exception as e:
             memory_info = {"error": str(e)}
 
+        # Rich, clearly-scoped memory picture: SQL Server allocation + host RAM ("out of what").
+        mem = {
+            "used_mb": round(_to_float(memory_info.get("sql_memory_used_mb", 0)), 1),   # SQL Server process in use
+            "utilization_pct": _to_float(memory_info.get("memory_utilization_percentage", 0)),
+            "page_fault_count": _to_int(memory_info.get("page_fault_count", 0)),
+        }
+        try:  # Total / Target Server Memory (what SQL Server has grabbed vs wants)
+            for x in _rows(engine, "SELECT RTRIM(counter_name) AS cn, cntr_value FROM sys.dm_os_performance_counters "
+                                   "WHERE counter_name IN ('Total Server Memory (KB)','Target Server Memory (KB)')"):
+                v = round(_to_float(x.get("cntr_value", 0)) / 1024.0, 1)
+                if str(x.get("cn", "")).startswith("Total"):
+                    mem["total_mb"] = v          # SQL Server currently using
+                elif str(x.get("cn", "")).startswith("Target"):
+                    mem["target_mb"] = v         # SQL Server wants/ceiling
+        except Exception:
+            pass
+        try:  # Page Life Expectancy (seconds pages stay in buffer pool)
+            r = _rows(engine, "SELECT cntr_value FROM sys.dm_os_performance_counters "
+                              "WHERE RTRIM(counter_name)='Page life expectancy' AND object_name LIKE '%Buffer Manager%'")
+            if r:
+                mem["page_life_expectancy"] = _to_int(r[0].get("cntr_value", 0))
+        except Exception:
+            pass
+        try:  # Physical host RAM — gives the real "out of" denominator
+            r = _rows(engine, "SELECT total_physical_memory_kb, available_physical_memory_kb, "
+                              "system_memory_state_desc FROM sys.dm_os_sys_memory")
+            if r:
+                ht = round(_to_float(r[0].get("total_physical_memory_kb", 0)) / 1024.0, 1)
+                ha = round(_to_float(r[0].get("available_physical_memory_kb", 0)) / 1024.0, 1)
+                mem["host_total_mb"] = ht
+                mem["host_available_mb"] = ha
+                mem["host_used_mb"] = round(ht - ha, 1)
+                mem["host_used_pct"] = round((ht - ha) / ht * 100, 1) if ht > 0 else 0
+                mem["system_memory_state"] = r[0].get("system_memory_state_desc")
+        except Exception:
+            pass
+
         locks = []
         blocking = []
         try:
@@ -292,12 +358,15 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
 
         cpu_info = {"sql_cpu_pct": 0, "sql_only_pct": 0}
         try:
+            # Correct node names: SystemIdle = idle %, ProcessUtilization = SQL Server's CPU %.
             rows = _rows(engine, """
-                SELECT TOP 1 100 - SystemIdle AS sql_cpu_pct, SQLProcessUtilization AS sql_only_pct
+                SELECT TOP 1
+                    100 - system_idle AS sql_cpu_pct,
+                    sql_cpu AS sql_only_pct
                 FROM (
                     SELECT
-                        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int') AS SystemIdle,
-                        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SQLProcessUtilization)[1]','int') AS SQLProcessUtilization
+                        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','int') AS system_idle,
+                        record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int') AS sql_cpu
                     FROM (
                         SELECT TOP 1 CONVERT(XML, record) AS record
                         FROM sys.dm_os_ring_buffers
@@ -309,9 +378,29 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
             """)
             if rows:
                 cpu_info = {
-                    "sql_cpu_pct": _to_int(rows[0].get("sql_cpu_pct", 0)),
-                    "sql_only_pct": _to_int(rows[0].get("sql_only_pct", 0)),
+                    "sql_cpu_pct": max(min(_to_int(rows[0].get("sql_cpu_pct", 0)), 100), 0),
+                    "sql_only_pct": max(min(_to_int(rows[0].get("sql_only_pct", 0)), 100), 0),
                 }
+        except Exception:
+            pass
+
+        # Clearly-scoped CPU: host total (out of 100% across all cores) + SQL Server's own slice,
+        # plus throughput counters the overview panel shows.
+        cpu = {
+            "host_cpu_pct": cpu_info.get("sql_cpu_pct", 0),      # whole machine, 0–100%
+            "sql_server_cpu_pct": cpu_info.get("sql_only_pct", 0),  # SQL Server's portion, 0–100%
+            "other_cpu_pct": max(cpu_info.get("sql_cpu_pct", 0) - cpu_info.get("sql_only_pct", 0), 0),
+        }
+        try:
+            m = {str(x.get("cn", "")).strip(): _to_int(x.get("cntr_value", 0))
+                 for x in _rows(engine, "SELECT RTRIM(counter_name) AS cn, cntr_value FROM sys.dm_os_performance_counters "
+                                        "WHERE counter_name IN ('SQL Compilations/sec','SQL Re-Compilations/sec','Batch Requests/sec','Full Scans/sec')")}
+            cpu.update({
+                "sql_compilations": m.get("SQL Compilations/sec", 0),
+                "sql_recompilations": m.get("SQL Re-Compilations/sec", 0),
+                "batch_requests_sec": m.get("Batch Requests/sec", 0),
+                "full_scans_sec": m.get("Full Scans/sec", 0),
+            })
         except Exception:
             pass
 
@@ -327,23 +416,48 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
         except Exception:
             pass
 
+        # Tables across ALL user databases (the connected DB is usually master → empty).
         tables = []
         try:
-            tables = _rows(engine, """
-                SELECT TOP 20 OBJECT_NAME(ius.object_id) AS table_name,
-                    SUM(ius.user_seeks+ius.user_scans+ius.user_lookups) AS total_reads,
-                    SUM(ius.user_updates) AS total_writes, p.rows AS row_count
-                FROM sys.dm_db_index_usage_stats ius
-                JOIN sys.partitions p ON ius.object_id=p.object_id AND p.index_id<=1
-                WHERE ius.database_id=DB_ID() AND OBJECTPROPERTY(ius.object_id,'IsUserTable')=1
-                GROUP BY ius.object_id, p.rows ORDER BY total_reads DESC
-            """)
-            for r in tables:
-                for k, v in r.items():
-                    if hasattr(v, '__class__') and v.__class__.__name__ == 'Decimal':
-                        r[k] = float(v)
-        except Exception:
-            pass
+            user_dbs = [r["name"] for r in _rows(engine,
+                        "SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0")]
+            mi_counts = {}
+            try:
+                for r in _rows(engine, "SELECT database_id, object_id, COUNT(*) AS cnt "
+                                       "FROM sys.dm_db_missing_index_details GROUP BY database_id, object_id"):
+                    mi_counts[(_to_int(r.get("database_id")), _to_int(r.get("object_id")))] = _to_int(r.get("cnt"))
+            except Exception:
+                pass
+            for d in user_dbs:
+                D = d.replace("]", "]]")
+                try:
+                    db_id = _to_int(_rows(engine, f"SELECT DB_ID('{d}') AS i")[0].get("i"))
+                    rows = _rows(engine, f"""
+                        SELECT '{d}' AS db_name, s.name AS schema_name, t.name AS table_name, t.object_id,
+                            p.rows AS row_count,
+                            CAST(SUM(CASE WHEN i.index_id IN (0,1) THEN a.data_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,2)) AS data_mb,
+                            CAST(SUM(CASE WHEN i.index_id NOT IN (0,1) THEN a.used_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,2)) AS index_mb,
+                            CAST(SUM(a.total_pages)*8/1024.0 AS DECIMAL(12,2)) AS total_mb,
+                            CONVERT(VARCHAR(19), t.modify_date, 120) AS last_updated
+                        FROM [{D}].sys.tables t
+                        JOIN [{D}].sys.schemas s ON t.schema_id = s.schema_id
+                        JOIN [{D}].sys.indexes i ON t.object_id = i.object_id
+                        JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+                        JOIN [{D}].sys.allocation_units a ON p.partition_id = a.container_id
+                        WHERE i.index_id <= 1
+                        GROUP BY s.name, t.name, t.object_id, p.rows, t.modify_date""")
+                    for r in rows:
+                        for k, v in list(r.items()):
+                            if hasattr(v, "__class__") and v.__class__.__name__ == "Decimal":
+                                r[k] = float(v)
+                        r["missing_index_count"] = mi_counts.get((db_id, _to_int(r.get("object_id"))), 0)
+                        tables.append(r)   # keeps db_name + raw schema_name for drill-down
+                except Exception:
+                    continue
+            tables.sort(key=lambda x: x.get("total_mb") or 0, reverse=True)
+            tables = tables[:100]
+        except Exception as e:
+            tables = [{"error": str(e)}]
 
         backup_history = []
         try:
@@ -406,28 +520,40 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
         except Exception:
             pass
 
-        version_str = str(server_info.get("version", "N/A"))
-        if "\n" in version_str:
-            version_str = version_str.split("\n")[0].strip()
+        product_version = str(server_info.get("product_version") or "").strip()
+        edition = str(server_info.get("edition") or "").strip()
+        full_version = str(server_info.get("version", "") or "")
+        version_str = product_version or (full_version.split("\n")[0].strip() if full_version else "N/A")
+
+        total_size_mb = round(sum(_to_float(d.get("size_mb", 0)) for d in databases if not d.get("error")), 1)
 
         return {
             "status": "success",
             "connection": conn_meta,
             "health_summary": {
                 "version": version_str,
+                "edition": edition,
+                "product_version": product_version,
+                "uptime": uptime_str,
                 "uptime_str": uptime_str,
                 "last_restart": last_restart_str,
                 "host_name": str(server_info.get("server_name", conn_rec.host)),
                 "total_databases": total_databases,
+                "total_size_mb": total_size_mb,
+                "total_size_gb": round(total_size_mb / 1024, 2),
                 "active_sessions": active_sessions,
                 "max_connections": max_connections,
+                "max_connections_unlimited": max_connections_unlimited,
                 "connection_pct": connection_pct,
                 "connection_usage_pct": connection_pct,
                 "buffer_cache_hit_pct": buffer_cache_hit_pct,
                 "disk_io_pct": 0.0,
-                "memory_usage_pct": _to_float(memory_info.get("memory_utilization_percentage", 0)),
+                # host RAM used % (true "out of host memory"); falls back to process utilization
+                "memory_usage_pct": mem.get("host_used_pct", mem.get("utilization_pct", 0)),
+                "page_life_expectancy": mem.get("page_life_expectancy"),
                 "replication_state": replication_state,
-                "sql_cpu_pct": cpu_info.get("sql_cpu_pct", 0),
+                "host_cpu_pct": cpu.get("host_cpu_pct", 0),
+                "sql_cpu_pct": cpu.get("sql_server_cpu_pct", 0),
             },
             "databases": databases,
             "wait_stats": wait_stats,
@@ -436,13 +562,15 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
             "top_queries": top_cpu_queries,
             "io_stats": io_stats,
             "disk_io": io_stats,
-            "memory": memory_info,
+            "memory": mem,
             "server_info": {
                 "server_name": str(server_info.get("server_name", conn_rec.host)),
                 "version": version_str,
+                "product_version": product_version,
+                "edition": edition,
             },
             "sessions": {"active": active_sessions, "max": max_connections, "pct": connection_pct},
-            "cpu": cpu_info,
+            "cpu": cpu,
             "locks": locks,
             "blocking": blocking,
             "replication": replication,

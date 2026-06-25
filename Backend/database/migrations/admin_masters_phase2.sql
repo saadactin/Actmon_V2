@@ -175,13 +175,26 @@ WHERE  e.deleted_at IS NULL;
 CREATE OR REPLACE PROCEDURE public.sp_insertemployee(IN p_json jsonb)
 LANGUAGE plpgsql AS $$
 DECLARE v_org INTEGER; v_code VARCHAR(50); v_name VARCHAR(150); v_by INTEGER; v_cnt INTEGER;
+        v_prefix TEXT; v_num INTEGER;
 BEGIN
     v_org := COALESCE((p_json->>'org_id')::INTEGER, 1);
     v_code := TRIM(p_json->>'employee_code');
     v_name := TRIM(p_json->>'employee_name');
     v_by := COALESCE((p_json->>'created_by')::INTEGER, 1);
-    IF v_code IS NULL OR v_code='' THEN RAISE EXCEPTION 'Employee Code is required'; END IF;
     IF v_name IS NULL OR v_name='' THEN RAISE EXCEPTION 'Employee Name is required'; END IF;
+    -- Auto-generate <PREFIX><nnn> per org when no code supplied (prefix from the org's
+    -- most-recent coded employee, default 'ACT'; number = max existing + 1).
+    IF v_code IS NULL OR v_code = '' THEN
+        SELECT (regexp_match(employee_code, '^([A-Za-z]+)'))[1] INTO v_prefix
+          FROM public.employee_master
+         WHERE org_id = v_org AND deleted_at IS NULL AND employee_code ~ '^[A-Za-z]+[0-9]+$'
+         ORDER BY created_at DESC NULLS LAST, employee_id DESC LIMIT 1;
+        v_prefix := COALESCE(v_prefix, 'ACT');
+        SELECT COALESCE(MAX((regexp_match(employee_code, '([0-9]+)$'))[1]::INTEGER), 0) + 1 INTO v_num
+          FROM public.employee_master
+         WHERE org_id = v_org AND deleted_at IS NULL AND employee_code ~ ('^' || v_prefix || '[0-9]+$');
+        v_code := v_prefix || LPAD(v_num::TEXT, 3, '0');
+    END IF;
     SELECT COUNT(*) INTO v_cnt FROM public.employee_master WHERE org_id=v_org AND lower(employee_code)=lower(v_code) AND deleted_at IS NULL;
     IF v_cnt>0 THEN RAISE EXCEPTION 'Employee Code already exists'; END IF;
     INSERT INTO public.employee_master

@@ -18,6 +18,7 @@ import {
   LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
+import HostResources from '../postgresql/PgHostResources';
 
 /* ─── MongoDB palette ─── */
 const C = {
@@ -988,6 +989,9 @@ export default function MongoDBDashboard() {
                   <KpiCard icon={Activity}  title="Total Ops"   value={fmtNum(opRate)} accent="cyan" />
                 </button>
               </div>
+
+              {/* Host Resources drill-down */}
+              <HostResources connId={id} tech="mongodb" />
 
               {/* 4 Gauges */}
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">

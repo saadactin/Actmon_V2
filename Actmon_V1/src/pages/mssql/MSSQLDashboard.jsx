@@ -18,6 +18,8 @@ import {
   LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
+import HostResources from '../postgresql/PgHostResources';
+import { mssqlTableDetail } from '../../api/drilldown';
 
 /* ─── palette ─── */
 const C = {
@@ -61,7 +63,25 @@ export default function MSSQLDashboard() {
   const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines]   = useState({ conn: [], cache: [], cpu: [] });
   const [tableSearch, setTableSearch] = useState('');
+  const [tableDetail, setTableDetail] = useState(null);   // { loading, data, err, title }
+  const [tablesDb, setTablesDb]       = useState('__all__'); // DB to filter the Tables tab to
 
+  // Drill from Databases → Tables filtered to one database
+  const openDbTables = (dbName) => {
+    setTablesDb(dbName || '__all__');
+    setTableSearch('');
+    setActiveTab('tables');
+  };
+
+  const openTableDetail = (t) => {
+    const dbn = t.db_name || (t.schema_name || '').split('.')[0];
+    const schema = t.schema_name && t.schema_name.includes('.') ? t.schema_name.split('.').slice(1).join('.') : (t.schema_name || 'dbo');
+    const table = t.table_name || t.name;
+    setTableDetail({ loading: true, title: `${dbn}.${schema}.${table}` });
+    mssqlTableDetail(id, dbn, schema, table)
+      .then((d) => setTableDetail({ loading: false, data: d, title: `${dbn}.${schema}.${table}` }))
+      .catch((e) => setTableDetail({ loading: false, err: e?.response?.data?.detail || e.message, title: `${dbn}.${schema}.${table}` }));
+  };
 
   const countRef = useRef(null);
 
@@ -90,11 +110,11 @@ export default function MSSQLDashboard() {
     if (!data) return;
     const connPct  = Number(data?.health_summary?.connection_usage_pct) || 0;
     const cachePct = Number(data?.health_summary?.buffer_cache_hit_pct) || 0;
-    const cpuTime  = Number(data?.health_summary?.cpu_time_ms)          || 0;
+    const cpuPct   = Number(data?.health_summary?.host_cpu_pct)         || 0;
     setSparklines(prev => ({
       conn:  [...prev.conn.slice(-20),  { t: new Date().toLocaleTimeString(), v: connPct  }],
       cache: [...prev.cache.slice(-20), { t: new Date().toLocaleTimeString(), v: cachePct }],
-      cpu:   [...prev.cpu.slice(-20),   { t: new Date().toLocaleTimeString(), v: cpuTime  }],
+      cpu:   [...prev.cpu.slice(-20),   { t: new Date().toLocaleTimeString(), v: cpuPct   }],
     }));
   }, [data]);
 
@@ -239,30 +259,33 @@ export default function MSSQLDashboard() {
 
               {/* ── Row 1: KPI strip ── */}
               <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
-                <KpiCard icon={Server}    title="Version"        value={(health_summary.version||'').split(' ')[0] || '—'}  accent="blue" />
-                <KpiCard icon={Clock}     title="Uptime"         value={health_summary.uptime || '—'}                       accent="sky" />
-                <KpiCard icon={Database}  title="Databases"      value={health_summary.total_databases ?? (databases.length || '—')}  accent="indigo" />
-                <KpiCard icon={Users}     title="Active Sessions" value={health_summary.active_sessions ?? sessions.active ?? '—'}  accent="green" />
-                <KpiCard icon={Activity}  title="Buffer Cache%"  value={cachePct > 0 ? `${cachePct}%` : '—'}                accent={cachePct < 80 ? 'red' : 'green'} />
-                <KpiCard icon={Cpu}       title="CPU Time (ms)"  value={fmtNum(health_summary.cpu_time_ms)}                 accent="orange" />
-                <KpiCard icon={AlertCircle} title="Wait Stats"   value={wait_stats.length > 0 ? `${wait_stats.length} types` : '—'}  accent="purple" />
-                <KpiCard icon={HardDrive} title="DB Size"        value={health_summary.total_size_gb > 0.1 ? `${health_summary.total_size_gb} GB` : `${health_summary.total_size_mb || 0} MB`} accent="slate" />
+                <KpiCard icon={Server}    title="Version"        value={(health_summary.version||'').split(' ')[0] || '—'}  accent="blue" hint="Server performance" onClick={()=>setActiveTab('performance')} />
+                <KpiCard icon={Clock}     title="Uptime"         value={health_summary.uptime || '—'}                       accent="sky" hint="Server performance" onClick={()=>setActiveTab('performance')} />
+                <KpiCard icon={Database}  title="Databases"      value={health_summary.total_databases ?? (databases.length || '—')}  accent="indigo" hint={`List ${health_summary.total_databases ?? databases.length ?? ''} databases`} onClick={()=>setActiveTab('databases')} />
+                <KpiCard icon={Users}     title="Active Sessions" value={health_summary.active_sessions ?? sessions.active ?? '—'}  accent="green" hint={`Show ${sessions.active ?? ''} active sessions`} onClick={()=>setActiveTab('users')} />
+                <KpiCard icon={Activity}  title="Buffer Cache%"  value={cachePct > 0 ? `${cachePct}%` : '—'}                accent={cachePct < 80 ? 'red' : 'green'} hint="Cache & performance" onClick={()=>setActiveTab('performance')} />
+                <KpiCard icon={Cpu}       title="CPU (of 100%)"  value={`${Number(cpu.host_cpu_pct) || 0}%`}                 accent={Number(cpu.host_cpu_pct) > 80 ? 'red' : 'orange'} hint="CPU & performance" onClick={()=>setActiveTab('performance')} />
+                <KpiCard icon={AlertCircle} title="Wait Stats"   value={wait_stats.length > 0 ? `${wait_stats.length} types` : '—'}  accent="purple" hint={`${wait_stats.length} wait types`} onClick={()=>setActiveTab('performance')} />
+                <KpiCard icon={HardDrive} title="DB Size"        value={health_summary.total_size_gb > 0.1 ? `${health_summary.total_size_gb} GB` : `${health_summary.total_size_mb || 0} MB`} accent="slate" hint="Storage breakdown" onClick={()=>setActiveTab('storage')} />
               </div>
+
+              {/* ── Host Resources drill-down ── */}
+              <HostResources connId={id} tech="mssql" />
 
               {/* ── Row 2: Status badges ── */}
               <div className="flex flex-wrap gap-2">
-                <StatusBadge ok={connPct < 80}  label={`Connections ${connPct}%`} />
-                <StatusBadge ok={cachePct > 90} label={`Buffer Cache ${cachePct}%`} />
-                <StatusBadge ok={diskIoPct < 80} label={`Disk I/O ${diskIoPct}%`} />
-                <StatusBadge ok={memPct < 85}   label={`Memory ${memPct}%`} />
-                <StatusBadge ok={blocking.length === 0} label={`Blocking: ${blocking.length} chain${blocking.length !== 1 ? 's' : ''}`} />
+                <StatusBadge ok={connPct < 80}  label={`Connections ${connPct}%`} onClick={()=>setActiveTab('users')} />
+                <StatusBadge ok={cachePct > 90} label={`Buffer Cache ${cachePct}%`} onClick={()=>setActiveTab('performance')} />
+                <StatusBadge ok={Number(cpu.host_cpu_pct) < 80} label={`CPU ${Number(cpu.host_cpu_pct) || 0}%`} onClick={()=>setActiveTab('performance')} />
+                <StatusBadge ok={memPct < 85}   label={`Memory ${memPct}% of RAM`} onClick={()=>setActiveTab('performance')} />
+                <StatusBadge ok={blocking.length === 0} label={`Blocking: ${blocking.length} chain${blocking.length !== 1 ? 's' : ''}`} onClick={()=>setActiveTab('locks')} />
                 {hasAlwaysOn && (
                   <StatusBadge ok={always_on.health_state === 'HEALTHY'}
-                    label={`AlwaysOn AG: ${always_on.health_state || always_on.ag_name || 'Configured'}`} />
+                    label={`AlwaysOn AG: ${always_on.health_state || always_on.ag_name || 'Configured'}`} onClick={()=>setActiveTab('replication')} />
                 )}
                 {active_queries.filter(q => Number(q.duration_ms) > 5000).length > 0 && (
                   <StatusBadge ok={false}
-                    label={`${active_queries.filter(q => Number(q.duration_ms) > 5000).length} long-running quer${active_queries.filter(q => Number(q.duration_ms) > 5000).length === 1 ? 'y' : 'ies'}`} />
+                    label={`${active_queries.filter(q => Number(q.duration_ms) > 5000).length} long-running quer${active_queries.filter(q => Number(q.duration_ms) > 5000).length === 1 ? 'y' : 'ies'}`} onClick={()=>setActiveTab('queries')} />
                 )}
               </div>
 
@@ -271,25 +294,29 @@ export default function MSSQLDashboard() {
                 <GaugeCard
                   title="Connection Pool"
                   pct={connPct}
-                  sub={`${sessions.active || 0} active / ${health_summary.max_connections || sessions.max || '?'} max`}
+                  sub={`${sessions.active || 0} active / ${fmtNum(health_summary.max_connections || sessions.max || 32767)} max${health_summary.max_connections_unlimited ? ' (unlimited)' : ''}`}
+                  onClick={()=>setActiveTab('users')}
                   colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.msBlue}
                 />
                 <GaugeCard
                   title="Buffer Cache Hit%"
                   pct={cachePct}
                   sub="Pages served from buffer pool"
+                  drillHint="Cache & performance" onClick={()=>setActiveTab('performance')}
                   colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green}
                 />
                 <GaugeCard
-                  title="Disk I/O Usage"
-                  pct={diskIoPct}
-                  sub={`Read: ${fmtNum(disk_io.reads || 0)} · Write: ${fmtNum(disk_io.writes || 0)}`}
-                  colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal}
+                  title="CPU Usage"
+                  pct={Number(cpu.host_cpu_pct) || 0}
+                  sub={`of 100% · SQL Server ${Number(cpu.sql_server_cpu_pct) || 0}% · Other ${Number(cpu.other_cpu_pct) || 0}%`}
+                  drillHint="CPU & performance" onClick={()=>setActiveTab('performance')}
+                  colorFn={v => v > 85 ? C.red : v > 65 ? C.orange : C.teal}
                 />
                 <GaugeCard
-                  title="Memory Usage"
+                  title="Memory Usage (Host RAM)"
                   pct={memPct}
-                  sub={`${memory.used_mb || 0} MB used / ${memory.total_mb || 0} MB total`}
+                  sub={`${fmtNum(memory.host_used_mb ?? memory.used_mb ?? 0)} MB used of ${fmtNum(memory.host_total_mb ?? memory.total_mb ?? 0)} MB`}
+                  drillHint="Memory & performance" onClick={()=>setActiveTab('performance')}
                   colorFn={v => v > 90 ? C.red : v > 75 ? C.orange : C.indigo}
                 />
               </div>
@@ -299,7 +326,7 @@ export default function MSSQLDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <TrendCard title="Connection Usage %" data={sparklines.conn}  color={C.msBlue} unit="%" />
                   <TrendCard title="Buffer Cache Hit %" data={sparklines.cache} color={C.green}  unit="%" />
-                  <TrendCard title="CPU Time (ms)"      data={sparklines.cpu}   color={C.orange} fmtVal={fmtNum} />
+                  <TrendCard title="CPU Usage %"        data={sparklines.cpu}   color={C.orange} unit="%" />
                 </div>
               ) : (
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 text-center text-slate-400 text-xs">
@@ -449,12 +476,15 @@ export default function MSSQLDashboard() {
                         style={{ width: `${cachePct}%`, background: cachePct >= 90 ? C.green : cachePct >= 70 ? C.orange : C.red }} />
                     </div>
                   </div>
-                  <Row label="Total Server Mem" value={memory.total_mb ? `${fmtNum(memory.total_mb)} MB` : '—'} />
-                  <Row label="SQL Server Target" value={memory.target_mb ? `${fmtNum(memory.target_mb)} MB` : '—'} />
-                  <Row label="SQL Server Used"   value={memory.used_mb  ? `${fmtNum(memory.used_mb)} MB`  : '—'} />
+                  <Row label="Host RAM" value={memory.host_total_mb ? `${fmtNum(memory.host_used_mb)} / ${fmtNum(memory.host_total_mb)} MB (${memory.host_used_pct}%)` : '—'} />
+                  <Row label="SQL Server using (Total)" value={memory.total_mb ? `${fmtNum(memory.total_mb)} MB` : '—'} />
+                  <Row label="SQL Server target (max)"  value={memory.target_mb ? `${fmtNum(memory.target_mb)} MB` : '—'} />
+                  <Row label="SQL process in use"   value={memory.used_mb  ? `${fmtNum(memory.used_mb)} MB`  : '—'} />
                   <Row label="Page Life Exp."    value={memory.page_life_expectancy ? `${memory.page_life_expectancy}s` : '—'} />
+                  <Row label="Host CPU"          value={`${Number(cpu.host_cpu_pct) || 0}% of 100%`} />
+                  <Row label="SQL Server CPU"    value={`${Number(cpu.sql_server_cpu_pct) || 0}%`} />
                   <Row label="SQL Compilations"  value={fmtNum(cpu.sql_compilations)} />
-                  <Row label="Batch Requests/s"  value={fmtNum(cpu.batch_requests_sec)} />
+                  <Row label="Batch Requests"    value={fmtNum(cpu.batch_requests_sec)} />
                 </Panel>
 
                 <Panel title="Disk I/O">
@@ -658,19 +688,30 @@ export default function MSSQLDashboard() {
         )}
 
         {/* ══ DATABASES ═════════════════════════════════════════════ */}
-        {activeTab === 'databases' && (
-          <Panel title={`Databases (${databases.length})`}>
+        {activeTab === 'databases' && (() => {
+          // per-database table count + table-size roll-up from the tables list
+          const byDb = {};
+          (tables || []).forEach(t => {
+            const k = t.db_name || '';
+            (byDb[k] = byDb[k] || { count: 0, mb: 0 });
+            byDb[k].count += 1;
+            byDb[k].mb += Number(t.total_mb || t.total_size_mb || 0);
+          });
+          return (
+          <Panel title={`Databases (${databases.length}) — click a database to see its tables`}>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-slate-50">
-                  <tr>{['Database', 'State', 'Recovery Model', 'Compatibility', 'Size (MB)', 'Log Size (MB)', 'Owner'].map(h => (
+                  <tr>{['Database', 'State', 'Tables', 'Recovery Model', 'Compatibility', 'Size (MB)', 'Log Size (MB)', 'Owner', ''].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                   ))}</tr>
                 </thead>
                 <tbody>
-                  {databases.map((db, i) => (
-                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-4 py-4 font-bold text-blue-700">{db.name}</td>
+                  {databases.map((db, i) => {
+                    const agg = byDb[db.name] || { count: 0, mb: 0 };
+                    return (
+                    <tr key={i} onClick={() => openDbTables(db.name)} className="border-t border-slate-100 hover:bg-blue-50/50 cursor-pointer transition-colors">
+                      <td className="px-4 py-4 font-bold text-blue-700">{db.name} <ChevronRight size={13} className="inline text-slate-300" /></td>
                       <td className="px-4 py-4">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           db.state_desc === 'ONLINE' ? 'bg-green-100 text-green-700'
@@ -679,6 +720,7 @@ export default function MSSQLDashboard() {
                           {db.state_desc || db.state || '—'}
                         </span>
                       </td>
+                      <td className="px-4 py-4 font-mono text-sm font-bold">{agg.count || '—'}{agg.mb ? <span className="text-[10px] text-slate-400 font-normal ml-1">({agg.mb.toFixed(1)} MB)</span> : null}</td>
                       <td className="px-4 py-4 text-xs text-slate-600">{db.recovery_model_desc || db.recovery_model || '—'}</td>
                       <td className="px-4 py-4 font-mono text-xs">{db.compatibility_level || '—'}</td>
                       <td className="px-4 py-4">
@@ -694,33 +736,54 @@ export default function MSSQLDashboard() {
                       </td>
                       <td className="px-4 py-4 font-mono text-xs">{db.log_size_mb || '—'}</td>
                       <td className="px-4 py-4 text-xs text-slate-400">{db.owner || '—'}</td>
+                      <td className="px-4 py-4">
+                        <button onClick={(e)=>{e.stopPropagation(); openDbTables(db.name);}}
+                          className="px-3 h-8 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors whitespace-nowrap">
+                          View Tables →
+                        </button>
+                      </td>
                     </tr>
-                  ))}
+                  );})}
                   {databases.length === 0 && (
-                    <tr><td colSpan={7} className="text-center py-12 text-slate-400">No databases found</td></tr>
+                    <tr><td colSpan={9} className="text-center py-12 text-slate-400">No databases found</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </Panel>
-        )}
+          );
+        })()}
 
         {/* ══ TABLES ════════════════════════════════════════════════ */}
         {activeTab === 'tables' && (() => {
-          const filteredTables = (tables || []).filter(t =>
-            !tableSearch
-              || (t.table_name || t.name || '').toLowerCase().includes(tableSearch.toLowerCase())
-              || (t.schema_name || t.schema || '').toLowerCase().includes(tableSearch.toLowerCase())
-          );
+          const dbList = [...new Set((tables || []).map(t => t.db_name).filter(Boolean))];
+          const filteredTables = (tables || [])
+            .filter(t => tablesDb === '__all__' || t.db_name === tablesDb)
+            .filter(t =>
+              !tableSearch
+                || (t.table_name || t.name || '').toLowerCase().includes(tableSearch.toLowerCase())
+                || (t.schema_name || t.schema || '').toLowerCase().includes(tableSearch.toLowerCase())
+            );
           return (
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <div className="relative flex-1 max-w-sm">
                   <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input value={tableSearch} onChange={e => setTableSearch(e.target.value)}
                     placeholder="Search tables…"
                     className="h-9 w-full pl-8 pr-4 rounded-xl border border-slate-200 text-sm outline-none focus:border-slate-400" />
                 </div>
+                <select value={tablesDb} onChange={e => setTablesDb(e.target.value)}
+                  className="h-9 px-3 rounded-xl border border-slate-200 text-sm outline-none focus:border-slate-400 bg-white">
+                  <option value="__all__">All databases</option>
+                  {dbList.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+                {tablesDb !== '__all__' && (
+                  <span className="inline-flex items-center gap-1 px-3 h-9 bg-blue-50 text-blue-700 rounded-xl text-xs font-bold border border-blue-200">
+                    <Database size={12}/> {tablesDb}
+                    <button onClick={()=>setTablesDb('__all__')} className="ml-1 text-blue-400 hover:text-blue-700">✕</button>
+                  </span>
+                )}
                 <span className="text-xs text-slate-400">{filteredTables.length} tables</span>
               </div>
 
@@ -734,9 +797,9 @@ export default function MSSQLDashboard() {
                     </thead>
                     <tbody>
                       {filteredTables.slice(0, 100).map((t, i) => (
-                        <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                          <td className="px-3 py-2.5 text-xs text-slate-400">{t.schema_name || t.schema || '—'}</td>
-                          <td className="px-3 py-2.5 font-semibold text-blue-700">{t.table_name || t.name || '—'}</td>
+                        <tr key={i} onClick={() => openTableDetail(t)} className="border-t border-slate-100 hover:bg-blue-50/50 cursor-pointer">
+                          <td className="px-3 py-2.5 text-xs text-slate-400">{t.db_name ? `${t.db_name}.` : ''}{t.schema_name || t.schema || '—'}</td>
+                          <td className="px-3 py-2.5 font-semibold text-blue-700">{t.table_name || t.name || '—'} <ChevronRight size={12} className="inline text-slate-300" /></td>
                           <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(t.row_count || t.rows)}</td>
                           <td className="px-3 py-2.5 font-mono text-xs">{t.data_mb || t.data_size_mb || '—'}</td>
                           <td className="px-3 py-2.5 font-mono text-xs">{t.index_mb || t.index_size_mb || '—'}</td>
@@ -984,6 +1047,50 @@ export default function MSSQLDashboard() {
               <MetricKpi title="Active Sessions" value={sessions.active || 0} accent="indigo" />
             </div>
 
+            {/* Active sessions — the actual connections behind the "Active Sessions / Connection Pool" cards */}
+            <Panel title={`Active Sessions — ${active_queries.length} running connection${active_queries.length !== 1 ? 's' : ''}`}>
+              {active_queries.length === 0 ? (
+                <div className="text-center py-10">
+                  <CheckCircle2 className="mx-auto text-green-400 mb-3" size={36} />
+                  <p className="text-slate-500 font-semibold">No active (running) sessions right now</p>
+                  <p className="text-xs text-slate-400 mt-1">{sessions.idle || 0} idle · {sessions.total || 0} total sessions</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>{['Session ID', 'Login', 'Database', 'Status', 'Duration (ms)', 'Wait Type', 'Query'].map(h => (
+                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                      ))}</tr>
+                    </thead>
+                    <tbody>
+                      {active_queries.map((q, i) => (
+                        <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${Number(q.duration_ms) > 5000 ? 'bg-yellow-50' : ''}`}>
+                          <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{q.session_id ?? '—'}</td>
+                          <td className="px-3 py-2.5 font-semibold text-blue-700 text-xs">{q.login_name || q.user || '—'}</td>
+                          <td className="px-3 py-2.5 text-xs text-slate-400">{q.database_name || '—'}</td>
+                          <td className="px-3 py-2.5 text-[10px]">
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full font-bold">{q.status || 'running'}</span>
+                          </td>
+                          <td className={`px-3 py-2.5 font-bold text-sm ${Number(q.duration_ms) > 5000 ? 'text-red-600' : Number(q.duration_ms) > 1000 ? 'text-orange-600' : 'text-slate-700'}`}>
+                            {fmtNum(q.duration_ms)}
+                          </td>
+                          <td className="px-3 py-2.5 text-[10px]">
+                            {q.wait_type ? (
+                              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full font-bold">{q.wait_type}</span>
+                            ) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[260px] truncate">
+                            {String(q.sql_text || q.query || '').slice(0, 140) || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Panel>
+
             {logins.length > 0 && (
               <Panel title={`Server Logins (${logins.length})`}>
                 <div className="overflow-x-auto">
@@ -1133,6 +1240,111 @@ export default function MSSQLDashboard() {
         {activeTab === 'backup' && navigate(`/mssql-dashboard/${id}/backup`)}
 
       </div>
+
+      {tableDetail && <TableDetailModal td={tableDetail} onClose={() => setTableDetail(null)} />}
+    </div>
+  );
+}
+
+/* ─── Table Detail modal: columns, indexes (+fragmentation/usage), missing indexes, recommendations ─── */
+function TableDetailModal({ td, onClose }) {
+  const d = td.data;
+  const s = d?.stats || {};
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex sm:items-center sm:justify-center sm:p-6" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white w-full h-full sm:h-[90vh] sm:max-w-5xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-slate-900 via-slate-800 to-blue-900 text-white">
+          <div className="flex items-center gap-2.5"><Table size={20} className="text-sky-300" /><span className="font-black text-sm font-mono">{td.title}</span></div>
+          <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-white/70 hover:bg-white/15"><XCircle size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5 space-y-4">
+          {td.loading ? (
+            <div className="flex items-center justify-center py-20 text-slate-400"><Loader2 size={22} className="animate-spin mr-2" /> Analyzing table…</div>
+          ) : td.err ? (
+            <div className="bg-red-50 border border-red-200 rounded-2xl px-5 py-4 text-sm text-red-700">{td.err}</div>
+          ) : d && (
+            <>
+              {/* size stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                {[['Rows', Number(s.row_count || 0).toLocaleString()], ['Total', `${s.total_mb ?? 0} MB`],
+                  ['Data', `${s.data_mb ?? 0} MB`], ['Index', `${s.index_mb ?? 0} MB`], ['Partitions', s.partitions ?? 1]].map(([l, v]) => (
+                  <div key={l} className="bg-white rounded-xl border border-slate-200 px-4 py-3">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{l}</p>
+                    <p className="text-lg font-black text-slate-800 mt-0.5">{v}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* columns */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Structure · {d.columns?.length || 0} columns</h4>
+                <table className="w-full text-xs">
+                  <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Column</th><th className="text-left">Type</th><th className="text-center">Null</th><th className="text-center">Key</th><th className="text-left">Default</th></tr></thead>
+                  <tbody>
+                    {(d.columns || []).map((c, i) => (
+                      <tr key={i} className="border-t border-slate-100">
+                        <td className="py-1.5 font-mono">{c.name}{c.is_identity ? <span className="ml-1 text-[9px] text-slate-400">IDENTITY</span> : ''}</td>
+                        <td className="font-mono text-slate-600">{c.data_type}{[ 'varchar','nvarchar','char','nchar' ].includes(c.data_type) && c.length > 0 ? `(${c.length})` : ''}</td>
+                        <td className="text-center">{c.is_nullable ? <span className="text-slate-400">yes</span> : <span className="text-slate-700 font-bold">no</span>}</td>
+                        <td className="text-center">{c.is_pk ? <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">PK</span> : ''}</td>
+                        <td className="font-mono text-[11px] text-slate-400">{c.default_def || ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* indexes */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Indexes · {d.indexes?.length || 0}</h4>
+                <table className="w-full text-xs">
+                  <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Index</th><th className="text-left">Type</th><th className="text-left">Columns</th><th className="text-right">Frag %</th><th className="text-right">Seek/Scan/Look</th><th className="text-right">Writes</th></tr></thead>
+                  <tbody>
+                    {(d.indexes || []).map((ix, i) => {
+                      const unused = (ix.seeks + ix.scans + ix.lookups) === 0 && ix.updates > 0 && !ix.is_primary_key;
+                      const fragHigh = (ix.frag_pct || 0) >= 30;
+                      return (
+                        <tr key={i} className={`border-t border-slate-100 ${unused ? 'bg-red-50/50' : fragHigh ? 'bg-amber-50/50' : ''}`}>
+                          <td className="py-1.5 font-mono">{ix.index_name || '(heap)'}{ix.is_primary_key ? <span className="ml-1 text-[9px] font-black px-1 rounded bg-amber-500 text-white">PK</span> : ''}{unused && <span className="ml-1 text-[9px] font-black px-1 rounded bg-red-500 text-white">UNUSED</span>}</td>
+                          <td className="text-slate-500">{(ix.type_desc || '').replace('_INDEX', '')}</td>
+                          <td className="font-mono text-[11px] text-slate-600">{ix.key_columns}</td>
+                          <td className="text-right font-bold" style={{ color: fragHigh ? '#ef4444' : '#64748b' }}>{ix.frag_pct ?? '—'}</td>
+                          <td className="text-right text-slate-500">{ix.seeks}/{ix.scans}/{ix.lookups}</td>
+                          <td className="text-right text-slate-500">{ix.updates}</td>
+                        </tr>
+                      );
+                    })}
+                    {(d.indexes || []).length === 0 && <tr><td colSpan={6} className="py-4 text-center text-slate-400">No indexes (heap table).</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* missing indexes */}
+              {d.missing_indexes?.length > 0 && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+                  <h4 className="text-[11px] font-black text-emerald-600 uppercase tracking-wider mb-2">Missing indexes — create these</h4>
+                  {d.missing_indexes.map((m, i) => (
+                    <div key={i} className="mb-2">
+                      <div className="text-xs text-emerald-700 font-bold">≈ {m.impact}% faster · {m.uses} uses</div>
+                      <code className="block font-mono text-[11px] text-slate-700 bg-white rounded px-2 py-1 mt-0.5 break-all">{m.ddl}</code>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* recommendations */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Recommendations</h4>
+                <ul className="space-y-1.5">
+                  {(d.recommendations || []).map((r, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-slate-700"><span className="mt-1 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />{r}</li>
+                  ))}
+                </ul>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1175,7 +1387,7 @@ function HealthBadge({ score }) {
     </div>
   );
 }
-function KpiCard({ icon: Icon, title, value, accent }) {
+function KpiCard({ icon: Icon, title, value, accent, onClick, hint }) {
   const acc = {
     sky:    'border-l-sky-500',
     blue:   'border-l-blue-500',
@@ -1186,16 +1398,19 @@ function KpiCard({ icon: Icon, title, value, accent }) {
     purple: 'border-l-purple-500',
     slate:  'border-l-slate-400',
   };
+  const clickable = typeof onClick === 'function';
   return (
-    <div className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent] || acc.slate} p-4 hover:shadow-md transition-all`}>
+    <button type="button" onClick={onClick} disabled={!clickable}
+      className={`group text-left w-full bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent] || acc.slate} p-4 transition-all ${clickable ? 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5' : ''}`}
+      title={clickable ? `Open ${hint || title}` : undefined}>
       <div className="flex justify-between items-start">
         <div>
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
           <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
         </div>
-        <Icon size={20} className="text-slate-300 mt-0.5" />
+        <Icon size={20} className={`mt-0.5 transition-colors ${clickable ? 'text-slate-300 group-hover:text-blue-500' : 'text-slate-300'}`} />
       </div>
-    </div>
+    </button>
   );
 }
 function MetricKpi({ title, value, accent }) {
@@ -1216,12 +1431,16 @@ function MetricKpi({ title, value, accent }) {
     </div>
   );
 }
-function StatusBadge({ ok, label }) {
+function StatusBadge({ ok, label, onClick }) {
+  const clickable = typeof onClick === 'function';
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-      ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+    <span onClick={onClick} role={clickable ? 'button' : undefined}
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all ${
+      ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'} ${
+      clickable ? 'cursor-pointer hover:shadow-sm hover:brightness-95' : ''}`}>
       {ok ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
       {label}
+      {clickable && <ChevronRight size={11} className="opacity-60" />}
     </span>
   );
 }
@@ -1268,13 +1487,16 @@ function HeartbeatCard({ label, value, warn }) {
     </div>
   );
 }
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn }) {
+function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn, onClick, drillHint }) {
   const safePct       = Math.max(0, Math.min(100, pct || 0));
   const fill          = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.msBlue);
   const displayCenter = centerLabel !== undefined ? centerLabel : safePct;
   const displayUnit   = centerLabel !== undefined ? centerUnit : '%';
+  const clickable     = typeof onClick === 'function';
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
+    <div onClick={onClick} role={clickable ? 'button' : undefined}
+      className={`group bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center transition-all ${clickable ? 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5' : ''}`}
+      title={clickable ? `Open ${drillHint || title}` : undefined}>
       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
       <div className="relative flex flex-col items-center">
         <PieChart width={150} height={90}>

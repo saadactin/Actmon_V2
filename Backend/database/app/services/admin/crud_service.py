@@ -28,6 +28,33 @@ def get_row(db: Session, view: str, pk: str, pk_val) -> dict:
     return dict(row)
 
 
+def find_by_unique(db: Session, view: str, pk: str, unique_key: str, val, org_id=None) -> dict | None:
+    """Fetch a row by a unique business key (e.g. employee_code) — used to recover the
+    new id right after an INSERT stored-proc (which returns nothing)."""
+    sql = f"SELECT * FROM {view} WHERE {unique_key} = :v"
+    params = {"v": val}
+    if org_id is not None:
+        sql += " AND org_id = :o"
+        params["o"] = org_id
+    sql += f" ORDER BY {pk} DESC LIMIT 1"
+    row = db.execute(text(sql), params).mappings().first()
+    return dict(row) if row else None
+
+
+def find_latest_by(db: Session, view: str, pk: str, filters: dict) -> dict | None:
+    """Fetch the most-recently-created row (highest pk) matching equality filters — used
+    to recover the new id when the business key was auto-generated server-side."""
+    conds, params = [], {}
+    for k, v in (filters or {}).items():
+        if v is None:
+            continue
+        conds.append(f"{k} = :{k}")
+        params[k] = v
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    row = db.execute(text(f"SELECT * FROM {view}{where} ORDER BY {pk} DESC LIMIT 1"), params).mappings().first()
+    return dict(row) if row else None
+
+
 def _set_audit_context(db: Session, payload: dict, ctx: dict | None) -> None:
     """Set session vars the audit trigger reads (acting user / ip / agent / org)."""
     ctx = ctx or {}

@@ -43,6 +43,25 @@ def _rows(engine, sql, params=None):
         return [dict(row) for row in r.mappings().all()]
 
 
+def _pgss_engine(conn):
+    """Return (engine, dbname) for a database where the pg_stat_statements VIEW is readable.
+    The view returns cluster-wide stats, so any DB that has the extension works. Tries the
+    connection's DB, then 'postgres', then 'template1'. Returns (None, None) if unavailable."""
+    seen = set()
+    for dbn in [conn.database_name, "postgres", "template1"]:
+        if not dbn or dbn in seen:
+            continue
+        seen.add(dbn)
+        try:
+            e = _pg_engine_db(conn, dbn)
+            with e.connect() as c:
+                c.execute(text("SELECT 1 FROM pg_stat_statements LIMIT 1"))
+            return e, dbn
+        except Exception:
+            continue
+    return None, None
+
+
 def _val(engine, sql):
     with engine.connect() as c:
         row = c.execute(text(sql)).fetchone()
@@ -607,6 +626,29 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
     except Exception:
         table_stats = []
 
+    # Cluster-wide table count — the connection DB (often "postgres") may hold no
+    # user tables, so counting only the connected DB shows 0. Sum every user DB.
+    try:
+        with engine.connect() as _c:
+            _dbs = [r[0] for r in _c.execute(text(
+                "SELECT datname FROM pg_database WHERE datistemplate = false"
+            )).fetchall()]
+        _cluster_total = 0
+        for _dn in _dbs:
+            _e2 = None
+            try:
+                _e2 = _pg_engine_db(conn_rec, _dn)
+                _cluster_total += int(_val(_e2, "SELECT count(*) FROM pg_stat_user_tables") or 0)
+            except Exception:
+                pass
+            finally:
+                if _e2 is not None:
+                    _e2.dispose()
+        if _cluster_total > total_tables:
+            total_tables = _cluster_total
+    except Exception:
+        pass
+
     server_vars = {}
     memory = {
         "shared_buffers": "unknown",
@@ -671,9 +713,10 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             }
 
     pg_stat_statements = []
+    _pgss_eng, _ = _pgss_engine(conn_rec)
     try:
         pg_stat_statements = _rows(
-            engine,
+            _pgss_eng or engine,
             "SELECT userid::regrole AS usename, dbid::text AS dbname, query, calls, "
             "total_exec_time, mean_exec_time, max_exec_time, min_exec_time, "
             "stddev_exec_time, rows, shared_blks_hit, shared_blks_read "
@@ -939,9 +982,15 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
     source  = "pg_stat_activity"
     error   = None
 
+    # pg_stat_statements returns CLUSTER-WIDE stats, but the view only exists in the DB(s)
+    # where CREATE EXTENSION was run. The connection DB (e.g. 'actmon') often lacks it even
+    # though the library is preloaded and 'postgres' has it — so read from whichever DB has it.
+    pgss_eng, pgss_db = _pgss_engine(conn_rec)
+    read_eng = pgss_eng or engine
+
     try:
         rows = _rows(
-            engine,
+            read_eng,
             "SELECT userid::regrole AS user_name, s.dbid, d.datname, s.query, s.calls, "
             "s.total_exec_time, s.mean_exec_time, s.max_exec_time, s.stddev_exec_time, "
             "s.rows, s.shared_blks_hit, s.shared_blks_read "
@@ -993,12 +1042,19 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
             pg_stat_statements_available = False
         except Exception:
             queries = []
+    finally:
+        if pgss_eng is not None:
+            try:
+                pgss_eng.dispose()
+            except Exception:
+                pass
 
     return {
         "status":  "success",
         "source":  source,
         "queries": queries,
         "pg_stat_statements_available": pg_stat_statements_available,
+        "pgss_database": pgss_db,
         "total":   len(queries),
         "error":   error,
     }
@@ -1008,7 +1064,7 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
 #  3. Enable pg_stat_statements
 # ═════════════════════════════════════════════════════════════════════════════
 
-def svc_enable_pg_stat_statements(conn_id: int, db: Session):
+def svc_enable_pg_stat_statements(conn_id: int, db: Session, database: str = None):
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -1017,31 +1073,65 @@ def svc_enable_pg_stat_statements(conn_id: int, db: Session):
         raise HTTPException(status_code=404, detail="PostgreSQL connection not found")
 
     try:
-        engine = _pg_engine(conn_rec)
+        # create the extension in the SPECIFIC database (each DB needs its own CREATE EXTENSION)
+        engine = _pg_engine_db(conn_rec, database) if database else _pg_engine(conn_rec)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    # If the view is already readable from some database (e.g. 'postgres'), we're done —
+    # ActMon reads cluster-wide stats from there. No CREATE EXTENSION needed.
+    pgss_eng, pgss_db = _pgss_engine(conn_rec)
+    if pgss_eng:
+        return {
+            "status":  "success",
+            "message": f"pg_stat_statements is already active (read from the '{pgss_db}' database). Reopen the Queries tab.",
+            "next_step": None,
+        }
+
     try:
         with engine.connect() as conn:
+            conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+            # standby/replica cannot accept writes — CREATE EXTENSION must run on the primary
+            try:
+                if conn.execute(text("SELECT pg_is_in_recovery()")).scalar():
+                    return {
+                        "status":  "read_only_replica",
+                        "message": "This node is a read-only standby/replica — CREATE EXTENSION can only run on the PRIMARY. "
+                                   "Enable it on the primary (or it's already enabled there and ActMon will read it).",
+                        "next_step": "use_primary",
+                    }
+            except Exception:
+                pass
+            try:
+                conn.execute(text("SET default_transaction_read_only = off"))
+            except Exception:
+                pass
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_stat_statements"))
-            conn.commit()
         return {
             "status":    "success",
-            "message":   "pg_stat_statements extension created successfully. Refresh the slow queries page to see data.",
+            "message":   "pg_stat_statements extension created successfully. Reopen the Queries tab to see data.",
             "next_step": None,
         }
     except Exception as e:
         raw = str(e)
+        if "read-only" in raw.lower() or "readonlysql" in raw.lower():
+            return {
+                "status":  "read_only_replica",
+                "message": "The target node is read-only (a standby/replica). Enable pg_stat_statements on the PRIMARY node — "
+                           "ActMon will then read the stats automatically.",
+                "next_step": "use_primary",
+            }
         if "shared_preload_libraries" in raw or "requires restart" in raw or "could not open extension control file" in raw:
             return {
                 "status":    "needs_restart",
-                "message":   "The extension library is not loaded. You must add it to postgresql.conf and restart PostgreSQL first.",
+                "message":   "The extension library is not loaded. Add it to postgresql.conf and restart PostgreSQL first.",
                 "next_step": "add_preload",
             }
-        if "permission denied" in raw.lower() or "42501" in raw:
+        if "permission denied" in raw.lower() or "42501" in raw or "must be superuser" in raw.lower():
             return {
                 "status":    "permission_denied",
-                "message":   f"The database user '{conn_rec.username}' does not have SUPERUSER or CREATE EXTENSION permission.",
+                "message":   f"'{conn_rec.username}' is not a superuser. Run CREATE EXTENSION as a superuser once "
+                             "(in the 'postgres' database is enough — ActMon reads cluster-wide stats from there).",
                 "next_step": "grant_permission",
             }
         return {
@@ -1639,12 +1729,16 @@ def svc_queries_detail(conn_id: int, db: Session):
         return out
 
     all_stmts = []
-    try:
-        rows = _rows(engine, ss_base + "LIMIT 500")
-        all_stmts = _cast(rows)
-        pg_ss_available = True
-    except Exception as e:
-        errors.append(f"pg_stat_statements: {e}")
+    pgss_eng, _pgss_db = _pgss_engine(conn_rec)
+    if pgss_eng:
+        try:
+            rows = _rows(pgss_eng, ss_base + "LIMIT 500")
+            all_stmts = _cast(rows)
+            pg_ss_available = True
+        except Exception as e:
+            errors.append(f"pg_stat_statements: {e}")
+    else:
+        errors.append("pg_stat_statements view not found in any accessible database")
 
     top_mean  = sorted(all_stmts, key=lambda x: x["mean_exec_time"],  reverse=True)[:25]
     top_total = sorted(all_stmts, key=lambda x: x["total_exec_time"], reverse=True)[:25]
@@ -1875,29 +1969,29 @@ def svc_table_structure(
         with db_eng.connect() as conn:
 
             try:
+                # Read columns from pg_catalog (NOT information_schema) — information_schema.columns
+                # is privilege-filtered, so a monitoring user with no table privileges sees 0 columns.
                 columns = [dict(r) for r in conn.execute(text("""
                     SELECT
-                        c.ordinal_position,
-                        c.column_name,
-                        c.data_type,
-                        c.udt_name,
-                        c.character_maximum_length,
-                        c.numeric_precision,
-                        c.numeric_scale,
-                        c.datetime_precision,
-                        c.is_nullable,
-                        c.column_default,
-                        c.is_identity,
-                        c.identity_generation,
-                        pgd.description AS column_comment
-                    FROM information_schema.columns c
-                    LEFT JOIN pg_catalog.pg_statio_all_tables st
-                        ON st.schemaname = c.table_schema AND st.relname = c.table_name
-                    LEFT JOIN pg_catalog.pg_description pgd
-                        ON pgd.objoid = st.relid
-                        AND pgd.objsubid = c.ordinal_position
-                    WHERE c.table_schema = :schema AND c.table_name = :tname
-                    ORDER BY c.ordinal_position
+                        a.attnum AS ordinal_position,
+                        a.attname AS column_name,
+                        format_type(a.atttypid, a.atttypmod) AS data_type,
+                        format_type(a.atttypid, a.atttypmod) AS udt_name,
+                        NULL::int AS character_maximum_length,
+                        NULL::int AS numeric_precision,
+                        NULL::int AS numeric_scale,
+                        CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS is_nullable,
+                        pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
+                        CASE WHEN a.attidentity IN ('a','d') THEN 'YES' ELSE 'NO' END AS is_identity,
+                        CASE a.attidentity WHEN 'a' THEN 'ALWAYS' WHEN 'd' THEN 'BY DEFAULT' ELSE NULL END AS identity_generation,
+                        col_description(c.oid, a.attnum) AS column_comment
+                    FROM pg_catalog.pg_attribute a
+                    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+                    WHERE n.nspname = :schema AND c.relname = :tname
+                      AND a.attnum > 0 AND NOT a.attisdropped
+                    ORDER BY a.attnum
                 """), {"schema": schema, "tname": table}).mappings().fetchall()]
             except Exception as e:
                 errors.append(f"columns: {e}")
@@ -2134,32 +2228,35 @@ def svc_table_structure(
                 errors.append(f"col_stats: {e}")
 
             try:
-                ext_row = conn.execute(text(
-                    "SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements'"
-                )).fetchone()
-                has_pg_stat_statements = bool(ext_row)
+                # pg_stat_statements view may only exist in another DB (e.g. 'postgres'); read it
+                # from there and filter to THIS database + table. Works for monitoring users with
+                # pg_read_all_stats even without the extension in the table's own database.
+                pgss_eng, _pgssdb = _pgss_engine(conn_rec)
+                has_pg_stat_statements = bool(pgss_eng)
 
                 if has_pg_stat_statements:
                     tbl_pattern = f"%{table}%"
-                    q_rows = conn.execute(text("""
-                        SELECT
-                            queryid::text                                   AS query_id,
-                            LEFT(query, 300)                                AS query_text,
-                            calls,
-                            ROUND(total_exec_time::numeric, 1)              AS total_time_ms,
-                            ROUND(mean_exec_time::numeric, 2)               AS mean_time_ms,
-                            ROUND(stddev_exec_time::numeric, 2)             AS stddev_ms,
-                            rows,
-                            shared_blks_hit,
-                            shared_blks_read,
-                            ROUND((shared_blks_hit::numeric /
-                                   GREATEST(shared_blks_hit + shared_blks_read, 1) * 100), 1) AS cache_hit_pct
-                        FROM pg_stat_statements
-                        WHERE query ILIKE :pattern
-                          AND query NOT ILIKE '%pg_stat%'
-                        ORDER BY total_exec_time DESC
-                        LIMIT 15
-                    """), {"pattern": tbl_pattern}).mappings().fetchall()
+                    with pgss_eng.connect() as pc:
+                        q_rows = pc.execute(text("""
+                            SELECT
+                                queryid::text                                   AS query_id,
+                                LEFT(query, 300)                                AS query_text,
+                                calls,
+                                ROUND(total_exec_time::numeric, 1)              AS total_time_ms,
+                                ROUND(mean_exec_time::numeric, 2)               AS mean_time_ms,
+                                ROUND(stddev_exec_time::numeric, 2)             AS stddev_ms,
+                                rows,
+                                shared_blks_hit,
+                                shared_blks_read,
+                                ROUND((shared_blks_hit::numeric /
+                                       GREATEST(shared_blks_hit + shared_blks_read, 1) * 100), 1) AS cache_hit_pct
+                            FROM pg_stat_statements
+                            WHERE query ILIKE :pattern
+                              AND query NOT ILIKE '%pg_stat%'
+                              AND (dbid = (SELECT oid FROM pg_database WHERE datname = :dbname) OR :dbname IS NULL)
+                            ORDER BY total_exec_time DESC
+                            LIMIT 15
+                        """), {"pattern": tbl_pattern, "dbname": database}).mappings().fetchall()
                     all_queries = [dict(r) for r in q_rows]
                     for q in all_queries:
                         q["calls"]          = int(q.get("calls") or 0)
@@ -3635,7 +3732,11 @@ def svc_pg_ssl_stats(conn_id: int, db: Session):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def svc_pg_query_analytics(conn_id: int, db: Session, sort: str = "mean_exec_time", limit: int = 100):
-    _, engine = _pg_conn(conn_id, db)
+    conn_rec, engine = _pg_conn(conn_id, db)
+    # Read pg_stat_statements (cluster-wide) from whichever DB actually has the view.
+    _pgss_eng, _ = _pgss_engine(conn_rec)
+    if _pgss_eng is not None:
+        engine = _pgss_eng
 
     valid_sorts = {
         "mean_exec_time":  "mean_exec_time DESC",
@@ -3725,6 +3826,12 @@ def svc_pg_query_analytics(conn_id: int, db: Session, sort: str = "mean_exec_tim
                 "statements": [], "summary": {},
             }
         return {"status": "error", "error": note[:300], "statements": [], "summary": {}}
+    finally:
+        if _pgss_eng is not None:
+            try:
+                _pgss_eng.dispose()
+            except Exception:
+                pass
 
 
 # ═════════════════════════════════════════════════════════════════════════════

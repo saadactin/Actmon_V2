@@ -12,15 +12,18 @@ import {
   Stethoscope, Download, ShieldCheck, Wrench, CheckCircle2, ServerCog, History, Flame,
 } from 'lucide-react';
 import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import {
-  pgHostMetrics, pgProcesses, pgProcessSessions, pgSessionDetail, pgRca, pgGrantMonitor,
-  pgHistory, pgHistoryDetail, pgHistoryRca,
+  ddHostMetrics, ddProcesses, ddProcessSessions, ddSessionDetail, ddRca,
+  ddHistory, ddHistoryDetail, ddHistoryRca, pgGrantMonitor,
+  mssqlOsProcesses, mssqlEnableOsVisibility,
 } from '../../api/drilldown';
 
 const colorFor = (pct) => (pct == null ? '#94a3b8' : pct >= 85 ? '#ef4444' : pct >= 65 ? '#f59e0b' : '#22c55e');
 const fmtPct = (v) => (v == null ? '—' : `${v}%`);
+const TECH_LABEL = { postgresql: 'PostgreSQL', mysql: 'MySQL', oracle: 'Oracle', mssql: 'SQL Server', mongodb: 'MongoDB', clickhouse: 'ClickHouse' };
+const techName = (t) => TECH_LABEL[t] || 'Database';
 
 function Gauge({ icon: Icon, label, pct, sub, onClick }) {
   const c = colorFor(pct);
@@ -53,18 +56,18 @@ const stateColor = (s) => {
   return 'bg-amber-100 text-amber-700';
 };
 
-export default function PgHostResources({ connId }) {
+export default function HostResources({ connId, tech = 'postgresql' }) {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true); setErr(null);
-    pgHostMetrics(connId)
+    ddHostMetrics(tech, connId)
       .then(setMetrics)
       .catch((e) => setErr(e?.response?.data?.detail || e.message || 'Failed to load host metrics'))
       .finally(() => setLoading(false));
-  }, [connId]);
+  }, [connId, tech]);
   useEffect(() => { load(); }, [load]);
 
   // drill-down modal state
@@ -112,14 +115,14 @@ export default function PgHostResources({ connId }) {
         </div>
       </div>
 
-      {drill && <DrillModal connId={connId} sortBy={drill.sortBy} onClose={() => setDrill(null)} />}
-      {showHistory && <HistoryModal connId={connId} onClose={() => setShowHistory(false)} />}
+      {drill && <DrillModal connId={connId} tech={tech} sortBy={drill.sortBy} onClose={() => setDrill(null)} />}
+      {showHistory && <HistoryModal connId={connId} tech={tech} onClose={() => setShowHistory(false)} />}
     </>
   );
 }
 
 /* ─────────────── Drill-down modal (levels 2 → 3 → 4) ─────────────── */
-function DrillModal({ connId, sortBy: initialSort, onClose }) {
+function DrillModal({ connId, tech, sortBy: initialSort, onClose }) {
   const [step, setStep] = useState('processes');      // processes | procdetail | sessions | detail | rca
   const [sortBy, setSortBy] = useState(initialSort);
   const [pid, setPid] = useState(null);
@@ -136,26 +139,35 @@ function DrillModal({ connId, sortBy: initialSort, onClose }) {
       .finally(() => setLoading(false));
   };
   const fetchStep = useCallback((which, p) => {
-    run(which === 'processes' ? pgProcesses(connId, sortBy)
-      : which === 'sessions' ? pgProcessSessions(connId, p)
-      : pgSessionDetail(connId, p));
-  }, [connId, sortBy]);
+    run(which === 'processes' ? ddProcesses(tech, connId, sortBy)
+      : which === 'sessions' ? ddProcessSessions(tech, connId, p)
+      : ddSessionDetail(tech, connId, p));
+  }, [connId, tech, sortBy]);
 
   useEffect(() => { if (step === 'processes') fetchStep('processes'); }, [step, sortBy, fetchStep]);
 
-  const openSessions = (p) => { setPid(p); setStep('sessions'); fetchStep('sessions', p); };
+  const openSessions = (p) => {
+    // For SQL Server a "process" IS a session, so skip the redundant query-list step and
+    // go straight to the deep analysis (tables / indexes / missing indexes / partitioning).
+    if (tech === 'mssql') { setPid(p); setStep('detail'); fetchStep('detail', p); return; }
+    setPid(p); setStep('sessions'); fetchStep('sessions', p);
+  };
   const openProcDetail = (p) => { setSelectedProc(p); setPid(p.pid); setStep('procdetail'); };
   const openDetail = (p) => { setPid(p); setStep('detail'); fetchStep('detail', p); };
   const openRca = (target) => {     // target = {pid, cmd} | null
     setRcaTarget(target || null); setPid(target?.pid || null); setStep('rca');
-    run(pgRca(connId, sortBy === 'mem' ? 'mem' : 'cpu', target?.pid, target?.cmd));
+    run(ddRca(tech, connId, sortBy === 'mem' ? 'mem' : 'cpu', target?.pid, target?.cmd));
   };
 
   const crumbs = [
     { key: 'processes', label: 'Processes' },
     ...(step === 'procdetail' ? [{ key: 'procdetail', label: `PID ${pid} · ${selectedProc?.command || ''}` }] : []),
-    ...(step === 'sessions' || step === 'detail' ? [{ key: 'sessions', label: `PID ${pid} · Queries` }] : []),
-    ...(step === 'detail' ? [{ key: 'detail', label: 'Why' }] : []),
+    ...(step === 'sessions' ? [{ key: 'sessions', label: `PID ${pid} · Queries` }] : []),
+    ...(step === 'detail'
+      ? (tech === 'mssql'
+          ? [{ key: 'detail', label: `PID ${pid} · Analysis` }]
+          : [{ key: 'sessions', label: `PID ${pid} · Queries` }, { key: 'detail', label: 'Why' }])
+      : []),
     ...(step === 'rca' ? [{ key: 'rca', label: 'RCA Report' }] : []),
   ];
 
@@ -192,15 +204,16 @@ function DrillModal({ connId, sortBy: initialSort, onClose }) {
           )}
 
           {!loading && !err && step === 'processes' && (
-            <ProcessList data={data} sortBy={sortBy} setSortBy={setSortBy}
-              onPick={openSessions} onProcDetail={openProcDetail} />
+            <ProcessList data={data} sortBy={sortBy} setSortBy={setSortBy} techLabel={techName(tech)}
+              connId={connId} tech={tech} onPick={openSessions} onProcDetail={openProcDetail}
+              onRca={() => openRca()} />
           )}
           {step === 'procdetail' && (
-            <ProcDetail proc={selectedProc}
+            <ProcDetail proc={selectedProc} techLabel={techName(tech)}
               onRca={() => openRca({ pid: selectedProc?.pid, cmd: selectedProc?.command })} />
           )}
           {!loading && !err && step === 'sessions' && (
-            <SessionList data={data} connId={connId} onPick={openDetail}
+            <SessionList data={data} connId={connId} techLabel={techName(tech)} onPick={openDetail}
               onGranted={() => fetchStep('sessions', pid)} />
           )}
           {!loading && !err && step === 'detail' && (
@@ -251,7 +264,7 @@ function GrantBanner({ connId, onGranted }) {
 }
 
 /* ─────────────── History (logged CPU/RAM over time + spike analysis) ─────────────── */
-function HistoryModal({ connId, onClose }) {
+function HistoryModal({ connId, tech, onClose }) {
   const [hours, setHours] = useState(6);
   const [samples, setSamples] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -263,11 +276,11 @@ function HistoryModal({ connId, onClose }) {
 
   useEffect(() => {
     setLoading(true);
-    pgHistory(connId, hours).then((d) => setSamples(d.samples || [])).finally(() => setLoading(false));
-  }, [connId, hours]);
+    ddHistory(tech, connId, hours).then((d) => setSamples(d.samples || [])).finally(() => setLoading(false));
+  }, [connId, tech, hours]);
 
-  const openDetail = (id) => { setSel(id); setView('detail'); setBusy(true); setDetail(null); pgHistoryDetail(connId, id).then(setDetail).finally(() => setBusy(false)); };
-  const openRca = () => { setView('rca'); setBusy(true); setRca(null); pgHistoryRca(connId, sel, 'cpu').then(setRca).finally(() => setBusy(false)); };
+  const openDetail = (id) => { setSel(id); setView('detail'); setBusy(true); setDetail(null); ddHistoryDetail(tech, connId, id).then(setDetail).finally(() => setBusy(false)); };
+  const openRca = () => { setView('rca'); setBusy(true); setRca(null); ddHistoryRca(tech, connId, sel, 'cpu').then(setRca).finally(() => setBusy(false)); };
 
   const events = samples.filter((s) => s.is_event);
   const chartData = samples.map((s) => ({
@@ -423,7 +436,91 @@ function HistoryModal({ connId, onClose }) {
   );
 }
 
-function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail }) {
+function WindowsProcesses({ connId }) {
+  const [state, setState] = useState('idle'); // idle | loading | data | needsEnable
+  const [res, setRes2] = useState({ processes: [] });
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const procs = res.processes || [];
+
+  const load = () => {
+    setState('loading');
+    mssqlOsProcesses(connId).then((d) => {
+      setNote(d.note || '');
+      if (d.needs_enable) { setState('needsEnable'); }
+      else { setRes2(d); setState('data'); }
+    }).catch((e) => { setNote(e?.response?.data?.detail || e.message); setState('data'); setRes2({ processes: [] }); });
+  };
+  const enable = () => {
+    setBusy(true);
+    mssqlEnableOsVisibility(connId).then((r) => {
+      if (r.status === 'success') load(); else setNote(r.message);
+    }).finally(() => setBusy(false));
+  };
+
+  if (state === 'idle') {
+    return (
+      <button onClick={load} className="mt-3 inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-[12px] font-bold hover:bg-slate-700">
+        <Activity size={14} /> Identify the Windows process
+      </button>
+    );
+  }
+  if (state === 'loading') return <div className="mt-3 text-sm text-slate-400 flex items-center gap-2"><Loader size={16} className="animate-spin" /> Reading Windows processes…</div>;
+  if (state === 'needsEnable') {
+    return (
+      <div className="mt-3 bg-slate-50 border border-slate-200 rounded-2xl p-4">
+        <p className="text-sm font-bold text-slate-700">Windows process visibility is off</p>
+        <p className="text-xs text-slate-500 mt-0.5">{note} Enabling uses <b>xp_cmdshell</b> (sysadmin-only). Do this only on servers you administer.</p>
+        <button onClick={enable} disabled={busy} className="mt-2.5 inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-[12px] font-bold disabled:opacity-60">
+          {busy ? <Loader size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Enable Windows process visibility
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 bg-white rounded-2xl border border-slate-200 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Windows processes · real-time CPU%</h4>
+        <button onClick={load} className="text-slate-400 hover:text-slate-700"><RefreshCw size={13} /></button>
+      </div>
+      {/* total bar */}
+      <div className="flex items-center gap-3 mb-3 text-xs">
+        <span className="font-black text-slate-700">Total host CPU in use: <span style={{ color: colorFor(res.total_cpu_pct) }}>{res.total_cpu_pct ?? '—'}%</span></span>
+        <span className="text-slate-400">Idle: {res.idle_pct ?? '—'}%</span>
+        {res.cpu_cores ? <span className="text-slate-400">· {res.cpu_cores} cores</span> : null}
+      </div>
+      <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-3">
+        <div className="h-full rounded-full" style={{ width: `${Math.min(res.total_cpu_pct || 0, 100)}%`, background: colorFor(res.total_cpu_pct) }} />
+      </div>
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase text-slate-400 font-black">
+          <tr>
+            <th className="text-left py-1">Process</th><th className="text-right">PID</th>
+            <th className="text-right">CPU % (now)</th><th className="text-right">CPU (s) total</th><th className="text-right">Memory</th>
+          </tr>
+        </thead>
+        <tbody>
+          {procs.map((p, i) => {
+            const isSql = /sqlservr/i.test(p.name);
+            return (
+              <tr key={i} className={`border-t border-slate-100 ${isSql ? 'bg-indigo-50/40' : i === 0 && p.cpu_pct > 0 ? 'bg-amber-50/60' : ''}`}>
+                <td className="py-1.5 font-mono">{p.name}{isSql && <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-600 text-white">SQL</span>}{!isSql && i === 0 && p.cpu_pct > 0 && <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">TOP</span>}</td>
+                <td className="text-right text-slate-500">{p.pid}</td>
+                <td className="text-right font-black" style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}%</td>
+                <td className="text-right text-slate-500">{Number(p.cpu_seconds).toLocaleString()}</td>
+                <td className="text-right text-slate-500">{p.mem_mb} MB</td>
+              </tr>
+            );
+          })}
+          {procs.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{note || 'No process data.'}</td></tr>}
+        </tbody>
+      </table>
+      <p className="text-[11px] text-slate-400 mt-2">{note}</p>
+    </div>
+  );
+}
+
+function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail, onRca, techLabel = 'Database', connId, tech }) {
   const rows = data?.processes || [];
   const sysCpu = data?.system_cpu_pct;
   const dbCpu = data?.db_cpu_pct;
@@ -438,19 +535,40 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail }) {
           <p className="text-[11px] text-slate-400">{cores ? `across ${cores} core${cores > 1 ? 's' : ''}` : ''}</p>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">PostgreSQL share</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{techLabel} share</p>
           <p className="text-2xl font-black text-indigo-600 mt-0.5">{dbCpu == null ? '—' : `${dbCpu}%`}</p>
           <p className="text-[11px] text-slate-400">of total host CPU</p>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Other / OS</p>
-          <p className="text-2xl font-black text-slate-700 mt-0.5">{sysCpu == null || dbCpu == null ? '—' : `${Math.max(Math.round((sysCpu - dbCpu) * 10) / 10, 0)}%`}</p>
+          <p className="text-2xl font-black mt-0.5" style={{ color: colorFor(sysCpu == null || dbCpu == null ? null : Math.max(sysCpu - dbCpu, 0)) }}>{sysCpu == null || dbCpu == null ? '—' : `${Math.max(Math.round((sysCpu - dbCpu) * 10) / 10, 0)}%`}</p>
           <p className="text-[11px] text-slate-400">non-database processes</p>
         </div>
       </div>
 
+      {/* Honest explanation when the host load is NOT the database (e.g. Windows SQL Server) */}
+      {data?.is_external && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3.5 mb-4 flex items-start gap-3">
+          <AlertTriangle size={18} className="text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="font-black text-amber-800 text-sm">The database is not the CPU consumer</p>
+            <p className="text-amber-700 text-xs mt-0.5">{data.note}</p>
+            {tech === 'mssql' && <WindowsProcesses connId={connId} />}
+            {onRca && (
+              <button onClick={onRca}
+                className="mt-3 inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[12px] font-bold shadow hover:shadow-lg transition-all">
+                <Stethoscope size={15} /> Generate RCA Report
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
-        <p className="text-sm font-bold text-slate-600">Real-time processes · each value = share of total host {sortBy === 'mem' ? 'memory' : 'CPU'}</p>
+        <p className="text-sm font-bold text-slate-600">
+          {data?.is_external ? `${techLabel} sessions · ranked by cumulative CPU time (${techLabel} is using ${dbCpu ?? 0}% of host now)`
+            : `Real-time processes · each value = share of total host ${sortBy === 'mem' ? 'memory' : 'CPU'}`}
+        </p>
         <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1">
           {[['cpu', 'By CPU'], ['mem', 'By Memory']].map(([k, l]) => (
             <button key={k} onClick={() => setSortBy(k)}
@@ -463,7 +581,7 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail }) {
           <thead className="bg-slate-50 text-[11px] uppercase text-slate-400 font-black">
             <tr>
               <th className="px-4 py-2.5 text-left">PID</th><th className="px-4 py-2.5 text-left">User</th>
-              <th className="px-4 py-2.5 text-right">CPU%</th><th className="px-4 py-2.5 text-right">MEM%</th>
+              <th className="px-4 py-2.5 text-right">{data?.is_external ? 'CPU TIME · %SQL' : 'CPU%'}</th><th className="px-4 py-2.5 text-right">MEM%</th>
               <th className="px-4 py-2.5 text-right">RSS</th><th className="px-4 py-2.5 text-left">Command</th><th></th>
             </tr>
           </thead>
@@ -473,7 +591,11 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail }) {
                 className={`border-t border-slate-100 cursor-pointer ${p.is_db ? 'bg-indigo-50/40' : ''} hover:bg-slate-50`}>
                 <td className="px-4 py-2.5 font-mono text-xs">{p.pid}</td>
                 <td className="px-4 py-2.5 text-slate-500">{p.user}</td>
-                <td className="px-4 py-2.5 text-right font-bold" style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}</td>
+                <td className="px-4 py-2.5 text-right font-bold text-slate-700">
+                  {p.cpu_ms != null
+                    ? <span>{(p.cpu_ms / 1000).toFixed(1)}s {p.cpu_share_pct != null && <span className="text-slate-400 font-semibold">· {p.cpu_share_pct}%</span>}</span>
+                    : <span style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}</span>}
+                </td>
                 <td className="px-4 py-2.5 text-right font-bold" style={{ color: colorFor(p.mem_pct) }}>{p.mem_pct}</td>
                 <td className="px-4 py-2.5 text-right text-slate-500">{p.rss_mb} MB</td>
                 <td className="px-4 py-2.5">
@@ -489,18 +611,22 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-400 mt-3">Click a row to drill in — PostgreSQL rows open their live <b>queries</b>; other processes open a detail view. The <b>RCA report</b> is generated at the final step.</p>
+      {data?.is_external && (
+        <p className="text-[11px] text-slate-400 mt-2"><b>%SQL</b> = each session's share of SQL Server's <i>own</i> CPU (which is only {dbCpu ?? 0}% of the host). The host's {sysCpu ?? 0}% is mostly <b>non-SQL</b> — use <b>Identify the Windows process</b> above to see it.</p>
+      )}
+      <p className="text-[11px] text-slate-400 mt-3">Click a row to drill in — {techLabel} rows open their live <b>queries</b>; other processes open a detail view. The <b>RCA report</b> is generated at the final step.</p>
     </>
   );
 }
 
-function SessionList({ data, connId, onPick, onGranted }) {
+function SessionList({ data, connId, onPick, onGranted, techLabel = 'Database' }) {
   const rows = data?.sessions || [];
   return (
     <>
       {data?.limited && <GrantBanner connId={connId} onGranted={onGranted} />}
+      {data?.note && <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 mb-3">{data.note}</p>}
       <p className="text-sm font-bold text-slate-600 mb-3">
-        {data?.matched_pid ? `Live query for PID ${data.pid}` : 'Active backend sessions (pid was the postmaster)'}
+        {data?.matched_pid ? `Live query for PID ${data.pid}` : `Active ${techLabel} sessions`}
       </p>
       <div className="space-y-2.5">
         {rows.map((s) => (
@@ -529,6 +655,7 @@ function SessionList({ data, connId, onPick, onGranted }) {
 
 function SessionDetail({ data, connId, onRca, onGranted }) {
   const d = data?.detail || {};
+  const a = data?.analysis;
   const blockers = Array.isArray(d.blocked_by) ? d.blocked_by : [];
   const Field = ({ label, value }) => (
     <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
@@ -536,24 +663,19 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
       <p className="text-sm font-bold text-slate-800 mt-0.5 break-all">{value == null || value === '' ? '—' : String(value)}</p>
     </div>
   );
+  const used = (i) => (i.seeks || 0) + (i.scans || 0) + (i.lookups || 0);
   return (
     <div className="space-y-4">
       {data?.limited && <GrantBanner connId={connId} onGranted={onGranted} />}
-      <div className="flex justify-end">
-        <button onClick={onRca}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[12px] font-bold shadow hover:shadow-lg transition-all">
-          <Stethoscope size={15} /> Generate RCA Report
-        </button>
-      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Field label="State" value={d.state} />
-        <Field label="Wait" value={d.wait_event ? `${d.wait_event_type}/${d.wait_event}` : 'none'} />
+        <Field label="Wait" value={d.wait_event ? `${d.wait_event_type || ''}${d.wait_event_type ? '/' : ''}${d.wait_event}` : 'none'} />
         <Field label="Running for" value={d.query_seconds != null ? `${d.query_seconds}s` : '—'} />
-        <Field label="In transaction" value={d.xact_seconds != null ? `${d.xact_seconds}s` : '—'} />
         <Field label="User" value={d.usename} />
         <Field label="Database" value={d.datname} />
         <Field label="Client" value={d.client_addr} />
-        <Field label="Backend type" value={d.backend_type} />
+        <Field label="CPU (ms)" value={d.cpu_ms != null ? Number(d.cpu_ms).toLocaleString() : '—'} />
+        <Field label="Reads / Writes" value={d.reads != null ? `${Number(d.reads).toLocaleString()} / ${Number(d.writes || 0).toLocaleString()}` : '—'} />
       </div>
 
       {blockers.length > 0 && (
@@ -561,26 +683,148 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
           <GitBranch size={18} className="text-red-600 mt-0.5 flex-shrink-0" />
           <div>
             <p className="font-black text-red-800 text-sm">Blocked by PID(s): {blockers.join(', ')}</p>
-            <p className="text-red-700 text-xs mt-0.5">This query is waiting on a lock held by another session — that's why it's consuming/stalling.</p>
+            <p className="text-red-700 text-xs mt-0.5">This query is waiting on a lock held by another session.</p>
           </div>
         </div>
       )}
 
-      <div>
-        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Query</p>
-        <pre className="bg-slate-900 text-emerald-200 rounded-2xl p-4 text-xs overflow-x-auto whitespace-pre-wrap break-all">{d.query || '—'}</pre>
-      </div>
+      {d.query ? (
+        <div>
+          <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Last query</p>
+          <pre className="bg-slate-900 text-emerald-200 rounded-2xl p-4 text-xs overflow-x-auto whitespace-pre-wrap break-all">{d.query}</pre>
+        </div>
+      ) : (
+        <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
+          No user query — this session is idle or its last activity was internal monitoring. The database health analysis below still applies.
+        </p>
+      )}
 
-      <div>
-        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Execution plan (EXPLAIN)</p>
-        <pre className="bg-white border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap">{data?.plan || '(not a plain SELECT — plan not generated)'}</pre>
+      {a?.top_queries?.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Top queries by CPU · {a.database}</h4>
+          <div className="space-y-2">
+            {a.top_queries.slice(0, 6).map((q, i) => (
+              <div key={i} className="text-xs">
+                <div className="flex justify-between text-slate-500">
+                  <span>{q.execution_count ?? '—'} execs · {q.avg_reads != null ? `${Number(q.avg_reads).toLocaleString()} avg reads` : ''}</span>
+                  <span className="font-bold text-orange-600">{q.total_cpu_ms != null ? `${Number(q.total_cpu_ms).toLocaleString()} ms total` : ''}{q.avg_cpu_ms != null ? ` · ${q.avg_cpu_ms} ms avg` : ''}</span>
+                </div>
+                <code className="block font-mono text-slate-700 bg-slate-50 rounded px-2 py-1 mt-0.5 line-clamp-2 break-all">{q.query}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Deep database analysis (step-wise, BEFORE the RCA) ── */}
+      {a ? (
+        <>
+          <div className="flex items-center gap-2 pt-1">
+            <Database size={16} className="text-indigo-500" />
+            <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">Deep analysis · {a.database}</h3>
+          </div>
+
+          {a.tables?.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Largest tables (size & rows)</h4>
+              <table className="w-full text-xs">
+                <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Table</th><th className="text-right">Rows</th><th className="text-right">Total MB</th><th className="text-right">Index MB</th></tr></thead>
+                <tbody>
+                  {a.tables.slice(0, 10).map((t, i) => (
+                    <tr key={i} className={`border-t border-slate-100 ${(t.row_count || 0) > 1000000 ? 'bg-amber-50/60' : ''}`}>
+                      <td className="py-1.5 font-mono">{t.schema_name}.{t.table_name}</td>
+                      <td className="text-right">{Number(t.row_count || 0).toLocaleString()}</td>
+                      <td className="text-right font-bold">{t.total_mb}</td>
+                      <td className="text-right text-slate-500">{t.index_mb}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {a.missing_indexes?.length > 0 && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
+              <h4 className="text-[11px] font-black text-emerald-600 uppercase tracking-wider mb-2">Missing indexes — create these</h4>
+              <div className="space-y-2">
+                {a.missing_indexes.map((m, i) => (
+                  <div key={i}>
+                    <div className="flex justify-between text-xs"><span className="font-bold text-slate-700">[{m.table}]</span><span className="text-emerald-700 font-black">≈ {m.impact}% faster · {m.uses} uses</span></div>
+                    <code className="block font-mono text-[11px] text-slate-700 bg-white rounded px-2 py-1 mt-0.5 break-all">{m.ddl}</code>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {a.indexes?.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Index usage (seeks / scans / lookups / writes)</h4>
+              <table className="w-full text-xs">
+                <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Table · Index</th><th className="text-right">Seek</th><th className="text-right">Scan</th><th className="text-right">Lookup</th><th className="text-right">Writes</th></tr></thead>
+                <tbody>
+                  {a.indexes.slice(0, 12).map((ix, i) => {
+                    const unused = used(ix) === 0 && (ix.updates || 0) > 0 && ix.type_desc !== 'CLUSTERED';
+                    return (
+                      <tr key={i} className={`border-t border-slate-100 ${unused ? 'bg-red-50/60' : ''}`}>
+                        <td className="py-1.5 font-mono">{ix.table_name} · {ix.index_name}{unused && <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded bg-red-500 text-white">UNUSED</span>}</td>
+                        <td className="text-right">{Number(ix.seeks).toLocaleString()}</td>
+                        <td className="text-right">{Number(ix.scans).toLocaleString()}</td>
+                        <td className="text-right">{Number(ix.lookups).toLocaleString()}</td>
+                        <td className="text-right text-slate-500">{Number(ix.updates).toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {a.partition_candidates?.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+              <h4 className="text-[11px] font-black text-amber-600 uppercase tracking-wider mb-2">Partitioning candidates (very large, un-partitioned)</h4>
+              <div className="space-y-1.5">
+                {a.partition_candidates.map((t, i) => (
+                  <div key={i} className="flex justify-between text-xs text-slate-700">
+                    <span className="font-mono">[{t.table_name}]</span>
+                    <span className="text-amber-700 font-bold">{Number(t.row_count).toLocaleString()} rows · not partitioned</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {a.recommendations?.length > 0 && (
+            <div className="bg-white rounded-2xl border border-slate-200 p-4">
+              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Recommendations</h4>
+              <ul className="space-y-1.5">
+                {a.recommendations.map((r, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs text-slate-700"><span className="mt-1 w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      ) : data?.plan && (
+        <div>
+          <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Execution plan</p>
+          <pre className="bg-white border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap">{data.plan}</pre>
+        </div>
+      )}
+
+      {/* RCA generated only at the FINAL step, after the deep analysis */}
+      <div className="flex justify-end pt-2 border-t border-slate-100">
+        <button onClick={onRca}
+          className="inline-flex items-center gap-1.5 h-10 px-5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-sm font-bold shadow hover:shadow-lg transition-all">
+          <Stethoscope size={16} /> Generate RCA Report
+        </button>
       </div>
     </div>
   );
 }
 
 /* ─────────────── Process detail (drill step for non-DB processes) ─────────────── */
-function ProcDetail({ proc, onRca }) {
+function ProcDetail({ proc, onRca, techLabel = 'the database' }) {
   if (!proc) return null;
   const Field = ({ label, value, color }) => (
     <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
@@ -606,7 +850,7 @@ function ProcDetail({ proc, onRca }) {
         <Field label="Owner" value={proc.user} />
       </div>
       <div className="bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-sm text-slate-600">
-        This is not a PostgreSQL process. To understand <b>what it is and why it's consuming {`${proc.cpu_pct ?? 0}%`} CPU</b> — and confirm the database isn't the cause — generate the RCA report.
+        This is not a {techLabel} process. To understand <b>what it is and why it's consuming {`${proc.cpu_pct ?? 0}%`} CPU</b> — and confirm {techLabel} isn't the cause — generate the RCA report.
       </div>
       <div className="flex justify-end">
         <button onClick={onRca}
@@ -630,6 +874,7 @@ function RcaReport({ data, resource }) {
   const rca = data?.rca || {};
   const ev = data?.evidence || {};
   const isDb = data?.is_db_related;
+  const engLabel = techName(ev.engine);
   const sev = SEV[rca.severity] || SEV.Medium;
   const now = new Date().toLocaleString();
   const reportRef = useRef(null);
@@ -701,13 +946,40 @@ function RcaReport({ data, resource }) {
         </div>
       </div>
 
+      {/* Step-wise decision path */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-3">Decision path</p>
+        <ol className="space-y-2.5">
+          {[
+            { t: `${resource} at ${ev.host_util_pct ?? '—'}% on the host`, ok: true },
+            { t: `Split: ${engLabel} ${ev.db_share_pct ?? 0}% vs other/OS ${ev.external_share_pct ?? 0}% → ${isDb ? `${engLabel} IS the consumer` : 'NOT the database'}`, ok: true },
+            ...(isDb
+              ? [
+                  { t: `Database under load: ${ev.analysis_db || ev.top_consumer?.db_name || '—'}`, ok: true },
+                  { t: ev.top_consumer ? `Top query/session: ${ev.top_consumer.db_name || ''} ${ev.top_consumer.session_id != null ? '(session ' + ev.top_consumer.session_id + ')' : ''}` : 'Heaviest queries identified', ok: true },
+                  { t: ev.missing_indexes?.length ? `${ev.missing_indexes.length} missing index(es) → create them` : 'No missing indexes detected', ok: !ev.missing_indexes?.length },
+                  { t: ev.big_tables?.length ? `${ev.big_tables.length} very large table(s) → consider partitioning` : 'No partitioning needed', ok: !ev.big_tables?.length },
+                ]
+              : [
+                  { t: ev.top_external_process ? `Top offender: ${ev.top_external_process.command} (PID ${ev.top_external_process.pid})` : 'A non-database OS process is the cause', ok: false },
+                  { t: 'OS-level process list needs a host agent (Windows) / SSH (Linux)', ok: false },
+                ]),
+          ].map((s, i) => (
+            <li key={i} className="flex items-start gap-2.5 text-sm">
+              <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${s.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{i + 1}</span>
+              <span className="text-slate-700">{s.t}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
+
       {/* DB vs external banner */}
       <div className={`rounded-2xl border px-5 py-4 flex items-start gap-3 ${isDb ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50 border-slate-200'}`}>
         {isDb ? <Database size={18} className="text-indigo-600 mt-0.5" /> : <ServerCog size={18} className="text-slate-500 mt-0.5" />}
         <div>
           <p className="font-black text-sm text-slate-800">
-            {isDb ? `PostgreSQL is driving ${resource} (${ev.db_share_pct}% vs ${ev.external_share_pct}% external)`
-                  : `${resource} pressure is from a non-database process (${ev.external_share_pct}% external vs ${ev.db_share_pct}% DB)`}
+            {isDb ? `${engLabel} is driving ${resource} (${ev.db_share_pct}% vs ${ev.external_share_pct}% other)`
+                  : `${resource} pressure is from a non-database process (${ev.external_share_pct}% other vs ${ev.db_share_pct}% ${engLabel})`}
           </p>
           {!isDb && ev.top_external_process && (
             <p className="text-xs text-slate-600 mt-0.5">Top offender: <b>{ev.top_external_process.command}</b> (PID {ev.top_external_process.pid}, user {ev.top_external_process.user}, {ev.top_external_process[resource === 'MEMORY' ? 'mem_pct' : 'cpu_pct']}%)</p>
@@ -715,13 +987,158 @@ function RcaReport({ data, resource }) {
         </div>
       </div>
 
+      {/* CPU breakdown — the easy-to-understand calculation */}
+      {resource === 'CPU' && (() => {
+        const host = Math.round(Number(ev.host_util_pct ?? ev.host_cpu_pct ?? 0));
+        const sqlc = Math.round(Number(ev.sql_server_cpu_pct ?? ev.db_share_pct ?? 0));
+        // "other" = CPU we could attribute to specific non-DB processes from the sample.
+        const otherRaw = Number(ev.other_cpu_pct ?? ev.external_share_pct ?? (host - sqlc));
+        const other = Math.max(Math.round(otherRaw), 0);
+        const idle = Math.max(100 - host, 0);
+        // The host % is measured directly by the OS; per-process sampling rarely sums to it
+        // (kernel/system time + short-lived or untracked processes). That residual is shown
+        // explicitly so the numbers actually add up to the host total.
+        const untracked = Math.max(host - sqlc - other, 0);
+        const dbLabel = (ev.engine === 'mssql') ? 'SQL Server'
+          : (ev.engine ? `${techName(ev.engine)} (database)` : 'Database');
+        const topOs = (ev.os?.processes || []).slice(0, 4).filter((p) => p.cpu_pct > 0);
+        return (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <h4 className="text-sm font-black text-slate-700 uppercase tracking-wide mb-1">CPU breakdown — how the {host}% is made up</h4>
+            <p className="text-[11px] text-slate-500 mb-3">Total CPU in use is measured by the OS. Below, it is split into what we could trace to specific processes vs. the rest.</p>
+            {/* stacked bar — SQL + traced-other + untracked + idle always fills 100% */}
+            <div className="flex h-5 rounded-lg overflow-hidden mb-3 text-[10px] font-black text-white">
+              {sqlc > 0 && <div style={{ width: `${sqlc}%`, background: '#6366f1' }} className="flex items-center justify-center" title={`${dbLabel} ${sqlc}%`}>{sqlc >= 6 ? `${sqlc}%` : ''}</div>}
+              {other > 0 && <div style={{ width: `${other}%`, background: '#f59e0b' }} className="flex items-center justify-center" title={`Traced non-DB ${other}%`}>{other >= 6 ? `${other}%` : ''}</div>}
+              {untracked > 0 && <div style={{ width: `${untracked}%`, background: '#94a3b8' }} className="flex items-center justify-center" title={`System / untracked ${untracked}%`}>{untracked >= 6 ? `${untracked}%` : ''}</div>}
+              {idle > 0 && <div style={{ width: `${idle}%`, background: '#e2e8f0' }} className="flex items-center justify-center text-slate-600" title={`Idle ${idle}%`}>{idle >= 6 ? `${idle}%` : ''}</div>}
+            </div>
+            {/* the equation */}
+            <div className="font-mono text-sm space-y-1">
+              <div className="flex justify-between"><span className="flex items-center gap-2"><span className="w-3 h-3 rounded-sm" style={{ background: '#6366f1' }} /> {dbLabel}</span><span className="font-bold">{sqlc}%</span></div>
+              <div className="flex justify-between"><span className="flex items-center gap-2"><span className="w-3 h-3 rounded-sm" style={{ background: '#f59e0b' }} /> Traced non-DB processes</span><span className="font-bold">{other}%</span></div>
+              {untracked > 0 && (
+                <div className="flex justify-between"><span className="flex items-center gap-2"><span className="w-3 h-3 rounded-sm" style={{ background: '#94a3b8' }} /> System / untracked processes</span><span className="font-bold">{untracked}%</span></div>
+              )}
+              <div className="flex justify-between border-t border-slate-200 pt-1 mt-1"><span className="font-black">= Total CPU in use</span><span className="font-black" style={{ color: colorFor(host) }}>{host}%</span></div>
+              <div className="flex justify-between text-slate-400"><span>Idle (free)</span><span>{idle}%</span></div>
+            </div>
+            {topOs.length > 0 && (
+              <p className="text-xs text-slate-500 mt-3">The <b>{other}%</b> traced non-DB is mainly: {topOs.map((p, i) => <span key={i}>{i ? ', ' : ''}<b>{p.name}</b> {p.cpu_pct}%</span>)}.</p>
+            )}
+            <p className="text-[11px] text-slate-400 mt-2">
+              {sqlc}% ({dbLabel}) + {other}% (traced non-DB){untracked > 0 ? ` + ${untracked}% (system / untracked)` : ''} = {host}% in use, {idle}% idle.
+              {untracked > 0 && ` The ${untracked}% "untracked" is kernel/system time plus short-lived or background processes not caught in the process snapshot — the OS counts it toward CPU, but no single process owns it.`}
+            </p>
+          </div>
+        );
+      })()}
+
       {/* root cause */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
         <h4 className="text-sm font-black text-slate-700 uppercase tracking-wide mb-2">Root cause</h4>
         <p className="text-sm text-slate-700 leading-relaxed">{rca.root_cause || '—'}</p>
       </div>
 
+      {/* exact top consumer (named culprit) */}
+      {ev.top_consumer && (
+        <div className={`rounded-2xl p-4 border ${isDb ? 'bg-indigo-50 border-indigo-200' : 'bg-amber-50 border-amber-200'}`}>
+          <p className={`text-[11px] font-black uppercase tracking-wider mb-1.5 ${isDb ? 'text-indigo-500' : 'text-amber-600'}`}>Top consumer</p>
+          {ev.top_consumer.name ? (
+            <p className="text-sm font-bold text-slate-800">
+              {ev.top_consumer.name} · PID {ev.top_consumer.pid}
+              {ev.top_consumer.cpu_pct != null ? ` · ${ev.top_consumer.cpu_pct}% CPU now` : ''}
+              {ev.top_consumer.mem_mb != null ? ` · ${ev.top_consumer.mem_mb} MB` : ''}
+              <span className="ml-2 text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">NON-DB</span>
+            </p>
+          ) : (
+            <>
+              <p className="text-sm font-bold text-slate-800">
+                {ev.top_consumer.session_id != null ? `Session ${ev.top_consumer.session_id}` : 'Query'}
+                {ev.top_consumer.login_name ? ` · ${ev.top_consumer.login_name}` : ''}
+                {ev.top_consumer.db_name ? ` · DB: ${ev.top_consumer.db_name}` : ''}
+                {ev.top_consumer.cpu_ms != null ? ` · CPU ${Number(ev.top_consumer.cpu_ms).toLocaleString()} ms` : (ev.top_consumer.total_cpu_ms != null ? ` · CPU ${Number(ev.top_consumer.total_cpu_ms).toLocaleString()} ms` : '')}
+                {ev.top_consumer.wait_type ? ` · wait: ${ev.top_consumer.wait_type}` : ''}
+              </p>
+              {ev.top_consumer.query && <code className="block text-xs font-mono text-slate-700 bg-white rounded-lg px-3 py-2 mt-2 break-all">{ev.top_consumer.query}</code>}
+            </>
+          )}
+        </div>
+      )}
+
       <Section icon={Activity}     title="Evidence"           items={rca.evidence_summary} tone="indigo" />
+
+      {/* EXTERNAL cause → host CPU chart + the real OS processes (no DB tables/indexes shown) */}
+      {!isDb && ev.os?.processes?.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Windows processes consuming {resource} (live %)</h4>
+          <div style={{ height: 220 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={ev.os.processes.slice(0, 8).map((p) => ({ name: p.name.replace(/\.exe$/i, ''), cpu: p.cpu_pct }))}
+                margin={{ top: 6, right: 12, left: -10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-20} textAnchor="end" height={50} />
+                <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} unit="%" />
+                <Tooltip />
+                <Bar dataKey="cpu" fill="#f59e0b" radius={[4, 4, 0, 0]} name="CPU %" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <table className="w-full text-xs mt-2">
+            <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Process</th><th className="text-right">PID</th><th className="text-right">CPU %</th><th className="text-right">CPU (s)</th><th className="text-right">Memory</th></tr></thead>
+            <tbody>
+              {ev.os.processes.slice(0, 10).map((p, i) => (
+                <tr key={i} className={`border-t border-slate-100 ${/sqlservr/i.test(p.name) ? 'bg-indigo-50/40' : i === 0 ? 'bg-amber-50/60' : ''}`}>
+                  <td className="py-1.5 font-mono">{p.name}</td>
+                  <td className="text-right text-slate-500">{p.pid}</td>
+                  <td className="text-right font-black" style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}%</td>
+                  <td className="text-right text-slate-500">{Number(p.cpu_seconds).toLocaleString()}</td>
+                  <td className="text-right text-slate-500">{p.mem_mb} MB</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[11px] text-slate-400 mt-2">Host CPU in use {ev.os.total_cpu_pct}% · idle {ev.os.idle_pct}% · {ev.os.cpu_cores} cores. SQL Server itself is only {ev.sql_server_cpu_pct}%.</p>
+        </div>
+      )}
+      {!isDb && ev.os && !ev.os.enabled && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 text-sm text-amber-800">
+          To name the Windows process here, enable Windows process visibility from the Processes view (uses xp_cmdshell).
+        </div>
+      )}
+
+      {/* top queries (engine-agnostic: SQL Server / others) */}
+      {ev.top_queries?.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Heaviest queries by CPU</h4>
+          <div className="space-y-2">
+            {ev.top_queries.slice(0, 6).map((q, i) => (
+              <div key={i} className="text-xs">
+                <div className="flex justify-between text-slate-500">
+                  <span>{q.db_name || '—'} · {q.execution_count ?? '—'} execs</span>
+                  <span className="font-bold text-orange-600">{q.total_cpu_ms != null ? `${Number(q.total_cpu_ms).toLocaleString()} ms total` : ''}{q.avg_cpu_ms != null ? ` · ${q.avg_cpu_ms} ms avg` : ''}</span>
+                </div>
+                <code className="block font-mono text-slate-700 bg-slate-50 rounded px-2 py-1 mt-0.5 line-clamp-2 break-all">{q.query}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* top waits */}
+      {ev.top_waits?.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Top wait types</h4>
+          <div className="space-y-1.5">
+            {ev.top_waits.slice(0, 6).map((w, i) => (
+              <div key={i} className="flex justify-between text-xs text-slate-700">
+                <span className="font-mono">{w.wait_type}</span>
+                <span className="text-amber-600 font-bold">{Number(w.wait_time_ms).toLocaleString()} ms · {Number(w.waiting_tasks_count).toLocaleString()} tasks</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* evidence tables */}
       {isDb && (ev.top_statements?.length > 0 || ev.index_candidates?.length > 0) && (

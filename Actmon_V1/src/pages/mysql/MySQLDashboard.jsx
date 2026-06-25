@@ -9,7 +9,7 @@ import {
   TrendingUp, BarChart2, Table, Settings, Bell, ArrowUp,
   ArrowDown, Minus, Search, Filter,
   ChevronDown, ChevronUp, Code2, FolderOpen, Key, Link as LinkIcon,
-  Copy, Wifi, WifiOff, Loader2, Eye, X,
+  Copy, Wifi, WifiOff, Loader2, Eye, X, ExternalLink,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -17,6 +17,7 @@ import {
   LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
+import HostResources from '../postgresql/PgHostResources';
 
 /* ─── palette ─── */
 const C = {
@@ -38,6 +39,7 @@ const fetchTableStats     = (id) => client.get(`/connections/mysql/${id}/table-s
 const fetchUserStats      = (id) => client.get(`/connections/mysql/${id}/user-stats`).then(r => r.data);
 const fetchInnoDBMetrics  = (id) => client.get(`/connections/mysql/${id}/innodb-metrics`).then(r => r.data);
 const fetchDatabases      = (id) => client.get(`/connections/mysql/${id}/databases`).then(r => r.data);
+const fetchAllTables      = (id) => client.get(`/connections/mysql/${id}/all-tables`).then(r => r.data);
 const fetchTablesInDB     = (id, db) => client.get(`/connections/mysql/${id}/databases/${db}/tables`).then(r => r.data);
 const fetchTableDetail    = (id, db, tbl) => client.get(`/connections/mysql/${id}/databases/${db}/tables/${tbl}`).then(r => r.data);
 const fetchTableData      = (id, db, tbl) => client.get(`/connections/mysql/${id}/databases/${db}/tables/${tbl}/data`).then(r => r.data);
@@ -356,6 +358,8 @@ export default function MySQLDashboard() {
   const [selTable, setSelTable] = useState(null);
   const [tblSubTab, setTblSub]  = useState('columns');
   const [tblSearch, setTblSearch] = useState('');
+  const [tblView, setTblView]   = useState('size');     // flat-list sort view (PG-style)
+  const [tblDbFilter, setTblDbFilter] = useState('__all__'); // flat-list DB filter
 
   // Replication state
   const [replVarsOpen, setReplVarsOpen] = useState(false);
@@ -428,6 +432,13 @@ export default function MySQLDashboard() {
   });
 
   /* ── Table Explorer queries ── */
+  const { data: allTablesData, isLoading: allTablesLoading, refetch: refetchAllTables } = useQuery({
+    queryKey: ['mysqlAllTables', id],
+    queryFn:  () => fetchAllTables(id),
+    retry: false,
+    refetchInterval: 30000,
+    enabled: activeTab === 'tables',
+  });
   const { data: dbListData, isLoading: dbListLoading } = useQuery({
     queryKey: ['mysqlDatabases', id],
     queryFn:  () => fetchDatabases(id),
@@ -694,6 +705,9 @@ export default function MySQLDashboard() {
               <ClickableKpiCard icon={Cpu}       title="Slow Queries" value={fmtNum(query_stats.Slow_queries)} accent={Number(query_stats.Slow_queries) > 0 ? 'red' : 'slate'}
                 onClick={() => { setActiveTab('queries'); }} />
             </div>
+
+            {/* ── Host Resources drill-down ── */}
+            <HostResources connId={id} tech="mysql" />
 
             {/* ── Row 2: Status badges ── */}
             <div className="flex flex-wrap gap-2">
@@ -1704,93 +1718,152 @@ export default function MySQLDashboard() {
         )}
 
         {/* ══ TABLES — advanced explorer ═══════════════════════════ */}
-        {activeTab === 'tables' && (
-          <div className="flex gap-4 h-[calc(100vh-220px)] min-h-[500px]">
+        {activeTab === 'tables' && (() => {
+          const all      = allTablesData?.tables || allTablesData?.data || [];
+          const allDbs   = allTablesData?.databases || [...new Set(all.map(t => t.database))];
+          const totalCnt = allTablesData?.total_count ?? all.length;
+          const totBytes = allTablesData?.total_bytes || all.reduce((s, t) => s + (t.total_bytes || 0), 0);
+          const vw       = MYSQL_TABLE_VIEWS.find(v => v.id === tblView) || MYSQL_TABLE_VIEWS[0];
+          const maxBytes = Math.max(...all.map(t => t.total_bytes || 0), 1);
+          const rows = all
+            .filter(t => tblDbFilter === '__all__' || t.database === tblDbFilter)
+            .filter(t => !tblSearch
+              || t.name.toLowerCase().includes(tblSearch.toLowerCase())
+              || (t.database || '').toLowerCase().includes(tblSearch.toLowerCase()))
+            .sort(vw.sort);
+          const kpis = [
+            { label: 'Total Tables', value: totalCnt,                       color: 'cyan' },
+            { label: 'Total Size',   value: allTablesData?.total_size_human || fmtBytes(totBytes), color: 'violet' },
+            { label: 'Databases',    value: allDbs.length,                  color: 'blue' },
+            { label: 'Largest Table',value: rows[0]?.name || '—',           color: 'emerald' },
+            { label: 'Total Rows',   value: fmtNum(all.reduce((s, t) => s + (t.row_estimate || 0), 0)), color: 'amber' },
+          ];
+          return (
+          <div className="space-y-5">
 
-            {/* ─ Left: DB list ─ */}
-            <div className="w-48 flex-shrink-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-100 bg-slate-50/60 flex items-center gap-2">
-                <Database size={13} className="text-cyan-600 flex-shrink-0" />
-                <span className="font-bold text-slate-700 text-[12px]">Databases</span>
-                {!dbListLoading && dbListData?.data && (
-                  <span className="ml-auto text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full font-bold">
-                    {dbListData.data.length}
-                  </span>
-                )}
-              </div>
-              <div className="overflow-y-auto flex-1">
-                {dbListLoading ? (
-                  <div className="py-10 flex justify-center"><Loader2 size={18} className="animate-spin text-slate-400" /></div>
-                ) : (dbListData?.data || []).map(db => (
-                  <button key={db.name} onClick={() => { setSelDb(db.name); setSelTable(null); setTblSearch(''); }}
-                    className={`w-full text-left px-4 py-3 border-b border-slate-50 last:border-0 transition-all ${selDb === db.name ? 'bg-cyan-50 border-l-2 border-l-cyan-500' : 'hover:bg-slate-50'}`}>
-                    <p className={`font-semibold text-[12px] truncate ${selDb === db.name ? 'text-cyan-700' : 'text-slate-700'}`}>{db.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-slate-400">{db.tables} tbls</span>
-                      <span className="text-[10px] text-slate-400">{db.size_human}</span>
-                    </div>
-                  </button>
-                ))}
-                {!dbListLoading && (dbListData?.data || []).length === 0 && (
-                  <p className="text-center py-8 text-[11px] text-slate-400">No databases</p>
-                )}
-              </div>
-            </div>
-
-            {/* ─ Middle: Table list ─ */}
-            <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-              <div className="px-3 py-3 border-b border-slate-100 bg-slate-50/60">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <Table size={12} className="text-slate-400 flex-shrink-0" />
-                  <span className="font-bold text-slate-700 text-[12px]">{selDb ? `${selDb}` : 'Tables'}</span>
-                  {tblListData?.data && (
-                    <span className="ml-auto text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full font-bold">
-                      {tblListData.data.length}
-                    </span>
-                  )}
-                </div>
-                <div className="relative">
-                  <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input value={tblSearch} onChange={e => setTblSearch(e.target.value)} placeholder="Search…"
-                    className="h-7 w-full pl-7 pr-2 rounded-lg border border-slate-200 text-[11px] outline-none focus:border-cyan-400 bg-white" />
-                </div>
-              </div>
-              <div className="overflow-y-auto flex-1">
-                {!selDb ? (
-                  <p className="py-10 text-center text-[11px] text-slate-400">Select a database</p>
-                ) : tblListLoading ? (
-                  <div className="py-10 flex justify-center"><Loader2 size={18} className="animate-spin text-slate-400" /></div>
-                ) : (tblListData?.data || [])
-                    .filter(t => !tblSearch || t.name.toLowerCase().includes(tblSearch.toLowerCase()))
-                    .map(t => (
-                  <button key={t.name} onClick={() => { setSelTable(t.name); setTblSub('columns'); }}
-                    className={`w-full text-left px-3 py-2.5 border-b border-slate-50 last:border-0 transition-all ${selTable === t.name ? 'bg-cyan-50 border-l-2 border-l-cyan-500' : 'hover:bg-slate-50'}`}>
-                    <p className={`font-semibold text-[11px] truncate ${selTable === t.name ? 'text-cyan-700' : 'text-slate-700'}`}>{t.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 rounded-full font-bold">{t.engine}</span>
-                      <span className="text-[9px] text-slate-400">{t.row_estimate != null ? fmtNum(t.row_estimate) + ' rows' : '—'}</span>
-                      <span className="text-[9px] text-slate-400">{t.size_human}</span>
-                    </div>
-                  </button>
-                ))}
-                {!tblListLoading && selDb && (tblListData?.data || []).length === 0 && (
-                  <p className="text-center py-8 text-[11px] text-slate-400">No tables</p>
-                )}
-              </div>
-            </div>
-
-            {/* ─ Right: Table detail ─ */}
-            <div className="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-              {!selTable ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center py-20">
-                  <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center mb-4">
-                    <Table size={28} className="text-slate-200" />
+            {/* KPI strip */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-5 gap-3">
+              {kpis.map(k => (
+                <div key={k.label} className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    k.color==='cyan'?'bg-cyan-50 border border-cyan-100':k.color==='violet'?'bg-violet-50 border border-violet-100':
+                    k.color==='blue'?'bg-blue-50 border border-blue-100':k.color==='emerald'?'bg-emerald-50 border border-emerald-100':
+                    'bg-amber-50 border border-amber-100'}`}>
+                    <Table size={17} className={
+                      k.color==='cyan'?'text-cyan-500':k.color==='violet'?'text-violet-500':
+                      k.color==='blue'?'text-blue-500':k.color==='emerald'?'text-emerald-500':'text-amber-500'} />
                   </div>
-                  <p className="font-semibold text-slate-500">Select a table to inspect</p>
-                  <p className="text-[12px] text-slate-400 mt-1">Columns, indexes, constraints, DDL, and sample data</p>
+                  <div className="min-w-0">
+                    <p className="text-[17px] font-black text-slate-900 leading-tight truncate">{k.value}</p>
+                    <p className="text-[10px] text-slate-400 font-medium">{k.label}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Table panel */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="bg-gradient-to-r from-cyan-50 to-teal-50/30 border-b border-slate-100 px-5 py-3">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-2">
+                    <Table size={14} className="text-cyan-600" />
+                    <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Tables</h3>
+                    <span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[10px] font-bold">{rows.length} / {totalCnt}</span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {allDbs.length > 1 && (
+                      <select value={tblDbFilter} onChange={e => setTblDbFilter(e.target.value)}
+                        className="h-8 px-2 pr-6 rounded-xl border border-slate-200 text-[12px] outline-none focus:border-cyan-400 bg-white font-medium text-slate-600 appearance-none cursor-pointer"
+                        style={{backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")",backgroundRepeat:'no-repeat',backgroundPosition:'right 8px center'}}>
+                        <option value="__all__">All Databases ({totalCnt})</option>
+                        {allDbs.map(db => <option key={db} value={db}>{db} ({all.filter(t => t.database === db).length})</option>)}
+                      </select>
+                    )}
+                    <div className="relative">
+                      <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input value={tblSearch} onChange={e => setTblSearch(e.target.value)} placeholder="Filter tables…"
+                        className="h-8 pl-7 pr-3 rounded-xl border border-slate-200 text-[12px] outline-none focus:border-cyan-400 bg-white w-40" />
+                    </div>
+                    <button onClick={refetchAllTables} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 hover:bg-slate-50">
+                      <RefreshCw size={12} className={allTablesLoading ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex gap-1.5 mt-3 flex-wrap">
+                  {MYSQL_TABLE_VIEWS.map(tv => (
+                    <button key={tv.id} onClick={() => setTblView(tv.id)}
+                      className={`h-7 px-3 rounded-xl text-[11px] font-bold border-2 transition-all ${tblView===tv.id?'border-cyan-500 bg-cyan-50 text-cyan-700':'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}>
+                      {tv.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {allTablesLoading && !all.length ? (
+                <div className="py-20 flex justify-center"><Loader2 size={26} className="animate-spin text-slate-300" /></div>
+              ) : rows.length === 0 ? (
+                <div className="py-16 text-center">
+                  <Table size={40} className="mx-auto mb-3 text-slate-200" />
+                  <p className="font-bold text-slate-500">{totalCnt === 0 ? 'No user tables found' : 'No tables match filter'}</p>
                 </div>
               ) : (
-                <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="bg-slate-50/70 border-b border-slate-200">
+                        {['Database','Table','Engine','Rows','Data','Indexes','Total Size','Cols','Idx','Detail'].map(h => (
+                          <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((t, i) => {
+                        const sizePct = Math.min(100, Math.round((t.total_bytes || 0) / maxBytes * 100));
+                        return (
+                          <tr key={i} className="border-t border-slate-100 hover:bg-cyan-50/30 transition-colors cursor-pointer"
+                            onClick={() => { setSelDb(t.database); setSelTable(t.name); setTblSub('columns'); }}>
+                            <td className="px-3 py-2.5"><span className="px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[9px] font-bold border border-cyan-200 whitespace-nowrap">{t.database}</span></td>
+                            <td className="px-3 py-2.5">
+                              <span className="font-black text-cyan-700 hover:text-cyan-500 inline-flex items-center gap-1 group">
+                                {t.name}
+                                <ExternalLink size={10} className="text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5"><span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${engineBadge(t.engine)}`}>{t.engine || '—'}</span></td>
+                            <td className="px-3 py-2.5 font-mono text-slate-600">{fmtNum(t.row_estimate)}</td>
+                            <td className="px-3 py-2.5 font-mono text-slate-500 text-[11px]">{fmtBytes(t.data_bytes)}</td>
+                            <td className="px-3 py-2.5 font-mono text-slate-500 text-[11px]">{fmtBytes(t.index_bytes)}</td>
+                            <td className="px-3 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-slate-700 whitespace-nowrap">{t.size_human}</span>
+                                <div className="h-1.5 w-16 bg-slate-100 rounded-full overflow-hidden flex-shrink-0">
+                                  <div className="h-full rounded-full bg-cyan-400" style={{ width: `${Math.max(sizePct, 2)}%` }} />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2.5 font-mono text-slate-400 text-[11px]">{t.col_count ?? '—'}</td>
+                            <td className="px-3 py-2.5 font-mono text-slate-400 text-[11px]">{t.index_count ?? '—'}</td>
+                            <td className="px-3 py-2.5">
+                              <button onClick={(e) => { e.stopPropagation(); setSelDb(t.database); setSelTable(t.name); setTblSub('columns'); }}
+                                className="px-2.5 h-7 rounded-lg bg-cyan-600 text-white text-[10px] font-bold hover:bg-cyan-700 inline-flex items-center gap-1">
+                                Inspect <ChevronRight size={11} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── Table detail modal (opens on row click) ── */}
+            {selTable && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setSelTable(null)}>
+                <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl h-[82vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                  <button onClick={() => setSelTable(null)} className="absolute top-6 right-6 z-10 w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500">✕</button>
+                  <>
                   {/* detail header */}
                   <div className="flex-shrink-0 border-b border-slate-100 px-4 py-3 bg-slate-50/60">
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -1978,10 +2051,12 @@ export default function MySQLDashboard() {
                     ) : null}
                   </div>
                 </>
-              )}
-            </div>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+          );
+        })()}
 
         {/* ══ LOCKS ═════════════════════════════════════════════════ */}
         {activeTab === 'locks' && (
@@ -3046,6 +3121,35 @@ function fmtNum(n) {
   if (v >= 1e3) return `${(v/1e3).toFixed(1)}K`;
   return String(v);
 }
+
+// Parse a human size string ("15.4 MB", "20.5 KB", "0.0 B") to bytes — for relative bars.
+function parseSize(s) {
+  if (s == null) return 0;
+  if (typeof s === 'number') return s;
+  const m = String(s).match(/([\d.]+)\s*([KMGT]?B)/i);
+  if (!m) return 0;
+  const n = parseFloat(m[1]) || 0;
+  const mult = { B: 1, KB: 1024, MB: 1048576, GB: 1073741824, TB: 1099511627776 }[m[2].toUpperCase()] || 1;
+  return n * mult;
+}
+
+// Colour an engine badge consistently.
+const engineBadge = (e) => {
+  const k = (e || '').toLowerCase();
+  if (k === 'innodb') return 'bg-emerald-100 text-emerald-700';
+  if (k === 'myisam') return 'bg-amber-100 text-amber-700';
+  if (k === 'memory') return 'bg-violet-100 text-violet-700';
+  return 'bg-slate-100 text-slate-500';
+};
+
+// Sort views for the flat Tables list (PostgreSQL-style).
+const MYSQL_TABLE_VIEWS = [
+  { id: 'size',    label: 'By Size',          sort: (a, b) => (b.total_bytes || 0) - (a.total_bytes || 0) },
+  { id: 'rows',    label: 'Most Rows',        sort: (a, b) => (b.row_estimate || 0) - (a.row_estimate || 0) },
+  { id: 'indexes', label: 'Most Indexes',     sort: (a, b) => (b.index_count || 0) - (a.index_count || 0) },
+  { id: 'updated', label: 'Recently Updated', sort: (a, b) => String(b.update_time || '').localeCompare(String(a.update_time || '')) },
+  { id: 'name',    label: 'Name (A–Z)',       sort: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
+];
 
 /* ─── small components ─── */
 function BinlogEventBadge({ type }) {

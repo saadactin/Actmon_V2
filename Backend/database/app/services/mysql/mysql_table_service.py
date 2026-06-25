@@ -136,6 +136,65 @@ def get_tables(conn_id: int, db_name: str, db: Session) -> dict:
         return {"status": "error", "error": str(e), "data": []}
 
 
+def get_all_tables(conn_id: int, db: Session) -> dict:
+    """Flat list of every table across all user databases (one query) — powers the
+    PostgreSQL-style single-list Tables view."""
+    conn = _get_conn(conn_id, db)
+    try:
+        engine = _engine(conn)
+        skip = ",".join(f"'{s}'" for s in _SKIP_DBS)
+        rows = _rows(engine, f"""
+            SELECT
+                t.TABLE_SCHEMA                                    AS `database`,
+                t.TABLE_NAME                                      AS name,
+                t.ENGINE                                          AS engine,
+                t.TABLE_ROWS                                      AS row_estimate,
+                t.DATA_LENGTH                                     AS data_bytes,
+                t.INDEX_LENGTH                                    AS index_bytes,
+                (t.DATA_LENGTH + t.INDEX_LENGTH)                  AS total_bytes,
+                t.DATA_FREE                                       AS data_free,
+                t.ROW_FORMAT                                      AS row_format,
+                t.TABLE_COLLATION                                 AS collation,
+                t.AUTO_INCREMENT                                  AS auto_increment,
+                t.CREATE_TIME                                     AS create_time,
+                t.UPDATE_TIME                                     AS update_time,
+                (SELECT COUNT(*) FROM information_schema.COLUMNS c
+                 WHERE c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME) AS col_count,
+                (SELECT COUNT(DISTINCT INDEX_NAME) FROM information_schema.STATISTICS s
+                 WHERE s.TABLE_SCHEMA = t.TABLE_SCHEMA AND s.TABLE_NAME = t.TABLE_NAME)  AS index_count
+            FROM information_schema.TABLES t
+            WHERE t.TABLE_TYPE = 'BASE TABLE'
+              AND t.TABLE_SCHEMA NOT IN ({skip})
+            ORDER BY (t.DATA_LENGTH + t.INDEX_LENGTH) DESC, t.TABLE_NAME
+        """)
+        databases = []
+        total_bytes = 0
+        for r in rows:
+            r["row_estimate"] = int(r.get("row_estimate") or 0)
+            r["data_bytes"]   = int(r.get("data_bytes") or 0)
+            r["index_bytes"]  = int(r.get("index_bytes") or 0)
+            r["total_bytes"]  = int(r.get("total_bytes") or 0)
+            r["col_count"]    = int(r.get("col_count") or 0)
+            r["index_count"]  = int(r.get("index_count") or 0)
+            r["size_human"]   = _human_size(r["total_bytes"])
+            r["create_time"]  = str(r["create_time"]) if r.get("create_time") else None
+            r["update_time"]  = str(r["update_time"]) if r.get("update_time") else None
+            total_bytes += r["total_bytes"]
+            if r["database"] not in databases:
+                databases.append(r["database"])
+        return {
+            "status": "success",
+            "data": rows,
+            "tables": rows,
+            "total_count": len(rows),
+            "total_bytes": total_bytes,
+            "total_size_human": _human_size(total_bytes),
+            "databases": sorted(databases),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e), "data": [], "tables": [], "databases": []}
+
+
 def get_table_detail(conn_id: int, db_name: str, table_name: str, db: Session) -> dict:
     conn   = _get_conn(conn_id, db)
     result = {

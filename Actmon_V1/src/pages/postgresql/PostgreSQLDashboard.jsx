@@ -17,7 +17,7 @@ import {
   AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
-import PgHostResources from './PgHostResources';
+import HostResources from './PgHostResources';
 
 /* ─── palette ─── */
 const C = {
@@ -86,11 +86,12 @@ export default function PostgreSQLDashboard() {
     refetchInterval: activeTab === 'queries' ? 8000 : false,
   });
 
+  const [tablesDb, setTablesDb] = useState('__all__');   // selected DB to drill into Tables
   const { data: tablesDetail, isLoading: tablesLoading, refetch: refetchTables } = useQuery({
     queryKey: ['pgTablesDetail', id],
     queryFn:  () => client.get(`/connections/postgresql/${id}/tables-detail`).then(r => r.data),
-    enabled:  activeTab === 'tables',
-    refetchInterval: activeTab === 'tables' ? 15000 : false,
+    enabled:  activeTab === 'tables' || activeTab === 'databases',
+    refetchInterval: (activeTab === 'tables' || activeTab === 'databases') ? 15000 : false,
   });
 
   const { data: configDetail, isLoading: configLoading, refetch: refetchConfig } = useQuery({
@@ -301,17 +302,18 @@ export default function PostgreSQLDashboard() {
             {/* KPI strip */}
             <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
               {[
-                { icon: Clock,     title: 'Uptime',       value: health_summary.uptime,  accent: '#6366F1' },
-                { icon: Server,    title: 'Version',      value: (health_summary.version||'').split(' ')[1]||health_summary.version, accent: '#3B82F6' },
-                { icon: Database,  title: 'Databases',    value: health_summary.total_databases, accent: '#336791' },
-                { icon: Layers,    title: 'Tables',       value: fmtNum(health_summary.total_tables), accent: '#22C55E' },
-                { icon: HardDrive, title: 'DB Size',      value: health_summary.total_size || `${health_summary.total_size_mb||0} MB`, accent: '#F97316' },
-                { icon: Activity,  title: 'Commits',      value: fmtNum(commits), accent: '#8B5CF6' },
-                { icon: Network,   title: 'Connections',  value: `${totalConns}/${maxConns}`, accent: connPct > 80 ? '#EF4444' : '#22C55E' },
-                { icon: RotateCcw, title: 'Rollbacks',    value: fmtNum(rollbacks), accent: rollbacks > 0 ? '#EF4444' : '#64748B' },
-              ].map(({ icon: Icon, title, value, accent }) => (
-                <div key={title} className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md transition-all"
-                  style={{ borderLeft: `3px solid ${accent}` }}>
+                { icon: Clock,     title: 'Uptime',       value: health_summary.uptime,  accent: '#6366F1', tab: 'performance', hint: 'Performance' },
+                { icon: Server,    title: 'Version',      value: (health_summary.version||'').split(' ')[1]||health_summary.version, accent: '#3B82F6', tab: 'config', hint: 'Server config' },
+                { icon: Database,  title: 'Databases',    value: health_summary.total_databases, accent: '#336791', tab: 'databases', hint: 'List databases' },
+                { icon: Layers,    title: 'Tables',       value: fmtNum(health_summary.total_tables), accent: '#22C55E', tab: 'tables', hint: 'All tables' },
+                { icon: HardDrive, title: 'DB Size',      value: health_summary.total_size || `${health_summary.total_size_mb||0} MB`, accent: '#F97316', tab: 'storage', hint: 'Storage breakdown' },
+                { icon: Activity,  title: 'Commits',      value: fmtNum(commits), accent: '#8B5CF6', tab: 'queries', hint: 'Query activity' },
+                { icon: Network,   title: 'Connections',  value: `${totalConns}/${maxConns}`, accent: connPct > 80 ? '#EF4444' : '#22C55E', tab: 'users', hint: 'Sessions & users' },
+                { icon: RotateCcw, title: 'Rollbacks',    value: fmtNum(rollbacks), accent: rollbacks > 0 ? '#EF4444' : '#64748B', tab: 'queries', hint: 'Query activity' },
+              ].map(({ icon: Icon, title, value, accent, tab, hint }) => (
+                <button key={title} type="button" onClick={() => { if (tab === 'databases') setTablesDb('__all__'); setActiveTab(tab); }}
+                  className="group text-left bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 transition-all cursor-pointer"
+                  style={{ borderLeft: `3px solid ${accent}` }} title={`Open ${hint}`}>
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
@@ -319,48 +321,56 @@ export default function PostgreSQLDashboard() {
                     </div>
                     <Icon size={18} style={{ color: accent, opacity: 0.4 }} className="mt-0.5 flex-shrink-0" />
                   </div>
-                </div>
+                  <p className="text-[9px] text-slate-300 group-hover:text-indigo-500 font-bold uppercase tracking-wide mt-2 flex items-center gap-0.5 transition-colors">
+                    {hint} <ChevronRight size={10} />
+                  </p>
+                </button>
               ))}
             </div>
 
             {/* status badges */}
             <div className="flex flex-wrap gap-2">
-              <SBadge ok={connPct < 80}   label={`Connections ${connPct}%`} />
-              <SBadge ok={cachePct > 90}  label={`Cache Hit ${cachePct}%`} />
-              <SBadge ok={rollbackPct < 5} label={`Rollback Rate ${rollbackPct}%`} />
+              <SBadge ok={connPct < 80}   label={`Connections ${connPct}%`} onClick={()=>setActiveTab('users')} />
+              <SBadge ok={cachePct > 90}  label={`Cache Hit ${cachePct}%`} onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }} />
+              <SBadge ok={rollbackPct < 5} label={`Rollback Rate ${rollbackPct}%`} onClick={()=>setActiveTab('queries')} />
               <SBadge ok={replication.length === 0 || replication.every(r => !r.state || r.state === 'streaming' || r.state === 'catchup')}
-                label={`Replication: ${replication.length === 0 ? 'STANDALONE' : `${replication.length} replica(s)`}`} />
+                label={`Replication: ${replication.length === 0 ? 'STANDALONE' : `${replication.length} replica(s)`}`}
+                onClick={()=>setActiveTab('replication')} />
               {long_running_queries.length > 0 && (
-                <SBadge ok={false} label={`${long_running_queries.length} long-running quer${long_running_queries.length===1?'y':'ies'}`} />
+                <SBadge ok={false} label={`${long_running_queries.length} long-running quer${long_running_queries.length===1?'y':'ies'}`} onClick={()=>setActiveTab('queries')} />
               )}
               {blocking_queries.length > 0 && (
-                <SBadge ok={false} label={`${blocking_queries.length} blocking lock(s)`} />
+                <SBadge ok={false} label={`${blocking_queries.length} blocking lock(s)`} onClick={()=>setActiveTab('locks')} />
               )}
               {health_summary.autovacuum_enabled === false && (
-                <SBadge ok={false} label="Autovacuum DISABLED" />
+                <SBadge ok={false} label="Autovacuum DISABLED" onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }} />
               )}
             </div>
 
             {/* Host resources — click a gauge to drill: processes → queries → why */}
-            <PgHostResources connId={id} />
+            <HostResources connId={id} tech="postgresql" />
 
             {/* gauges */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
               <GaugeCard title="Connection Pool"  pct={connPct}
                 sub={`${totalConns} / ${maxConns} max`}
+                drillHint="Sessions & users" onClick={()=>setActiveTab('users')}
                 colorFn={v => v>80 ? C.red : v>60 ? C.orange : C.pg} />
               <GaugeCard title="Buffer Cache Hit" pct={cachePct}
                 sub="Shared buffers efficiency"
+                drillHint="Tables & cache" onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }}
                 colorFn={v => v<70 ? C.red : v<85 ? C.orange : C.green} />
               <GaugeCard title="Active Sessions"
                 pct={Math.min(100,Math.round((activeSess/Math.max(maxConns,1))*100))}
                 centerLabel={activeSess} centerUnit=" active"
                 sub={`${totalConns} total · ${maxConns} max`}
+                drillHint="Live sessions" onClick={()=>setActiveTab('locks')}
                 colorFn={v => v>50 ? C.orange : C.indigo} />
               <GaugeCard title="Rollback Rate"
                 pct={Math.min(100,rollbackPct*10)}
                 centerLabel={`${rollbackPct}`} centerUnit="%"
                 sub={`${fmtNum(rollbacks)} rollbacks / ${fmtNum(commits+rollbacks)} total`}
+                drillHint="Query activity" onClick={()=>setActiveTab('queries')}
                 colorFn={v => v>30 ? C.red : v>5 ? C.orange : C.green} />
             </div>
 
@@ -407,7 +417,7 @@ export default function PostgreSQLDashboard() {
                 </div>
               </ChartCard>
 
-              <ChartCard title="Database Size Distribution">
+              <ChartCard title="Database Size Distribution — click a bar to open its tables">
                 {databases.filter(d=>!['template0','template1'].includes(d.name)).length>0 ? (
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart layout="vertical"
@@ -416,7 +426,8 @@ export default function PostgreSQLDashboard() {
                       <XAxis type="number" tick={{ fontSize:9 }} tickFormatter={v=>`${v}MB`} axisLine={false} tickLine={false} />
                       <YAxis width={110} type="category" dataKey="name" tick={{ fontSize:10 }} axisLine={false} tickLine={false} />
                       <Tooltip formatter={v=>`${v} MB`} cursor={{ fill:'#f8fafc' }} />
-                      <Bar dataKey="size_mb" radius={[0,5,5,0]}>
+                      <Bar dataKey="size_mb" radius={[0,5,5,0]} cursor="pointer"
+                        onClick={(d)=>{ if(d&&d.name){ setTablesDb(d.name); setActiveTab('tables'); } }}>
                         {databases.slice(0,8).map((_,i)=><Cell key={i} fill={DB_COLORS[i%DB_COLORS.length]}/>)}
                       </Bar>
                     </BarChart>
@@ -620,25 +631,37 @@ export default function PostgreSQLDashboard() {
         )}
 
         {/* ══ DATABASES ══ */}
-        {activeTab === 'databases' && (
-          <Panel title={`Databases (${databases.length})`} icon={<Database size={15} className="text-slate-400"/>}>
+        {activeTab === 'databases' && (() => {
+          // per-database table count + table-size roll-up from tablesDetail
+          const tblList = tablesDetail?.tables || [];
+          const byDb = {};
+          tblList.forEach(t => {
+            const k = t.database || '';
+            (byDb[k] = byDb[k] || { count: 0, mb: 0 });
+            byDb[k].count += 1;
+            byDb[k].mb += Number(t.total_bytes || 0) / 1048576;
+          });
+          const openDbTables = (name) => { setTablesDb(name); setActiveTab('tables'); };
+          return (
+          <Panel title={`Databases (${databases.length}) — click a database to see its tables`} icon={<Database size={15} className="text-slate-400"/>}>
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="bg-slate-50">
-                    {['Database','Owner','Encoding','Connections','Size','Commits','Rollbacks','Action'].map(h=>(
+                    {['Database','Owner','Tables','Table Data','Connections','Size','Commits','Rollbacks',''].map(h=>(
                       <th key={h} className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {databases.map((db,i)=>(
-                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-4 font-bold text-indigo-700">{db.name}</td>
+                  {databases.map((db,i)=>{
+                    const agg = byDb[db.name] || { count: 0, mb: 0 };
+                    return (
+                    <tr key={i} onClick={()=>openDbTables(db.name)} className="border-t border-slate-100 hover:bg-indigo-50/50 cursor-pointer transition-colors">
+                      <td className="px-4 py-4 font-bold text-indigo-700">{db.name} <ChevronRight size={13} className="inline text-slate-300"/></td>
                       <td className="px-4 py-4 text-xs text-slate-500">{db.owner||'—'}</td>
-                      <td className="px-4 py-4">
-                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full">{db.encoding||'—'}</span>
-                      </td>
+                      <td className="px-4 py-4 font-mono text-sm font-bold">{agg.count || '—'}</td>
+                      <td className="px-4 py-4 font-mono text-xs text-slate-500">{agg.mb ? `${agg.mb.toFixed(1)} MB` : '—'}</td>
                       <td className="px-4 py-4 font-mono text-sm">{db.numbackends??'—'}</td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
@@ -654,25 +677,26 @@ export default function PostgreSQLDashboard() {
                       <td className="px-4 py-4 font-mono text-sm text-green-700 font-bold">{fmtNum(db.xact_commit)}</td>
                       <td className="px-4 py-4 font-mono text-sm text-red-600 font-bold">{fmtNum(db.xact_rollback)}</td>
                       <td className="px-4 py-4">
-                        <button onClick={()=>setActiveTab('tables')}
-                          className="px-3 h-8 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-colors">
-                          View Tables
+                        <button onClick={(e)=>{e.stopPropagation(); openDbTables(db.name);}}
+                          className="px-3 h-8 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-colors whitespace-nowrap">
+                          View Tables →
                         </button>
                       </td>
                     </tr>
-                  ))}
+                  );})}
                   {databases.length===0 && (
-                    <tr><td colSpan={8} className="text-center py-14 text-slate-400">No databases found</td></tr>
+                    <tr><td colSpan={9} className="text-center py-14 text-slate-400">No databases found</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </Panel>
-        )}
+          );
+        })()}
 
         {/* ══ TABLES ══ */}
         {activeTab === 'tables' && (
-          <AdvancedTablesTab detail={tablesDetail} isLoading={tablesLoading} refetch={refetchTables} connId={id} />
+          <AdvancedTablesTab detail={tablesDetail} isLoading={tablesLoading} refetch={refetchTables} connId={id} initialDb={tablesDb} />
         )}
 
         {/* ══ LOCKS ══ */}
@@ -852,18 +876,22 @@ function Row({ label, value, mono }) {
   );
 }
 
-function SBadge({ ok, label }) {
+function SBadge({ ok, label, onClick }) {
+  const clickable = typeof onClick === 'function';
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
-      ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+    <span onClick={onClick} role={clickable ? 'button' : undefined}
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border transition-all ${
+      ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'} ${
+      clickable ? 'cursor-pointer hover:shadow-sm hover:brightness-95' : ''}`}>
       {ok ? <CheckCircle2 size={11}/> : <AlertTriangle size={11}/>}
       {label}
+      {clickable && <ChevronRight size={11} className="opacity-60" />}
     </span>
   );
 }
 
 /* SVG semi-circle gauge */
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit='%', colorFn }) {
+function GaugeCard({ title, pct, sub, centerLabel, centerUnit='%', colorFn, onClick, drillHint }) {
   const safePct = Math.max(0, Math.min(100, pct || 0));
   const fill    = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.pg);
   const display = centerLabel !== undefined ? centerLabel : safePct;
@@ -875,8 +903,11 @@ function GaugeCard({ title, pct, sub, centerLabel, centerUnit='%', colorFn }) {
   const large = safePct > 50 ? 1 : 0;
   const trackD = `M ${cx-R} ${cy} A ${R} ${R} 0 0 1 ${cx+R} ${cy}`;
   const fillD  = safePct < 1 ? '' : `M ${cx-R} ${cy} A ${R} ${R} 0 ${large} 1 ${ex} ${ey}`;
+  const clickable = typeof onClick === 'function';
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
+    <div onClick={onClick} role={clickable ? 'button' : undefined}
+      className={`group bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center transition-all ${clickable ? 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5' : ''}`}
+      title={clickable ? `Open ${drillHint || title}` : undefined}>
       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
       <svg width="150" height="88" viewBox="0 0 150 88">
         <path d={trackD} fill="none" stroke="#e2e8f0" strokeWidth="13" strokeLinecap="round"/>
@@ -885,6 +916,11 @@ function GaugeCard({ title, pct, sub, centerLabel, centerUnit='%', colorFn }) {
         <text x="75" y="85" textAnchor="middle" style={{ fontSize:10, fill:'#94a3b8' }}>{unit}</text>
       </svg>
       <p className="text-[10px] text-slate-400 mt-1 text-center leading-tight">{sub}</p>
+      {clickable && (
+        <p className="text-[9px] text-slate-300 group-hover:text-indigo-500 font-bold uppercase tracking-wide mt-1.5 flex items-center gap-0.5 transition-colors">
+          {drillHint || 'Details'} <ChevronRight size={10} />
+        </p>
+      )}
     </div>
   );
 }
@@ -1831,11 +1867,75 @@ const METRIC_VIEWS = [
 ];
 const METRIC_KEYS = { mean:'top_by_mean_time', total:'top_by_total_time', calls:'top_by_calls', io:'top_by_io', rows:'top_by_rows', temp:'top_by_temp' };
 
+function AiQueryAnalysis({ res }) {
+  if (res.err) return <div className="mt-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-[12px] text-red-700">AI analysis failed: {res.err}</div>;
+  const a = res.data;
+  if (!a) return null;
+  const SEV = { critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-emerald-100 text-emerald-700' };
+  const Block = ({ title, children }) => (
+    <div className="bg-white border border-indigo-100 rounded-xl p-3">
+      <p className="text-[9px] font-black text-indigo-400 uppercase tracking-wide mb-1.5">{title}</p>{children}
+    </div>
+  );
+  return (
+    <div className="mt-3 space-y-2.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="inline-flex items-center gap-1 text-[11px] font-black px-2.5 py-1 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white"><Zap size={11} /> ActMon AI</span>
+        {a.severity && <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${SEV[a.severity] || SEV.medium}`}>{a.severity.toUpperCase()}</span>}
+        {a.estimated_overall_improvement && <span className="text-[11px] text-emerald-700 font-bold">↑ {a.estimated_overall_improvement}</span>}
+      </div>
+      {a.summary && <p className="text-[12px] text-slate-700"><b>Summary:</b> {a.summary}</p>}
+      {a.root_cause && <Block title="Root cause"><p className="text-[12px] text-slate-700">{a.root_cause}</p></Block>}
+
+      {a.issues?.length > 0 && (
+        <Block title={`Issues (${a.issues.length})`}>
+          <ul className="space-y-1.5">
+            {a.issues.map((is, k) => (
+              <li key={k} className="text-[12px] text-slate-700 flex items-start gap-2">
+                <span className={`mt-0.5 text-[9px] font-black px-1.5 py-0.5 rounded ${SEV[is.severity] || SEV.medium}`}>{is.type}</span>
+                <span>{is.description}{is.table ? <span className="text-slate-400"> · {is.table}</span> : ''}{is.evidence ? <span className="block text-[11px] text-slate-400 font-mono">{is.evidence}</span> : ''}</span>
+              </li>
+            ))}
+          </ul>
+        </Block>
+      )}
+
+      {a.index_recommendations?.length > 0 && (
+        <Block title="Index recommendations">
+          {a.index_recommendations.map((ir, k) => (
+            <div key={k} className="mb-2">
+              <p className="text-[11px] text-slate-600">{ir.reason} {ir.estimated_improvement ? <span className="text-emerald-600 font-bold">— {ir.estimated_improvement}</span> : ''}</p>
+              <code className="block font-mono text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-100 rounded px-2 py-1 mt-0.5 break-all">{ir.create_sql}</code>
+            </div>
+          ))}
+        </Block>
+      )}
+
+      {a.query_rewrite?.applicable && a.query_rewrite?.optimized_sql && (
+        <Block title={`Query rewrite ${a.query_rewrite.expected_gain ? '· ' + a.query_rewrite.expected_gain : ''}`}>
+          <p className="text-[11px] text-slate-600 mb-1">{a.query_rewrite.explanation}</p>
+          <pre className="font-mono text-[10px] text-violet-900 bg-violet-50 border border-violet-100 rounded p-2 whitespace-pre-wrap break-all">{a.query_rewrite.optimized_sql}</pre>
+        </Block>
+      )}
+
+      {a.priority_actions?.length > 0 && (
+        <Block title="Priority actions">
+          <ol className="space-y-1">
+            {a.priority_actions.map((p, k) => <li key={k} className="text-[12px] text-slate-700">{p}</li>)}
+          </ol>
+        </Block>
+      )}
+      {a.business_impact && <p className="text-[11px] text-slate-500 italic">{a.business_impact}</p>}
+    </div>
+  );
+}
+
 function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
   const [view,    setView]    = React.useState('mean');
   const [search,  setSearch]  = React.useState('');
   const [expand,  setExpand]  = React.useState(null);
   const [showAll, setShowAll] = React.useState(false);
+  const [modalQuery, setModalQuery] = React.useState(null);   // clicked statement → analysis window
 
   const d = detail || {};
   const mv = METRIC_VIEWS.find(m=>m.id===view) || METRIC_VIEWS[0];
@@ -2029,12 +2129,11 @@ function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
                   const qt = s.query_type || 'OTHER';
                   const qc = QTYPE_COLORS[qt] || QTYPE_COLORS.OTHER;
                   const isSlow = s.mean_exec_time > 1000;
-                  const isExp = expand === i;
                   return (
                     <React.Fragment key={i}>
-                      <tr onClick={()=>setExpand(isExp?null:i)}
-                        className={`border-t border-slate-100 cursor-pointer transition-colors hover:bg-indigo-50/20
-                          ${isSlow?'bg-red-50/40':''}  ${isExp?'bg-indigo-50/50':''}`}>
+                      <tr onClick={()=>setModalQuery(s)}
+                        className={`border-t border-slate-100 cursor-pointer transition-colors hover:bg-indigo-50/40
+                          ${isSlow?'bg-red-50/40':''}`}>
                         <td className="px-3 py-2.5 text-slate-400 font-mono">{i+1}</td>
                         <td className="px-3 py-2.5 font-bold text-indigo-700 truncate max-w-[80px]">{s.usename||'—'}</td>
                         <td className="px-3 py-2.5 text-slate-500 font-mono">{s.dbid||'—'}</td>
@@ -2064,45 +2163,9 @@ function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
                           {s.temp_blks_read > 0 ? fmtNum(s.temp_blks_read) : '—'}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-[10px] text-slate-400 max-w-[200px] truncate">
-                          {String(s.query||'').replace(/\s+/g,' ').slice(0,70)}
+                          {String(s.query||'').replace(/\s+/g,' ').slice(0,70)} <ChevronRight size={12} className="inline text-slate-300" />
                         </td>
                       </tr>
-                      {isExp && (
-                        <tr className="bg-indigo-50/50">
-                          <td colSpan={14} className="px-5 py-4">
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                              {/* Full SQL */}
-                              <div className="lg:col-span-2">
-                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide mb-1.5">Full Query</p>
-                                <pre className="font-mono text-[10px] text-indigo-900 bg-white border border-indigo-200 rounded-xl p-3 max-h-48 overflow-auto whitespace-pre-wrap break-all">{s.query}</pre>
-                              </div>
-                              {/* Stats breakdown */}
-                              <div>
-                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide mb-2">Performance Breakdown</p>
-                                <div className="space-y-2">
-                                  {[
-                                    { label:'Total Exec Time', value: fmtMs(s.total_exec_time) },
-                                    { label:'Mean Exec Time',  value: fmtMs(s.mean_exec_time),  warn: s.mean_exec_time>1000 },
-                                    { label:'Min / Max',       value: `${fmtMs(s.min_exec_time)} / ${fmtMs(s.max_exec_time)}` },
-                                    { label:'Stddev',          value: fmtMs(s.stddev_exec_time) },
-                                    { label:'Total Calls',     value: fmtNum(s.calls) },
-                                    { label:'Rows / Call',     value: s.rows_per_call?.toFixed(2) || '0' },
-                                    { label:'Shared Blks Hit', value: fmtNum(s.shared_blks_hit) },
-                                    { label:'Shared Blks Read',value: fmtNum(s.shared_blks_read), warn: s.shared_blks_read>10000 },
-                                    { label:'Temp Blks Read',  value: fmtNum(s.temp_blks_read),   warn: s.temp_blks_read>0 },
-                                    { label:'Temp Blks Write', value: fmtNum(s.temp_blks_written), warn: s.temp_blks_written>0 },
-                                  ].map(kv => (
-                                    <div key={kv.label} className="flex items-center justify-between">
-                                      <span className="text-[10px] text-slate-500">{kv.label}</span>
-                                      <span className={`text-[11px] font-bold font-mono ${kv.warn?'text-red-600':'text-slate-700'}`}>{kv.value}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </React.Fragment>
                   );
                 })}
@@ -2205,6 +2268,60 @@ function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
           </div>
         </div>
       )}
+
+      {modalQuery && <QueryAnalysisModal stmt={modalQuery} connId={connId} onClose={() => setModalQuery(null)} />}
+    </div>
+  );
+}
+
+function QueryAnalysisModal({ stmt, connId, onClose }) {
+  const s = stmt;
+  const [res, setRes] = React.useState({ loading: true });
+  React.useEffect(() => {
+    let alive = true;
+    client.post(`/connections/postgresql/${connId}/pg-slow-queries/analyze-groq`, {
+      sql_text: s.query, user_name: s.usename,
+      calls: s.calls, mean_exec_time_ms: s.mean_exec_time, max_exec_time_ms: s.max_exec_time,
+      total_exec_time_ms: s.total_exec_time, rows: s.rows,
+      shared_blks_hit: s.shared_blks_hit, shared_blks_read: s.shared_blks_read,
+      cache_hit_pct: s.cache_hit_pct,
+    }).then(r => { if (alive) setRes({ loading: false, data: r.data?.analysis, err: r.data?.status === 'error' ? r.data.error : null }); })
+      .catch(e => { if (alive) setRes({ loading: false, err: e?.response?.data?.detail || e.message }); });
+    return () => { alive = false; };
+  }, []);
+  const stat = (l, v, warn) => (
+    <div className="bg-white rounded-xl border border-slate-200 px-3 py-2">
+      <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide">{l}</p>
+      <p className={`text-[13px] font-black mt-0.5 ${warn ? 'text-red-600' : 'text-slate-800'}`}>{v}</p>
+    </div>
+  );
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex sm:items-center sm:justify-center sm:p-6" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="bg-white w-full h-full sm:h-[92vh] sm:max-w-4xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-900 to-violet-900 text-white">
+          <div className="flex items-center gap-2.5"><Zap size={20} className="text-violet-300" /><span className="font-black text-sm">Query Analysis · {s.usename || '—'} · db {s.dbid || '—'}</span></div>
+          <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-white/70 hover:bg-white/15 text-2xl leading-none">×</button>
+        </div>
+        <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5 space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {stat('Mean', `${(s.mean_exec_time || 0).toFixed(1)} ms`, s.mean_exec_time > 1000)}
+            {stat('Max', `${(s.max_exec_time || 0).toFixed(1)} ms`, s.max_exec_time > 5000)}
+            {stat('Total', `${(s.total_exec_time || 0).toFixed(0)} ms`)}
+            {stat('Calls', (s.calls || 0).toLocaleString())}
+            {stat('Rows/Call', (s.rows_per_call ?? 0).toFixed(1))}
+            {stat('Cache Hit', `${s.cache_hit_pct ?? 0}%`, (s.cache_hit_pct ?? 100) < 80)}
+            {stat('Blks Read', (s.shared_blks_read || 0).toLocaleString(), s.shared_blks_read > 10000)}
+            {stat('Temp Blks', (s.temp_blks_read || 0).toLocaleString(), s.temp_blks_read > 0)}
+          </div>
+          <div>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide mb-1.5">SQL</p>
+            <pre className="font-mono text-[11px] text-indigo-900 bg-white border border-indigo-200 rounded-xl p-3 max-h-44 overflow-auto whitespace-pre-wrap break-all">{s.query}</pre>
+          </div>
+          {res.loading
+            ? <div className="flex items-center justify-center py-16 text-slate-400"><RefreshCw size={20} className="animate-spin mr-2" /> Analyzing with ActMon AI…</div>
+            : <AiQueryAnalysis res={res} />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2243,6 +2360,47 @@ function analyzeAgo(t) {
 /* ══════════════════════════════════════════════════════════════════════════
    TABLE DEEP-DIVE MODAL  — full right-panel with 6 tabs
 ══════════════════════════════════════════════════════════════════════════ */
+function PgssEnablePanel({ connId, database, onEnabled }) {
+  const [busy, setBusy] = React.useState(false);
+  const [res, setRes] = React.useState(null);
+  const enable = () => {
+    setBusy(true);
+    client.post(`/connections/postgresql/${connId}/enable-pg-stat-statements`, null, { params: { database } })
+      .then((r) => { setRes(r.data); if (r.data?.status === 'success') setTimeout(onEnabled, 600); })
+      .catch((e) => setRes({ status: 'error', message: e?.response?.data?.detail || e.message }))
+      .finally(() => setBusy(false));
+  };
+  const ok = res?.status === 'success';
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
+      <div className="flex items-start gap-4">
+        <AlertTriangle size={20} className="text-amber-500 mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <p className="font-black text-amber-800 text-base">pg_stat_statements not enabled</p>
+          <p className="text-[12px] text-amber-700 mt-1">Track per-query CPU/time/IO statistics for <b>{database}</b>. One-click enable:</p>
+          {res && (
+            <div className={`mt-2 text-[12px] rounded-lg px-3 py-2 ${ok ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-white text-slate-700 border border-amber-200'}`}>
+              {res.message}
+              {res.status === 'needs_restart' && (
+                <pre className="mt-2 bg-slate-900 text-emerald-200 rounded-lg px-3 py-2 text-[11px] font-mono whitespace-pre-wrap">{`# 1) postgresql.conf:\nshared_preload_libraries = 'pg_stat_statements'\n# 2) restart PostgreSQL, then click Enable again`}</pre>
+              )}
+              {res.status === 'permission_denied' && (
+                <pre className="mt-2 bg-slate-900 text-emerald-200 rounded-lg px-3 py-2 text-[11px] font-mono whitespace-pre-wrap">{`-- run as a superuser:\nCREATE EXTENSION IF NOT EXISTS pg_stat_statements;`}</pre>
+              )}
+            </div>
+          )}
+        </div>
+        {!ok && (
+          <button onClick={enable} disabled={busy}
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-[12px] font-bold disabled:opacity-60 flex-shrink-0">
+            {busy ? <RefreshCw size={14} className="animate-spin" /> : <Zap size={14} />} Enable now
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TableDeepDiveModal({ connId, table, onClose }) {
   const key = `${table.database}/${table.schemaname}/${table.relname}`;
   const [tab, setTab] = React.useState('overview');
@@ -2869,20 +3027,7 @@ function TableDeepDiveModal({ connId, table, onClose }) {
           {tab === 'queries' && (<>
 
             {!hasPgSS ? (
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 flex items-start gap-4">
-                <AlertTriangle size={20} className="text-amber-500 mt-0.5 flex-shrink-0"/>
-                <div>
-                  <p className="font-black text-amber-800 text-base">pg_stat_statements not enabled</p>
-                  <p className="text-[12px] text-amber-700 mt-1">
-                    Install the extension to track query statistics:
-                  </p>
-                  <pre className="mt-2 bg-amber-100 px-3 py-2 rounded-lg text-[11px] font-mono text-amber-900">
-                    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;{'\n'}
-                    {/* Then add to postgresql.conf: */}
-                    shared_preload_libraries = 'pg_stat_statements'
-                  </pre>
-                </div>
-              </div>
+              <PgssEnablePanel connId={connId} database={table.database} onEnabled={refetchStr} />
             ) : topQ.length === 0 && slowQ.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-slate-300 py-16 text-center">
                 <Activity size={28} className="text-slate-300 mx-auto mb-3"/>
@@ -3266,12 +3411,17 @@ function TableDetailPane({ connId, table }) {
   );
 }
 
-function AdvancedTablesTab({ detail, isLoading, refetch, connId }) {
+function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
   const [view,          setView]          = React.useState('size');
   const [search,        setSearch]        = React.useState('');
-  const [selDb,         setSelDb]         = React.useState('__all__');
+  const [selDb,         setSelDb]         = React.useState(initialDb || '__all__');
   const [expand,        setExpand]        = React.useState(null);
   const [selectedTable, setSelectedTable] = React.useState(null);
+
+  // when the user drills in from the Databases tab, follow the chosen DB
+  React.useEffect(() => {
+    if (initialDb) setSelDb(initialDb);
+  }, [initialDb]);
 
   const d   = detail || {};
   const vw  = TABLE_VIEWS.find(v => v.id === view) || TABLE_VIEWS[0];

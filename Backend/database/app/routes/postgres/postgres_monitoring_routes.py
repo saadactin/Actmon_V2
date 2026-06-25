@@ -66,8 +66,8 @@ def route_pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
 
 # ── 3. Enable pg_stat_statements ─────────────────────────────────────────────
 @router.post("/{conn_id}/enable-pg-stat-statements")
-def route_enable_pg_stat_statements(conn_id: int, db: Session = Depends(get_db)):
-    return svc_enable_pg_stat_statements(conn_id, db)
+def route_enable_pg_stat_statements(conn_id: int, database: str = None, db: Session = Depends(get_db)):
+    return svc_enable_pg_stat_statements(conn_id, db, database=database)
 
 
 # ── 4. Index Analysis ─────────────────────────────────────────────────────────

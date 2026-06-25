@@ -69,7 +69,7 @@ ENTITIES = [
      "order": "designation_id", "org_scoped": True,
      "sp_insert": "sp_insertdesignation", "sp_update": "sp_updatedesignation", "sp_delete": "sp_deletedesignation"},
     {"path": "employees", "title": "Employee", "view": "vw_employee", "pk": "employee_id",
-     "order": "employee_id", "org_scoped": True,
+     "order": "employee_id", "org_scoped": True, "unique_key": "employee_code",
      "sp_insert": "sp_insertemployee", "sp_update": "sp_updateemployee", "sp_delete": "sp_deleteemployee"},
     {"path": "users", "title": "User", "view": "vw_user", "pk": "user_id",
      "order": "user_id", "org_scoped": True,
@@ -103,7 +103,25 @@ def make_router(cfg: dict) -> APIRouter:
         if stamps_org and not ctx.get("is_super"):
             payload["org_id"] = ctx.get("org_id")  # force creator's org
         svc.call_sp(db, cfg["sp_insert"], payload, _ctx(request))
-        return {"status": "success", "message": f"{cfg['title']} created successfully"}
+        resp = {"status": "success", "message": f"{cfg['title']} created successfully"}
+        # Return the newly-created row's id so the caller can chain follow-up actions —
+        # e.g. auto-create a login for a new employee. Resolve by the unique business key
+        # when supplied; otherwise (code auto-generated server-side) take the latest row.
+        uk = cfg.get("unique_key")
+        org_scope = payload.get("org_id") if stamps_org else None
+        try:
+            row = None
+            if uk and (payload.get(uk) or "").strip():
+                row = svc.find_by_unique(db, view, pk, uk, payload[uk], org_scope)
+            elif cfg["path"] == "employees":
+                row = svc.find_latest_by(db, view, pk, {
+                    "org_id": org_scope, "employee_name": (payload.get("employee_name") or "").strip()})
+            if row:
+                resp["id"] = row.get(pk)
+                resp["row"] = row
+        except Exception:
+            pass
+        return resp
 
     @r.put("/{item_id}")
     def update(item_id: int, request: Request, body: dict = Body(...), db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
@@ -234,3 +252,25 @@ def delete_role_permission(item_id: int, request: Request, db: Session = Depends
 
 
 admin_crud_routers.append(rp_router)
+
+
+# ── Username suggestion (for auto-creating a login when an employee is added) ──
+# Distinct path so it never collides with /admin/users/{id:int}.
+uname_router = APIRouter(prefix="/api/v1/admin/suggest-username", tags=["Admin - User"])
+
+
+@uname_router.get("")
+def suggest_username(base: str = "", db: Session = Depends(get_db)):
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "_", (base or "").strip().lower()).strip("_") or "user"
+    cand, n = slug, 1
+    while db.execute(
+        text("SELECT 1 FROM user_master WHERE lower(user_name)=lower(:u) AND deleted_at IS NULL"),
+        {"u": cand},
+    ).first():
+        n += 1
+        cand = f"{slug}{n}"
+    return {"username": cand}
+
+
+admin_crud_routers.append(uname_router)

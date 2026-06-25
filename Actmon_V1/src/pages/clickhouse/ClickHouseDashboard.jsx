@@ -14,6 +14,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
+import HostResources from '../postgresql/PgHostResources';
 
 /* ─── palette ─── */
 const C = {
@@ -248,6 +249,9 @@ export default function ClickHouseDashboard() {
                 <KpiCard icon={Archive}  title="Parts"         value={fmtNum(hs.total_parts)} accent={hs.total_parts>2000?'red':'slate'} />
                 <KpiCard icon={GitMerge} title="Merges"        value={merges.length} accent={merges.length>20?'red':merges.length>5?'orange':'green'} />
               </div>
+
+              {/* Host Resources drill-down */}
+              <HostResources connId={id} tech="clickhouse" />
 
               {/* Status badges */}
               <div className="flex flex-wrap gap-2">

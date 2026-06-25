@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2, Eye, X, Search, RefreshCw, Check, ChevronLeft, ChevronDown } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, X, Search, RefreshCw, Check, ChevronLeft, ChevronDown, KeyRound, ShieldCheck, UserCog, Loader2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PERMISSION_BITS, decodePermission } from './mockDb';
 import { usePermissions } from '../../../hooks/usePermissions';
+import { usersApi, rolesApi, suggestUsername } from '../../../api/admin';
 
 // Accent palette — each record card gets a rotating gradient identity.
 const CARD_ACCENTS = [
@@ -47,6 +48,7 @@ export default function AdminResourcePage({ config }) {
   const [confirm, setConfirm] = useState(null);    // row pending delete
   const [toast, setToast]     = useState(null);
   const [saving, setSaving]   = useState(false);
+  const [loginFor, setLoginFor] = useState(null);  // employee → "Create Login" dialog
 
   const load = async () => {
     setLoading(true);
@@ -77,8 +79,23 @@ export default function AdminResourcePage({ config }) {
     setSaving(true);
     try {
       const payload = orgId ? { ...form, org_id: form.org_id || Number(orgId) } : form;
-      if (modal.mode === 'add') { await api.create(payload); flash('Record created'); }
-      else { await api.update(form[idKey], payload); flash('Record updated'); }
+      if (modal.mode === 'add') {
+        const res = await api.create(payload);
+        flash(res?.row?.employee_code ? `Created — code ${res.row.employee_code}` : 'Record created');
+        setModal(null); await load();
+        // New employee → offer to create a linked login account (set password / confirm).
+        if (config.autoCreateLogin && res?.id) {
+          const r = res.row || {};
+          setLoginFor({
+            employee_id:   res.id,
+            employee_name: r.employee_name || payload.employee_name || '',
+            email_id:      r.email_id || payload.email_id || '',
+            org_id:        payload.org_id || (orgId ? Number(orgId) : undefined),
+          });
+        }
+        return;
+      }
+      await api.update(form[idKey], payload); flash('Record updated');
       setModal(null); await load();
     } catch (e) { flash(e.message || 'Save failed', false); }
     finally { setSaving(false); }
@@ -239,6 +256,11 @@ export default function AdminResourcePage({ config }) {
       {confirm && (
         <ConfirmModal name={title} row={confirm} idKey={idKey}
           onCancel={() => setConfirm(null)} onConfirm={doDelete} />
+      )}
+      {loginFor && (
+        <CreateLoginModal employee={loginFor} orgId={orgId}
+          onSkip={() => { setLoginFor(null); flash('Employee created (no login added)'); }}
+          onDone={(msg) => { setLoginFor(null); flash(msg); }} />
       )}
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-xl text-sm font-bold text-white flex items-center gap-2 ${toast.ok ? 'bg-emerald-600' : 'bg-red-600'}`}>
@@ -462,6 +484,133 @@ function ConfirmModal({ name, row, idKey, onCancel, onConfirm }) {
           <button onClick={onCancel} className="flex-1 h-10 rounded-xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200">Cancel</button>
           <button onClick={onConfirm} className="flex-1 h-10 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-sm">Delete</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Create-Login dialog: shown right after an employee is created ── */
+function CreateLoginModal({ employee, orgId, onSkip, onDone }) {
+  const [username, setUsername] = useState('');
+  const [roleId, setRoleId]     = useState('');
+  const [roles, setRoles]       = useState([]);
+  const [pwd, setPwd]           = useState('');
+  const [confirm, setConfirm]   = useState('');
+  const [showPwd, setShowPwd]   = useState(false);
+  const [loading, setLoading]   = useState(true);
+  const [saving, setSaving]     = useState(false);
+  const [err, setErr]           = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // Suggest a unique username from the employee's name, and load assignable roles.
+      const [u, rs] = await Promise.all([
+        suggestUsername(employee.employee_name || ''),
+        rolesApi.list(orgId).catch(() => []),
+      ]);
+      if (!alive) return;
+      setUsername(u);
+      setRoles((rs || []).map((r) => ({ value: r.role_id, label: r.role_name })));
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [employee, orgId]);
+
+  const submit = async () => {
+    setErr('');
+    if (!username.trim())      return setErr('Username is required.');
+    if (!roleId)               return setErr('Please choose a role.');
+    if (!pwd)                  return setErr('Please set a password.');
+    if (pwd.length < 6)        return setErr('Password must be at least 6 characters.');
+    if (pwd !== confirm)       return setErr('Passwords do not match.');
+    setSaving(true);
+    try {
+      await usersApi.create({
+        user_name: username.trim(),
+        password_hash: pwd,
+        role_id: Number(roleId),
+        employee_id: employee.employee_id,
+        is_active: true,
+        account_locked: false,
+        ...(employee.org_id ? { org_id: employee.org_id } : {}),
+      });
+      onDone(`Login "${username.trim()}" created for ${employee.employee_name}`);
+    } catch (e) {
+      setErr(e?.response?.data?.detail || e.message || 'Could not create login');
+      setSaving(false);
+    }
+  };
+
+  const match = pwd && confirm && pwd === confirm;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" onClick={onSkip}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-indigo-600 to-violet-600 px-6 py-5 text-white flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center"><UserCog size={22} /></div>
+          <div>
+            <h3 className="font-black text-lg leading-tight">Create login account</h3>
+            <p className="text-indigo-100 text-xs mt-0.5">For <b>{employee.employee_name}</b>{employee.email_id ? ` · ${employee.email_id}` : ''}</p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="py-16 flex justify-center"><Loader2 className="animate-spin text-indigo-500" size={26} /></div>
+        ) : (
+          <div className="p-6 space-y-4">
+            <div>
+              <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Username <span className="text-red-500">*</span></label>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 bg-white" />
+              <p className="text-[11px] text-slate-400 mt-1.5">Suggested from the employee's name — edit if you prefer.</p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Role <span className="text-red-500">*</span></label>
+              <div className="relative">
+                <select value={roleId} onChange={(e) => setRoleId(e.target.value)}
+                  className={`w-full h-11 px-3.5 pr-10 rounded-xl border border-slate-200 text-sm appearance-none font-semibold focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 bg-white ${roleId ? 'text-slate-800' : 'text-slate-400'}`}>
+                  <option value="">— Select role —</option>
+                  {roles.map((o) => <option key={o.value} value={o.value} className="text-slate-800">{o.label}</option>)}
+                </select>
+                <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Password <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <input type={showPwd ? 'text' : 'password'} value={pwd} onChange={(e) => setPwd(e.target.value)} placeholder="Set a password…"
+                    className="w-full h-11 px-3.5 pr-10 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 bg-white" />
+                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-black text-slate-500 uppercase tracking-wider mb-2">Confirm Password <span className="text-red-500">*</span></label>
+                <div className="relative">
+                  <input type={showPwd ? 'text' : 'password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Re-enter password…"
+                    className={`w-full h-11 px-3.5 pr-10 rounded-xl border text-sm focus:outline-none focus:ring-4 bg-white ${confirm ? (match ? 'border-emerald-300 focus:ring-emerald-100 focus:border-emerald-400' : 'border-red-300 focus:ring-red-100 focus:border-red-400') : 'border-slate-200 focus:ring-indigo-100 focus:border-indigo-400'}`} />
+                  {confirm && match && <ShieldCheck size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-500" />}
+                </div>
+                {confirm && !match && <p className="text-[11px] font-semibold text-red-500 mt-1.5">Passwords do not match.</p>}
+              </div>
+            </div>
+
+            {err && <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-[12px] font-semibold text-red-600">{err}</div>}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={onSkip} disabled={saving}
+                className="h-11 px-4 rounded-xl bg-slate-100 text-slate-600 font-bold text-sm hover:bg-slate-200 disabled:opacity-60">Skip</button>
+              <button onClick={submit} disabled={saving}
+                className="flex-1 h-11 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold text-sm shadow hover:shadow-lg disabled:opacity-60 inline-flex items-center justify-center gap-2">
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} Create Login
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

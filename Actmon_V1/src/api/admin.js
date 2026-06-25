@@ -49,6 +49,16 @@ export const rolePermissionsApi = {
   async remove(id)      { const r = await client.delete(`/admin/role-permissions/${id}`); return r.data; },
 };
 
+/** Suggest a unique username from a person's name (server checks user_master). */
+export async function suggestUsername(base) {
+  try {
+    const r = await client.get(`/admin/suggest-username?base=${encodeURIComponent(base || '')}`);
+    return r.data?.username || '';
+  } catch {
+    return (base || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  }
+}
+
 /** Build an async <select> option loader for FK dropdowns; filters by org when given. */
 export const optionLoader = (api, valueKey, labelKey) => async (orgId) => {
   const rows = await api.list(orgId);

@@ -11,6 +11,21 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  build: {
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        // Split big, stable vendor libs into their own chunks → they download in
+        // parallel with app code and stay cached across deploys (only changed app
+        // code re-downloads when you ship an update).
+        manualChunks: {
+          'react-vendor':  ['react', 'react-dom', 'react-router-dom'],
+          'query-vendor':  ['@tanstack/react-query'],
+          'fluent-vendor': ['@fluentui/react-components'],
+        },
+      },
+    },
+  },
   server: {
     port: 3000,
     // Disable overlay so proxy connection errors won't show the full overlay in the browser

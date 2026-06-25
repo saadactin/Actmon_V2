@@ -17,6 +17,14 @@ from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
+# Access-Control / Administration (RBAC) schema — organization, employee, role,
+# module, page, permission, user, sessions, audit, etc.
+from app.models.admin_models import (                                # noqa: F401
+    StatusMaster, OrganizationMaster, DepartmentMaster, DesignationMaster,
+    EmployeeMaster, Role, ModuleMaster, PageMaster, Permission,
+    GroupRolePagePermission, UserMaster, UserSession, LoginHistory,
+    PasswordHistory, AuditLog,
+)
 
 # Routes
 from app.routes.os_server.server_routes import router as server_router
@@ -30,6 +38,7 @@ from app.routes.mssql.mssql_routes import router as mssql_router
 from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
 from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
 from app.routes.postgres.postgres_drilldown_routes import router as postgres_drilldown_router
+from app.routes.drilldown_routes import router as drilldown_router
 from app.routes.mongo.mongo_error_analysis_routes import router as mongo_error_router
 from app.routes.clickhouse.clickhouse_error_analysis_routes import router as clickhouse_error_router
 from app.routes.clickhouse.clickhouse_monitoring_routes import router as clickhouse_monitoring_router
@@ -129,6 +138,7 @@ app.include_router(server_router)
 app.include_router(postgres_error_router)
 app.include_router(postgres_monitoring_router)
 app.include_router(postgres_drilldown_router)
+app.include_router(drilldown_router)
 app.include_router(mongo_error_router)
 app.include_router(clickhouse_error_router)
 app.include_router(clickhouse_monitoring_router)
