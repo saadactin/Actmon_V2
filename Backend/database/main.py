@@ -133,3 +133,13 @@ def home():
         "status": "success",
         "message": "ACTMON Backend v2.0 Running — PostgreSQL"
     }
+
+
+@app.get("/api/health")
+def health():
+    """Health check endpoint for service monitoring."""
+    return {
+        "status": "healthy",
+        "service": "actmon-database-backend",
+        "version": "2.0"
+    }

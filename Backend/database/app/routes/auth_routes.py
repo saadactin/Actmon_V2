@@ -65,6 +65,17 @@ def login(req: LoginRequest):
 
 @router.get("/me")
 def get_me(credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme)):
+    # BYPASS AUTH in development mode
+    if os.getenv("BYPASS_AUTH") == "true":
+        return {
+            "id": 1,
+            "username": "admin",
+            "email": "admin@actmon.local",
+            "role": "Admin",
+            "is_active": True,
+            "is_superuser": True,
+        }
+
     if not credentials:
         raise HTTPException(status_code=401, detail="Not authenticated")
     payload = _decode_token(credentials.credentials)

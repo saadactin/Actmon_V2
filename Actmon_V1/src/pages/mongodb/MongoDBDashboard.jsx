@@ -791,7 +791,7 @@ export default function MongoDBDashboard() {
                 <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
                   <div className="flex items-center gap-2 mb-3">
                     <AlertTriangle className="text-red-500" size={16} />
-                    <span className="font-bold text-red-700 text-sm">{slowOps.length} Slow Operation{slowOps.length > 1 ? 's' : ''} (running > 1s)</span>
+                    <span className="font-bold text-red-700 text-sm">{slowOps.length} Slow Operation{slowOps.length > 1 ? 's' : ''} (running &gt; 1s)</span>
                   </div>
                   {slowOps.slice(0, 3).map((op, i) => (
                     <div key={i} className="bg-white rounded-xl border border-red-100 px-3 py-2 text-xs mb-2">

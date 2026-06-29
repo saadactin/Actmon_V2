@@ -46,7 +46,7 @@ import DatabaseServersPage from './pages/databases/DatabaseServersPage';
 import AddOsServerPage from './pages/databases/AddOsServerPage';
 import AddServerPage from './pages/databases/AddServerPage';
 import ServerDetail from './pages/databases/ServerDetail';
-import { CloudPage } from './pages/cloud/CloudPage';
+import { cloudRoutes } from './features/cloud/routes/cloudRoutes';
 import { MLPage } from './pages/ml/MLPage';
 import { AlertsPage } from './pages/alerts/AlertsPage';
 import { UsersPage } from './pages/users/UsersPage';
@@ -175,10 +175,7 @@ const router = createBrowserRouter([
         element: <ServerDetail />,
       },
       
-      {
-        path: 'cloud',
-        element: <CloudPage />,
-      },
+      ...cloudRoutes,
       {
         path: 'infra',
         element: <InfraPage />,

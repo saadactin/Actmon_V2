@@ -1,0 +1,29 @@
+"""FastAPI dependency injectors."""
+from __future__ import annotations
+
+from typing import AsyncGenerator
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.database import get_db
+from app.services.cloud_account_service import CloudAccountService
+from app.services.discovery_service import DiscoveryService
+from app.services.resource_service import ResourceService
+from app.services.cost_service import CostService
+
+
+async def get_account_service(db: AsyncSession = Depends(get_db)) -> CloudAccountService:
+    return CloudAccountService(db)
+
+
+async def get_discovery_service(db: AsyncSession = Depends(get_db)) -> DiscoveryService:
+    return DiscoveryService(db)
+
+
+async def get_resource_service(db: AsyncSession = Depends(get_db)) -> ResourceService:
+    return ResourceService(db)
+
+
+async def get_cost_service(db: AsyncSession = Depends(get_db)) -> CostService:
+    return CostService(db)

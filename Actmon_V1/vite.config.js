@@ -20,11 +20,18 @@ export default defineConfig({
     proxy: disableApiProxy
       ? undefined
       : {
+          // WebSocket — database service
           '/api/v1/terminal/ws': {
             target: 'ws://127.0.0.1:8000',
             ws: true,
             changeOrigin: true,
           },
+          // Cloud microservice — must be declared BEFORE the generic /api rule
+          '/api/v1/cloud': {
+            target: 'http://127.0.0.1:8002',
+            changeOrigin: true,
+          },
+          // All other API calls → database / main backend service
           '/api': {
             target: 'http://127.0.0.1:8000',
             changeOrigin: true,
