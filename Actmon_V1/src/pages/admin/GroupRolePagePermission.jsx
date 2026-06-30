@@ -115,9 +115,12 @@ export default function GroupRolePagePermission() {
 
   // Hide the user's OWN role — nobody may edit the permissions of the role they're logged in with.
   const isOwnRole = (r) => Number(r.role_id) === Number(user?.role_id) && Number(r.org_id) === Number(user?.org_id);
+  // Hide the signed-in user's own role to avoid self-lockout — EXCEPT for a
+  // super admin, who may view (read-only) their own role here. The own-role
+  // view is already gated read-only via `ownRoleOpen` (no Add/Edit/Delete).
   const orgRoles = useMemo(
-    () => (selectedOrg ? roles.filter((r) => Number(r.org_id) === Number(selectedOrg.org_id) && !isOwnRole(r)) : []),
-    [roles, selectedOrg, user],
+    () => (selectedOrg ? roles.filter((r) => Number(r.org_id) === Number(selectedOrg.org_id) && (superAdmin || !isOwnRole(r))) : []),
+    [roles, selectedOrg, user, superAdmin],
   );
   // True when the currently-opened role is the logged-in user's own role (e.g. via direct URL).
   const ownRoleOpen = !!(selectedRole && isOwnRole(selectedRole));
@@ -577,10 +580,7 @@ export default function GroupRolePagePermission() {
                           return available.map((p) => (
                             <button type="button" key={p.permission_id} onClick={() => { addPerm(p.permission_value); }}
                               className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-sm transition-colors hover:bg-slate-50">
-                              <span className="flex items-center gap-2.5">
-                                <span className="w-5 h-5 rounded-md flex items-center justify-center border border-slate-300 bg-white" />
-                                <span className="font-semibold text-slate-700">{p.permission_name}</span>
-                              </span>
+                              <span className="font-semibold text-slate-700">{p.permission_name}</span>
                               <span className="text-[11px] font-mono text-slate-400">{p.permission_value}</span>
                             </button>
                           ));

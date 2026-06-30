@@ -16,6 +16,7 @@ from app.models.agent_model import (                              # noqa: F401
 from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
+from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
 from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
 # Access-Control / Administration (RBAC) schema — organization, employee, role,
 # module, page, permission, user, sessions, audit, etc.
@@ -58,6 +59,7 @@ from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitori
 from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
 from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
+from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
 from app.routes.smtp.smtp_config_routes import router as smtp_config_router
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
@@ -105,6 +107,9 @@ async def lifespan(app_instance):
     # Start PostgreSQL report email scheduler
     from app.services.postgres.postgres_report_email_service import start_postgres_report_scheduler
     start_postgres_report_scheduler()
+    # Start SQL Server report email scheduler
+    from app.services.mssql.mssql_report_email_service import start_mssql_report_scheduler
+    start_mssql_report_scheduler()
     yield
     # Graceful shutdown
     from app.services.agent.agent_collector_service import stop_agent_collector
@@ -166,6 +171,7 @@ app.include_router(oracle_monitoring_router)
 app.include_router(oracle_report_email_router)
 app.include_router(mysql_report_email_router)
 app.include_router(postgres_report_email_router)
+app.include_router(mssql_report_email_router)
 app.include_router(smtp_config_router)
 app.include_router(mongo_monitoring_router)
 

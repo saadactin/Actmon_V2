@@ -176,11 +176,11 @@ export default function ClickHouseDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── HEADER ─── */}
       <div style={{background:'linear-gradient(to right,#0f172a,#78350f,#7c1d12)'}} className="text-white shadow-xl">
-        <div className="px-6 py-4 flex flex-wrap justify-between items-start gap-3">
+        <div className="px-6 py-4 flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl"
               style={{background:'rgba(255,204,0,0.15)',border:'1px solid rgba(255,204,0,0.4)'}}>⚡</div>
@@ -207,7 +207,7 @@ export default function ClickHouseDashboard() {
         </div>
 
         {/* ── TAB BAR ── */}
-        <div className="px-4 flex gap-0.5 overflow-x-auto border-t border-white/10">
+        <div className="px-4 pt-2 flex gap-0.5 overflow-x-auto border-t border-white/10">
           {TABS.map(t => {
             const Icon = t.icon;
             const alert = alerts[t.id]||0;

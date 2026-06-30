@@ -183,7 +183,7 @@ const TABS = [
    • Only the content zone below the header scrolls (overflow-y-auto)
    This means: header is always visible, zero background-scroll, full-screen feel
 ═════════════════════════════════════════════════════════════════════════════════*/
-export default function MySQLBackupPage() {
+export default function MySQLBackupPage({ embedded = false }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -223,26 +223,32 @@ export default function MySQLBackupPage() {
       h-[calc(100%+3rem)] md:h-[calc(100%+4rem)] restores the height lost to padding removal.
       overflow-hidden ensures THIS div never scrolls — only the inner content zone does.
     */
-    <div className="-m-6 md:-m-8 h-[calc(100%+3rem)] md:h-[calc(100%+4rem)] flex flex-col overflow-hidden bg-[#f0f4ff]">
+    <div className={embedded
+      ? 'flex flex-col'
+      : '-m-6 md:-m-8 h-[calc(100%+3rem)] md:h-[calc(100%+4rem)] flex flex-col overflow-hidden bg-[#f0f4ff]'}>
       <Toast t={toast} />
 
       {/* ══════ HEADER — never scrolls ══════ */}
-      <div className="flex-shrink-0 bg-white border-b border-slate-200 shadow-sm z-50">
-        <div className="px-5 pt-4 pb-0">
+      <div className={embedded
+        ? 'flex-shrink-0 bg-white border border-slate-200 rounded-2xl shadow-sm mb-4'
+        : 'flex-shrink-0 bg-white border-b border-slate-200 shadow-sm z-50'}>
+        <div className={embedded ? 'px-5 pt-4 pb-0' : 'px-5 pt-4 pb-0'}>
 
           {/* top row */}
           <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
             <div className="flex items-center gap-3">
-              <button onClick={() => navigate(`/mysql-dashboard/${id}`)}
-                className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-all border border-slate-200 flex-shrink-0">
-                <ArrowLeft size={15} className="text-slate-600" />
-              </button>
+              {!embedded && (
+                <button onClick={() => navigate(`/mysql-dashboard/${id}`)}
+                  className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-all border border-slate-200 flex-shrink-0">
+                  <ArrowLeft size={15} className="text-slate-600" />
+                </button>
+              )}
               <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                 style={{ background: 'linear-gradient(135deg,#1e40af,#3b82f6)' }}>
                 <Database size={18} className="text-white" />
               </div>
               <div>
-                <h1 className="text-[17px] font-black text-slate-900 leading-tight">MySQL Backup &amp; Restore</h1>
+                <h1 className="text-[17px] font-black text-slate-900 leading-tight">{embedded ? 'Backup & Restore' : 'MySQL Backup & Restore'}</h1>
                 <p className="text-[11px] text-slate-400">Connection #{id} · Advanced backup, restore &amp; PITR console</p>
               </div>
             </div>
@@ -300,8 +306,8 @@ export default function MySQLBackupPage() {
       </div>
 
       {/* ══════ CONTENT — only this zone scrolls ══════ */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-        <div className="p-5 max-w-[1600px] mx-auto">
+      <div className={embedded ? '' : 'flex-1 overflow-y-auto overflow-x-hidden'}>
+        <div className={embedded ? 'max-w-[1600px] mx-auto' : 'p-5 max-w-[1600px] mx-auto'}>
           {tab === 'backups'  && <BackupsTab   connId={id} backups={backups} stats={stats} storageDir={storageDir} refetch={refetchBkps} showToast={showToast} setTab={setTab} />}
           {tab === 'new'      && <NewBackupTab connId={id} storageDir={storageDir} refresh={refresh} showToast={showToast} />}
           {tab === 'schedule' && <ScheduleTab  connId={id} showToast={showToast} />}

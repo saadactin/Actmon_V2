@@ -21,6 +21,9 @@ import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
 import { mssqlTableDetail } from '../../api/drilldown';
 
+// Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
+const MSSQLBackupPageEmbedded = React.lazy(() => import('./MSSQLBackupPage'));
+
 /* ─── palette ─── */
 const C = {
   msBlue:  '#0078D4',
@@ -178,11 +181,11 @@ export default function MSSQLDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── TOP HEADER ─── */}
       <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 text-white shadow-xl">
-        <div className="px-6 py-4 flex flex-wrap justify-between items-start gap-3">
+        <div className="px-6 py-4 flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-sky-400/20 border border-sky-400/40 rounded-2xl flex items-center justify-center text-2xl">
               🗄️
@@ -203,6 +206,7 @@ export default function MSSQLDashboard() {
               { to: `/mssql-dashboard/${id}/slow-queries`,   label: 'Slow Queries' },
               { to: `/mssql-dashboard/${id}/error-logs`,     label: 'Error Logs' },
               { to: `/mssql-dashboard/${id}/index-analysis`, label: 'Index Analysis' },
+              { to: `/mssql-dashboard/${id}/reports`,        label: 'Reports' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
                 className="px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-xs font-semibold text-white/80 hover:text-white">
@@ -222,12 +226,12 @@ export default function MSSQLDashboard() {
         </div>
 
         {/* ─── TAB BAR ─── */}
-        <div className="px-4 flex gap-0.5 overflow-x-auto border-t border-white/10">
+        <div className="px-4 pt-2 flex gap-0.5 overflow-x-auto border-t border-white/10">
           {TABS.map(tab => {
             const Icon  = tab.icon;
             const alert = alerts[tab.id] || 0;
             return (
-              <button key={tab.id} onClick={() => tab.id === 'backup' ? navigate(`/mssql-dashboard/${id}/backup`) : setActiveTab(tab.id)}
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                 className={`relative flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-lg whitespace-nowrap transition-all ${
                   activeTab === tab.id
                     ? 'bg-slate-50 text-blue-700'
@@ -1236,8 +1240,12 @@ export default function MSSQLDashboard() {
           );
         })()}
 
-        {/* ══ BACKUP & PITR — navigate to dedicated page ═════════════════ */}
-        {activeTab === 'backup' && navigate(`/mssql-dashboard/${id}/backup`)}
+        {/* ══ BACKUP & PITR (embedded — keeps the dashboard topbar) ══ */}
+        {activeTab === 'backup' && (
+          <React.Suspense fallback={<div className="flex items-center justify-center py-20"><RefreshCw size={24} className="animate-spin text-sky-600" /></div>}>
+            <MSSQLBackupPageEmbedded embedded />
+          </React.Suspense>
+        )}
 
       </div>
 

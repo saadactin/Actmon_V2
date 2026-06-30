@@ -862,7 +862,7 @@ export default function MongoDBDashboard() {
 
   /* ─────────────────────────────────────────────────────────────── */
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── Collection Detail Modal ─── */}
       {selectedColl && (
@@ -882,7 +882,7 @@ export default function MongoDBDashboard() {
       {/* ─── HERO HEADER ─── */}
       <div style={{ background: `linear-gradient(135deg, ${C.navy} 0%, #0a2d1f 50%, #003d2a 100%)` }}
         className="text-white shadow-2xl">
-        <div className="px-6 py-4 flex flex-wrap justify-between items-start gap-3">
+        <div className="px-6 py-4 flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl"
               style={{ background: 'rgba(0,237,100,0.15)', border: '1px solid rgba(0,237,100,0.35)' }}>
@@ -914,7 +914,7 @@ export default function MongoDBDashboard() {
         </div>
 
         {/* TAB BAR */}
-        <div className="px-4 flex gap-0.5 overflow-x-auto border-t border-white/10">
+        <div className="px-4 pt-2 flex gap-0.5 overflow-x-auto border-t border-white/10">
           {TABS.map(tab => {
             const Icon  = tab.icon;
             const alert = alerts[tab.id] || 0;
@@ -1790,7 +1790,21 @@ export default function MongoDBDashboard() {
         {activeTab === 'oplog' && (() => {
           if (oplogLoading) return <TabLoader />;
           const og = oplogData || {};
-          if (og.error && !og.status) return (
+          // Standalone server (no replica set) → there is no oplog. Explain clearly.
+          if (og.status === 'standalone' || og.is_replica_set === false) return (
+            <div className="bg-blue-50 border border-blue-200 rounded-2xl p-10 text-center max-w-2xl mx-auto">
+              <Archive className="mx-auto text-blue-400 mb-3" size={40} />
+              <p className="font-black text-blue-800 text-lg">No oplog — standalone MongoDB</p>
+              <p className="text-sm text-blue-700 mt-2">
+                {og.note || 'This MongoDB is running as a standalone server (not a replica set), so it has no oplog.'}
+              </p>
+              <p className="text-xs text-slate-500 mt-3">
+                The oplog (operations log) is created only when MongoDB runs as part of a replica set.
+                Convert this server to a replica set to enable replication, the oplog and point-in-time features.
+              </p>
+            </div>
+          );
+          if (og.error && og.status === 'error') return (
             <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-8 text-center">
               <Archive className="mx-auto text-yellow-400 mb-3" size={36} />
               <p className="font-bold text-yellow-700">Oplog Unavailable</p>
@@ -1983,6 +1997,17 @@ export default function MongoDBDashboard() {
           const t = txn.transactions || {};
           return (
             <div className="space-y-5">
+              {txn.note && (
+                <div className={`rounded-2xl border p-4 flex items-start gap-3 ${txn.is_replica_set === false ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <RotateCcw size={18} className={`mt-0.5 flex-shrink-0 ${txn.is_replica_set === false ? 'text-blue-500' : 'text-slate-400'}`} />
+                  <div>
+                    <p className={`font-bold text-sm ${txn.is_replica_set === false ? 'text-blue-800' : 'text-slate-600'}`}>
+                      {txn.is_replica_set === false ? 'Standalone MongoDB — transactions need a replica set' : 'No transactions recorded yet'}
+                    </p>
+                    <p className={`text-xs mt-0.5 ${txn.is_replica_set === false ? 'text-blue-700' : 'text-slate-500'}`}>{txn.note}</p>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MetricKpi title="Current Active"   value={t.currentActive   ?? 0} accent={t.currentActive > 0 ? 'blue' : 'slate'} />
                 <MetricKpi title="Current Open"     value={t.currentOpen     ?? 0} accent={t.currentOpen > 5 ? 'orange' : 'green'} />

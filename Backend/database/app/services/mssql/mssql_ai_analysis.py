@@ -1,23 +1,22 @@
 """
-MSSQL AI Analysis Service
-Generates AI-driven analysis for MSSQL errors
+MSSQL AI Analysis Service.
+ - analyze_mssql_error / get_mssql_recommendations : rule-based error guidance (used by mssql_error_service)
+ - analyze_slow_query_groq : Groq-powered slow-query analysis (T-SQL specific)
 """
+import os
+import json
+from typing import Optional
+
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.models.connection_model import ConnectionMaster
+
 
 def analyze_mssql_error(error_message: str, error_code: str, engine=None) -> str:
-    """
-    Analyze MSSQL error and provide AI-driven insights
-
-    Args:
-        error_message: The MSSQL error message
-        error_code: The MSSQL error code
-        engine: SQLAlchemy engine for connection
-
-    Returns:
-        AI analysis text
-    """
-
-    error_msg_lower = error_message.lower()
-    error_code_int = int(error_code) if error_code.isdigit() else 0
+    """Analyze a MSSQL error and provide rule-based, plain-language guidance."""
+    error_msg_lower = (error_message or "").lower()
+    error_code_int = int(error_code) if str(error_code).isdigit() else 0
 
     analysis = f"""
 MSSQL Error Analysis Report
@@ -27,157 +26,185 @@ What is error:
 The SQL Server reported error code {error_code} with message: {error_message}
 
 """
-
-    # Common MSSQL error analysis
     if error_code_int == 1205:
         analysis += """Why it is coming:
-This is a deadlock error. MSSQL encountered conflicting locks from multiple transactions
+This is a deadlock error. SQL Server detected conflicting locks from multiple transactions
 trying to access the same resources simultaneously, forcing one transaction to roll back.
 
 How to solve:
 1. Review the deadlock victim query and the blocking query
 2. Optimize query execution plans to reduce lock duration
 3. Use READ COMMITTED SNAPSHOT isolation if appropriate
-4. Consider reordering table access in transactions
-5. Implement connection pooling to reduce lock contention
-6. Use sp_helptext to examine the problematic stored procedures
-7. Apply indexes on frequently locked columns
-
-Exactly where to change:
-Check the SQL Server error log and deadlock graph XML for specific queries.
-Update the query logic in your application code or stored procedures.
-
-Exact variable to remove:
-No configuration variable needs removal - adjust query logic instead.
+4. Keep transactions short and access objects in a consistent order
+5. Add indexes on frequently locked columns
 """
     elif error_code_int == 1053:
         analysis += """Why it is coming:
-This error indicates that a SQL Server query timed out or the server is shutting down.
-The server was unable to complete the request within the allocated time.
+A SQL Server query timed out or the service is shutting down. The request could not finish
+within the allocated time.
 
 How to solve:
-1. Increase the command timeout in your connection string
-2. Optimize the slow running query with proper indexing
+1. Increase the command timeout in the connection string
+2. Optimize the slow-running query with proper indexing
 3. Check if the server is under heavy load
-4. Review and optimize table statistics
-5. Consider breaking the query into smaller operations
-6. Enable parallel query execution if beneficial
-
-Exactly where to change:
-Modify the query timeout in your connection string or application settings.
-Optimize the slow-running queries causing the timeout.
-
-Exact variable to remove:
-No configuration variable removal needed.
+4. Update statistics and review the plan
 """
     elif error_code_int == 515:
         analysis += """Why it is coming:
-Cannot insert NULL value into a column that doesn't allow NULLs.
-The SQL Server constraint prevents inserting NULL values into this column.
+Cannot insert NULL into a column that does not allow NULLs. A NOT NULL constraint is blocking
+the insert.
 
 How to solve:
 1. Provide a non-NULL value for the required column
-2. Check the table schema to see which columns require values
-3. Use DEFAULT constraint if a default value should be applied
-4. Ensure all required fields are populated in the INSERT statement
-
-Exactly where to change:
-Update the INSERT statement to include values for all NOT NULL columns.
-Modify your application code to populate required fields.
-
-Exact variable to remove:
-No configuration variable removal needed.
+2. Check the table schema for NOT NULL columns
+3. Add a DEFAULT constraint if a default should apply
 """
     elif "permission" in error_msg_lower or "denied" in error_msg_lower:
         analysis += """Why it is coming:
-The user does not have sufficient permissions to execute this operation.
-The SQL Server login lacks the required permissions for the requested action.
+The login does not have sufficient permissions for this operation.
 
 How to solve:
-1. Grant the necessary permissions using GRANT statement
-2. Check the user's role and permissions in SQL Server
-3. Use sp_helprotect to review object permissions
-4. Assign appropriate database roles (db_owner, db_datareader, etc.)
-5. Verify the user is in the correct database context
-
-Exactly where to change:
-Execute GRANT statements to provide required permissions to the user.
-Review and update user roles and permissions in SQL Server Management Studio.
-
-Exact variable to remove:
-No configuration variable removal needed.
+1. GRANT the required permission to the login or role
+2. Review the login's server and database roles
+3. Verify the correct database context
 """
-    elif "syntax error" in error_msg_lower:
+    elif "syntax" in error_msg_lower:
         analysis += """Why it is coming:
-There is a syntax error in the SQL query submitted to SQL Server.
-The SQL Server parser encountered invalid SQL syntax.
+There is a T-SQL syntax error in the submitted statement.
 
 How to solve:
-1. Review the SQL query for syntax errors
-2. Check for missing commas, parentheses, or semicolons
-3. Verify table and column names are correct
-4. Use SQL Server Management Studio to validate syntax
-5. Test the query piece by piece to isolate the error
-6. Check for reserved keywords used as identifiers
-
-Exactly where to change:
-Fix the syntax errors in your SQL query.
-Update the query in your application code or stored procedures.
-
-Exact variable to remove:
-No configuration variable removal needed.
+1. Review the statement for missing commas, parentheses or keywords
+2. Verify object names exist and are spelled correctly
+3. Test the statement piece by piece to isolate the error
 """
     else:
         analysis += """Why it is coming:
-The specific error requires analysis of the SQL Server error logs and server state.
-This error may be related to server configuration, resource constraints, or query issues.
+This error needs analysis of the SQL Server error log and current server state. It may relate
+to configuration, resource limits or query issues.
 
 How to solve:
-1. Check the SQL Server error log for detailed error information
-2. Review Event Viewer for system-level errors
-3. Check SQL Server Agent jobs for failures
-4. Monitor server resources (CPU, Memory, Disk)
-5. Verify all database maintenance jobs are running
-6. Check transaction log space availability
-
-Exactly where to change:
-Refer to the SQL Server error log and diagnostic data to identify the root cause.
-
-Exact variable to remove:
-No configuration variable removal needed.
+1. Check the SQL Server error log for detail
+2. Review wait statistics and blocking
+3. Monitor CPU, memory and disk on the host
+4. Verify backups and transaction-log space
 """
-
     return analysis.strip()
 
+
 def get_mssql_recommendations(error_code: str) -> dict:
-    """Get specific recommendations for MSSQL error codes"""
-
-    error_code_int = int(error_code) if error_code.isdigit() else 0
-
+    """Specific recommendations for common MSSQL error codes."""
+    error_code_int = int(error_code) if str(error_code).isdigit() else 0
     recommendations = {
-        1205: {
-            "title": "Deadlock Detected",
-            "severity": "HIGH",
-            "impact": "Transaction rolled back, operations blocked",
-            "actions": ["Review conflicting queries", "Optimize indexes", "Adjust isolation levels"]
-        },
-        1053: {
-            "title": "Query Timeout",
-            "severity": "MEDIUM",
-            "impact": "Slow query execution",
-            "actions": ["Increase timeout", "Optimize query", "Add indexes"]
-        },
-        515: {
-            "title": "NULL Constraint Violation",
-            "severity": "LOW",
-            "impact": "Data insertion failed",
-            "actions": ["Provide required values", "Update schema", "Add defaults"]
-        }
+        1205: {"title": "Deadlock Detected", "severity": "HIGH",
+               "impact": "Transaction rolled back, operations blocked",
+               "actions": ["Review conflicting queries", "Optimize indexes", "Adjust isolation level"]},
+        1053: {"title": "Query Timeout", "severity": "MEDIUM",
+               "impact": "Slow query execution",
+               "actions": ["Increase timeout", "Optimize query", "Add indexes"]},
+        515:  {"title": "NULL Constraint Violation", "severity": "LOW",
+               "impact": "Data insertion failed",
+               "actions": ["Provide required values", "Update schema", "Add defaults"]},
     }
-
     return recommendations.get(error_code_int, {
-        "title": "MSSQL Error",
-        "severity": "UNKNOWN",
+        "title": "MSSQL Error", "severity": "UNKNOWN",
         "impact": "Check error logs for details",
-        "actions": ["Review error logs", "Check server status"]
+        "actions": ["Review error logs", "Check server status"],
     })
+
+
+# ── Groq-powered slow-query analysis ──────────────────────────────────────────
+class MssqlSlowQueryGroqRequest(BaseModel):
+    sql_text:           str
+    db_name:            Optional[str] = None
+    execution_count:    int   = 0
+    avg_elapsed_ms:     float = 0.0
+    total_cpu_ms:       float = 0.0
+    avg_logical_reads:  float = 0.0
+    avg_physical_reads: float = 0.0
+
+
+def analyze_slow_query_groq(conn_id: int, payload: MssqlSlowQueryGroqRequest, db: Session) -> dict:
+    rec = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id,
+        ConnectionMaster.db_type == "mssql",
+    ).first()
+    if not rec:
+        return {"status": "error", "error": "SQL Server connection not found"}
+    if not (payload.sql_text or "").strip():
+        return {"status": "error", "error": "No SQL text provided"}
+
+    try:
+        from groq import Groq
+        client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        prompt = f"""You are a world-class Microsoft SQL Server (T-SQL) performance expert. Analyze this slow query deeply and return ONLY valid JSON — no markdown, no code fences.
+
+=== QUERY CONTEXT ===
+Server: {rec.host}:{rec.port}
+Database: {payload.db_name or 'unknown'}
+SQL:
+{payload.sql_text}
+
+=== PERFORMANCE METRICS (from sys.dm_exec_query_stats) ===
+Execution count: {payload.execution_count:,}
+Average elapsed time: {payload.avg_elapsed_ms:.2f} ms
+Total CPU time: {payload.total_cpu_ms:.2f} ms
+Average logical reads (from memory): {payload.avg_logical_reads:,.0f}
+Average physical reads (from disk): {payload.avg_physical_reads:,.0f}
+
+Return this exact JSON structure:
+{{
+  "severity": "critical|high|medium|low",
+  "severity_reason": "why this severity was assigned",
+  "summary": "one sentence: what the query does and why it is slow",
+  "root_cause": "detailed root cause — what exactly makes this query slow in SQL Server",
+  "issues": [
+    {{
+      "type": "TABLE_SCAN|INDEX_SCAN|MISSING_INDEX|KEY_LOOKUP|INEFFICIENT_JOIN|SORT_SPILL|HIGH_LOGICAL_READS|PARAMETER_SNIFFING|IMPLICIT_CONVERSION|LARGE_RESULT_SET|OTHER",
+      "table": "affected table or null",
+      "description": "detailed description of the issue",
+      "severity": "critical|high|medium|low",
+      "evidence": "the metric or pattern that proves this issue"
+    }}
+  ],
+  "index_recommendations": [
+    {{
+      "table": "schema.table",
+      "columns": ["col1","col2"],
+      "include_columns": ["col3"],
+      "index_type": "NONCLUSTERED|CLUSTERED|COLUMNSTORE",
+      "create_sql": "CREATE NONCLUSTERED INDEX IX_name ON schema.table (col1, col2) INCLUDE (col3);",
+      "reason": "why this index helps",
+      "estimated_improvement": "e.g. removes a table scan, 95% fewer logical reads"
+    }}
+  ],
+  "query_rewrite": {{
+    "applicable": true,
+    "optimized_sql": "rewritten T-SQL or empty string",
+    "changes_made": ["list","of","changes"],
+    "explanation": "what changed and why it is faster",
+    "expected_gain": "e.g. 10x-50x faster"
+  }},
+  "schema_suggestions": ["any table/index design changes that would help"],
+  "priority_actions": ["1. Most impactful action first","2. Second","3. Third"],
+  "business_impact": "impact on the application and users",
+  "estimated_overall_improvement": "overall expected improvement after all fixes",
+  "validation_queries": ["a query to verify the optimization worked"]
+}}"""
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=3000,
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+        analysis = json.loads(raw.strip())
+        return {"status": "success", "analysis": analysis}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}

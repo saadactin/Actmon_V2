@@ -206,7 +206,7 @@ export default function OracleDashboard() {
   const POOL_COLORS = [C.red, C.orange, C.amber, C.blue, C.purple, C.teal, C.green, C.cyan];
 
   return (
-    <div className="min-h-screen bg-[#f1f5f9] flex flex-col">
+    <div className="min-h-full bg-[#f1f5f9] flex flex-col">
 
       {/* ─── DRILL MODAL ─── */}
       {drillModal && (

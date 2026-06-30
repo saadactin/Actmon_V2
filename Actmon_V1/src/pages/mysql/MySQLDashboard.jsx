@@ -19,6 +19,9 @@ import {
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
 
+// Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
+const MySQLBackupPageEmbedded = React.lazy(() => import('./MySQLBackupPage'));
+
 /* ─── palette ─── */
 const C = {
   teal:   '#00758F',
@@ -593,7 +596,7 @@ export default function MySQLDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── Drill-down Modal ─── */}
       {drillModal && (
@@ -604,7 +607,7 @@ export default function MySQLDashboard() {
 
       {/* ─── TOP HEADER ─── */}
       <div className="bg-gradient-to-r from-slate-900 via-cyan-900 to-teal-800 text-white shadow-xl">
-        <div className="px-6 py-4 flex flex-wrap justify-between items-start gap-3">
+        <div className="px-6 py-4 flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-cyan-400/20 border border-cyan-400/40 rounded-2xl flex items-center justify-center text-2xl">
               🐬
@@ -650,13 +653,13 @@ export default function MySQLDashboard() {
         </div>
 
         {/* ─── TAB BAR ─── */}
-        <div className="px-4 flex gap-0.5 overflow-x-auto border-t border-white/10">
+        <div className="px-4 pt-2 flex gap-0.5 overflow-x-auto border-t border-white/10">
           {TABS.map(tab => {
             const Icon  = tab.icon;
             const alert = alerts[tab.id] || 0;
             return (
               <button key={tab.id}
-                onClick={() => tab.id === 'backup' ? navigate(`/mysql-dashboard/${id}/backup`) : setActiveTab(tab.id)}
+                onClick={() => setActiveTab(tab.id)}
                 className={`relative flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-lg whitespace-nowrap transition-all ${
                   activeTab === tab.id
                     ? 'bg-slate-50 text-cyan-700'
@@ -677,6 +680,13 @@ export default function MySQLDashboard() {
 
       {/* ─── TAB CONTENT ─── */}
       <div className="flex-1 p-5 overflow-auto">
+
+        {/* ══ BACKUP & PITR (embedded — keeps the dashboard topbar) ══ */}
+        {activeTab === 'backup' && (
+          <React.Suspense fallback={<div className="flex items-center justify-center py-20"><RefreshCw size={24} className="animate-spin text-cyan-600" /></div>}>
+            <MySQLBackupPageEmbedded embedded />
+          </React.Suspense>
+        )}
 
         {/* ══ OVERVIEW ══════════════════════════════════════════════ */}
         {activeTab === 'overview' && (() => {
@@ -2695,101 +2705,8 @@ export default function MySQLDashboard() {
         )}
 
         {/* ══ BACKUP & PITR ═════════════════════════════════════════ */}
-        {activeTab === 'backup' && (
-          <div className="space-y-5">
-            {backupLoading ? <TabLoader /> : (() => {
-              const bi = backupData?.backup_info || {};
-              const pitr = bi.pitr_capable;
-              return (
-                <>
-                  <div className={`rounded-2xl border p-5 ${pitr ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <div className="flex items-center gap-3">
-                        {pitr ? <CheckCircle2 className="text-green-600" size={24} /> : <XCircle className="text-red-600" size={24} />}
-                        <div>
-                          <h2 className="text-lg font-bold">PITR: {pitr ? 'ENABLED' : 'DISABLED'} — Binary Logging {bi.binlog_enabled || '?'}</h2>
-                          <p className={`text-sm ${pitr ? 'text-green-700' : 'text-red-700'}`}>
-                            {pitr ? 'Point-In-Time Recovery is available via binary logs.'
-                                  : 'Enable binary logging (log_bin=ON) in my.cnf to support PITR.'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => navigate(`/mysql-dashboard/${id}/backup`)}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm transition-colors shadow-md flex-shrink-0">
-                        <Archive size={16} /> Open Backup & Restore Console
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <MetricKpi title="Binlog"    value={bi.binlog_enabled || '—'} accent={bi.binlog_enabled==='ON'?'green':'red'} />
-                    <MetricKpi title="Format"    value={bi.binlog_format || '—'}  accent="blue" />
-                    <MetricKpi title="GTID Mode" value={bi.gtid_mode || '—'}      accent={bi.gtid_mode==='ON'?'green':'orange'} />
-                    <MetricKpi title="Durability" value={bi.durability_level || '—'} accent="blue" />
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                    <Panel title="Current Binary Log Position">
-                      <div className="space-y-2 text-sm">
-                        <Row label="File"     value={bi.current_binlog_file     || '—'} mono />
-                        <Row label="Position" value={bi.current_binlog_position || '—'} mono />
-                        <Row label="Server ID" value={bi.server_id || '—'} mono />
-                        <Row label="Data Dir" value={bi.datadir   || '—'} mono />
-                        <Row label="Expire Days" value={bi.expire_logs_days || '—'} />
-                        <Row label="sync_binlog" value={bi.sync_binlog || '—'} />
-                        <Row label="innodb_flush_log" value={bi.innodb_flush_log_at_trx_commit || '—'} />
-                      </div>
-                    </Panel>
-
-                    <Panel title="Backup Strategy">
-                      <div className="space-y-3 text-sm">
-                        {[
-                          ['Full Backup', 'mysqldump --all-databases > full.sql', 'blue'],
-                          ['Hot Backup',  'xtrabackup --backup --target-dir=/backup', 'green'],
-                          ['PITR Restore','mysqlbinlog --start-datetime="..." | mysql', 'purple'],
-                        ].map(([t, cmd, color]) => (
-                          <div key={t} className={`rounded-xl border p-3 bg-${color}-50 border-${color}-200`}>
-                            <p className={`font-bold text-${color}-700 text-xs mb-1`}>{t}</p>
-                            <code className="text-[10px] text-slate-600 font-mono break-all">{cmd}</code>
-                          </div>
-                        ))}
-                      </div>
-                    </Panel>
-                  </div>
-
-                  {bi.binlog_files?.length > 0 && (
-                    <Panel title={`Binary Log Files (${bi.binlog_files.length})`}>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th className="px-4 py-2.5 text-left text-xs font-bold text-slate-400">File</th>
-                              <th className="px-4 py-2.5 text-right text-xs font-bold text-slate-400">Size</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {bi.binlog_files.map((f, i) => (
-                              <tr key={i} className={`border-t border-slate-100 ${f.file === bi.current_binlog_file ? 'bg-cyan-50' : 'hover:bg-slate-50'}`}>
-                                <td className="px-4 py-2.5 font-mono text-xs">
-                                  {f.file}
-                                  {f.file === bi.current_binlog_file && (
-                                    <span className="ml-2 px-1.5 py-0.5 bg-cyan-100 text-cyan-700 text-[9px] font-bold rounded">CURRENT</span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2.5 text-right font-mono text-xs">{fmtBytes(f.size_bytes)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </Panel>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-        )}
+        {/* Legacy inline backup section removed — Backup & PITR now renders the
+            full embedded MySQLBackupPage (see activeTab === 'backup' block above). */}
 
         {/* ══ LOGS ══════════════════════════════════════════════════ */}
         {activeTab === 'logs' && (

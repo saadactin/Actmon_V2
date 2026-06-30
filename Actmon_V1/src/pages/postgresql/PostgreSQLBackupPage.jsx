@@ -177,7 +177,7 @@ function TimePicker12h({ hour24=2, minute=0, onChange, label }) {
 /* ══════════════════════════════════════════════════════════════════════════════
    MAIN PAGE
 ══════════════════════════════════════════════════════════════════════════════ */
-export default function PostgreSQLBackupPage() {
+export default function PostgreSQLBackupPage({ embedded = false }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [tab,       setTab]      = useState('summary');
@@ -204,20 +204,24 @@ export default function PostgreSQLBackupPage() {
   const archOk     = archMode === 'on' || archMode === 'always';
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className={embedded ? 'flex flex-col' : 'min-h-screen bg-slate-50'}>
       <Toast t={toast} />
 
       {/* ── Top bar ── */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center gap-4 shadow-sm">
-        <button onClick={() => navigate(`/postgresql-dashboard/${id}`)}
-          className="w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-500 transition-all">
-          <ArrowLeft size={16} />
-        </button>
+      <div className={embedded
+        ? 'bg-white border border-slate-200 rounded-2xl shadow-sm px-6 py-4 flex items-center gap-4 mb-4'
+        : 'bg-white border-b border-slate-200 px-6 py-4 flex items-center gap-4 shadow-sm'}>
+        {!embedded && (
+          <button onClick={() => navigate(`/postgresql-dashboard/${id}`)}
+            className="w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 text-slate-500 transition-all">
+            <ArrowLeft size={16} />
+          </button>
+        )}
         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center flex-shrink-0">
           <Shield size={17} className="text-white" />
         </div>
         <div>
-          <h1 className="font-black text-slate-900 text-[16px]">PostgreSQL Backup & PITR</h1>
+          <h1 className="font-black text-slate-900 text-[16px]">{embedded ? 'Backup & Restore' : 'PostgreSQL Backup & PITR'}</h1>
           <p className="text-[12px] text-slate-400">
             pg_dump · pg_basebackup · WAL archiving · Point-in-Time Recovery
           </p>
@@ -239,7 +243,9 @@ export default function PostgreSQLBackupPage() {
       </div>
 
       {/* ── Tab bar ── */}
-      <div className="bg-white border-b border-slate-200 px-6">
+      <div className={embedded
+        ? 'bg-white border border-slate-200 rounded-2xl shadow-sm px-6 mb-4'
+        : 'bg-white border-b border-slate-200 px-6'}>
         <div className="flex gap-1 overflow-x-auto no-scrollbar">
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
@@ -252,7 +258,7 @@ export default function PostgreSQLBackupPage() {
       </div>
 
       {/* ── Content ── */}
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className={embedded ? 'max-w-7xl mx-auto' : 'p-6 max-w-7xl mx-auto'}>
         {tab === 'summary'  && <SummaryTab  connId={id} data={sumData} isLoading={sumLoading} refetch={refetchSum} showToast={showToast} setTab={setTab} />}
         {tab === 'backups'  && <BackupsTab  connId={id} showToast={showToast} setTab={setTab} />}
         {tab === 'new'      && <NewBackupTab connId={id} showToast={showToast} setTab={setTab} />}

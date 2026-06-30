@@ -971,10 +971,33 @@ def get_oplog(conn_id: int, db: Session):
         mc = _mongo_client(conn)
         local_db = mc["local"]
 
+        # The oplog only exists on a replica set. Detect a standalone server first so the UI
+        # can show a clear message instead of confusing zeros.
+        set_name = None
+        try:
+            hello = mc.admin.command("hello")
+            set_name = hello.get("setName")
+        except Exception:
+            try:
+                set_name = mc.admin.command("isMaster").get("setName")
+            except Exception:
+                set_name = None
+        if not set_name:
+            return {
+                "status": "standalone",
+                "is_replica_set": False,
+                "note": "This MongoDB is running as a standalone server (not a replica set), so it has no oplog. "
+                        "The oplog is created only when the server is part of a replica set.",
+                "size_bytes": 0, "used_bytes": 0, "size_mb": 0.0, "used_mb": 0.0, "used_pct": 0.0,
+                "first_ts": 0, "last_ts": 0, "oplog_window_hours": 0.0, "count": 0,
+                "op_types": {}, "recent_entries": [],
+            }
+
         try:
             oplog_stats = local_db.command("collStats", "oplog.rs")
         except Exception as e:
-            return {"status": "error", "error": str(e), "note": "oplog.rs not found — may not be a replica set"}
+            return {"status": "error", "is_replica_set": True, "error": str(e),
+                    "note": "oplog.rs not found — the replica set may not be fully initialised yet."}
 
         size_bytes = oplog_stats.get("maxSize", oplog_stats.get("storageSize", 0))
         used_bytes = oplog_stats.get("size", 0)
@@ -1027,6 +1050,7 @@ def get_oplog(conn_id: int, db: Session):
 
         return {
             "status":             "success",
+            "is_replica_set":     True,
             "size_bytes":         size_bytes,
             "used_bytes":         used_bytes,
             "size_mb":            size_mb,
@@ -1202,13 +1226,34 @@ def get_transactions(conn_id: int, db: Session):
         except Exception:
             pass
 
+        # Multi-document transactions require a replica set. On a standalone server the counters
+        # stay at zero because transactions cannot run — surface that so the UI can explain it.
+        set_name = None
+        try:
+            set_name = mc.admin.command("hello").get("setName")
+        except Exception:
+            try:
+                set_name = mc.admin.command("isMaster").get("setName")
+            except Exception:
+                set_name = None
+        is_rs = bool(set_name)
+        note = None
+        if not is_rs:
+            note = ("This MongoDB is running as a standalone server (not a replica set). Multi-document "
+                    "transactions require a replica set, so these counters stay at zero until the server "
+                    "is part of a replica set.")
+        elif total == 0:
+            note = "No multi-document transactions have been recorded yet — the counters will populate once transactions run."
+
         return {
-            "status":       "success",
-            "available":    True,
-            "transactions": transactions,
-            "commit_rate":  commit_rate,
-            "abort_rate":   abort_rate,
-            "two_phase":    two_phase,
+            "status":         "success",
+            "available":      True,
+            "is_replica_set": is_rs,
+            "note":           note,
+            "transactions":   transactions,
+            "commit_rate":    commit_rate,
+            "abort_rate":     abort_rate,
+            "two_phase":      two_phase,
         }
 
     except Exception as e:

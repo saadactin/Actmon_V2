@@ -19,6 +19,9 @@ import {
 import client from '../../api/client';
 import HostResources from './PgHostResources';
 
+// Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
+const PostgreSQLBackupPageEmbedded = React.lazy(() => import('./PostgreSQLBackupPage'));
+
 /* ─── palette ─── */
 const C = {
   pg:     '#336791',
@@ -47,6 +50,7 @@ const TABS = [
   { id: 'replication', label: 'Replication', icon: GitBranch },
   { id: 'users',       label: 'Users',       icon: Users },
   { id: 'storage',     label: 'Storage',     icon: HardDrive },
+  { id: 'backup',      label: 'Backup & PITR', icon: Shield },
   { id: 'config',      label: 'Config',      icon: Settings },
 ];
 
@@ -197,7 +201,7 @@ export default function PostgreSQLDashboard() {
   const DB_COLORS = [C.pg, C.indigo, C.green, C.orange, C.purple, C.cyan, C.yellow, C.red];
 
   return (
-    <div className="min-h-screen bg-[#f1f5f9] flex flex-col">
+    <div className="min-h-full bg-[#f1f5f9] flex flex-col">
 
       {/* ════════ HEADER ════════ */}
       <div style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e3a5f 55%,#312e81 100%)' }} className="text-white shadow-2xl">
@@ -235,7 +239,6 @@ export default function PostgreSQLDashboard() {
               { to: `/postgresql-dashboard/${id}/slow-queries`,   label: 'Slow Queries' },
               { to: `/postgresql-dashboard/${id}/error-logs`,     label: 'Error Logs' },
               { to: `/postgresql-dashboard/${id}/index-analysis`, label: 'Indexes' },
-              { to: `/postgresql-dashboard/${id}/backup`,         label: '🛡 Backup & PITR' },
               { to: `/postgresql-dashboard/${id}/reports`,        label: '📊 Reports' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
@@ -262,7 +265,7 @@ export default function PostgreSQLDashboard() {
         </div>
 
         {/* ── TAB BAR ── */}
-        <div className="px-2 flex overflow-x-auto" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="px-2 pt-2 flex overflow-x-auto" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
           {TABS.map(tab => {
             const Icon  = tab.icon;
             const alert = alerts[tab.id] || 0;
@@ -801,6 +804,13 @@ export default function PostgreSQLDashboard() {
         {/* ══ CONFIG ══ */}
         {activeTab === 'config' && (
           <AdvancedConfigTab detail={configDetail} isLoading={configLoading} refetch={refetchConfig} />
+        )}
+
+        {/* ══ BACKUP & PITR (embedded — keeps the dashboard topbar) ══ */}
+        {activeTab === 'backup' && (
+          <React.Suspense fallback={<div className="flex items-center justify-center py-20"><RefreshCw size={24} className="animate-spin text-indigo-600" /></div>}>
+            <PostgreSQLBackupPageEmbedded embedded />
+          </React.Suspense>
         )}
 
       </div>

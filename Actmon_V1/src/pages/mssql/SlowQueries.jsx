@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, RefreshCw, Zap, Clock, BarChart2, AlertTriangle,
@@ -10,6 +10,74 @@ import client from '../../api/client';
 
 const fetchSlowQueries = (id) =>
   client.get(`/connections/mssql/${id}/mssql-slow-queries`).then(r => r.data);
+
+const analyzeQuery = (id, body) =>
+  client.post(`/connections/mssql/${id}/mssql-slow-queries/analyze-groq`, body).then(r => r.data);
+
+const sevCls = (s) =>
+  s === 'critical' ? 'bg-red-100 text-red-700'
+  : s === 'high'   ? 'bg-orange-100 text-orange-700'
+  : s === 'medium' ? 'bg-amber-100 text-amber-700'
+  : 'bg-emerald-100 text-emerald-700';
+
+function AiAnalysis({ a }) {
+  if (!a) return null;
+  return (
+    <div className="mt-4 space-y-3 border-t border-indigo-200 pt-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-black uppercase tracking-wider text-indigo-600">🧠 AI Analysis</span>
+        {a.severity && <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${sevCls(a.severity)}`}>{a.severity}</span>}
+        {a.estimated_overall_improvement && <span className="text-[10px] text-emerald-600 font-semibold">Expected: {a.estimated_overall_improvement}</span>}
+      </div>
+      {a.summary && <p className="text-sm text-slate-700"><b>Summary:</b> {a.summary}</p>}
+      {a.root_cause && (
+        <div className="bg-white border border-slate-200 rounded-xl p-3">
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Root cause</p>
+          <p className="text-xs text-slate-700">{a.root_cause}</p>
+        </div>
+      )}
+      {(a.issues || []).length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold text-slate-400 uppercase">Issues found</p>
+          {a.issues.map((is, i) => (
+            <div key={i} className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs">
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold mr-2 ${sevCls(is.severity)}`}>{is.type}</span>
+              <span className="text-slate-700">{is.description}</span>
+              {is.evidence && <p className="text-[10px] text-slate-400 mt-1">Evidence: {is.evidence}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+      {(a.index_recommendations || []).length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-bold text-slate-400 uppercase">Index recommendations</p>
+          {a.index_recommendations.map((ix, i) => (
+            <div key={i} className="bg-white border border-slate-200 rounded-lg p-3">
+              <p className="text-xs text-slate-600 mb-1.5">{ix.reason} {ix.estimated_improvement && <span className="text-emerald-600 font-semibold">({ix.estimated_improvement})</span>}</p>
+              <div className="flex items-start gap-2">
+                <pre className="flex-1 bg-slate-900 text-green-400 rounded-lg p-2 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{ix.create_sql}</pre>
+                <CopyBtn text={ix.create_sql} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {a.query_rewrite && a.query_rewrite.applicable && a.query_rewrite.optimized_sql && (
+        <div className="bg-white border border-slate-200 rounded-lg p-3">
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Suggested rewrite {a.query_rewrite.expected_gain && <span className="text-emerald-600">· {a.query_rewrite.expected_gain}</span>}</p>
+          <pre className="bg-slate-900 text-green-400 rounded-lg p-2 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap">{a.query_rewrite.optimized_sql}</pre>
+        </div>
+      )}
+      {(a.priority_actions || []).length > 0 && (
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Priority actions</p>
+          <ul className="space-y-1">{a.priority_actions.map((p, i) => <li key={i} className="text-xs text-slate-700">{p}</li>)}</ul>
+        </div>
+      )}
+      {a.business_impact && <p className="text-xs text-slate-500"><b>Business impact:</b> {a.business_impact}</p>}
+    </div>
+  );
+}
 
 /* ── Helpers ── */
 function fmtNum(n) {
@@ -65,9 +133,24 @@ function CopyBtn({ text }) {
   );
 }
 
-function QueryDetail({ q }) {
+function QueryDetail({ q, connId }) {
   const warnings = getWarnings(q);
   const sql = q.sql_text || '';
+  const [ai, setAi] = useState(null);   // { loading } | { result } | { err }
+  const runAi = async () => {
+    setAi({ loading: true });
+    try {
+      const res = await analyzeQuery(connId, {
+        sql_text: sql, db_name: q.db_name,
+        execution_count:    Number(q.execution_count) || 0,
+        avg_elapsed_ms:     Number(q.avg_elapsed_ms) || 0,
+        total_cpu_ms:       Number(q.total_cpu_ms) || 0,
+        avg_logical_reads:  Number(q.avg_logical_reads) || 0,
+        avg_physical_reads: Number(q.avg_physical_reads) || 0,
+      });
+      setAi(res.status === 'success' ? { result: res.analysis } : { err: res.error || 'Analysis failed' });
+    } catch (e) { setAi({ err: e?.response?.data?.detail || e.message }); }
+  };
   return (
     <div className="space-y-4 py-1">
       <div>
@@ -117,6 +200,16 @@ function QueryDetail({ q }) {
           ))}
         </div>
       )}
+
+      {/* AI analysis */}
+      <div>
+        <button onClick={runAi} disabled={ai?.loading}
+          className="inline-flex items-center gap-2 h-9 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-xs font-bold shadow hover:shadow-lg disabled:opacity-60 transition-all">
+          <Zap size={13} /> {ai?.loading ? 'Analysing with AI…' : ai?.result ? 'Re-analyse with AI' : 'Analyse with AI'}
+        </button>
+        {ai?.err && <p className="text-xs text-red-600 mt-2">AI analysis failed: {ai.err}</p>}
+        {ai?.result && <AiAnalysis a={ai.result} />}
+      </div>
     </div>
   );
 }
@@ -148,6 +241,7 @@ function Err({ msg, onRetry }) {
 /* ── Main Page ── */
 export default function MSSQLSlowQueries() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(null);
   const [search, setSearch]     = useState('');
   const [dbFilter, setDbFilter] = useState('');
@@ -293,11 +387,12 @@ export default function MSSQLSlowQueries() {
                     return (
                       <React.Fragment key={key}>
                         <tr
-                          className={`border-b border-slate-100 cursor-pointer transition-colors ${isOpen ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                          onClick={() => setExpanded(isOpen ? null : key)}
+                          className="border-b border-slate-100 cursor-pointer transition-colors hover:bg-blue-50/60 group"
+                          onClick={() => navigate(`/mssql-dashboard/${id}/slow-queries/detail`, { state: { query: q } })}
+                          title="Open full analysis"
                         >
-                          <td className="px-3 py-3 text-slate-400">
-                            {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          <td className="px-3 py-3 text-slate-300 group-hover:text-blue-500">
+                            <ChevronRight size={14} />
                           </td>
                           <td className="px-4 py-3 max-w-xs">
                             <div className="flex items-center gap-2">
@@ -351,13 +446,6 @@ export default function MSSQLSlowQueries() {
                             </div>
                           </td>
                         </tr>
-                        {isOpen && (
-                          <tr className="bg-blue-50 border-b border-blue-100">
-                            <td colSpan={10} className="px-5 py-4">
-                              <QueryDetail q={q} />
-                            </td>
-                          </tr>
-                        )}
                       </React.Fragment>
                     );
                   })}

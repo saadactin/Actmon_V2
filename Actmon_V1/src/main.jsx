@@ -22,18 +22,17 @@ const ErrorLogs               = React.lazy(() => import('./pages/mysql/ErrorLogs
 const ErrorAnalysis           = React.lazy(() => import('./pages/mysql/ErrorAnalysis'));
 const MySQLSelfHeal           = React.lazy(() => import('./pages/mysql/MySQLSelfHeal'));
 const IndexAnalysis           = React.lazy(() => import('./pages/mysql/IndexAnalysis'));
-const MySQLBackupPage         = React.lazy(() => import('./pages/mysql/MySQLBackupPage'));
 const MySQLReportsPage        = React.lazy(() => import('./pages/mysql/MySQLReportsPage'));
 const PostgreSQLDashboard     = React.lazy(() => import('./pages/postgresql/PostgreSQLDashboard'));
-const PostgreSQLBackupPage    = React.lazy(() => import('./pages/postgresql/PostgreSQLBackupPage'));
 const PostgreSQLReportsPage   = React.lazy(() => import('./pages/postgres/PostgreSQLReportsPage'));
 const PGSlowQueries           = React.lazy(() => import('./pages/postgresql/SlowQueries'));
 const PGQueryDetail           = React.lazy(() => import('./pages/postgresql/QueryDetailPage'));
 const PGErrorLogs             = React.lazy(() => import('./pages/postgresql/ErrorLogs'));
 const PGIndexAnalysis         = React.lazy(() => import('./pages/postgresql/IndexAnalysis'));
 const MSSQLDashboard          = React.lazy(() => import('./pages/mssql/MSSQLDashboard'));
-const MSSQLBackupPage         = React.lazy(() => import('./pages/mssql/MSSQLBackupPage'));
 const MSSQLSlowQueries        = React.lazy(() => import('./pages/mssql/SlowQueries'));
+const MSSQLQueryDetail        = React.lazy(() => import('./pages/mssql/QueryDetailPage'));
+const MSSQLReportsPage        = React.lazy(() => import('./pages/mssql/MSSQLReportsPage'));
 const MSSQLErrorLogs          = React.lazy(() => import('./pages/mssql/ErrorLogs'));
 const MSSQLIndexAnalysis      = React.lazy(() => import('./pages/mssql/IndexAnalysis'));
 const OracleDashboard         = React.lazy(() => import('./pages/oracle/OracleDashboard'));
@@ -155,10 +154,6 @@ const router = createBrowserRouter([
         element: <IndexAnalysis />,
       },
       {
-        path: 'mysql-dashboard/:id/backup',
-        element: <MySQLBackupPage />,
-      },
-      {
         path: 'mysql-dashboard/:id/reports',
         element: <MySQLReportsPage />,
       },
@@ -168,15 +163,15 @@ const router = createBrowserRouter([
       { path: 'postgresql-dashboard/:id/slow-queries/detail', element: <PGQueryDetail /> },
       { path: 'postgresql-dashboard/:id/error-logs', element: <PGErrorLogs /> },
       { path: 'postgresql-dashboard/:id/index-analysis', element: <PGIndexAnalysis /> },
-      { path: 'postgresql-dashboard/:id/backup', element: <PostgreSQLBackupPage /> },
       { path: 'postgresql-dashboard/:id/reports', element: <PostgreSQLReportsPage /> },
       { path: 'postgresql-dashboard/:id/:tab', element: <PostgreSQLDashboard /> },
       // MSSQL
       { path: 'mssql-dashboard/:id', element: <MSSQLDashboard /> },
       { path: 'mssql-dashboard/:id/slow-queries', element: <MSSQLSlowQueries /> },
+      { path: 'mssql-dashboard/:id/slow-queries/detail', element: <MSSQLQueryDetail /> },
       { path: 'mssql-dashboard/:id/error-logs', element: <MSSQLErrorLogs /> },
       { path: 'mssql-dashboard/:id/index-analysis', element: <MSSQLIndexAnalysis /> },
-      { path: 'mssql-dashboard/:id/backup', element: <MSSQLBackupPage /> },
+      { path: 'mssql-dashboard/:id/reports', element: <MSSQLReportsPage /> },
       { path: 'mssql-dashboard/:id/:tab', element: <MSSQLDashboard /> },
       // Oracle
       { path: 'oracle-dashboard/:id', element: <OracleDashboard /> },
