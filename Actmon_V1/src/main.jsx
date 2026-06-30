@@ -55,6 +55,16 @@ const AddOsServerPage         = React.lazy(() => import('./pages/databases/AddOs
 const AddServerPage           = React.lazy(() => import('./pages/databases/AddServerPage'));
 const ServerDetail            = React.lazy(() => import('./pages/databases/ServerDetail'));
 const CloudPage               = React.lazy(() => import('./pages/cloud/CloudPage').then(m => ({ default: m.CloudPage })));
+// ── Cloud Discovery feature (from cloud service) — lazy-loaded, namespaced ──
+const CloudDashboard          = React.lazy(() => import('./features/cloud/pages/CloudDashboard').then(m => ({ default: m.CloudDashboard })));
+const CloudAccountsPage       = React.lazy(() => import('./features/cloud/pages/CloudAccountsPage').then(m => ({ default: m.CloudAccountsPage })));
+const CloudResourcesPage      = React.lazy(() => import('./features/cloud/pages/ResourcesPage').then(m => ({ default: m.ResourcesPage })));
+const CloudResourceDetailPage = React.lazy(() => import('./features/cloud/pages/ResourceDetailPage').then(m => ({ default: m.ResourceDetailPage })));
+const CloudCostPage           = React.lazy(() => import('./features/cloud/pages/CostPage').then(m => ({ default: m.CostPage })));
+const CloudSecurityPage       = React.lazy(() => import('./features/cloud/pages/SecurityPosturePage').then(m => ({ default: m.SecurityPosturePage })));
+const CloudTopologyPage       = React.lazy(() => import('./features/cloud/pages/CloudTopologyPage').then(m => ({ default: m.CloudTopologyPage })));
+const CloudCompliancePage     = React.lazy(() => import('./features/cloud/pages/CompliancePage').then(m => ({ default: m.CompliancePage })));
+const CloudAlertsPage         = React.lazy(() => import('./features/cloud/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const MLPage                  = React.lazy(() => import('./pages/ml/MLPage').then(m => ({ default: m.MLPage })));
 const AlertsPage              = React.lazy(() => import('./pages/alerts/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const InfraPage               = React.lazy(() => import('./pages/infra/InfraPage').then(m => ({ default: m.InfraPage })));
@@ -211,10 +221,16 @@ const router = createBrowserRouter([
         element: <ServerDetail />,
       },
       
-      {
-        path: 'cloud',
-        element: <CloudPage />,
-      },
+      // ── Cloud Discovery feature routes (served by the cloud microservice) ──
+      { path: 'cloud', element: <CloudDashboard /> },
+      { path: 'cloud/accounts', element: <CloudAccountsPage /> },
+      { path: 'cloud/resources', element: <CloudResourcesPage /> },
+      { path: 'cloud/resources/:resourceId', element: <CloudResourceDetailPage /> },
+      { path: 'cloud/cost', element: <CloudCostPage /> },
+      { path: 'cloud/security', element: <CloudSecurityPage /> },
+      { path: 'cloud/topology', element: <CloudTopologyPage /> },
+      { path: 'cloud/compliance', element: <CloudCompliancePage /> },
+      { path: 'cloud/alerts', element: <CloudAlertsPage /> },
       {
         path: 'infra',
         element: <InfraPage />,
