@@ -344,6 +344,7 @@ export default function DatabaseServersPage({ tech = null }) {
   const [envFilter, setEnvFilter]           = useState('All');
   const [search, setSearch]                 = useState('');
   const [terminalServer, setTerminalServer] = useState(null);
+  const [statusFilter, setStatusFilter]     = useState(null); // null | online | warning | offline | clusters (KPI card click)
 
   const { data: summaryData } = useQuery({
     queryKey: ['serverSummary'],
@@ -450,9 +451,34 @@ export default function DatabaseServersPage({ tech = null }) {
       s.ip_address.includes(search)
     );
 
+  // ── Tech-specific counts (only THIS technology's servers, not the global 11) ──
+  const isOnline  = (s) => s.status === 'Connected';
+  const isWarning = (s) => s.status === 'Warning';
+  const isOffline = (s) => s.status !== 'Connected' && s.status !== 'Warning';
+  const isClustered = (s) => s.node_type !== 'Standalone' && !!s.cluster_name;
+  const techSummary = {
+    total:        servers.length,
+    connected:    servers.filter(isOnline).length,
+    warning:      servers.filter(isWarning).length,
+    disconnected: servers.filter(isOffline).length,
+    clusters:     new Set(servers.filter(isClustered).map((s) => s.cluster_name)).size,
+  };
+  const techHealthPct = techSummary.total > 0 ? Math.round((techSummary.connected / techSummary.total) * 100) : 0;
+
+  // ── Apply the KPI-card click filter to the displayed servers ──
+  const matchesStatus = (s) => {
+    if (!statusFilter) return true;
+    if (statusFilter === 'online')   return isOnline(s);
+    if (statusFilter === 'warning')  return isWarning(s);
+    if (statusFilter === 'offline')  return isOffline(s);
+    if (statusFilter === 'clusters') return isClustered(s);
+    return true;
+  };
+  const shownServers = servers.filter(matchesStatus);
+
   const clusterMap = {};
   const standaloneList = [];
-  for (const s of servers) {
+  for (const s of shownServers) {
     if (s.node_type !== 'Standalone' && s.cluster_name) {
       (clusterMap[s.cluster_name] = clusterMap[s.cluster_name] || []).push(s);
     } else {
@@ -464,12 +490,12 @@ export default function DatabaseServersPage({ tech = null }) {
     <div className="min-h-screen bg-[#f1f4f9]">
 
       {/* ══════════════════ HERO TOPBAR ══════════════════ */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 px-6 pt-6 pb-0 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.03]"
-          style={{ backgroundImage:'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize:'32px 32px' }}/>
+      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 pt-3 pb-4 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage:'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize:'28px 28px' }}/>
 
         {/* breadcrumb */}
-        <div className="relative flex items-center gap-2 text-xs text-slate-500 mb-5">
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
           <button onClick={() => goToTech(null)} className="hover:text-slate-300 cursor-pointer transition-colors">ActMon</button>
           <ChevronRight size={11}/>
           <button onClick={() => goToTech(null)} className="hover:text-slate-300 cursor-pointer transition-colors">Databases</button>
@@ -478,46 +504,46 @@ export default function DatabaseServersPage({ tech = null }) {
         </div>
 
         {/* header row */}
-        <div className="relative flex flex-col md:flex-row md:items-start justify-between gap-5 mb-6">
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-3">
             <button
               onClick={() => goToTech(null)}
-              className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-white transition-all flex-shrink-0"
+              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-white transition-all flex-shrink-0"
               title="Back to technologies"
             >
-              <ChevronLeft size={18}/>
+              <ChevronLeft size={16}/>
             </button>
-            <div className={`w-10 h-10 rounded-xl ${techConfig.accent} flex items-center justify-center flex-shrink-0 shadow-lg`}>
-              <span className="text-xl">{techConfig.emoji}</span>
+            <div className={`w-9 h-9 rounded-lg ${techConfig.accent} flex items-center justify-center flex-shrink-0 shadow-md`}>
+              <span className="text-lg">{techConfig.emoji}</span>
             </div>
             <div>
-              <h1 className="text-2xl font-black text-white tracking-tight leading-none">{techConfig.name} Servers</h1>
-              <p className="text-slate-400 text-xs mt-0.5">
+              <h1 className="text-lg font-black text-white tracking-tight leading-none">{techConfig.name} Servers</h1>
+              <p className="text-sky-200/70 text-[11px] mt-0.5">
                 {servers.length} server{servers.length !== 1 ? 's' : ''} · {techConfig.subtitle}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 flex-shrink-0">
-            <div className="hidden md:flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 backdrop-blur-sm">
-              <div className="relative w-9 h-9">
-                <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
-                  <circle cx="18" cy="18" r="15" fill="none" stroke="#ffffff10" strokeWidth="3"/>
+          <div className="flex items-center gap-2.5 flex-shrink-0">
+            <div className="hidden md:flex items-center gap-2.5 bg-white/10 border border-white/15 rounded-xl px-3 py-1.5 backdrop-blur-sm">
+              <div className="relative w-8 h-8">
+                <svg className="w-8 h-8 -rotate-90" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="15" fill="none" stroke="#ffffff20" strokeWidth="3"/>
                   <circle cx="18" cy="18" r="15" fill="none"
-                    stroke={healthPct>80?'#22c55e':healthPct>50?'#f59e0b':'#ef4444'}
-                    strokeWidth="3" strokeDasharray={`${(healthPct/100)*94.2} 94.2`} strokeLinecap="round"/>
+                    stroke={techHealthPct>80?'#22c55e':techHealthPct>50?'#f59e0b':'#ef4444'}
+                    strokeWidth="3" strokeDasharray={`${(techHealthPct/100)*94.2} 94.2`} strokeLinecap="round"/>
                 </svg>
-                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-white">{healthPct}%</span>
+                <span className="absolute inset-0 flex items-center justify-center text-[9px] font-black text-white">{techHealthPct}%</span>
               </div>
               <div>
-                <p className="text-white font-black text-sm leading-none">{summary.connected}/{summary.total}</p>
-                <p className="text-slate-400 text-[10px] mt-0.5">servers online</p>
+                <p className="text-white font-black text-[13px] leading-none">{techSummary.connected}/{techSummary.total}</p>
+                <p className="text-sky-200/70 text-[10px] mt-0.5">online</p>
               </div>
             </div>
             {canHere('add') && (
               <button
                 onClick={() => navigate('/databases/add-os-server')}
-                className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
+                className="h-9 px-4 rounded-lg bg-white text-blue-700 font-bold flex items-center gap-1.5 hover:bg-sky-50 shadow-sm transition-all text-sm flex-shrink-0"
               >
                 <Plus size={15}/> Add Server
               </button>
@@ -525,29 +551,46 @@ export default function DatabaseServersPage({ tech = null }) {
           </div>
         </div>
 
-        {/* KPI stat bar */}
-        <div className="relative grid grid-cols-2 md:grid-cols-5 gap-px bg-white/10 rounded-t-2xl overflow-hidden -mx-6">
-          {[
-            { icon:<Server size={16}/>,        label:'Total',    value:summary.total,        sub:'servers registered',  color:'text-white',       from:'from-slate-800/60' },
-            { icon:<CheckCircle2 size={16}/>,  label:'Online',   value:summary.connected,    sub:'connected now',       color:'text-emerald-400', from:'from-emerald-900/30' },
-            { icon:<AlertTriangle size={16}/>, label:'Warning',  value:summary.warning,      sub:'need attention',      color:'text-amber-400',   from:'from-amber-900/30' },
-            { icon:<XCircle size={16}/>,       label:'Offline',  value:summary.disconnected, sub:'unreachable',         color:'text-red-400',     from:'from-red-900/30' },
-            { icon:<GitBranch size={16}/>,     label:'Clusters', value:summary.clusters,     sub:'HA groups',           color:'text-indigo-300',  from:'from-indigo-900/30' },
-          ].map(({ icon, label, value, sub, color, from }) => (
-            <div key={label} className={`bg-gradient-to-b ${from} to-slate-900/40 backdrop-blur px-5 py-4`}>
-              <div className={`flex items-center gap-2 ${color} mb-1`}>
-                {icon}
-                <span className="text-[11px] font-bold uppercase tracking-widest opacity-80">{label}</span>
-              </div>
-              <p className={`text-3xl font-black ${color} leading-none`}>{value ?? 0}</p>
-              <p className="text-slate-500 text-[10px] mt-1">{sub}</p>
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* ══════════════════ CONTENT ══════════════════ */}
       <div className="max-w-[1800px] mx-auto px-6 py-6">
+
+        {/* KPI cards — show THIS technology's counts; click to filter the list below */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+          {[
+            { key:null,        icon:<Server size={18}/>,        label:'Total',    value:techSummary.total,        sub:'servers',        iconBg:'bg-slate-100',   iconColor:'text-slate-500',   valueColor:'text-slate-800',   ring:'ring-slate-300' },
+            { key:'online',    icon:<CheckCircle2 size={18}/>,  label:'Online',   value:techSummary.connected,    sub:'connected now',  iconBg:'bg-emerald-50',  iconColor:'text-emerald-500', valueColor:'text-emerald-600', ring:'ring-emerald-300' },
+            { key:'warning',   icon:<AlertTriangle size={18}/>, label:'Warning',  value:techSummary.warning,      sub:'need attention', iconBg:'bg-amber-50',    iconColor:'text-amber-500',   valueColor:'text-amber-600',   ring:'ring-amber-300' },
+            { key:'offline',   icon:<XCircle size={18}/>,       label:'Offline',  value:techSummary.disconnected, sub:'unreachable',    iconBg:'bg-red-50',      iconColor:'text-red-500',     valueColor:'text-red-600',     ring:'ring-red-300' },
+            { key:'clusters',  icon:<GitBranch size={18}/>,     label:'Clusters', value:techSummary.clusters,     sub:'HA groups',      iconBg:'bg-blue-50',     iconColor:'text-blue-500',    valueColor:'text-blue-600',    ring:'ring-blue-300' },
+          ].map(({ key, icon, label, value, sub, iconBg, iconColor, valueColor, ring }) => {
+            const active = statusFilter === key && key !== null ? true : (key === null && statusFilter === null);
+            return (
+              <button key={label} type="button"
+                onClick={() => setStatusFilter((prev) => (key === null ? null : (prev === key ? null : key)))}
+                className={`text-left bg-white rounded-2xl border shadow-sm px-4 py-3.5 flex items-center gap-3 transition-all hover:shadow-md hover:-translate-y-0.5 ${
+                  active ? `border-transparent ring-2 ${ring}` : 'border-slate-200'}`}>
+                <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${iconBg} ${iconColor}`}>
+                  {icon}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+                  <p className={`text-2xl font-black leading-none ${valueColor}`}>{value ?? 0}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 truncate">{sub}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* active filter indicator */}
+        {statusFilter && (
+          <div className="flex items-center gap-2 mb-4 -mt-2">
+            <span className="text-xs text-slate-500">Filtered by <b className="text-slate-700 capitalize">{statusFilter}</b> · {shownServers.length} of {servers.length}</span>
+            <button onClick={() => setStatusFilter(null)} className="text-xs font-bold text-blue-600 hover:text-blue-700">Clear</button>
+          </div>
+        )}
 
         {/* filter + search + tech switcher */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3 flex flex-wrap items-center gap-2 mb-6">

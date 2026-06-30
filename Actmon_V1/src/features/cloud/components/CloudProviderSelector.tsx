@@ -10,6 +10,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Cloud, Plus, Search } from 'lucide-react';
 import { CloudAccount } from '../types/cloud';
+import { usePermissions } from '../../../hooks/usePermissions';
 
 // ─── Provider metadata ────────────────────────────────────────────────────────
 
@@ -73,6 +74,7 @@ export const CloudProviderSelector: React.FC<Props> = ({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const { canHere } = usePermissions();
 
   // Close on outside click
   useEffect(() => {
@@ -306,8 +308,8 @@ export const CloudProviderSelector: React.FC<Props> = ({
               )}
             </div>
 
-            {/* Footer: add account */}
-            {onAddAccount && (
+            {/* Footer: add account (gated by Add permission) */}
+            {onAddAccount && canHere('add') && (
               <div style={{ borderTop: '1px solid #e2e8f0', padding: '8px 0' }}>
                 <button
                   onClick={() => { onAddAccount(); setOpen(false); }}

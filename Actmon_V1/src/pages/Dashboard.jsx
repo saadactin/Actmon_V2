@@ -98,37 +98,45 @@ const StatPill = ({ icon, label, value, color = '#94a3b8' }) => (
   </div>
 );
 
-const KPICard = ({ icon, label, value, sub, iconBg, valueColor = '#0f172a', trend }) => (
-  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col gap-3 hover:shadow-md transition-shadow">
-    <div className="flex items-center justify-between">
-      <div
-        className="w-10 h-10 rounded-xl flex items-center justify-center"
-        style={{ backgroundColor: iconBg }}
-      >
-        {icon}
-      </div>
-      {trend !== undefined && (
-        <span
-          className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full"
-          style={{
-            color: trend >= 0 ? '#22c55e' : '#ef4444',
-            backgroundColor: trend >= 0 ? '#dcfce7' : '#fee2e2',
-          }}
-        >
-          {trend >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-          {Math.abs(trend)}
+const KPICard = ({ icon, label, value, sub, iconBg, valueColor = '#0f172a', trend, onClick, active }) => {
+  const Tag = onClick ? 'button' : 'div';
+  return (
+  <Tag
+    onClick={onClick}
+    className={`text-left w-full bg-white rounded-xl border shadow-sm px-4 py-3 flex items-center gap-3 transition-all ${
+      onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5' : 'hover:shadow-md'
+    } ${active ? 'border-transparent ring-2 ring-blue-400' : 'border-slate-200'}`}
+  >
+    <div
+      className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+      style={{ backgroundColor: iconBg }}
+    >
+      {icon}
+    </div>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center gap-2">
+        <span className="text-2xl font-extrabold tracking-tight leading-none" style={{ color: valueColor }}>
+          {value}
         </span>
-      )}
-    </div>
-    <div>
-      <div className="text-3xl font-extrabold tracking-tight" style={{ color: valueColor }}>
-        {value}
+        {trend !== undefined && (
+          <span
+            className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+            style={{
+              color: trend >= 0 ? '#16a34a' : '#ef4444',
+              backgroundColor: trend >= 0 ? '#dcfce7' : '#fee2e2',
+            }}
+          >
+            {trend >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
+            {Math.abs(trend)}
+          </span>
+        )}
       </div>
-      <div className="text-sm font-semibold text-slate-700 mt-0.5">{label}</div>
-      {sub && <div className="text-xs text-slate-400 mt-0.5">{sub}</div>}
+      <div className="text-[12px] font-semibold text-slate-700 mt-0.5 truncate">{label}</div>
+      {sub && <div className="text-[10px] text-slate-400 truncate">{sub}</div>}
     </div>
-  </div>
-);
+  </Tag>
+  );
+};
 
 const AgentChip = ({ agent, onClick }) => {
   const level = statusLevel(agent.status);
@@ -292,7 +300,11 @@ export const Dashboard = () => {
       );
     }
     if (statusFilter !== 'all') {
-      list = list.filter((a) => statusLevel(a.status) === statusFilter);
+      list = list.filter((a) => {
+        const l = statusLevel(a.status);
+        // "Critical / Offline" KPI counts both levels — match both here too.
+        return statusFilter === 'critical' ? (l === 'critical' || l === 'offline') : l === statusFilter;
+      });
     }
     list = [...list].sort((a, b) => {
       let va = a[sortKey] ?? '';
@@ -380,65 +392,8 @@ export const Dashboard = () => {
                 </button>
                 <span className="text-xs text-slate-500 tabular-nums">{countdown}s</span>
               </div>
-
-              {/* Health badge */}
-              <div
-                className="px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-2"
-                style={{
-                  backgroundColor: metrics.allOk ? '#166534' : '#7f1d1d',
-                  color: metrics.allOk ? '#86efac' : '#fca5a5',
-                  border: `1px solid ${metrics.allOk ? '#16a34a' : '#ef4444'}`,
-                }}
-              >
-                {metrics.allOk ? (
-                  <CheckCircle className="h-4 w-4" />
-                ) : (
-                  <ShieldAlert className="h-4 w-4" />
-                )}
-                {metrics.allOk ? 'All OK' : 'Issues Detected'}
-              </div>
             </div>
           </div>
-        </div>
-
-        {/* Bottom row — stat pills */}
-        <div className="flex flex-wrap gap-2 px-6 pb-5 border-t border-slate-700/50 pt-4">
-          <StatPill
-            icon={<Server className="h-3.5 w-3.5" />}
-            label="Total"
-            value={metrics.total}
-            color="#94a3b8"
-          />
-          <StatPill
-            icon={<CheckCircle className="h-3.5 w-3.5" />}
-            label="Online"
-            value={metrics.online}
-            color="#22c55e"
-          />
-          <StatPill
-            icon={<AlertTriangle className="h-3.5 w-3.5" />}
-            label="Warning"
-            value={metrics.warning}
-            color="#f59e0b"
-          />
-          <StatPill
-            icon={<ShieldAlert className="h-3.5 w-3.5" />}
-            label="Critical"
-            value={metrics.critical}
-            color="#ef4444"
-          />
-          <StatPill
-            icon={<Cpu className="h-3.5 w-3.5" />}
-            label="Avg CPU"
-            value={`${metrics.avgCpu.toFixed(1)}%`}
-            color="#6366f1"
-          />
-          <StatPill
-            icon={<Users className="h-3.5 w-3.5" />}
-            label="Sessions"
-            value={metrics.sessions.toLocaleString()}
-            color="#06b6d4"
-          />
         </div>
 
         {agentsError && (
@@ -457,6 +412,8 @@ export const Dashboard = () => {
           value={metrics.total}
           sub="Registered monitors"
           iconBg="#dbeafe"
+          onClick={() => setStatusFilter('all')}
+          active={statusFilter === 'all'}
         />
         <KPICard
           icon={<CheckCircle className="h-5 w-5 text-green-600" />}
@@ -466,6 +423,8 @@ export const Dashboard = () => {
           iconBg="#dcfce7"
           valueColor="#16a34a"
           trend={metrics.total > 0 ? metrics.online : undefined}
+          onClick={() => setStatusFilter('online')}
+          active={statusFilter === 'online'}
         />
         <KPICard
           icon={<AlertTriangle className="h-5 w-5 text-amber-600" />}
@@ -474,6 +433,8 @@ export const Dashboard = () => {
           sub="Degraded agents"
           iconBg="#fef3c7"
           valueColor={metrics.warning > 0 ? '#d97706' : '#0f172a'}
+          onClick={() => setStatusFilter('warning')}
+          active={statusFilter === 'warning'}
         />
         <KPICard
           icon={<ShieldAlert className="h-5 w-5 text-red-600" />}
@@ -482,6 +443,8 @@ export const Dashboard = () => {
           sub="Needs attention"
           iconBg="#fee2e2"
           valueColor={metrics.critical > 0 ? '#dc2626' : '#0f172a'}
+          onClick={() => setStatusFilter('critical')}
+          active={statusFilter === 'critical'}
         />
         <KPICard
           icon={<Cpu className="h-5 w-5 text-indigo-600" />}
@@ -499,101 +462,6 @@ export const Dashboard = () => {
           iconBg="#cffafe"
         />
       </div>
-
-      {/* ── FLEET STRIP + DB DISTRIBUTION ────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Fleet strip */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-              <Globe className="h-4 w-4 text-blue-500" />
-              Fleet Status
-            </h2>
-            <span className="text-xs text-slate-400">{agents.length} agents</span>
-          </div>
-          <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-1">
-            {agents.length === 0 && (
-              <p className="text-xs text-slate-400 py-4">No agents registered.</p>
-            )}
-            {agents.map((a) => (
-              <AgentChip
-                key={a.name}
-                agent={a}
-                onClick={(ag) => navigate(`/agents/${ag.name}`)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* DB engine distribution */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-          <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-3">
-            <Database className="h-4 w-4 text-indigo-500" />
-            Engine Distribution
-          </h2>
-          {dbDistribution.length === 0 ? (
-            <p className="text-xs text-slate-400">No data.</p>
-          ) : (
-            <div className="space-y-2">
-              {dbDistribution.map(({ type, count }) => {
-                const pct = agents.length > 0 ? (count / agents.length) * 100 : 0;
-                const color = getDbColor(type);
-                return (
-                  <div key={type} className="flex items-center gap-3">
-                    <span className="text-xs font-semibold text-slate-600 w-24 truncate">{type}</span>
-                    <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pct}%`, backgroundColor: color }}
-                      />
-                    </div>
-                    <span className="text-xs font-bold w-6 text-right" style={{ color }}>
-                      {count}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* ── DB CPU BAR CHART ─────────────────────────────────────────────── */}
-      {cpuChartData.length > 0 && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-          <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2 mb-4">
-            <Cpu className="h-4 w-4 text-indigo-500" />
-            DB CPU per Agent
-            <span className="text-xs font-normal text-slate-400 ml-1">
-              (top {cpuChartData.length})
-            </span>
-          </h2>
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart data={cpuChartData} margin={{ top: 4, right: 12, left: -24, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis
-                dataKey="name"
-                tick={{ fontSize: 10, fill: '#64748b' }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                domain={[0, 100]}
-                tick={{ fontSize: 10, fill: '#64748b' }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={(v) => `${v}%`}
-              />
-              <Tooltip content={<CustomBarTooltip />} cursor={{ fill: '#f8fafc' }} />
-              <Bar dataKey="cpu" name="DB CPU" radius={[4, 4, 0, 0]} maxBarSize={36}>
-                {cpuChartData.map((entry, i) => (
-                  <Cell key={i} fill={cpuColor(entry.cpu)} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       {/* ── AGENTS TABLE + ALERTS ─────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -621,29 +489,6 @@ export const Dashboard = () => {
               </div>
             </div>
 
-            {/* Status filter pills */}
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {[
-                { key: 'all', label: 'All', color: '#64748b' },
-                { key: 'online', label: 'Online', color: '#22c55e' },
-                { key: 'warning', label: 'Warning', color: '#f59e0b' },
-                { key: 'critical', label: 'Critical', color: '#ef4444' },
-                { key: 'offline', label: 'Offline', color: '#94a3b8' },
-              ].map(({ key, label, color }) => (
-                <button
-                  key={key}
-                  onClick={() => setStatusFilter(key)}
-                  className="px-2.5 py-0.5 rounded-full text-xs font-semibold transition-all"
-                  style={
-                    statusFilter === key
-                      ? { backgroundColor: color, color: '#fff', border: `1px solid ${color}` }
-                      : { backgroundColor: `${color}12`, color: '#475569', border: `1px solid ${color}30` }
-                  }
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Table */}

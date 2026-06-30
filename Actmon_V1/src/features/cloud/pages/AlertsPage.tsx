@@ -10,10 +10,10 @@ export const AlertsPage = () => {
 
   const fetchAlerts = async () => {
     try {
-      const res = await fetch(`http://localhost:8002/api/v1/cloud/alerts`);
+      const res = await fetch(`/api/v1/cloud/alerts`);
       if (res.ok) {
         const data = await res.json();
-        setAlerts(data);
+        setAlerts(Array.isArray(data) ? data : (data?.alerts ?? []));
       }
     } catch (err) {
       console.error("Failed to fetch alerts", err);
@@ -31,7 +31,7 @@ export const AlertsPage = () => {
   const handleSimulate = async () => {
     setSimulating(true);
     try {
-      const res = await fetch(`http://localhost:8002/api/v1/cloud/alerts/simulate`, {
+      const res = await fetch(`/api/v1/cloud/alerts/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -52,7 +52,7 @@ export const AlertsPage = () => {
 
   const handleMarkRead = async (id: string) => {
     try {
-      await fetch(`http://localhost:8002/api/v1/cloud/alerts/${id}/read`, { method: 'POST' });
+      await fetch(`/api/v1/cloud/alerts/${id}/read`, { method: 'POST' });
       fetchAlerts();
     } catch (err) {
       console.error(err);

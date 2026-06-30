@@ -10,6 +10,7 @@ import { useAllResources } from '../hooks/useResources';
 import { useCloudStore } from '../state/cloudStore';
 import { DrawerPanel } from '../../../components/ui/DrawerPanel';
 import { AddCloudAccountForm } from './AddCloudAccountForm';
+import { usePermissions } from '../../../hooks/usePermissions';
 
 const TABS = [
   { to: '/cloud', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -28,6 +29,8 @@ export const CloudShell: React.FC = () => {
   const { data: resources } = useAllResources();
   const isDrawerOpen = useCloudStore((s) => s.isAddAccountDrawerOpen);
   const setDrawerOpen = useCloudStore((s) => s.setAddAccountDrawerOpen);
+  const { canHere } = usePermissions();
+  const canAdd = canHere('add');
 
   const accountCount = accounts?.length ?? 0;
   const resourceCount = resources?.length ?? 0;
@@ -60,10 +63,12 @@ export const CloudShell: React.FC = () => {
               style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}>
               <Server size={13} className="text-sky-300" /> {resourceCount} Resources
             </span>
-            <button onClick={() => setDrawerOpen(true)}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold bg-white text-blue-700 hover:bg-sky-50 transition-all shadow-sm">
-              <Plus size={15} /> Add Account
-            </button>
+            {canAdd && (
+              <button onClick={() => setDrawerOpen(true)}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold bg-white text-blue-700 hover:bg-sky-50 transition-all shadow-sm">
+                <Plus size={15} /> Add Account
+              </button>
+            )}
             <button onClick={() => qc.invalidateQueries()}
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all"
               style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)' }}>
@@ -96,8 +101,8 @@ export const CloudShell: React.FC = () => {
         <Outlet />
       </div>
 
-      {/* ─── Add Cloud Account drawer (global — works from any cloud tab) ─── */}
-      <DrawerPanel open={isDrawerOpen} onClose={() => setDrawerOpen(false)} title="Connect a Cloud Provider">
+      {/* ─── Add Cloud Account drawer (global — works from any cloud tab; add-gated) ─── */}
+      <DrawerPanel open={isDrawerOpen && canAdd} onClose={() => setDrawerOpen(false)} title="Connect a Cloud Provider">
         <AddCloudAccountForm onSuccess={() => setDrawerOpen(false)} />
       </DrawerPanel>
     </div>

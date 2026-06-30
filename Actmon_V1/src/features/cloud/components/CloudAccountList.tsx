@@ -6,11 +6,13 @@ import { useCloudStore } from '../state/cloudStore';
 import { Cloud, Trash2 } from 'lucide-react';
 import { Button, Spinner, Card } from '@fluentui/react-components';
 import { formatDate } from '../utils/formatters';
+import { usePermissions } from '../../../hooks/usePermissions';
 
 export const CloudAccountList = () => {
   const { data: accounts, isLoading } = useCloudAccounts();
   const { mutate: deleteAccount } = useDeleteCloudAccount();
   const { selectedAccountId, setSelectedAccountId } = useCloudStore();
+  const { canHere } = usePermissions();
   const navigate = useNavigate();
 
   if (isLoading) {
@@ -69,11 +71,13 @@ export const CloudAccountList = () => {
                 Region: {acc.tenant_or_region} &bull; Last Scan: {formatDate(acc.last_discovery || '')}
               </div>
             </div>
-            <Button 
-              appearance="subtle" 
-              icon={<Trash2 className="h-4 w-4 text-red-500" />} 
-              onClick={(e) => { e.stopPropagation(); deleteAccount(acc.id); }}
-            />
+            {canHere('delete') && (
+              <Button
+                appearance="subtle"
+                icon={<Trash2 className="h-4 w-4 text-red-500" />}
+                onClick={(e) => { e.stopPropagation(); deleteAccount(acc.id); }}
+              />
+            )}
           </div>
         );
       })}

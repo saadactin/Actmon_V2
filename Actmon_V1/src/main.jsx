@@ -7,6 +7,7 @@ import { ToastProvider } from './components/ui/ToastProvider';
 import { AuthProvider } from './auth/AuthProvider';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { AppShell } from './components/layout/AppShell';
+import ErrorBoundary from './components/ErrorBoundary';
 import { Login } from './pages/Login';
 // Heavy pages are LAZY-loaded → each becomes its own JS chunk fetched only when first
 // navigated to, instead of bloating the initial bundle. This is the biggest first-load win.
@@ -291,7 +292,9 @@ ReactDOM.createRoot(document.getElementById('app')).render(
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           <AuthProvider>
-            <RouterProvider router={router} />
+            <ErrorBoundary>
+              <RouterProvider router={router} />
+            </ErrorBoundary>
           </AuthProvider>
         </ToastProvider>
       </QueryClientProvider>

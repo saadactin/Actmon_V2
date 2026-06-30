@@ -367,8 +367,8 @@ const AgentCard = ({ agent, onClick }) => {
 
         {/* SSH button */}
         <button
-          className="ml-1 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-mono
-                     font-semibold hover:bg-slate-700 transition-colors select-none"
+          className="ml-1 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-xs font-mono
+                     font-semibold hover:bg-blue-100 transition-colors select-none"
           onClick={(e) => e.stopPropagation()}
           title="SSH Terminal"
         >
@@ -473,7 +473,7 @@ const AgentCard = ({ agent, onClick }) => {
         <button
           onClick={(e) => { e.stopPropagation(); navigate(`/agents/${agent.name}`); }}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl
-                     bg-slate-900 text-white text-sm font-bold hover:bg-slate-800 transition-colors"
+                     bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-bold hover:from-blue-600 hover:to-blue-700 shadow-sm hover:shadow-md transition-all"
         >
           <Activity className="h-4 w-4" />
           Dashboard

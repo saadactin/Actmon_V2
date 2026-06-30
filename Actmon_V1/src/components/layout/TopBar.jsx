@@ -3,7 +3,7 @@ import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { useNotifications } from '../../hooks/useNotifications';
 import { useAuthStore } from '../../store/authStore';
 import { Bell, BellRing, LogOut } from 'lucide-react';
-import { Avatar, Button, Popover, PopoverTrigger, PopoverSurface, Persona } from '@fluentui/react-components';
+import { Avatar } from '@fluentui/react-components';
 import NotificationPopup  from '../notifications/NotificationPopup';
 import NotificationCenter from '../notifications/NotificationCenter';
 
@@ -18,12 +18,25 @@ export const TopBar = () => {
   // center = full side panel (popup "See all" click)
   const [popupOpen,  setPopupOpen]  = useState(false);
   const [centerOpen, setCenterOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const handleLogout = () => { clearToken(); navigate('/login'); };
 
+  const displayName = user?.employee_name || user?.username || 'User';
+  const initials = displayName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase() || 'U';
+  const email = user?.email || `${user?.username || 'user'}@actmon.local`;
+  const roleName = user?.role || user?.role_name || '—';
+
   const togglePopup = () => {
     setCenterOpen(false);
+    setProfileOpen(false);
     setPopupOpen((v) => !v);
+  };
+
+  const toggleProfile = () => {
+    setPopupOpen(false);
+    setCenterOpen(false);
+    setProfileOpen((v) => !v);
   };
 
   const openCenter = () => {
@@ -40,18 +53,9 @@ export const TopBar = () => {
   const pathnames = location.pathname.split('/').filter(Boolean);
 
   return (
-    <header className="h-16 bg-white border-b border-brand-border flex items-center justify-between px-6 z-30 sticky top-0">
+    <header className="h-16 bg-white border-b border-brand-border flex items-center justify-between px-6 md:px-8 z-30 sticky top-0">
 
      <div className="flex items-center gap-4 min-w-0">
-      {/* ── Company logo (logged-in org) ── */}
-      {user?.org_logo && (
-        <div className="flex items-center gap-2 pr-4 border-r border-slate-200 flex-shrink-0" title={user?.org_name}>
-          <img src={encodeURI(user.org_logo)} alt={user?.org_name || 'Company'}
-            className="h-8 max-w-[130px] object-contain"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-        </div>
-      )}
-
       {/* ── Breadcrumbs ── */}
       <nav className="flex text-sm text-brand-text-secondary" aria-label="Breadcrumb">
         <ol className="inline-flex items-center space-x-1 md:space-x-2">
@@ -117,45 +121,52 @@ export const TopBar = () => {
           )}
         </div>
 
-        {/* ── User account popover ── */}
-        <Popover trapFocus>
-          <PopoverTrigger disableButtonEnhancement>
-            <button className="flex items-center focus:outline-none focus:ring-2 focus:ring-slate-200 rounded-full">
-              <Avatar
-                name={user?.username || 'Admin'}
-                color="brand"
-                size={32}
-                className="cursor-pointer hover:opacity-80 transition-opacity"
-              />
-            </button>
-          </PopoverTrigger>
-          <PopoverSurface className="w-64 p-4">
-            <div className="flex flex-col gap-3">
-              <Persona
-                name={user?.employee_name || user?.username || 'User'}
-                secondaryText={user?.email || `${user?.username || 'user'}@actmon.local`}
-                presence={{ status: 'available' }}
-                avatar={{ color: 'brand' }}
-              />
-              <div className="border-t border-brand-border my-1" />
-              <p className="text-xs text-brand-text-secondary px-2">
-                Organization: <span className="font-semibold">{user?.org_name || '—'}</span>
-              </p>
-              <p className="text-xs text-brand-text-secondary px-2">
-                Role: <span className="font-semibold">{user?.role || user?.role_name || '—'}</span>
-              </p>
-              <div className="border-t border-brand-border my-1" />
-              <Button
-                icon={<LogOut className="h-4 w-4" />}
-                appearance="subtle"
-                onClick={handleLogout}
-                className="justify-start text-left text-brand-error hover:bg-red-50"
-              >
-                Sign out
-              </Button>
-            </div>
-          </PopoverSurface>
-        </Popover>
+        {/* ── User account dropdown (custom — Fluent Popover crashed the app) ── */}
+        <div className="relative">
+          <button onClick={toggleProfile}
+            className="flex items-center focus:outline-none focus:ring-2 focus:ring-slate-200 rounded-full">
+            <Avatar name={user?.username || 'Admin'} color="brand" size={32}
+              className="cursor-pointer hover:opacity-80 transition-opacity" />
+          </button>
+
+          {profileOpen && (
+            <>
+              {/* click-away */}
+              <div className="fixed inset-0 z-40" onClick={() => setProfileOpen(false)} />
+              {/* fancy card */}
+              <div className="absolute right-0 top-full mt-2 w-[300px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden z-50">
+                <div className="relative">
+                  <div className="h-20" style={{ background: 'linear-gradient(135deg,#1e40af 0%,#3b82f6 55%,#0ea5e9 100%)' }} />
+                  <div className="px-5">
+                    <div className="-mt-9 w-16 h-16 rounded-2xl bg-white shadow-md border-4 border-white flex items-center justify-center">
+                      <span className="text-lg font-black text-blue-700">{initials}</span>
+                    </div>
+                    <p className="mt-2 font-black text-slate-900 text-[15px] leading-tight truncate">{displayName}</p>
+                    <p className="text-xs text-slate-400 truncate">{email}</p>
+                  </div>
+                </div>
+
+                <div className="px-5 py-4 space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Organization</span>
+                    <span className="text-xs font-semibold text-slate-700 truncate max-w-[160px] text-right">{user?.org_name || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Role</span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[11px] font-bold border border-blue-100 truncate max-w-[160px]">{roleName}</span>
+                  </div>
+                </div>
+
+                <div className="px-4 pb-4">
+                  <button onClick={handleLogout}
+                    className="w-full flex items-center justify-center gap-2 h-10 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 text-sm font-bold border border-red-100 transition-colors">
+                    <LogOut className="h-4 w-4" /> Sign out
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* ── Full notification side panel ── */}

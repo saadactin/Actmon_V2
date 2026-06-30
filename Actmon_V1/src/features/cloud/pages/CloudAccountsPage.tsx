@@ -3,6 +3,7 @@ import { CloudAccountList } from '../components/CloudAccountList';
 import { useCloudStore } from '../state/cloudStore';
 import { Button } from '@fluentui/react-components';
 import { Plus } from 'lucide-react';
+import { usePermissions } from '../../../hooks/usePermissions';
 
 const PAGE_STYLE: React.CSSProperties = {
   minHeight: '100%',
@@ -19,6 +20,7 @@ const UI_BTN_STYLE: React.CSSProperties = {
 
 export const CloudAccountsPage = () => {
   const setDrawerOpen = useCloudStore(state => state.setAddAccountDrawerOpen);
+  const { canHere } = usePermissions();
 
   return (
     <div style={PAGE_STYLE}>
@@ -31,9 +33,11 @@ export const CloudAccountsPage = () => {
             Manage connections to AWS, Azure, and OCI.
           </p>
         </div>
-        <Button appearance="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setDrawerOpen(true)}>
-          Add Account
-        </Button>
+        {canHere('add') && (
+          <Button appearance="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setDrawerOpen(true)}>
+            Add Account
+          </Button>
+        )}
       </div>
 
       <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 16, padding: '20px 24px' }}>

@@ -1,9 +1,10 @@
 import React, { Suspense } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import RouteGuard from '../../auth/RouteGuard';
+import ErrorBoundary from '../ErrorBoundary';
 import { usePermissions } from '../../hooks/usePermissions';
 
 // Floating AI widget — not needed for first paint, so load it as its own chunk.
@@ -19,6 +20,7 @@ const PageLoader = () => (
 
 export const AppShell = () => {
   const { can } = usePermissions();
+  const { pathname } = useLocation();
   // ActMon AI is only available to roles granted View on the ChatBot page.
   const canChat = can('/chatbot', 'view');
   return (
@@ -34,9 +36,11 @@ export const AppShell = () => {
         {/* Dynamic Page Outlet — scrollable content area */}
         <main className="flex-1 overflow-x-hidden overflow-y-auto p-6 md:p-8">
           <RouteGuard>
-            <Suspense fallback={<PageLoader />}>
-              <Outlet />
-            </Suspense>
+            <ErrorBoundary resetKey={pathname}>
+              <Suspense fallback={<PageLoader />}>
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
           </RouteGuard>
         </main>
       </div>

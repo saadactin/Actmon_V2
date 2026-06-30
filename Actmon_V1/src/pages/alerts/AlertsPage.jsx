@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as zod from 'zod';
@@ -28,13 +29,15 @@ import {
 import { Mail, Plus, Trash2, Settings, Server, Play } from 'lucide-react';
 
 const configSchema = zod.object({
-  smtp_host: zod.string().min(1, 'Host is required'),
-  smtp_port: zod.coerce.number().min(1, 'Valid port required'),
+  // SMTP gateway is configured centrally in Settings → SMTP Configuration; these
+  // are optional here so the alert-threshold form saves without SMTP fields.
+  smtp_host: zod.string().optional().default(''),
+  smtp_port: zod.coerce.number().optional().default(587),
   username: zod.string().optional(),
   password: zod.string().optional(),
   use_tls: zod.boolean().default(false),
   use_ssl: zod.boolean().default(false),
-  from_email: zod.string().email('Valid from email required'),
+  from_email: zod.string().optional().default(''),
   timeout_seconds: zod.coerce.number().min(1).default(10),
   cpu_threshold_pct: zod.coerce.number().min(1).max(100).default(80),
   offline_threshold_seconds: zod.coerce.number().min(10).default(300),
@@ -271,54 +274,27 @@ export const AlertsPage = () => {
           <Card className="p-6 bg-white border border-brand-border rounded-card shadow-card space-y-4">
             <h2 className="text-base font-bold text-brand-text-primary flex items-center gap-2 border-b border-brand-border pb-3">
               <Settings className="h-5 w-5 text-brand-primary" />
-              <span>Global SMTP Gateway Settings</span>
+              <span>Alert Threshold Triggers</span>
             </h2>
 
+            {/* SMTP is configured centrally — point to Settings instead of duplicating it here */}
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-blue-50 border border-blue-100">
+              <Mail className="h-5 w-5 text-blue-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-slate-700">Email is sent via the SMTP gateway in Settings</p>
+                <p className="text-xs text-slate-500">Configure the mail server once under Settings → SMTP Configuration; alerts reuse it automatically.</p>
+              </div>
+              <Link to="/settings" className="text-xs font-bold text-blue-600 hover:text-blue-700 whitespace-nowrap">Open Settings →</Link>
+            </div>
+
             {loadingConfig ? (
-              <div className="flex justify-center items-center py-10"><Spinner label="Loading profile..." /></div>
+              <div className="flex justify-center items-center py-10"><Spinner label="Loading thresholds..." /></div>
             ) : (
               <form onSubmit={handleSubmit(onSubmitConfig)} className="space-y-4">
                 <div className="py-1">
-                  <Checkbox {...register('enabled')} label="Enable Global Email Dispatcher Queue" />
+                  <Checkbox {...register('enabled')} label="Enable email alert notifications" />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Field label="SMTP Host Address" required validationMessage={errors.smtp_host?.message}>
-                    <Input {...register('smtp_host')} placeholder="e.g. smtp.office365.com" />
-                  </Field>
-                  <Field label="SMTP Port" required validationMessage={errors.smtp_port?.message}>
-                    <Input {...register('smtp_port')} type="number" placeholder="587" />
-                  </Field>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Field label="Connect User / Email" validationMessage={errors.username?.message}>
-                    <Input {...register('username')} placeholder="e.g. notifications@actmon.com" />
-                  </Field>
-                  <Field label="Connect Password" validationMessage={errors.password?.message}>
-                    <Input {...register('password')} type="password" placeholder="••••••••" />
-                  </Field>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Field label="Sender (From) Email" required validationMessage={errors.from_email?.message}>
-                    <Input {...register('from_email')} placeholder="e.g. alerts@actmon.com" />
-                  </Field>
-                  <Field label="Connection Timeout (s)">
-                    <Input {...register('timeout_seconds')} type="number" />
-                  </Field>
-                </div>
-
-                <div className="grid grid-cols-3 gap-2">
-                  <Checkbox {...register('use_tls')} label="Use TLS" />
-                  <Checkbox {...register('use_ssl')} label="Use SSL" />
-                </div>
-
-                {/* Alarm Thresholds parameters */}
-                <h3 className="text-xs font-bold text-brand-text-secondary uppercase border-t border-brand-border pt-4">
-                  Default Threshold Triggers
-                </h3>
-                
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <Field label="CPU Alert Limit (%)" required validationMessage={errors.cpu_threshold_pct?.message}>
                     <Input {...register('cpu_threshold_pct')} type="number" />
@@ -333,7 +309,7 @@ export const AlertsPage = () => {
 
                 <div className="pt-4 border-t border-brand-border flex justify-end">
                   <Button type="submit" appearance="primary" disabled={savingConfig}>
-                    {savingConfig ? <Spinner size="tiny" label="Saving..." /> : 'Save Configurations'}
+                    {savingConfig ? <Spinner size="tiny" label="Saving..." /> : 'Save Thresholds'}
                   </Button>
                 </div>
               </form>
