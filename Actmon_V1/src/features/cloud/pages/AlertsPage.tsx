@@ -71,7 +71,7 @@ export const AlertsPage = () => {
           >
             <ArrowLeft size={16} /> Cloud Control Center
           </button>
-          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
             🚨 Real-Time Alerts
           </h1>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
@@ -92,14 +92,14 @@ export const AlertsPage = () => {
       </div>
 
       <div style={{
-        background: '#1e293b', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 12, padding: 24, minHeight: 400
+        background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 24, minHeight: 400
       }}>
         {loading ? (
           <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: 40 }}>Loading alerts...</div>
         ) : alerts.length === 0 ? (
           <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: 80, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <Bell size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
-            <div style={{ fontSize: 16, fontWeight: 600, color: '#cbd5e1' }}>No alerts yet</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#475569' }}>No alerts yet</div>
             <div style={{ fontSize: 13, marginTop: 4 }}>You will see anomalies and critical issues here.</div>
           </div>
         ) : (
@@ -107,7 +107,7 @@ export const AlertsPage = () => {
             {alerts.map((alert) => (
               <div key={alert.id} style={{
                 background: alert.is_read ? 'rgba(0,0,0,0.15)' : 'rgba(239,68,68,0.05)',
-                border: `1px solid ${alert.is_read ? 'rgba(255,255,255,0.05)' : 'rgba(239,68,68,0.2)'}`,
+                border: `1px solid ${alert.is_read ? '#e2e8f0' : 'rgba(239,68,68,0.2)'}`,
                 borderLeft: `4px solid ${alert.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b'}`,
                 borderRadius: 8, padding: 20, display: 'flex', gap: 16, alignItems: 'flex-start'
               }}>
@@ -116,7 +116,7 @@ export const AlertsPage = () => {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <h3 style={{ margin: 0, color: '#f1f5f9', fontSize: 16, fontWeight: 700 }}>{alert.anomaly_type}</h3>
+                    <h3 style={{ margin: 0, color: '#1e293b', fontSize: 16, fontWeight: 700 }}>{alert.anomaly_type}</h3>
                     <span style={{ fontSize: 12, color: '#64748b' }}>
                       {new Date(alert.created_at).toLocaleString()}
                     </span>
@@ -152,8 +152,8 @@ export const AlertsPage = () => {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };

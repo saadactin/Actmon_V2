@@ -148,44 +148,6 @@ export const CloudDashboard = () => {
 
   return (
     <div style={PAGE_STYLE}>
-      {/* Hero Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.5 }}>
-            ☁️ Cloud Control Center
-          </h1>
-          <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
-            Monitor and manage your multi-cloud accounts and resource health
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/accounts')}>
-            Accounts
-          </Button>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/resources')}>
-            View Resources
-          </Button>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/cost')}>
-            Cost Analysis
-          </Button>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/security')}>
-            Security Posture
-          </Button>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/topology')}>
-            Topology Map
-          </Button>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/compliance')}>
-            Compliance
-          </Button>
-          <Button appearance="secondary" style={UI_BTN_STYLE} onClick={() => navigate('/cloud/alerts')}>
-            Alerts
-          </Button>
-          <Button appearance="primary" icon={<Plus className="h-4 w-4" />} onClick={handleAddAccount}>
-            Add Cloud Account
-          </Button>
-        </div>
-      </div>
-
       {/* ── Provider Summary Bar (AWS / Azure / OCI panels) ── */}
       <ProviderSummaryBar
         accounts={accounts || []}
@@ -204,8 +166,8 @@ export const CloudDashboard = () => {
             style={{
               padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
               fontFamily: 'inherit', cursor: 'pointer', transition: 'all 0.15s',
-              border: `1.5px solid ${selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.color : 'rgba(255,255,255,0.08)'}`,
-              background: selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.accent : 'rgba(255,255,255,0.03)',
+              border: `1.5px solid ${selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.color : '#e2e8f0'}`,
+              background: selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.accent : '#eef2f6',
               color: selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.color : '#64748b',
             }}
           >
@@ -218,8 +180,8 @@ export const CloudDashboard = () => {
               style={{
                 padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
                 fontFamily: 'inherit', cursor: 'pointer', transition: 'all 0.15s',
-                border: `1.5px solid ${selectedView === acc.id ? PROVIDER_META[selectedProvider]?.color : 'rgba(255,255,255,0.08)'}`,
-                background: selectedView === acc.id ? PROVIDER_META[selectedProvider]?.accent : 'rgba(255,255,255,0.03)',
+                border: `1.5px solid ${selectedView === acc.id ? PROVIDER_META[selectedProvider]?.color : '#e2e8f0'}`,
+                background: selectedView === acc.id ? PROVIDER_META[selectedProvider]?.accent : '#eef2f6',
                 color: selectedView === acc.id ? PROVIDER_META[selectedProvider]?.color : '#64748b',
               }}
             >
@@ -241,7 +203,7 @@ export const CloudDashboard = () => {
             </div>
             <div>
               <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Cloud Accounts</p>
-              <p style={{ color: '#f1f5f9', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{accounts?.length || 0}</p>
+              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{accounts?.length || 0}</p>
             </div>
           </div>
         </div>
@@ -253,7 +215,7 @@ export const CloudDashboard = () => {
             </div>
             <div>
               <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Total Resources</p>
-              <p style={{ color: '#f1f5f9', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{totalResources}</p>
+              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{totalResources}</p>
             </div>
           </div>
         </div>
@@ -268,7 +230,7 @@ export const CloudDashboard = () => {
             </div>
             <div>
               <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Est. Monthly Cost</p>
-              <p style={{ color: '#f1f5f9', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>${totalCost.toFixed(2)}</p>
+              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>${totalCost.toFixed(2)}</p>
             </div>
           </div>
         </div>
@@ -281,7 +243,7 @@ export const CloudDashboard = () => {
             </div>
             <div>
               <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Active Scans</p>
-              <p style={{ color: '#f1f5f9', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{activeJobsCount}</p>
+              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{activeJobsCount}</p>
             </div>
           </div>
         </div>
@@ -289,7 +251,7 @@ export const CloudDashboard = () => {
         {/* Security Health Score Card */}
         <div
           onClick={() => navigate('/cloud/security')}
-          style={{ ...CARD_STYLE, cursor: 'pointer', hover: { background: 'rgba(255,255,255,0.06)' }, transition: 'all 0.15s' }}
+          style={{ ...CARD_STYLE, cursor: 'pointer', hover: { background: '#ffffff' }, transition: 'all 0.15s' }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{
@@ -303,7 +265,7 @@ export const CloudDashboard = () => {
             <div style={{ flex: 1 }}>
               <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Security Health</p>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, margin: '4px 0 0' }}>
-                <span style={{ color: '#f1f5f9', fontSize: 24, fontWeight: 800 }}>{avgSecurityScore}</span>
+                <span style={{ color: '#1e293b', fontSize: 24, fontWeight: 800 }}>{avgSecurityScore}</span>
                 <span style={{ color: getGradeColor(securityGrade), fontSize: 14, fontWeight: 700 }}>Grade {securityGrade}</span>
               </div>
             </div>
@@ -317,7 +279,7 @@ export const CloudDashboard = () => {
         
         {/* Resource Breakdown Donut */}
         <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 15, fontWeight: 700 }}>
+          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
             Resource Type Distribution
           </h3>
           <div style={{ height: 260, position: 'relative' }}>
@@ -340,8 +302,8 @@ export const CloudDashboard = () => {
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                    itemStyle={{ color: '#cbd5e1', fontSize: 12 }}
+                    contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                    itemStyle={{ color: '#475569', fontSize: 12 }}
                   />
                   <Legend
                     verticalAlign="bottom"
@@ -358,7 +320,7 @@ export const CloudDashboard = () => {
 
         {/* Region Heatmap Bar */}
         <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 15, fontWeight: 700 }}>
+          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
             Geographic / Region Breakdown
           </h3>
           <div style={{ height: 260 }}>
@@ -367,13 +329,13 @@ export const CloudDashboard = () => {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
                   <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
                   <YAxis stroke="#64748b" fontSize={10} tickLine={false} />
                   <Tooltip
-                    contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                    itemStyle={{ color: '#cbd5e1', fontSize: 12 }}
-                    cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                    contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                    itemStyle={{ color: '#475569', fontSize: 12 }}
+                    cursor={{ fill: '#eef2f6' }}
                   />
                   <Bar dataKey="value" fill="#60a5fa" radius={[4, 4, 0, 0]}>
                     {barData.map((entry, index) => (
@@ -393,7 +355,7 @@ export const CloudDashboard = () => {
         
         {/* Scan timeline and accounts */}
         <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
             <Clock size={16} /> Scan History & Account Health
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -410,7 +372,7 @@ export const CloudDashboard = () => {
                       background: meta?.bg, fontSize: 18, flexShrink: 0,
                     }}>{meta?.logo || '⚪'}</span>
                     <div>
-                      <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 700 }}>{acc.account_name}</div>
+                      <div style={{ color: '#334155', fontSize: 13, fontWeight: 700 }}>{acc.account_name}</div>
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>
                         <span style={{
                           fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 6,
@@ -444,7 +406,7 @@ export const CloudDashboard = () => {
 
         {/* Recently Discovered */}
         <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 15, fontWeight: 700 }}>
+          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
             Recently Discovered Resources
           </h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -455,7 +417,7 @@ export const CloudDashboard = () => {
                 style={{ ...RESOURCE_ROW_STYLE, cursor: 'pointer' }}
               >
                 <div>
-                  <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 700 }}>{res.resource_name}</div>
+                  <div style={{ color: '#334155', fontSize: 13, fontWeight: 700 }}>{res.resource_name}</div>
                   <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{res.resource_type} • {res.region_or_zone}</div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -483,23 +445,23 @@ export const CloudDashboard = () => {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };
 
 const CARD_STYLE: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
   borderRadius: 16,
   padding: '20px 24px',
 };
 
 const UI_BTN_STYLE: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  color: '#cbd5e1',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
+  color: '#475569',
 };
 
 
@@ -510,7 +472,7 @@ const EMPTY_CHART_STYLE: React.CSSProperties = {
   justifyContent: 'center',
   color: '#64748b',
   fontSize: 13,
-  border: '1px dashed rgba(255,255,255,0.05)',
+  border: '1px dashed #e2e8f0',
   borderRadius: 12,
 };
 
@@ -519,8 +481,8 @@ const ACCOUNT_ROW_STYLE: React.CSSProperties = {
   justifyContent: 'space-between',
   alignItems: 'center',
   padding: '12px 16px',
-  background: 'rgba(255,255,255,0.02)',
-  border: '1px solid rgba(255,255,255,0.04)',
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
   borderRadius: 12,
 };
 
@@ -529,7 +491,7 @@ const RESOURCE_ROW_STYLE: React.CSSProperties = {
   justifyContent: 'space-between',
   alignItems: 'center',
   padding: '12px 16px',
-  background: 'rgba(255,255,255,0.02)',
-  border: '1px solid rgba(255,255,255,0.04)',
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
   borderRadius: 12,
 };

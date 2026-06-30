@@ -19,9 +19,9 @@ export const CloudAccountList = () => {
 
   if (!accounts || accounts.length === 0) {
     return (
-      <div style={{ padding: 32, textAlign: 'center', border: '1px dashed rgba(255,255,255,0.1)', borderRadius: 12 }}>
+      <div style={{ padding: 32, textAlign: 'center', border: '1px dashed #e2e8f0', borderRadius: 12 }}>
         <Cloud className="h-12 w-12 text-gray-500 mx-auto mb-2" />
-        <h3 style={{ fontWeight: 600, color: '#f1f5f9' }}>No Cloud Accounts</h3>
+        <h3 style={{ fontWeight: 600, color: '#1e293b' }}>No Cloud Accounts</h3>
         <p style={{ fontSize: 14, color: '#94a3b8', marginTop: 4 }}>Connect a provider to get started.</p>
       </div>
     );
@@ -39,8 +39,8 @@ export const CloudAccountList = () => {
               justifyContent: 'space-between',
               alignItems: 'center',
               padding: '16px 20px',
-              background: isSelected ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255,255,255,0.02)',
-              border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(255,255,255,0.04)',
+              background: isSelected ? 'rgba(59, 130, 246, 0.1)' : '#eef2f6',
+              border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid #e2e8f0',
               borderRadius: 12,
               cursor: 'pointer',
               transition: 'background 0.2s',
@@ -52,13 +52,13 @@ export const CloudAccountList = () => {
           >
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontWeight: 600, color: '#f1f5f9', fontSize: 16 }}>{acc.account_name}</span>
+                <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 16 }}>{acc.account_name}</span>
                 <span style={{ 
                   fontSize: 11, 
                   padding: '2px 6px', 
                   borderRadius: 4, 
-                  background: 'rgba(255,255,255,0.1)', 
-                  color: '#e2e8f0', 
+                  background: '#e2e8f0', 
+                  color: '#334155', 
                   fontWeight: 600, 
                   textTransform: 'uppercase' 
                 }}>

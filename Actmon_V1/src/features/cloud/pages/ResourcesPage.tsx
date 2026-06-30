@@ -38,7 +38,7 @@ export const ResourcesPage = () => {
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 10, flexWrap: 'wrap', gap: 14 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.5 }}>
+            <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5 }}>
               ☁️ Resource Inventory
             </h1>
             <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
@@ -85,15 +85,15 @@ export const ResourcesPage = () => {
             { label: 'Auto Discovery', value: selectedAccount.auto_discovery ? 'Enabled' : 'Disabled', icon: '🔄' },
           ].map(stat => (
             <div key={stat.label} style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
               borderRadius: 12,
               padding: '14px 18px',
             }}>
               <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>
                 {stat.icon} {stat.label}
               </div>
-              <div style={{ color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}>{stat.value}</div>
+              <div style={{ color: '#334155', fontSize: 14, fontWeight: 600 }}>{stat.value}</div>
             </div>
           ))}
         </div>
@@ -107,8 +107,8 @@ export const ResourcesPage = () => {
       {!selectedAccountId && (
         <div style={{
           textAlign: 'center', padding: '80px 24px',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.07)',
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
           borderRadius: 20,
         }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>☁️</div>
@@ -121,8 +121,8 @@ export const ResourcesPage = () => {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };
@@ -132,8 +132,8 @@ const BACK_BTN: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '6px 12px',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
   borderRadius: 8,
   color: '#94a3b8',
   fontSize: 12,

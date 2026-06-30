@@ -259,7 +259,7 @@ export const CloudTopologyPage = () => {
             <button onClick={() => setZoom(p => Math.min(3, p + 0.12))} style={S.zoomBtn} title="Zoom in"><ZoomIn size={15} /></button>
             <span style={{ color: '#475569', fontSize: 11, fontWeight: 700, textAlign: 'center', lineHeight: 1 }}>{Math.round(zoom * 100)}%</span>
             <button onClick={() => setZoom(p => Math.max(0.3, p - 0.12))} style={S.zoomBtn} title="Zoom out"><ZoomOut size={15} /></button>
-            <div style={{ width: '100%', height: 1, background: 'rgba(255,255,255,0.06)' }} />
+            <div style={{ width: '100%', height: 1, background: '#ffffff' }} />
             <button onClick={resetView} style={S.zoomBtn} title="Reset view"><Maximize2 size={15} /></button>
           </div>
 
@@ -389,7 +389,7 @@ export const CloudTopologyPage = () => {
                     <rect
                       width={CARD_W} height={CARD_H} rx="12"
                       fill={isSel ? 'rgba(30,42,68,0.95)' : isDefault ? 'rgba(15,23,42,0.5)' : 'rgba(22,30,50,0.82)'}
-                      stroke={isSel ? meta.color : isHov ? `${meta.color}cc` : isDefault ? 'rgba(148,163,184,0.2)' : 'rgba(255,255,255,0.07)'}
+                      stroke={isSel ? meta.color : isHov ? `${meta.color}cc` : isDefault ? 'rgba(148,163,184,0.2)' : '#e2e8f0'}
                       strokeWidth={isSel ? 2 : 1}
                       strokeDasharray={isDefault ? '5,4' : undefined}
                       style={{ transition: 'all 0.18s' }}
@@ -459,7 +459,7 @@ export const CloudTopologyPage = () => {
                 {selectedNodeMeta.icon}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#f1f5f9', wordBreak: 'break-all', lineHeight: 1.3 }}>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#1e293b', wordBreak: 'break-all', lineHeight: 1.3 }}>
                   {selectedNode.name}
                 </h3>
                 <span style={{ fontSize: 10, fontWeight: 700, color: selectedNodeMeta.color, textTransform: 'uppercase', letterSpacing: 0.6 }}>
@@ -477,7 +477,7 @@ export const CloudTopologyPage = () => {
             </div>
 
             {/* Meta rows */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginBottom: 20, background: 'rgba(255,255,255,0.02)', borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginBottom: 20, background: '#f8fafc', borderRadius: 10, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
               {[
                 { label: 'Status', value: selectedNode.status?.toUpperCase() ?? 'N/A', color: '#10b981' },
                 { label: 'Region', value: selectedNode.region },
@@ -549,12 +549,12 @@ function ConnectionList({ title, connections, onSelect }: {
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8,
                     padding: '7px 10px',
-                    background: 'rgba(255,255,255,0.025)',
-                    border: '1px solid rgba(255,255,255,0.05)',
+                    background: '#f8fafc',
+                    border: '1px solid #e2e8f0',
                     borderRadius: 8, cursor: 'pointer',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#e2e8f0')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.025)')}
                 >
                   <span style={{ fontSize: 14, flexShrink: 0 }}>{m.icon}</span>
@@ -581,7 +581,7 @@ const S: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 55%, #0d1117 100%)',
+    background: 'linear-gradient(160deg, #f1f5f9 0%, #f1f5f9 55%, #f1f5f9 100%)',
     padding: '24px 28px 0',
     fontFamily: "'Inter', -apple-system, sans-serif",
     boxSizing: 'border-box',
@@ -598,8 +598,8 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     padding: '5px 12px',
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.08)',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
     borderRadius: 7,
     color: '#94a3b8',
     fontSize: 12,
@@ -612,7 +612,7 @@ const S: Record<string, React.CSSProperties> = {
     margin: '0 0 2px',
     fontSize: 26,
     fontWeight: 800,
-    color: '#f1f5f9',
+    color: '#1e293b',
     letterSpacing: -0.5,
   },
   subtitle: {
@@ -624,8 +624,8 @@ const S: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    background: 'rgba(255,255,255,0.03)',
-    border: '1px solid rgba(255,255,255,0.09)',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
     borderRadius: 9,
     padding: '7px 12px',
     width: 210,
@@ -634,7 +634,7 @@ const S: Record<string, React.CSSProperties> = {
     background: 'none',
     border: 'none',
     outline: 'none',
-    color: '#e2e8f0',
+    color: '#334155',
     fontSize: 13,
     width: '100%',
     fontFamily: 'inherit',
@@ -649,10 +649,10 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   select: {
-    background: 'rgba(15,23,42,0.8)',
-    border: '1px solid rgba(255,255,255,0.09)',
+    background: '#ffffff',
+    border: '1px solid #e2e8f0',
     borderRadius: 9,
-    color: '#e2e8f0',
+    color: '#334155',
     fontSize: 13,
     padding: '7px 12px',
     fontFamily: 'inherit',
@@ -660,8 +660,8 @@ const S: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   iconBtn: {
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.09)',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
     borderRadius: 9,
     color: '#94a3b8',
     padding: '7px 10px',
@@ -674,8 +674,8 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 20,
     padding: '8px 14px',
-    background: 'rgba(255,255,255,0.02)',
-    border: '1px solid rgba(255,255,255,0.05)',
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
     borderRadius: 10,
     marginBottom: 14,
     flexShrink: 0,
@@ -691,7 +691,7 @@ const S: Record<string, React.CSSProperties> = {
   canvas: {
     position: 'relative',
     background: 'rgba(10,15,30,0.5)',
-    border: '1px solid rgba(255,255,255,0.06)',
+    border: '1px solid #e2e8f0',
     borderRadius: 16,
     overflow: 'hidden',
     minHeight: 0,
@@ -707,7 +707,7 @@ const S: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     background: 'rgba(0,0,0,0.28)',
-    borderBottom: '1px solid rgba(255,255,255,0.04)',
+    borderBottom: '1px solid #e2e8f0',
     pointerEvents: 'none',
     zIndex: 5,
   },
@@ -729,7 +729,7 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 4,
     background: 'rgba(12,18,36,0.92)',
-    border: '1px solid rgba(255,255,255,0.07)',
+    border: '1px solid #e2e8f0',
     borderRadius: 10,
     padding: '6px 4px',
     zIndex: 10,
@@ -768,7 +768,7 @@ const S: Record<string, React.CSSProperties> = {
     width: 310,
     flexShrink: 0,
     background: 'linear-gradient(175deg, rgba(18,26,46,0.98) 0%, rgba(10,15,30,0.99) 100%)',
-    border: '1px solid rgba(255,255,255,0.07)',
+    border: '1px solid #e2e8f0',
     borderRadius: 16,
     padding: '20px 18px',
     display: 'flex',
@@ -781,8 +781,8 @@ const S: Record<string, React.CSSProperties> = {
     width: 28,
     height: 28,
     borderRadius: 7,
-    border: '1px solid rgba(255,255,255,0.08)',
-    background: 'rgba(255,255,255,0.04)',
+    border: '1px solid #e2e8f0',
+    background: '#f8fafc',
     color: '#64748b',
     display: 'flex',
     alignItems: 'center',

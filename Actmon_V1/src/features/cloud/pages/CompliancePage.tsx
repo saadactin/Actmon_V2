@@ -97,7 +97,7 @@ export const CompliancePage = () => {
           >
             <ArrowLeft size={16} /> Cloud Control Center
           </button>
-          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
             📜 Compliance & Audit Dashboard
           </h1>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
@@ -116,7 +116,7 @@ export const CompliancePage = () => {
               onClick={handleDownloadPDF}
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                padding: '9px 16px', background: '#3b82f6', color: '#fff',
+                padding: '9px 16px', background: '#3b82f6', color: '#1e293b',
                 border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
                 transition: 'background 0.2s', fontSize: 13
               }}
@@ -130,7 +130,7 @@ export const CompliancePage = () => {
       {/* Main Score Overview */}
       <div style={{ 
         background: 'linear-gradient(135deg, rgba(30,41,59,0.7) 0%, rgba(15,23,42,0.7) 100%)',
-        border: '1px solid rgba(255,255,255,0.05)',
+        border: '1px solid #e2e8f0',
         borderRadius: 16,
         padding: 32,
         marginBottom: 32,
@@ -146,12 +146,12 @@ export const CompliancePage = () => {
             flexDirection: 'column',
             boxShadow: `0 0 30px ${getScoreColor(overall_compliance_score)}40`
           }}>
-            <span style={{ fontSize: 42, fontWeight: 800, color: '#f8fafc', lineHeight: 1 }}>{overall_compliance_score}%</span>
+            <span style={{ fontSize: 42, fontWeight: 800, color: '#1e293b', lineHeight: 1 }}>{overall_compliance_score}%</span>
             <span style={{ fontSize: 12, color: '#94a3b8', marginTop: 4, fontWeight: 600, textTransform: 'uppercase' }}>Overall Score</span>
           </div>
         </div>
         <div>
-          <h2 style={{ color: '#e2e8f0', fontSize: 22, margin: '0 0 12px 0', fontWeight: 700 }}>Enterprise Compliance Posture</h2>
+          <h2 style={{ color: '#334155', fontSize: 22, margin: '0 0 12px 0', fontWeight: 700 }}>Enterprise Compliance Posture</h2>
           <p style={{ color: '#94a3b8', fontSize: 14, margin: '0 0 20px 0', maxWidth: 600, lineHeight: 1.5 }}>
             Your cloud infrastructure is continuously mapped against critical industry frameworks. 
             An overall score above 90% indicates readiness for an external compliance audit.
@@ -168,8 +168,8 @@ export const CompliancePage = () => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
         {Object.entries(frameworks).map(([name, data]: [string, any]) => (
           <div key={name} style={{
-            background: '#1e293b',
-            border: '1px solid rgba(255,255,255,0.05)',
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
             borderRadius: 12,
             padding: 24,
             display: 'flex',
@@ -177,7 +177,7 @@ export const CompliancePage = () => {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
               <div>
-                <h3 style={{ margin: 0, color: '#f1f5f9', fontSize: 18, fontWeight: 700 }}>{name}</h3>
+                <h3 style={{ margin: 0, color: '#1e293b', fontSize: 18, fontWeight: 700 }}>{name}</h3>
                 <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 12 }}>{data.total_controls} Controls Evaluated</p>
               </div>
               <div style={{ 
@@ -193,7 +193,7 @@ export const CompliancePage = () => {
             </div>
 
             {/* Progress Bar */}
-            <div style={{ height: 6, background: 'rgba(0,0,0,0.3)', borderRadius: 3, marginBottom: 20, overflow: 'hidden' }}>
+            <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginBottom: 20, overflow: 'hidden' }}>
               <div style={{ width: `${data.score}%`, height: '100%', background: getScoreColor(data.score), borderRadius: 3 }} />
             </div>
 
@@ -212,8 +212,8 @@ export const CompliancePage = () => {
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 330 }}>
                     {paginatedIssues.map((issue: any, idx: number) => (
-                      <div key={idx} style={{ background: 'rgba(0,0,0,0.15)', padding: '10px 12px', borderRadius: 8, borderLeft: `3px solid ${issue.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }}>
-                        <div style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div key={idx} style={{ background: '#f1f5f9', padding: '10px 12px', borderRadius: 8, borderLeft: `3px solid ${issue.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }}>
+                        <div style={{ color: '#334155', fontSize: 12, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {issue.rule}
                         </div>
                         <div style={{ color: '#94a3b8', fontSize: 11 }}>
@@ -227,12 +227,12 @@ export const CompliancePage = () => {
                   {data.issues.length > PAGE_SIZE && (
                     <div className="no-print" style={{ 
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
-                      marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.05)' 
+                      marginTop: 16, paddingTop: 16, borderTop: '1px solid #e2e8f0' 
                     }}>
                       <button 
                         onClick={() => handlePageChange(name, -1)}
                         disabled={currentPage === 0}
-                        style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: currentPage === 0 ? '#475569' : '#94a3b8', padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: currentPage === 0 ? 'not-allowed' : 'pointer' }}
+                        style={{ background: '#ffffff', border: 'none', color: currentPage === 0 ? '#475569' : '#94a3b8', padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: currentPage === 0 ? 'not-allowed' : 'pointer' }}
                       >
                         Prev
                       </button>
@@ -242,7 +242,7 @@ export const CompliancePage = () => {
                       <button 
                         onClick={() => handlePageChange(name, 1)}
                         disabled={currentPage >= totalPages - 1}
-                        style={{ background: 'rgba(255,255,255,0.05)', border: 'none', color: currentPage >= totalPages - 1 ? '#475569' : '#94a3b8', padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
+                        style={{ background: '#ffffff', border: 'none', color: currentPage >= totalPages - 1 ? '#475569' : '#94a3b8', padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
                       >
                         Next
                       </button>
@@ -260,8 +260,8 @@ export const CompliancePage = () => {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };

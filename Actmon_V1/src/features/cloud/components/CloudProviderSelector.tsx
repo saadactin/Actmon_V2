@@ -121,10 +121,10 @@ export const CloudProviderSelector: React.FC<Props> = ({
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '9px 16px',
-            background: open ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)',
-            border: `1.5px solid ${open ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.1)'}`,
+            background: open ? '#e2e8f0' : '#e2e8f0',
+            border: `1.5px solid ${open ? 'rgba(255,255,255,0.2)' : '#e2e8f0'}`,
             borderRadius: 12,
-            color: '#e2e8f0',
+            color: '#334155',
             fontSize: 13, fontWeight: 600,
             cursor: 'pointer', fontFamily: 'inherit',
             transition: 'all 0.15s',
@@ -168,7 +168,7 @@ export const CloudProviderSelector: React.FC<Props> = ({
           <div style={{
             position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 9999,
             minWidth: 320,
-            background: '#0f1923',
+            background: '#f1f5f9',
             border: '1px solid rgba(255,255,255,0.12)',
             borderRadius: 16,
             boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
@@ -176,11 +176,11 @@ export const CloudProviderSelector: React.FC<Props> = ({
             animation: 'fadeSlideDown 0.15s ease',
           }}>
             {/* Search */}
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
                 borderRadius: 8, padding: '7px 12px',
               }}>
                 <Search size={13} style={{ color: '#64748b', flexShrink: 0 }} />
@@ -191,7 +191,7 @@ export const CloudProviderSelector: React.FC<Props> = ({
                   placeholder="Search accounts..."
                   style={{
                     background: 'none', border: 'none', outline: 'none',
-                    color: '#e2e8f0', fontSize: 13, fontFamily: 'inherit', width: '100%',
+                    color: '#334155', fontSize: 13, fontFamily: 'inherit', width: '100%',
                   }}
                 />
               </div>
@@ -308,7 +308,7 @@ export const CloudProviderSelector: React.FC<Props> = ({
 
             {/* Footer: add account */}
             {onAddAccount && (
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', padding: '8px 0' }}>
+              <div style={{ borderTop: '1px solid #e2e8f0', padding: '8px 0' }}>
                 <button
                   onClick={() => { onAddAccount(); setOpen(false); }}
                   style={{
@@ -374,8 +374,8 @@ export const ProviderSummaryBar: React.FC<ProviderSummaryBarProps> = ({
         style={{
           display: 'flex', alignItems: 'center', gap: 10,
           padding: '10px 18px',
-          background: !selectedProvider ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.03)',
-          border: `1.5px solid ${!selectedProvider ? '#60a5fa' : 'rgba(255,255,255,0.08)'}`,
+          background: !selectedProvider ? 'rgba(96,165,250,0.1)' : '#eef2f6',
+          border: `1.5px solid ${!selectedProvider ? '#60a5fa' : '#e2e8f0'}`,
           borderRadius: 14,
           cursor: 'pointer', fontFamily: 'inherit',
           transition: 'all 0.15s',
@@ -404,8 +404,8 @@ export const ProviderSummaryBar: React.FC<ProviderSummaryBarProps> = ({
             style={{
               display: 'flex', alignItems: 'center', gap: 12,
               padding: '10px 18px',
-              background: isActive ? meta.accent : 'rgba(255,255,255,0.03)',
-              border: `1.5px solid ${isActive ? meta.color : 'rgba(255,255,255,0.08)'}`,
+              background: isActive ? meta.accent : '#eef2f6',
+              border: `1.5px solid ${isActive ? meta.color : '#e2e8f0'}`,
               borderRadius: 14,
               cursor: 'pointer', fontFamily: 'inherit',
               transition: 'all 0.15s',
@@ -441,7 +441,7 @@ export const ProviderSummaryBar: React.FC<ProviderSummaryBarProps> = ({
                 marginLeft: 4,
                 width: 22, height: 22, borderRadius: '50%',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: isActive ? meta.color : 'rgba(255,255,255,0.08)',
+                background: isActive ? meta.color : '#e2e8f0',
                 color: isActive ? '#fff' : '#94a3b8',
                 fontSize: 11, fontWeight: 800,
                 flexShrink: 0,

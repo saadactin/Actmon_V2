@@ -58,7 +58,7 @@ function StatCard({ icon, label, value, sub, color = '#60a5fa' }: {
 }) {
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.04)',
+      background: '#f8fafc',
       border: `1px solid ${color}22`,
       borderRadius: 14,
       padding: '18px 20px',
@@ -66,7 +66,7 @@ function StatCard({ icon, label, value, sub, color = '#60a5fa' }: {
     }}>
       <div style={{ fontSize: 20 }}>{icon}</div>
       <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8 }}>{label}</div>
-      <div style={{ color: '#f1f5f9', fontSize: 20, fontWeight: 800, lineHeight: 1.2 }}>{value}</div>
+      <div style={{ color: '#1e293b', fontSize: 20, fontWeight: 800, lineHeight: 1.2 }}>{value}</div>
       {sub && <div style={{ color: '#64748b', fontSize: 11 }}>{sub}</div>}
     </div>
   );
@@ -75,19 +75,19 @@ function StatCard({ icon, label, value, sub, color = '#60a5fa' }: {
 function InfoPanel({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.04)',
-      border: '1px solid rgba(255,255,255,0.08)',
+      background: '#f8fafc',
+      border: '1px solid #e2e8f0',
       borderRadius: 14,
       overflow: 'hidden',
     }}>
       <div style={{
         padding: '14px 20px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        borderBottom: '1px solid #e2e8f0',
         display: 'flex', alignItems: 'center', gap: 8,
-        background: 'rgba(0,0,0,0.15)',
+        background: '#f1f5f9',
       }}>
         <span style={{ fontSize: 16 }}>{icon}</span>
-        <span style={{ color: '#cbd5e1', fontSize: 14, fontWeight: 700 }}>{title}</span>
+        <span style={{ color: '#475569', fontSize: 14, fontWeight: 700 }}>{title}</span>
       </div>
       <div style={{ padding: '4px 0' }}>{children}</div>
     </div>
@@ -102,7 +102,7 @@ function Row({ label, value, mono = false, highlight = false, badge }: {
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       padding: '11px 20px',
-      borderBottom: '1px solid rgba(255,255,255,0.04)',
+      borderBottom: '1px solid #e2e8f0',
       gap: 16,
     }}>
       <span style={{ color: '#64748b', fontSize: 13, flexShrink: 0, minWidth: 160 }}>{label}</span>
@@ -136,7 +136,7 @@ function TagPill({ k, v }: { k: string; v: string }) {
     }}>
       <span style={{ color: '#93c5fd', fontSize: 12, fontWeight: 700 }}>{k}</span>
       <span style={{ color: '#64748b', fontSize: 11 }}>:</span>
-      <span style={{ color: '#e2e8f0', fontSize: 12 }}>{v}</span>
+      <span style={{ color: '#334155', fontSize: 12 }}>{v}</span>
     </div>
   );
 }
@@ -326,8 +326,8 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
 
         return (
           <div key={metricName} style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: `1px solid ${hasData ? 'rgba(255,255,255,0.08)' : 'rgba(100,116,139,0.12)'}`,
+            background: '#f8fafc',
+            border: `1px solid ${hasData ? '#e2e8f0' : 'rgba(100,116,139,0.12)'}`,
             borderRadius: 14,
             padding: '18px 22px',
           }}>
@@ -352,12 +352,12 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
                       <stop offset="95%" stopColor={hasData ? strokeColor : '#475569'} stopOpacity={0.01}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
                   <XAxis dataKey="time" stroke="#64748b" fontSize={9} tickLine={false} />
                   <YAxis stroke="#64748b" fontSize={9} tickLine={false} />
                   <Tooltip
-                    contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                    itemStyle={{ color: '#cbd5e1', fontSize: 11 }}
+                    contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                    itemStyle={{ color: '#475569', fontSize: 11 }}
                     labelStyle={{ color: '#64748b', fontSize: 10 }}
                   />
                   <Area
@@ -546,7 +546,7 @@ export const ResourceDetailPage: React.FC = () => {
           <InfoPanel title="Raw AWS Response Data" icon="{}">
             <div style={{ padding: 16 }}>
               <pre style={{
-                background: 'rgba(0,0,0,0.3)', borderRadius: 10, padding: 16,
+                background: '#e2e8f0', borderRadius: 10, padding: 16,
                 margin: 0, fontSize: 12, color: '#7dd3fc',
                 overflowX: 'auto', maxHeight: 500, lineHeight: 1.65,
               }}>
@@ -568,7 +568,7 @@ export const ResourceDetailPage: React.FC = () => {
       {/* ── Hero ─────────────────────────────────────────────────────── */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(30,41,59,0.98) 0%, rgba(15,23,42,0.99) 100%)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        border: '1px solid #e2e8f0',
         borderRadius: 20, padding: '28px 32px', marginBottom: 24,
         position: 'relative', overflow: 'hidden',
       }}>
@@ -591,7 +591,7 @@ export const ResourceDetailPage: React.FC = () => {
           {/* Title */}
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
-              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.3 }}>
+              <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#1e293b', letterSpacing: -0.3 }}>
                 {resource.resource_name}
               </h1>
               <span style={{
@@ -629,14 +629,14 @@ export const ResourceDetailPage: React.FC = () => {
             ...extraStats.map(s => ({ icon: s.icon, label: s.label, value: s.value })),
           ].map(s => (
             <div key={s.label} style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
               borderRadius: 10, padding: '10px 16px', minWidth: 90,
             }}>
               <div style={{ color: '#64748b', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8 }}>
                 {s.icon} {s.label}
               </div>
-              <div style={{ color: '#e2e8f0', fontSize: 14, fontWeight: 700, marginTop: 3 }}>{s.value}</div>
+              <div style={{ color: '#334155', fontSize: 14, fontWeight: 700, marginTop: 3 }}>{s.value}</div>
             </div>
           ))}
         </div>
@@ -645,8 +645,8 @@ export const ResourceDetailPage: React.FC = () => {
       {/* ── Tabs ─────────────────────────────────────────────────────── */}
       <div style={{
         display: 'flex', gap: 3,
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.07)',
+        background: '#f8fafc',
+        border: '1px solid #e2e8f0',
         borderRadius: 12, padding: 3, marginBottom: 20,
       }}>
         {TABS.map(tab => (
@@ -672,7 +672,7 @@ function Empty({ icon, msg }: { icon: string; msg: string }) {
   return (
     <div style={{
       textAlign: 'center', padding: '60px 24px',
-      background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 14,
+      background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 14,
     }}>
       <div style={{ fontSize: 36, marginBottom: 10 }}>{icon}</div>
       <p style={{ color: '#64748b', fontSize: 14, margin: 0 }}>{msg}</p>
@@ -681,8 +681,8 @@ function Empty({ icon, msg }: { icon: string; msg: string }) {
 }
 
 const PAGE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };
@@ -690,8 +690,8 @@ const PAGE: React.CSSProperties = {
 const BACK_BTN: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 6,
   marginBottom: 20, padding: '8px 16px',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
   borderRadius: 10, color: '#94a3b8', fontSize: 13, fontWeight: 600,
   cursor: 'pointer', fontFamily: 'inherit',
 };

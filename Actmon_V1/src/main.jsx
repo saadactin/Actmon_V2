@@ -56,6 +56,7 @@ const AddServerPage           = React.lazy(() => import('./pages/databases/AddSe
 const ServerDetail            = React.lazy(() => import('./pages/databases/ServerDetail'));
 const CloudPage               = React.lazy(() => import('./pages/cloud/CloudPage').then(m => ({ default: m.CloudPage })));
 // ── Cloud Discovery feature (from cloud service) — lazy-loaded, namespaced ──
+const CloudShell              = React.lazy(() => import('./features/cloud/components/CloudShell').then(m => ({ default: m.CloudShell })));
 const CloudDashboard          = React.lazy(() => import('./features/cloud/pages/CloudDashboard').then(m => ({ default: m.CloudDashboard })));
 const CloudAccountsPage       = React.lazy(() => import('./features/cloud/pages/CloudAccountsPage').then(m => ({ default: m.CloudAccountsPage })));
 const CloudResourcesPage      = React.lazy(() => import('./features/cloud/pages/ResourcesPage').then(m => ({ default: m.ResourcesPage })));
@@ -221,16 +222,22 @@ const router = createBrowserRouter([
         element: <ServerDetail />,
       },
       
-      // ── Cloud Discovery feature routes (served by the cloud microservice) ──
-      { path: 'cloud', element: <CloudDashboard /> },
-      { path: 'cloud/accounts', element: <CloudAccountsPage /> },
-      { path: 'cloud/resources', element: <CloudResourcesPage /> },
-      { path: 'cloud/resources/:resourceId', element: <CloudResourceDetailPage /> },
-      { path: 'cloud/cost', element: <CloudCostPage /> },
-      { path: 'cloud/security', element: <CloudSecurityPage /> },
-      { path: 'cloud/topology', element: <CloudTopologyPage /> },
-      { path: 'cloud/compliance', element: <CloudCompliancePage /> },
-      { path: 'cloud/alerts', element: <CloudAlertsPage /> },
+      // ── Cloud Discovery feature (shared top-bar + tabs via CloudShell layout) ──
+      {
+        path: 'cloud',
+        element: <CloudShell />,
+        children: [
+          { index: true, element: <CloudDashboard /> },
+          { path: 'accounts', element: <CloudAccountsPage /> },
+          { path: 'resources', element: <CloudResourcesPage /> },
+          { path: 'resources/:resourceId', element: <CloudResourceDetailPage /> },
+          { path: 'cost', element: <CloudCostPage /> },
+          { path: 'security', element: <CloudSecurityPage /> },
+          { path: 'topology', element: <CloudTopologyPage /> },
+          { path: 'compliance', element: <CloudCompliancePage /> },
+          { path: 'alerts', element: <CloudAlertsPage /> },
+        ],
+      },
       {
         path: 'infra',
         element: <InfraPage />,

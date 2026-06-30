@@ -1694,7 +1694,7 @@ export default function MySQLDashboard() {
                   {databases.map((db, i) => (
                     <tr key={i}
                       className="border-t border-slate-100 hover:bg-cyan-50 cursor-pointer transition-colors group"
-                      onClick={() => { setSelDb(db.name); setActiveTab('tables'); }}>
+                      onClick={() => { setSelDb(db.name); setTblDbFilter(db.name); setActiveTab('tables'); }}>
                       <td className="px-5 py-4 font-bold text-cyan-700 flex items-center gap-1.5">
                         {db.name}
                         <Eye size={11} className="opacity-0 group-hover:opacity-60 text-cyan-500 transition-opacity flex-shrink-0" />
@@ -1710,7 +1710,7 @@ export default function MySQLDashboard() {
                         </div>
                       </td>
                       <td className="px-5 py-4">
-                        <button onClick={e => { e.stopPropagation(); setSelDb(db.name); setActiveTab('tables'); }}
+                        <button onClick={e => { e.stopPropagation(); setSelDb(db.name); setTblDbFilter(db.name); setActiveTab('tables'); }}
                           className="px-3 h-8 bg-cyan-700 text-white text-xs font-semibold rounded-xl hover:bg-cyan-800">
                           View Tables
                         </button>
@@ -1871,8 +1871,8 @@ export default function MySQLDashboard() {
             {/* ── Table detail modal (opens on row click) ── */}
             {selTable && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setSelTable(null)}>
-                <div onClick={e => e.stopPropagation()} className="w-full max-w-5xl h-[82vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-                  <button onClick={() => setSelTable(null)} className="absolute top-6 right-6 z-10 w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500">✕</button>
+                <div onClick={e => e.stopPropagation()} className="relative w-full max-w-5xl h-[82vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                  <button onClick={() => setSelTable(null)} className="absolute top-3 right-3 z-10 w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500">✕</button>
                   <>
                   {/* detail header */}
                   <div className="flex-shrink-0 border-b border-slate-100 px-4 py-3 bg-slate-50/60">
@@ -2690,7 +2690,7 @@ export default function MySQLDashboard() {
                     <div className="mt-3 space-y-1.5">
                       {databases.filter(d=>d.size_mb>0).map((db, i) => (
                         <button key={i}
-                          onClick={() => { setSelDb(db.name); setActiveTab('tables'); }}
+                          onClick={() => { setSelDb(db.name); setTblDbFilter(db.name); setActiveTab('tables'); }}
                           className="w-full flex items-center justify-between text-xs bg-slate-50 hover:bg-cyan-50 border border-slate-100 hover:border-cyan-200 rounded-lg px-3 py-1.5 transition-colors group">
                           <span className="font-mono font-bold text-slate-700">{db.name}</span>
                           <span className="text-slate-400 group-hover:text-cyan-600">{db.size_mb} MB → View Tables</span>

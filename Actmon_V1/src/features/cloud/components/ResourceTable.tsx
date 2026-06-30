@@ -86,8 +86,8 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
     cursor: 'pointer',
     userSelect: 'none',
     whiteSpace: 'nowrap',
-    borderBottom: '1px solid rgba(255,255,255,0.07)',
-    background: 'rgba(0,0,0,0.2)',
+    borderBottom: '1px solid #e2e8f0',
+    background: '#f1f5f9',
     transition: 'color 0.15s',
   });
 
@@ -110,8 +110,8 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 7,
                 padding: '6px 14px', borderRadius: 10, cursor: 'pointer',
-                border: `1px solid ${typeFilter === type ? m.color : 'rgba(255,255,255,0.1)'}`,
-                background: typeFilter === type ? m.bg : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${typeFilter === type ? m.color : '#e2e8f0'}`,
+                background: typeFilter === type ? m.bg : '#eef2f6',
                 color: typeFilter === type ? m.color : '#94a3b8',
                 fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
                 transition: 'all 0.15s',
@@ -120,7 +120,7 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
               <span>{m.icon}</span>
               <span>{type}</span>
               <span style={{
-                background: typeFilter === type ? m.color : 'rgba(255,255,255,0.1)',
+                background: typeFilter === type ? m.color : '#e2e8f0',
                 color: typeFilter === type ? '#000' : '#94a3b8',
                 borderRadius: 20, padding: '0 6px', fontSize: 11, fontWeight: 700,
               }}>{count}</span>
@@ -138,9 +138,9 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
           placeholder={`Search ${filtered.length} resources…`}
           style={{
             width: '100%', padding: '10px 14px 10px 40px',
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 10, color: '#e2e8f0', fontSize: 14,
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: 10, color: '#334155', fontSize: 14,
             fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box',
           }}
         />
@@ -148,8 +148,8 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
 
       {/* Table */}
       <div style={{
-        background: 'rgba(15,23,42,0.8)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
         borderRadius: 16,
         overflow: 'hidden',
         backdropFilter: 'blur(10px)',
@@ -193,12 +193,12 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
                     onClick={() => navigate(`/cloud/resources/${item.id}`)}
                     style={{
                       cursor: 'pointer',
-                      background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
-                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                      background: i % 2 === 0 ? 'transparent' : '#eef2f6',
+                      borderBottom: '1px solid #e2e8f0',
                       transition: 'background 0.12s',
                     }}
                     onMouseEnter={e => (e.currentTarget.style.background = 'rgba(96,165,250,0.08)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : '#eef2f6')}
                   >
                     {/* Name */}
                     <td style={{ padding: '14px 16px' }}>
@@ -265,9 +265,9 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
         {/* Footer */}
         <div style={{
           padding: '10px 16px',
-          borderTop: '1px solid rgba(255,255,255,0.05)',
+          borderTop: '1px solid #e2e8f0',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          background: 'rgba(0,0,0,0.15)',
+          background: '#f1f5f9',
         }}>
           <span style={{ color: '#64748b', fontSize: 12 }}>
             Showing <strong style={{ color: '#94a3b8' }}>{filtered.length}</strong> of <strong style={{ color: '#94a3b8' }}>{(resources || []).length}</strong> resources

@@ -61,7 +61,7 @@ export const CostPage = () => {
           <button onClick={() => navigate('/cloud')} style={BACK_BTN}>
             <ArrowLeft size={16} /> Cloud Control Center
           </button>
-          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.5 }}>
+          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5 }}>
             📈 Cost Analytics & Optimization
           </h1>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
@@ -84,7 +84,7 @@ export const CostPage = () => {
         <div style={CARD_STYLE}>
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <AlertTriangle size={48} color="#ef4444" style={{ marginBottom: 16 }} />
-            <h3 style={{ margin: '0 0 8px', color: '#e2e8f0', fontSize: 18, fontWeight: 700 }}>Analytics Unavailable</h3>
+            <h3 style={{ margin: '0 0 8px', color: '#334155', fontSize: 18, fontWeight: 700 }}>Analytics Unavailable</h3>
             <p style={{ margin: 0, color: '#64748b', fontSize: 14 }}>
               Unable to analyze cloud billing. Please make sure resources have been discovered first.
             </p>
@@ -103,7 +103,7 @@ export const CostPage = () => {
                 </div>
                 <div>
                   <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Projected Monthly Spend</p>
-                  <p style={{ color: '#f1f5f9', fontSize: 26, fontWeight: 800, margin: '4px 0 0' }}>
+                  <p style={{ color: '#1e293b', fontSize: 26, fontWeight: 800, margin: '4px 0 0' }}>
                     ${analytics.total_monthly_cost.toFixed(2)}
                   </p>
                 </div>
@@ -147,7 +147,7 @@ export const CostPage = () => {
             
             {/* Projected Spend Line */}
             <div style={CARD_STYLE}>
-              <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 15, fontWeight: 700 }}>
+              <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
                 📊 Monthly Spend Trend (Last 30 Days)
               </h3>
               <div style={{ height: 230 }}>
@@ -162,12 +162,12 @@ export const CostPage = () => {
                           <stop offset="95%" stopColor="#60a5fa" stopOpacity={0.01}/>
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
                       <XAxis dataKey="date" stroke="#64748b" fontSize={9} tickLine={false} />
                       <YAxis stroke="#64748b" fontSize={9} tickLine={false} unit="$" />
                       <Tooltip
-                        contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                        itemStyle={{ color: '#cbd5e1', fontSize: 11 }}
+                        contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                        itemStyle={{ color: '#475569', fontSize: 11 }}
                       />
                       <Area type="monotone" dataKey="estimated_cost" name="Projected Cost" stroke="#60a5fa" strokeWidth={2} fillOpacity={1} fill="url(#colorCost)" />
                     </AreaChart>
@@ -178,7 +178,7 @@ export const CostPage = () => {
 
             {/* Resource Sprawl Line */}
             <div style={CARD_STYLE}>
-              <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 15, fontWeight: 700 }}>
+              <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
                 📈 Resource Sprawl / growth (Last 30 Days)
               </h3>
               <div style={{ height: 230 }}>
@@ -193,12 +193,12 @@ export const CostPage = () => {
                           <stop offset="95%" stopColor="#a855f7" stopOpacity={0.01}/>
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
                       <XAxis dataKey="date" stroke="#64748b" fontSize={9} tickLine={false} />
                       <YAxis stroke="#64748b" fontSize={9} tickLine={false} />
                       <Tooltip
-                        contentStyle={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8 }}
-                        itemStyle={{ color: '#cbd5e1', fontSize: 11 }}
+                        contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
+                        itemStyle={{ color: '#475569', fontSize: 11 }}
                       />
                       <Area type="monotone" dataKey="resource_count" name="Total Resources" stroke="#a855f7" strokeWidth={2} fillOpacity={1} fill="url(#colorCount)" />
                     </AreaChart>
@@ -211,7 +211,7 @@ export const CostPage = () => {
 
           {/* Cost Optimization Recommendations */}
           <div>
-            <h3 style={{ margin: '0 0 16px', color: '#cbd5e1', fontSize: 16, fontWeight: 800 }}>
+            <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 16, fontWeight: 800 }}>
               💡 Actionable Cost Optimization Recommendations
             </h3>
             
@@ -228,14 +228,14 @@ export const CostPage = () => {
                     <div key={opt.id} style={{
                       ...CARD_STYLE,
                       borderLeft: `4px solid ${style.fg}`,
-                      background: 'rgba(255,255,255,0.03)',
+                      background: '#f8fafc',
                       padding: '18px 24px',
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
                         <div>
                           {/* Title & tags */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                            <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>{opt.rule}</h4>
+                            <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#1e293b' }}>{opt.rule}</h4>
                             <span style={{
                               fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 12,
                               background: style.bg, border: `1px solid ${style.border}`, color: style.fg,
@@ -258,12 +258,12 @@ export const CostPage = () => {
 
                           {/* Remediation */}
                           <div style={{
-                            padding: '10px 14px', borderRadius: 8, background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.03)'
+                            padding: '10px 14px', borderRadius: 8, background: '#f1f5f9', border: '1px solid #eef2f6'
                           }}>
                             <div style={{ color: '#a855f7', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
                               🔧 Actionable Steps
                             </div>
-                            <p style={{ margin: 0, color: '#cbd5e1', fontSize: 12 }}>
+                            <p style={{ margin: 0, color: '#475569', fontSize: 12 }}>
                               {opt.recommendation}
                             </p>
                           </div>
@@ -276,7 +276,7 @@ export const CostPage = () => {
                               </div>
                               {opt.sub_resources.map((sr: any, idx: number) => (
                                 <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', background: 'rgba(0,0,0,0.1)', borderRadius: 6, marginBottom: idx === opt.sub_resources.length - 1 ? 0 : 4 }}>
-                                  <span style={{ color: '#e2e8f0', fontSize: 12, fontFamily: 'monospace' }}>{sr.name}</span>
+                                  <span style={{ color: '#334155', fontSize: 12, fontFamily: 'monospace' }}>{sr.name}</span>
                                   <span style={{ color: '#10b981', fontSize: 12, fontWeight: 600 }}>${sr.cost.toFixed(2)}/mo</span>
                                 </div>
                               ))}
@@ -313,8 +313,8 @@ export const CostPage = () => {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };
@@ -329,8 +329,8 @@ const SPINNER_STYLE: React.CSSProperties = {
 };
 
 const CARD_STYLE: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
   borderRadius: 16,
   padding: '20px 24px',
 };
@@ -340,8 +340,8 @@ const BACK_BTN: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '6px 12px',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
   borderRadius: 8,
   color: '#94a3b8',
   fontSize: 12,
@@ -352,10 +352,10 @@ const BACK_BTN: React.CSSProperties = {
 };
 
 const SELECT_STYLE: React.CSSProperties = {
-  background: 'rgba(15,23,42,0.8)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
   borderRadius: 10,
-  color: '#e2e8f0',
+  color: '#334155',
   fontSize: 13,
   padding: '8px 14px',
   fontFamily: 'inherit',
@@ -370,6 +370,6 @@ const EMPTY_CHART_STYLE: React.CSSProperties = {
   justifyContent: 'center',
   color: '#64748b',
   fontSize: 13,
-  border: '1px dashed rgba(255,255,255,0.05)',
+  border: '1px dashed #e2e8f0',
   borderRadius: 12,
 };

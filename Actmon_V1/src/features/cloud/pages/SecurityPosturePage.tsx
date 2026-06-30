@@ -86,7 +86,7 @@ export const SecurityPosturePage = () => {
           <button onClick={() => navigate('/cloud')} style={BACK_BTN}>
             <ArrowLeft size={16} /> Cloud Control Center
           </button>
-          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#f1f5f9', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
             🛡️ Security Posture Scanner
           </h1>
           <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
@@ -112,7 +112,7 @@ export const SecurityPosturePage = () => {
                 borderRadius: 10,
                 border: 'none',
                 background: '#3b82f6',
-                color: '#ffffff',
+                color: '#1e293b',
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
@@ -135,7 +135,7 @@ export const SecurityPosturePage = () => {
         <div style={CARD_STYLE}>
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <ShieldAlert size={48} color="#ef4444" style={{ marginBottom: 16 }} />
-            <h3 style={{ margin: '0 0 8px', color: '#e2e8f0', fontSize: 18, fontWeight: 700 }}>Security Scan Unavailable</h3>
+            <h3 style={{ margin: '0 0 8px', color: '#334155', fontSize: 18, fontWeight: 700 }}>Security Scan Unavailable</h3>
             <p style={{ margin: 0, color: '#64748b', fontSize: 14 }}>
               Unable to analyze cloud account resources. Please make sure resources have been discovered first.
             </p>
@@ -161,7 +161,7 @@ export const SecurityPosturePage = () => {
               <div style={{ position: 'relative', width: 140, height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {/* SVG Gauge */}
                 <svg width="140" height="140" viewBox="0 0 140 140">
-                  <circle cx="70" cy="70" r="58" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="10" />
+                  <circle cx="70" cy="70" r="58" fill="none" stroke="#e2e8f0" strokeWidth="10" />
                   <circle
                     cx="70" cy="70" r="58" fill="none"
                     stroke={getGradeColor(posture.grade)}
@@ -174,7 +174,7 @@ export const SecurityPosturePage = () => {
                   />
                 </svg>
                 <div style={{ position: 'absolute', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                  <span style={{ fontSize: 36, fontWeight: 900, color: '#f1f5f9', lineHeight: 1 }}>{posture.score}</span>
+                  <span style={{ fontSize: 36, fontWeight: 900, color: '#1e293b', lineHeight: 1 }}>{posture.score}</span>
                   <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 }}>Score</span>
                 </div>
               </div>
@@ -208,7 +208,7 @@ export const SecurityPosturePage = () => {
                 ].map(stat => (
                   <div key={stat.label} style={{
                     ...CARD_STYLE, padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 16,
-                    border: `1px solid ${stat.color}15`, background: 'rgba(255,255,255,0.03)'
+                    border: `1px solid ${stat.color}15`, background: '#f8fafc'
                   }}>
                     <div style={{
                       width: 42, height: 42, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -218,27 +218,27 @@ export const SecurityPosturePage = () => {
                     </div>
                     <div>
                       <div style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>{stat.label}</div>
-                      <div style={{ color: '#f1f5f9', fontSize: 22, fontWeight: 800, marginTop: 2 }}>{stat.count}</div>
+                      <div style={{ color: '#1e293b', fontSize: 22, fontWeight: 800, marginTop: 2 }}>{stat.count}</div>
                     </div>
                   </div>
                 ))}
               </div>
 
               {/* General details bar */}
-              <div style={{ ...CARD_STYLE, padding: '18px 24px', display: 'flex', justifyContent: 'space-around', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
+              <div style={{ ...CARD_STYLE, padding: '18px 24px', display: 'flex', justifyContent: 'space-around', alignItems: 'center', background: '#f8fafc' }}>
                 <div>
                   <span style={{ color: '#64748b', fontSize: 12 }}>Resources Scanned</span>
-                  <div style={{ color: '#e2e8f0', fontSize: 18, fontWeight: 700, marginTop: 4 }}>{posture.total_resources_scanned}</div>
+                  <div style={{ color: '#334155', fontSize: 18, fontWeight: 700, marginTop: 4 }}>{posture.total_resources_scanned}</div>
                 </div>
-                <div style={{ width: 1, height: 32, background: 'rgba(255,255,255,0.08)' }} />
+                <div style={{ width: 1, height: 32, background: '#ffffff' }} />
                 <div>
                   <span style={{ color: '#64748b', fontSize: 12 }}>Total Findings</span>
-                  <div style={{ color: '#e2e8f0', fontSize: 18, fontWeight: 700, marginTop: 4 }}>{posture.total_findings}</div>
+                  <div style={{ color: '#334155', fontSize: 18, fontWeight: 700, marginTop: 4 }}>{posture.total_findings}</div>
                 </div>
-                <div style={{ width: 1, height: 32, background: 'rgba(255,255,255,0.08)' }} />
+                <div style={{ width: 1, height: 32, background: '#ffffff' }} />
                 <div>
                   <span style={{ color: '#64748b', fontSize: 12 }}>Last Scanned</span>
-                  <div style={{ color: '#e2e8f0', fontSize: 18, fontWeight: 700, marginTop: 4 }}>
+                  <div style={{ color: '#334155', fontSize: 18, fontWeight: 700, marginTop: 4 }}>
                     {selectedAccount?.last_discovery ? new Date(selectedAccount.last_discovery).toLocaleString() : 'Never'}
                   </div>
                 </div>
@@ -250,7 +250,7 @@ export const SecurityPosturePage = () => {
           {/* Filter Bar */}
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)',
+            background: '#f8fafc', border: '1px solid #e2e8f0',
             borderRadius: 14, padding: '12px 20px', marginBottom: 20
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#94a3b8', fontSize: 13, fontWeight: 600 }}>
@@ -306,14 +306,14 @@ export const SecurityPosturePage = () => {
                     ...CARD_STYLE,
                     borderLeft: `4px solid ${style.fg}`,
                     padding: '18px 24px',
-                    background: 'rgba(255,255,255,0.03)',
+                    background: '#f8fafc',
                     transition: 'transform 0.15s, background-color 0.15s'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
                       <div>
                         {/* Title and Badge */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                          <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>{finding.title}</h4>
+                          <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: '#1e293b' }}>{finding.title}</h4>
                           <span style={{
                             fontSize: 10, fontWeight: 800, padding: '2px 8px', borderRadius: 12,
                             background: style.bg, border: `1px solid ${style.border}`, color: style.fg,
@@ -322,7 +322,7 @@ export const SecurityPosturePage = () => {
                             {finding.severity}
                           </span>
                           <span style={{
-                            fontSize: 11, color: '#64748b', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: 4
+                            fontSize: 11, color: '#64748b', background: '#ffffff', padding: '2px 8px', borderRadius: 4
                           }}>
                             {finding.category}
                           </span>
@@ -335,12 +335,12 @@ export const SecurityPosturePage = () => {
 
                         {/* Recommendation */}
                         <div style={{
-                          padding: '10px 14px', borderRadius: 8, background: 'rgba(0,0,0,0.15)', border: '1px solid rgba(255,255,255,0.03)'
+                          padding: '10px 14px', borderRadius: 8, background: '#f1f5f9', border: '1px solid #eef2f6'
                         }}>
                           <div style={{ display: 'flex', gap: 6, alignItems: 'center', color: '#60a5fa', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>
                             🔧 Remediation Recommendation
                           </div>
-                          <p style={{ margin: 0, color: '#cbd5e1', fontSize: 12 }}>
+                          <p style={{ margin: 0, color: '#475569', fontSize: 12 }}>
                             {finding.recommendation}
                           </p>
                         </div>
@@ -374,8 +374,8 @@ export const SecurityPosturePage = () => {
 };
 
 const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100vh',
-  background: 'linear-gradient(160deg, #0d1117 0%, #0f1923 50%, #0d1117 100%)',
+  minHeight: '100%',
+  background: '#f1f5f9',
   padding: '28px 32px',
   fontFamily: "'Inter', -apple-system, sans-serif",
 };
@@ -390,8 +390,8 @@ const SPINNER_STYLE: React.CSSProperties = {
 };
 
 const CARD_STYLE: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.04)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  background: '#f8fafc',
+  border: '1px solid #e2e8f0',
   borderRadius: 16,
   padding: '20px 24px',
 };
@@ -401,8 +401,8 @@ const BACK_BTN: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '6px 12px',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
   borderRadius: 8,
   color: '#94a3b8',
   fontSize: 12,
@@ -413,10 +413,10 @@ const BACK_BTN: React.CSSProperties = {
 };
 
 const SELECT_STYLE: React.CSSProperties = {
-  background: 'rgba(15,23,42,0.8)',
-  border: '1px solid rgba(255,255,255,0.1)',
+  background: '#ffffff',
+  border: '1px solid #e2e8f0',
   borderRadius: 8,
-  color: '#e2e8f0',
+  color: '#334155',
   fontSize: 12,
   padding: '6px 10px',
   fontFamily: 'inherit',
