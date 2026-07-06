@@ -52,12 +52,15 @@ def _ch_engine(conn):
 # active-session SQL → normalized columns:
 # pid, usename, datname, client_addr, state, wait_event_type, wait_event, query_seconds, query
 _SQL = {
+    # Every query EXCLUDES ActMon's own monitoring session — otherwise the list
+    # shows the drill-down's own SELECT, which is gone by the time it's clicked
+    # ("Session no longer active").
     "mysql": """
         SELECT ID AS pid, USER AS usename, DB AS datname, HOST AS client_addr,
                COMMAND AS state, '' AS wait_event_type, STATE AS wait_event,
                TIME AS query_seconds, INFO AS query
         FROM information_schema.PROCESSLIST
-        WHERE INFO IS NOT NULL AND COMMAND <> 'Sleep'
+        WHERE INFO IS NOT NULL AND COMMAND <> 'Sleep' AND ID <> CONNECTION_ID()
         ORDER BY TIME DESC LIMIT 50""",
     "mssql": """
         SELECT r.session_id AS pid, s.login_name AS usename, DB_NAME(r.database_id) AS datname,
@@ -67,7 +70,7 @@ _SQL = {
         FROM sys.dm_exec_requests r
         JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
         CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
-        WHERE r.session_id > 50
+        WHERE r.session_id > 50 AND r.session_id <> @@SPID
         ORDER BY r.total_elapsed_time DESC""",
     "oracle": """
         SELECT * FROM (
@@ -76,13 +79,16 @@ _SQL = {
                  s.event AS wait_event, s.last_call_et AS query_seconds, q.sql_text AS query
           FROM v$session s LEFT JOIN v$sql q ON s.sql_id = q.sql_id
           WHERE s.type = 'USER' AND s.username IS NOT NULL
+            AND s.audsid <> USERENV('SESSIONID')
           ORDER BY s.last_call_et DESC
         ) WHERE ROWNUM <= 50""",
     "clickhouse": """
         SELECT query_id AS pid, user AS usename, current_database AS datname,
                toString(address) AS client_addr, 'active' AS state,
                '' AS wait_event_type, '' AS wait_event, elapsed AS query_seconds, query
-        FROM system.processes WHERE query <> '' ORDER BY elapsed DESC LIMIT 50""",
+        FROM system.processes
+        WHERE query <> '' AND query_id <> queryID()
+        ORDER BY elapsed DESC LIMIT 50""",
 }
 
 TECH = {
@@ -165,6 +171,78 @@ def _is_local_host(host) -> bool:
     except Exception:
         pass
     return False
+
+
+_DB_PROC_KEYS = ("mysqld", "mariadb", "postgres", "sqlservr", "oracle", "ora_", "mongod", "clickhouse")
+
+
+def _agent_processes(conn_id: int, db, sort: str = "cpu", limit: int = 25) -> dict | None:
+    """Top processes from the ActMon agent's last snapshot (no SSH needed)."""
+    import json
+    from app.models.os_server_model import OsServer, DatabaseInstance
+    inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+    if not inst:
+        return None
+    server = db.query(OsServer).filter(
+        OsServer.id == inst.server_id, OsServer.collector == "agent").first()
+    if not server or not server.last_infra_json:
+        return None
+    try:
+        d = json.loads(server.last_infra_json)
+    except Exception:
+        return None
+    rows = []
+    for p in (d.get("processes") or []):
+        cmd = str(p.get("command") or "")
+        rows.append({
+            "pid": str(p.get("pid") or ""), "user": p.get("user") or "",
+            "cpu_pct": float(p.get("cpu") or 0), "mem_pct": float(p.get("mem") or 0),
+            "command": cmd, "is_db": any(k in cmd.lower() for k in _DB_PROC_KEYS),
+        })
+    key = "mem_pct" if sort == "mem" else "cpu_pct"
+    rows.sort(key=lambda r: r.get(key) or 0, reverse=True)
+    rows = rows[: int(limit)]
+    return {
+        "processes": rows, "sort": sort, "cpu_cores": None,
+        "system_cpu_pct": d.get("cpu_pct"),
+        "db_cpu_pct": round(sum(r["cpu_pct"] for r in rows if r["is_db"]), 1),
+        "source": "agent",
+    }
+
+
+def _agent_host_metrics(conn_id: int, db) -> dict | None:
+    """Host CPU/RAM/Disk from the ActMon agent's last pushed snapshot (for hosts
+    monitored via agent, where SSH isn't configured and the DB may be remote)."""
+    import json
+    from app.models.os_server_model import OsServer, DatabaseInstance
+    inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+    if not inst:
+        return None
+    server = db.query(OsServer).filter(
+        OsServer.id == inst.server_id, OsServer.collector == "agent").first()
+    if not server or not server.last_infra_json:
+        return None
+    try:
+        d = json.loads(server.last_infra_json)
+    except Exception:
+        return None
+    mem = d.get("memory") or {}
+    fs = d.get("filesystems") or []
+    disk = max((f.get("use_pct", 0) for f in fs), default=None)
+    load = d.get("load") or {}
+    load_avg = None
+    if isinstance(load, dict) and load.get("one") is not None:
+        load_avg = f"{load.get('one')} {load.get('five')} {load.get('fifteen')}"
+    return {
+        "source": "agent",
+        "cpu_pct": d.get("cpu_pct"),
+        "ram_pct": mem.get("used_pct"),
+        "ram_used_mb": mem.get("used_mb"),
+        "ram_total_mb": mem.get("total_mb"),
+        "disk_pct": disk,
+        "load_avg": load_avg,
+        "cpu_cores": None,
+    }
 
 
 def _local_host_metrics() -> dict | None:
@@ -995,6 +1073,10 @@ def host_metrics(tech: str, conn_id: int, db: Session) -> dict:
         m = _local_host_metrics()
         if m:
             return m
+    # Host monitored by an ActMon agent → use the metrics the agent pushed (no SSH needed).
+    am = _agent_host_metrics(conn_id, db)
+    if am:
+        return am
     ssh = _ssh_connect(conn, db)
     try:
         cpu = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
@@ -1020,6 +1102,10 @@ def processes(tech: str, conn_id: int, db: Session, sort: str = "cpu", limit: in
         local = _local_processes(cfg["procs"], sort=sort, limit=limit)
         if local is not None:
             return local
+    # Host monitored by an ActMon agent → use the processes the agent pushed.
+    am = _agent_processes(conn_id, db, sort=sort, limit=limit)
+    if am:
+        return am
     ssh = _ssh_connect(conn, db)
     cores = _num(_run(ssh, "nproc"), int) or 1
     rows = _collect(ssh, cores, cfg["procs"])
@@ -1084,7 +1170,10 @@ def session_detail(tech: str, conn_id: int, pid, db: Session) -> dict:
     sessions = _active_sessions(tech, conn)
     row = next((s for s in sessions if str(s.get("pid")) == str(pid)), None)
     if not row:
-        raise HTTPException(status_code=404, detail="Session no longer active.")
+        raise HTTPException(
+            status_code=404,
+            detail="This session finished before it could be inspected — short-lived queries "
+                   "often complete within seconds. Go back to see the current sessions.")
     return {"detail": row, "plan": "(execution plan available on PostgreSQL/Oracle deep-dive)", "limited": False}
 
 
@@ -1098,14 +1187,25 @@ def rca(tech: str, conn_id: int, db: Session, pid: Optional[int] = None,
     if tech == "mssql":
         return _mssql_rca(conn, resource, pid, target_cmd)
     cfg = _cfg(tech)
-    ssh = _ssh_connect(conn, db)
-    cores = _num(_run(ssh, "nproc"), int) or 1
-    all_procs = _collect(ssh, cores, cfg["procs"])
-    if resource == "cpu":
-        host_util = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+    # Agent-connected host → build the process snapshot from the agent's last
+    # push instead of SSH (agent hosts often have no SSH creds at all).
+    ap = _agent_processes(conn_id, db, sort=("mem" if resource != "cpu" else "cpu"), limit=200)
+    if ap:
+        all_procs = ap["processes"]
+        if resource == "cpu":
+            host_util = ap.get("system_cpu_pct")
+        else:
+            am = _agent_host_metrics(conn_id, db)
+            host_util = (am or {}).get("ram_pct")
     else:
-        host_util = _num(_run(ssh, "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'"))
-    ssh.close()
+        ssh = _ssh_connect(conn, db)
+        cores = _num(_run(ssh, "nproc"), int) or 1
+        all_procs = _collect(ssh, cores, cfg["procs"])
+        if resource == "cpu":
+            host_util = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+        else:
+            host_util = _num(_run(ssh, "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'"))
+        ssh.close()
 
     metric = "cpu_pct" if resource == "cpu" else "mem_pct"
     db_share = round(sum((p[metric] or 0) for p in all_procs if p["is_db"]), 1)
@@ -1113,7 +1213,7 @@ def rca(tech: str, conn_id: int, db: Session, pid: Optional[int] = None,
     top_procs = sorted(all_procs, key=lambda r: r.get(metric) or 0, reverse=True)[:10]
     target = None
     if pid:
-        target = next((p for p in all_procs if p["pid"] == pid), None)
+        target = next((p for p in all_procs if str(p["pid"]) == str(pid)), None)
     if target is None and target_cmd:
         target = next((p for p in all_procs if p["command"] == target_cmd), None)
     is_db_related = target["is_db"] if target is not None else (db_share >= ext_share)

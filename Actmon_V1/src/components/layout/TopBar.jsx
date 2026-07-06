@@ -53,34 +53,9 @@ export const TopBar = () => {
   const pathnames = location.pathname.split('/').filter(Boolean);
 
   return (
-    <header className="h-16 bg-white border-b border-brand-border flex items-center justify-between px-6 md:px-8 z-30 sticky top-0">
+    <header className="h-12 bg-white border-b border-brand-border flex items-center justify-end px-6 md:px-8 z-30 sticky top-0">
 
-     <div className="flex items-center gap-4 min-w-0">
-      {/* ── Breadcrumbs ── */}
-      <nav className="flex text-sm text-brand-text-secondary" aria-label="Breadcrumb">
-        <ol className="inline-flex items-center space-x-1 md:space-x-2">
-          <li>
-            <Link to="/dashboard" className="hover:text-brand-primary font-medium">ActMon</Link>
-          </li>
-          {pathnames.map((value, index) => {
-            const last  = index === pathnames.length - 1;
-            const to    = `/${pathnames.slice(0, index + 1).join('/')}`;
-            const label = LABEL[value.toLowerCase()] || value;
-            return (
-              <li key={to} className="flex items-center">
-                <span className="mx-1 text-gray-400">/</span>
-                {last
-                  ? <span className="font-semibold text-brand-text-primary">{label}</span>
-                  : <Link to={to} className="hover:text-brand-primary font-medium">{label}</Link>
-                }
-              </li>
-            );
-          })}
-        </ol>
-      </nav>
-     </div>
-
-      {/* ── Right controls ── */}
+      {/* ── Right controls (slim bar — breadcrumb removed) ── */}
       <div className="flex items-center gap-3">
 
         {/* ── Bell + mini popup ── */}

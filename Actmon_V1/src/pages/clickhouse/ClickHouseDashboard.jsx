@@ -176,7 +176,7 @@ export default function ClickHouseDashboard() {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── HEADER ─── */}
       <div style={{background:'linear-gradient(to right,#0f172a,#78350f,#7c1d12)'}} className="text-white shadow-xl">

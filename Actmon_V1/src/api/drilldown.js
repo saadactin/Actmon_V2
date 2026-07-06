@@ -21,7 +21,7 @@ export const mssqlEnableOsVisibility = (connId) =>
 export const mssqlTableDetail = (connId, dbName, schema, table) =>
   client.get(`/drilldown/mssql/${connId}/table-detail`, { params: { db_name: dbName, schema, table } }).then((r) => r.data);
 
-// PostgreSQL SolarWinds-style resource drill-down (on-demand).
+// PostgreSQL ActMon-style resource drill-down (on-demand).
 export const pgHostMetrics = (connId) =>
   client.get(`/connections/postgresql/${connId}/host-metrics`).then((r) => r.data);
 

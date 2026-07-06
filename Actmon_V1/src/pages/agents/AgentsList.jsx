@@ -686,64 +686,44 @@ export const AgentsList = () => {
         />
       )}
 
-      {/* ── PAGE TITLE ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold text-slate-800 tracking-tight">Monitored Systems</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            All registered database agents &middot; {agents.length} total
-          </p>
+      {/* ── HEADER (full-bleed cloud-blue, compact — matches dashboard) ─────── */}
+      <div className="-mx-6 md:-mx-8 bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 md:px-8 pt-3 pb-4 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+          <span>ActMon</span><span>›</span><span className="text-white font-semibold">Agents</span>
         </div>
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0">
+              <Server className="h-[18px] w-[18px] text-sky-200" />
+            </div>
+            <div>
+              <h1 className="text-lg font-black text-white tracking-tight leading-none">Monitored Systems</h1>
+              <p className="text-sky-200/70 text-[11px] mt-0.5">{agents.length} registered agent{agents.length !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Sync toast */}
-          {syncMsg && (
-            <span
-              className="text-xs font-semibold px-3 py-1.5 rounded-lg animate-in fade-in duration-200"
-              style={{
-                backgroundColor: syncMsg.type === 'success' ? '#dcfce7' : '#fee2e2',
-                color: syncMsg.type === 'success' ? '#166534' : '#991b1b',
-                border: `1px solid ${syncMsg.type === 'success' ? '#bbf7d0' : '#fecaca'}`,
-              }}
-            >
-              {syncMsg.text}
-            </span>
-          )}
-
-          {/* Register Agent button */}
-          <button
-            onClick={() => setShowRegisterModal(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white transition-all hover:opacity-90 active:scale-95"
-            style={{ background: 'linear-gradient(135deg, #0ea5e9, #2563eb)' }}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Register Agent
-          </button>
-
-          {/* Sync button */}
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white transition-all disabled:opacity-60 disabled:cursor-not-allowed hover:opacity-90 active:scale-95"
-            style={{ background: 'linear-gradient(135deg, #6366f1, #4f46e5)' }}
-          >
-            {syncing ? (
-              <Spinner size="tiny" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
+          <div className="flex items-center gap-2 flex-wrap">
+            {syncMsg && (
+              <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg"
+                style={{ backgroundColor: syncMsg.type === 'success' ? '#dcfce7' : '#fee2e2', color: syncMsg.type === 'success' ? '#166534' : '#991b1b' }}>
+                {syncMsg.text}
+              </span>
             )}
-            Sync Connections
-          </button>
-
-          {/* Refresh */}
-          <button
-            onClick={() => { refetch(); setCountdown(30); }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 transition-all"
-            title="Refresh now"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            <span className="tabular-nums text-slate-400">{countdown}s</span>
-          </button>
+            <button onClick={() => navigate('/agents/setup')}
+              className="h-9 px-4 rounded-lg bg-white text-blue-700 hover:bg-sky-50 shadow-sm text-sm font-bold flex items-center gap-1.5 transition-all">
+              <Plus className="h-4 w-4" /> Register Agent
+            </button>
+            <button onClick={handleSync} disabled={syncing}
+              className="h-9 px-4 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-60 transition-all">
+              {syncing ? <Spinner size="tiny" /> : <RefreshCw className="h-4 w-4" />} Sync
+            </button>
+            <button onClick={() => { refetch(); setCountdown(30); }} title="Refresh now"
+              className="h-9 px-3 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white text-sm font-semibold flex items-center gap-1.5 transition-all">
+              <RefreshCw className="h-3.5 w-3.5" /> <span className="tabular-nums text-sky-200/70">{countdown}s</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -795,23 +775,23 @@ export const AgentsList = () => {
             <button
               key={key}
               onClick={() => handleStatClick(key)}
-              className="bg-white rounded-xl border p-4 flex flex-col gap-3 text-left hover:shadow-md transition-all active:scale-[0.98]"
+              className="bg-white rounded-2xl border shadow-sm px-4 py-3 flex items-center gap-3 text-left hover:shadow-md hover:-translate-y-0.5 transition-all"
               style={{
                 borderColor: isActive ? color : '#e2e8f0',
                 boxShadow: isActive ? `0 0 0 2px ${color}30` : undefined,
               }}
             >
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
                 style={{ backgroundColor: iconBg }}
               >
                 {icon}
               </div>
-              <div>
-                <div className="text-2xl font-extrabold" style={{ color: isActive ? color : '#0f172a' }}>
+              <div className="min-w-0">
+                <div className="text-2xl font-black leading-none" style={{ color: isActive ? color : '#0f172a' }}>
                   {value}
                 </div>
-                <div className="text-xs font-semibold text-slate-500 mt-0.5">{label}</div>
+                <div className="text-[11px] font-semibold text-slate-600 mt-0.5 truncate">{label}</div>
               </div>
             </button>
           );

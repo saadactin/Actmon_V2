@@ -177,48 +177,46 @@ function dbColor(s) { return DB_COLORS[(s||'').toLowerCase()] || 'bg-slate-100 t
 ══════════════════════════════════════════════════════ */
 function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true }) {
   return (
-    <div className="min-h-screen bg-[#f1f4f9]">
-      {/* Hero */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 px-6 pt-6 pb-8 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.03]"
-          style={{ backgroundImage:'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize:'32px 32px' }}/>
+    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f4f9]">
+      {/* Hero — compact, cloud-blue (matches dashboard topbar) */}
+      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 pt-3 pb-4 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage:'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize:'28px 28px' }}/>
 
-        <div className="relative flex items-center gap-2 text-xs text-slate-500 mb-6">
-          <span className="text-slate-400">ActMon</span>
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+          <span>ActMon</span>
           <ChevronRight size={11}/>
-          <span className="text-slate-300 font-semibold">Databases</span>
+          <span className="text-white font-semibold">Databases</span>
         </div>
 
-        <div className="relative flex flex-col md:flex-row md:items-start justify-between gap-5">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-11 h-11 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center">
-                <Database size={22} className="text-indigo-300"/>
-              </div>
-              <div>
-                <h1 className="text-2xl font-black text-white tracking-tight leading-none">Database Infrastructure</h1>
-                <p className="text-slate-400 text-xs mt-0.5">Select a database technology to explore servers, clusters &amp; connections</p>
-              </div>
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0">
+              <Database size={18} className="text-sky-200"/>
+            </div>
+            <div>
+              <h1 className="text-lg font-black text-white tracking-tight leading-none">Database Infrastructure</h1>
+              <p className="text-sky-200/70 text-[11px] mt-0.5">Select a database technology to explore servers, clusters &amp; connections</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <div className="hidden md:flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 backdrop-blur-sm">
+          <div className="flex items-center gap-2.5 flex-shrink-0">
+            <div className="hidden md:flex items-center gap-2.5 bg-white/10 border border-white/15 rounded-xl px-3 py-1.5 backdrop-blur-sm">
               <div>
-                <p className="text-white font-black text-sm leading-none">{summary.connected}/{summary.total}</p>
-                <p className="text-slate-400 text-[10px] mt-0.5">servers online</p>
+                <p className="text-white font-black text-[13px] leading-none">{summary.connected}/{summary.total}</p>
+                <p className="text-sky-200/70 text-[10px] mt-0.5">online</p>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${summary.connected > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`}/>
-                <span className="text-[11px] text-slate-300 font-semibold">
-                  {summary.total > 0 ? Math.round((summary.connected/summary.total)*100) : 0}% healthy
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 rounded-full ${summary.connected > 0 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'}`}/>
+                <span className="text-[11px] text-sky-100 font-semibold">
+                  {summary.total > 0 ? Math.round((summary.connected/summary.total)*100) : 0}%
                 </span>
               </div>
             </div>
             {canAdd && (
               <button
                 onClick={() => navigate('/databases/add-os-server')}
-                className="h-10 px-5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/50 transition-all text-sm flex-shrink-0"
+                className="h-9 px-4 rounded-lg bg-white text-blue-700 font-bold flex items-center gap-1.5 hover:bg-sky-50 shadow-sm transition-all text-sm flex-shrink-0"
               >
                 <Plus size={15}/> Add Server
               </button>
@@ -487,7 +485,7 @@ export default function DatabaseServersPage({ tech = null }) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f1f4f9]">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f4f9]">
 
       {/* ══════════════════ HERO TOPBAR ══════════════════ */}
       <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 pt-3 pb-4 relative overflow-hidden">
@@ -881,7 +879,9 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
   const m = nodeMeta(node.node_type);
   const hasMetrics = node.cpu_usage || node.ram_usage || node.disk_usage;
   const isRefreshing = refreshMutation.isPending && refreshMutation.variables === node.id;
-  const conn = findConn(allConnections, node);
+  // A DB instance may carry a linked connection_id (agent-registered DBs) — that IS the dashboard.
+  const linkedInst = (node.db_instances || []).find((i) => i.connection_id);
+  const conn = (linkedInst && allConnections.find((c) => c.id === linkedInst.connection_id)) || findConn(allConnections, node);
 
   const osUp   = node.status === 'Connected';
   const osWarn = node.status === 'Warning';
@@ -1029,22 +1029,25 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
 
         {/* actions */}
         <div className="flex gap-2 mt-2">
-          <button
-            onClick={() => {
-              if (conn) {
-                navigate(getDashboardPath(conn));
-              } else {
-                const db = node.database_services?.[0]?.toLowerCase()||'mysql';
-                const portMap = { mysql:3306, postgresql:5432, oracle:1521, mssql:1433, mongodb:27017, clickhouse:8123 };
-                navigate(`/connections/add?type=${db}&host=${node.ip_address}&port=${portMap[db]||3306}&name=${encodeURIComponent(node.server_name+'-'+db)}`);
-              }
-            }}
-            className={`flex-1 h-9 rounded-xl text-[12px] font-bold transition-all flex items-center justify-center gap-2 ${
-              conn ? 'bg-slate-900 text-white hover:bg-indigo-600 hover:shadow-lg hover:shadow-indigo-200'
-                   : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}
-          >
-            {conn ? <><Activity size={12}/>Dashboard</> : <><Plus size={12}/>Connect</>}
-          </button>
+          {(() => {
+            // Same DB dashboard for SSH AND agent hosts — a linked connection_id IS the dashboard.
+            const connected = conn || linkedInst;
+            const onClick = () => {
+              if (conn) { navigate(getDashboardPath(conn)); return; }
+              if (linkedInst) { navigate(getDashboardPath({ db_type: linkedInst.db_type, id: linkedInst.connection_id })); return; }
+              const db = node.database_services?.[0]?.toLowerCase() || 'mysql';
+              const portMap = { mysql:3306, postgresql:5432, oracle:1521, mssql:1433, mongodb:27017, clickhouse:8123 };
+              navigate(`/connections/add?type=${db}&host=${node.ip_address}&port=${portMap[db]||3306}&name=${encodeURIComponent(node.server_name+'-'+db)}`);
+            };
+            return (
+              <button onClick={onClick}
+                className={`flex-1 h-9 rounded-xl text-[12px] font-bold transition-all flex items-center justify-center gap-2 ${
+                  connected ? 'bg-slate-900 text-white hover:bg-indigo-600 hover:shadow-lg hover:shadow-indigo-200'
+                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100'}`}>
+                {connected ? <><Activity size={12}/>Dashboard</> : <><Plus size={12}/>Connect</>}
+              </button>
+            );
+          })()}
           <button
             onClick={() => refreshMutation.mutate(node.id)}
             className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all

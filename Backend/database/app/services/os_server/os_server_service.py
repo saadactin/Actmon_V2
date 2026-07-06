@@ -46,6 +46,7 @@ class OsServerCreate(BaseModel):
     monitoring_enabled: Optional[bool] = True
     auto_discovery: Optional[bool] = True
     db_instances: Optional[List[DbInstanceIn]] = []
+    collector: Optional[str] = "ssh"   # 'ssh' or 'agent'
 
 
 class OsServerUpdate(BaseModel):
@@ -103,7 +104,8 @@ def svc_get_live_status(db: Session, org_id: Optional[int] = None):
     q = db.query(OsServer)
     if org_id is not None:
         q = q.filter(OsServer.org_id == org_id)
-    servers = q.all()
+    # Agent hosts report by push (their status is set on ingest) — don't TCP-probe them.
+    servers = [s for s in q.all() if (s.collector or "ssh") != "agent"]
 
     def check_one(s):
         os_up = _tcp_check(s.ip_address, s.ssh_port or 22, timeout=2.0)
@@ -210,6 +212,7 @@ def svc_list_os_servers(db: Session, environment: Optional[str] = None, os_type:
                 "db_type": inst.db_type,
                 "port": inst.port or DEFAULT_PORTS.get(inst.db_type),
                 "status": inst.status or "Unknown",
+                "connection_id": inst.connection_id,
             }
 
         for svc in (s.database_services or []):
@@ -237,6 +240,7 @@ def svc_list_os_servers(db: Session, environment: Optional[str] = None, os_type:
             "database_services": s.database_services or [],
             "status": s.status,
             "db_status": db_status,
+            "collector": s.collector or "ssh",
             "db_instances": db_instances_list,
             "cpu_usage": s.cpu_usage,
             "ram_usage": s.ram_usage,
@@ -321,6 +325,9 @@ def svc_get_os_server(server_id: int, db: Session, org_id: Optional[int] = None)
             "uptime": server.uptime,
             "monitoring_enabled": server.monitoring_enabled,
             "auto_discovery": server.auto_discovery,
+            "collector": server.collector or "ssh",
+            "agent_token": server.agent_token,
+            "last_infra_at": server.last_infra_at.isoformat() if server.last_infra_at else None,
             "created_at": server.created_at.isoformat() if server.created_at else None,
             "db_instances": instances,
             "cluster_siblings": cluster_siblings,
@@ -329,6 +336,10 @@ def svc_get_os_server(server_id: int, db: Session, org_id: Optional[int] = None)
 
 
 def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
+    import uuid
+    collector = (request.collector or "ssh").lower()
+    agent_token = f"actmon-{uuid.uuid4().hex}" if collector == "agent" else None
+
     server = OsServer(
         org_id=org_id,
         server_name=request.server_name,
@@ -345,6 +356,8 @@ def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
         monitoring_enabled=request.monitoring_enabled,
         auto_discovery=request.auto_discovery,
         status="Unknown",
+        collector=collector,
+        agent_token=agent_token,
     )
 
     db.add(server)
@@ -380,7 +393,12 @@ def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
     return {
         "status": "success",
         "message": "OS Server registered successfully",
-        "data": {"id": server.id, "server_name": server.server_name},
+        "data": {
+            "id": server.id,
+            "server_name": server.server_name,
+            "collector": server.collector,
+            "agent_token": server.agent_token,
+        },
     }
 
 

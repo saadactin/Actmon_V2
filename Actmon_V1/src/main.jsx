@@ -15,6 +15,11 @@ import { Login } from './pages/Login';
 const Dashboard               = React.lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const AgentsList              = React.lazy(() => import('./pages/agents/AgentsList').then(m => ({ default: m.AgentsList })));
 const AgentDetail             = React.lazy(() => import('./pages/agents/AgentDetail').then(m => ({ default: m.AgentDetail })));
+const AgentSessions           = React.lazy(() => import('./pages/agents/AgentSessions').then(m => ({ default: m.AgentSessions })));
+const AgentSetupPage          = React.lazy(() => import('./pages/agents/setup/AgentSetupPage'));
+const SetupWizard             = React.lazy(() => import('./pages/agents/setup/SetupWizard'));
+const AddWebsiteWizard        = React.lazy(() => import('./pages/agents/setup/AddWebsiteWizard'));
+const DeployAgentWizard       = React.lazy(() => import('./pages/agents/setup/deploy/DeployAgentWizard'));
 const ConnectionsPage         = React.lazy(() => import('./pages/connections/ConnectionsPage').then(m => ({ default: m.ConnectionsPage })));
 const AddConnectionPage       = React.lazy(() => import('./pages/connections/AddConnectionPage'));
 const MySQLDashboard          = React.lazy(() => import('./pages/mysql/MySQLDashboard'));
@@ -69,7 +74,9 @@ const CloudCompliancePage     = React.lazy(() => import('./features/cloud/pages/
 const CloudAlertsPage         = React.lazy(() => import('./features/cloud/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const MLPage                  = React.lazy(() => import('./pages/ml/MLPage').then(m => ({ default: m.MLPage })));
 const AlertsPage              = React.lazy(() => import('./pages/alerts/AlertsPage').then(m => ({ default: m.AlertsPage })));
+const LogsPage                = React.lazy(() => import('./pages/logs/LogsPage'));
 const InfraPage               = React.lazy(() => import('./pages/infra/InfraPage').then(m => ({ default: m.InfraPage })));
+const InfraHostDetail         = React.lazy(() => import('./pages/infra/InfraHostDetail').then(m => ({ default: m.InfraHostDetail })));
 const SettingsPage            = React.lazy(() => import('./pages/settings/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const NotFound                = React.lazy(() => import('./pages/NotFound').then(m => ({ default: m.NotFound })));
 const ChatbotPage             = React.lazy(() => import('./pages/chatbot/ChatbotPage'));
@@ -114,6 +121,26 @@ const router = createBrowserRouter([
       {
         path: 'agents',
         element: <AgentsList />,
+      },
+      {
+        path: 'agents/setup',
+        element: <AgentSetupPage />,
+      },
+      {
+        path: 'agents/deploy',
+        element: <DeployAgentWizard />,
+      },
+      {
+        path: 'agents/setup/website',
+        element: <AddWebsiteWizard />,
+      },
+      {
+        path: 'agents/setup/:tech',
+        element: <SetupWizard />,
+      },
+      {
+        path: 'agents/:id/sessions',
+        element: <AgentSessions />,
       },
       {
         path: 'agents/:id',
@@ -214,6 +241,15 @@ const router = createBrowserRouter([
         path: 'databases/add-os-server',
         element: <AddOsServerPage />,
       },
+      // Databases-context DB agent setup (keeps the sidebar on Databases).
+      {
+        path: 'databases/add-data',
+        element: <AgentSetupPage />,
+      },
+      {
+        path: 'databases/setup/:tech',
+        element: <SetupWizard />,
+      },
       {
         path: 'databases/add-server',
         element: <AddServerPage />,
@@ -244,12 +280,20 @@ const router = createBrowserRouter([
         element: <InfraPage />,
       },
       {
+        path: 'infra/:id',
+        element: <InfraHostDetail />,
+      },
+      {
         path: 'ml',
         element: <MLPage />,
       },
       {
         path: 'alerts',
         element: <AlertsPage />,
+      },
+      {
+        path: 'logs',
+        element: <LogsPage />,
       },
       // ── Administration (frontend-only CRUD UI; backend SPs come later) ──
       { path: 'administration', element: <AdministrationPage /> },

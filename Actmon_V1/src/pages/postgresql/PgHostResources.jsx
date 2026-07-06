@@ -1,5 +1,5 @@
 /**
- * PostgreSQL Host Resources + SolarWinds-style drill-down (on-demand).
+ * PostgreSQL Host Resources + ActMon-style drill-down (on-demand).
  *   Level 1: CPU / RAM / Disk gauges (click any to drill in)
  *   Level 2: OS process explorer (DB processes tagged)
  *   Level 3: pg_stat_activity sessions for the chosen pid
@@ -122,7 +122,7 @@ export default function HostResources({ connId, tech = 'postgresql' }) {
 }
 
 /* ─────────────── Drill-down modal (levels 2 → 3 → 4) ─────────────── */
-function DrillModal({ connId, tech, sortBy: initialSort, onClose }) {
+export function DrillModal({ connId, tech, sortBy: initialSort, onClose }) {
   const [step, setStep] = useState('processes');      // processes | procdetail | sessions | detail | rca
   const [sortBy, setSortBy] = useState(initialSort);
   const [pid, setPid] = useState(null);

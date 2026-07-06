@@ -87,6 +87,26 @@ def route_refresh_server(server_id: int, db: Session = Depends(get_db)):
     return svc_refresh_server(server_id, db)
 
 
+@router.get("/{server_id}/infra-detail")
+def route_host_infra_detail(server_id: int, db: Session = Depends(get_db)):
+    from app.services.os_server.infra_detail_service import svc_host_infra_detail
+    return svc_host_infra_detail(server_id, db)
+
+
+@router.get("/{server_id}/fs")
+def route_fs_list(server_id: int, path: str = "/", db: Session = Depends(get_db)):
+    """Storage drill-down: list folders & files under a path (SSH)."""
+    from app.services.os_server.fs_browse_service import svc_fs_list
+    return svc_fs_list(server_id, path, db)
+
+
+@router.get("/{server_id}/fs/file")
+def route_fs_read(server_id: int, path: str, db: Session = Depends(get_db)):
+    """Storage drill-down: read a file's content preview (first 64 KB)."""
+    from app.services.os_server.fs_browse_service import svc_fs_read
+    return svc_fs_read(server_id, path, db)
+
+
 @router.post("/{server_id}/instances/{instance_id}/link")
 def route_link_instance_to_connection(
     server_id: int,

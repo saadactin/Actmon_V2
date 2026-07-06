@@ -37,7 +37,7 @@ export const CloudShell: React.FC = () => {
   const providers = Array.from(new Set((accounts || []).map((a: any) => a.provider)));
 
   return (
-    <div className="min-h-full bg-[#f1f5f9] flex flex-col">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9] flex flex-col">
       {/* ─── TOP HEADER ─── */}
       <div className="text-white shadow-xl"
         style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e40af 52%,#0369a1 100%)' }}>

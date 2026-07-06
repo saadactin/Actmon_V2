@@ -1,0 +1,12 @@
+Package: actmon-agent
+Version: 1.1.0
+Section: admin
+Priority: optional
+Architecture: all
+Depends: procps, curl | wget
+Maintainer: ActMon <support@actmon.local>
+Description: ActMon Host Monitoring Agent
+ Lightweight agent that collects host CPU and memory metrics and pushes them
+ to the ActMon monitoring platform. Runs as a systemd service.
+ The installer accepts ACTMON_ACCESS_TOKEN / ACTMON_URL from the environment
+ to configure and start the service in one step.

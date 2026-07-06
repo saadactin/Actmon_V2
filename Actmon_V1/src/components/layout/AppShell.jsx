@@ -2,7 +2,6 @@ import React, { Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
 import { Sidebar } from './Sidebar';
-import { TopBar } from './TopBar';
 import RouteGuard from '../../auth/RouteGuard';
 import ErrorBoundary from '../ErrorBoundary';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -28,13 +27,11 @@ export const AppShell = () => {
       {/* Sidebar — fixed height, never scrolls with content */}
       <Sidebar />
 
-      {/* Main Content Area — only this column scrolls */}
+      {/* Main Content Area — only this column scrolls (no top bar) */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {/* TopBar Header */}
-        <TopBar />
-
-        {/* Dynamic Page Outlet — scrollable content area */}
-        <main className="flex-1 overflow-x-hidden overflow-y-auto p-6 md:p-8">
+        {/* Dynamic Page Outlet — scrollable content area (no top padding so page
+            headers sit flush against the top; pages add their own top spacing). */}
+        <main className="flex-1 overflow-x-hidden overflow-y-auto px-6 md:px-8 pb-6 md:pb-8">
           <RouteGuard>
             <ErrorBoundary resetKey={pathname}>
               <Suspense fallback={<PageLoader />}>

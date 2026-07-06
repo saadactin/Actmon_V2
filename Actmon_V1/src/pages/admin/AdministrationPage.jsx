@@ -71,9 +71,9 @@ export default function AdministrationPage() {
   /* ───── LEVEL 0 — organization selector ───── */
   if (!orgId) {
     return (
-      <div className="min-h-screen bg-[#f1f5f9] p-4 sm:p-6">
-        <div className="max-w-[1400px] mx-auto">
-          <Hero title="Administration" subtitle="Select an organization to manage its access control & masters" />
+      <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9]">
+        <Hero title="Administration" subtitle="Select an organization to manage its access control & masters" />
+        <div className="px-6 md:px-8 py-6 max-w-[1400px] mx-auto">
           {loading ? <CardSkeleton /> : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {orgs.map((o, i) => {
@@ -113,24 +113,31 @@ export default function AdministrationPage() {
 
   /* ───── LEVEL 1 — module grid for the selected org ───── */
   return (
-    <div className="min-h-screen bg-[#f1f5f9] p-4 sm:p-6">
-      <div className="max-w-[1400px] mx-auto">
-        <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 px-5 sm:px-7 py-6 mb-7 relative overflow-hidden">
-          <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
-          <div className="relative flex items-center gap-3">
-            <button onClick={() => navigate('/administration')} className="w-9 h-9 rounded-xl bg-white/10 border border-white/15 flex items-center justify-center text-white hover:bg-white/20 flex-shrink-0"><ChevronLeft size={18} /></button>
-            <div className="w-12 h-12 rounded-xl bg-white flex items-center justify-center overflow-hidden flex-shrink-0 p-1.5">
-              {selectedOrg?.logo_path
-                ? <img src={encodeURI(selectedOrg.logo_path)} alt="" className="max-h-9 max-w-full object-contain" />
-                : <Building2 size={22} className="text-indigo-500" />}
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-lg sm:text-2xl font-black text-white tracking-tight leading-none truncate">{selectedOrg?.org_name || 'Organization'}</h1>
-              <p className="text-slate-400 text-xs mt-1">Administration &amp; access control for this organization</p>
-            </div>
+    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9]">
+      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 md:px-8 pt-3 pb-4 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+          <button onClick={() => navigate('/administration')} className="hover:text-slate-200 transition-colors">ActMon</button>
+          <ChevronRight size={11} />
+          <button onClick={() => navigate('/administration')} className="hover:text-slate-200 transition-colors">Administration</button>
+          <ChevronRight size={11} />
+          <span className="text-white font-semibold truncate max-w-[220px]">{selectedOrg?.org_name || 'Organization'}</span>
+        </div>
+        <div className="relative flex items-center gap-3">
+          <button onClick={() => navigate('/administration')} className="w-8 h-8 rounded-lg bg-white/10 border border-white/15 flex items-center justify-center text-white hover:bg-white/20 flex-shrink-0"><ChevronLeft size={16} /></button>
+          <div className="w-9 h-9 rounded-lg bg-white flex items-center justify-center overflow-hidden flex-shrink-0 p-1">
+            {selectedOrg?.logo_path
+              ? <img src={encodeURI(selectedOrg.logo_path)} alt="" className="max-h-7 max-w-full object-contain" />
+              : <Building2 size={18} className="text-indigo-500" />}
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-lg font-black text-white tracking-tight leading-none truncate">{selectedOrg?.org_name || 'Organization'}</h1>
+            <p className="text-sky-200/70 text-[11px] mt-0.5">Administration &amp; access control for this organization</p>
           </div>
         </div>
+      </div>
 
+      <div className="px-6 md:px-8 py-6 max-w-[1400px] mx-auto">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {visibleModules.map((m) => {
             const Icon = m.icon;
@@ -159,13 +166,16 @@ export default function AdministrationPage() {
 
 function Hero({ title, subtitle }) {
   return (
-    <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 px-5 sm:px-7 py-6 mb-7 relative overflow-hidden">
+    <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 md:px-8 pt-3 pb-4 relative overflow-hidden">
       <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
-      <div className="relative flex items-center gap-4">
-        <div className="w-12 h-12 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center"><Shield size={24} className="text-indigo-300" /></div>
+      <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+        <span>ActMon</span><ChevronRight size={11} /><span className="text-white font-semibold">Administration</span>
+      </div>
+      <div className="relative flex items-center gap-3">
+        <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0"><Shield size={18} className="text-sky-200" /></div>
         <div>
-          <h1 className="text-2xl font-black text-white tracking-tight leading-none">{title}</h1>
-          <p className="text-slate-400 text-sm mt-1">{subtitle}</p>
+          <h1 className="text-lg font-black text-white tracking-tight leading-none">{title}</h1>
+          <p className="text-sky-200/70 text-[11px] mt-0.5">{subtitle}</p>
         </div>
       </div>
     </div>

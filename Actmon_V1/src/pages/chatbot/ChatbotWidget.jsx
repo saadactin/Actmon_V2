@@ -510,7 +510,7 @@ export default function ChatbotWidget() {
   return (
     <div
       className="fixed bottom-6 right-6 z-50 flex flex-col rounded-2xl shadow-2xl overflow-hidden transition-all duration-300"
-      style={{ width:W, height:620, background:'#f8fafc', border:'1px solid rgba(99,102,241,0.15)' }}
+      style={{ width:W, height:620, background:'var(--color-surface)', border:'1px solid rgba(99,102,241,0.15)' }}
     >
       {/* ── Header ───────────────────────────────────── */}
       <div className="flex-shrink-0 flex items-center gap-3 px-4 py-3 text-white"

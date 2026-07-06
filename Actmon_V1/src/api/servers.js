@@ -31,6 +31,9 @@ export const refreshServerStatus = (id) =>
 export const getLiveStatus = () =>
   client.get('/os-servers/live-status').then((r) => r.data);
 
+export const getHostInfraDetail = (id) =>
+  client.get(`/os-servers/${id}/infra-detail`).then((r) => r.data);
+
 export const linkDbInstance = (serverId, instanceId, connectionId) =>
   client
     .post(`/os-servers/${serverId}/instances/${instanceId}/link`, null, {
@@ -46,3 +49,9 @@ export const executeCommand = (serverId, command) =>
   client
     .post('/terminal/execute', { server_id: serverId, command })
     .then((r) => r.data);
+
+// Storage drill-down (file explorer): folders → files → file content.
+export const fsList = (serverId, path = '/') =>
+  client.get(`/os-servers/${serverId}/fs`, { params: { path } }).then((r) => r.data);
+export const fsRead = (serverId, path) =>
+  client.get(`/os-servers/${serverId}/fs/file`, { params: { path } }).then((r) => r.data);

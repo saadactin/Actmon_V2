@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   useAgentDashboard,
   useAgentMetrics,
@@ -7,7 +7,8 @@ import {
   useAgentWaitEvents,
   useOracleSnapshot,
 } from '../../hooks/useAgents';
-import { exportCSV } from '../../api/agents';
+import { useQuery } from '@tanstack/react-query';
+import { exportCSV, getAgentSessions } from '../../api/agents';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { DBTypeBadge } from '../../components/ui/DBTypeBadge';
 import { formatUptime, formatBytes } from '../../utils/formatters';
@@ -19,7 +20,7 @@ import {
   ArrowLeft, Download, RefreshCw, BarChart2, Database, Table,
   Activity, Cpu, Zap, Server, Clock, Shield, AlertTriangle,
   CheckCircle, TrendingUp, TrendingDown, Copy, ChevronDown, ChevronUp,
-  Wifi, HardDrive, Users, Timer, HelpCircle,
+  Wifi, HardDrive, Users, Timer, HelpCircle, ChevronRight, X,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, ComposedChart, Line,
@@ -83,15 +84,99 @@ const tooltipStyle = {
   boxShadow: '0 2px 8px rgba(0,0,0,.12)',
 };
 
+// Per-chart hover card — shows ONLY the hovered graph's own data.
+// `fields`: [label, valueFn, color] rows for that chart.
+// `sessionMode`: 'active' (running sessions + their queries — Sessions chart)
+//              | 'all'    (every connection + who owns it — Connections chart)
+const isRunning = (s) => (s.state || s.command || '').toLowerCase().match(/run|query|active|execut/);
+
+function ChartTip({ active, payload, title, fields, sessions, sessionMode }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  const when = d.timestamp ? new Date(d.timestamp).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }) : d.ts;
+
+  const all = sessions || [];
+  const list = sessionMode === 'active' ? all.filter(isRunning) : all;
+  const shown = list.slice(0, 5);
+
+  return (
+    <div style={{ ...tooltipStyle, padding: '10px 12px', maxWidth: 400 }}>
+      <p className="text-[11px] font-black text-slate-400 uppercase tracking-wide">{title}</p>
+      <p className="text-[12px] font-black text-slate-800 mt-0.5 mb-1.5">{when}</p>
+      {fields.map(([label, valueFn, color]) => (
+        <div key={label} className="flex items-center gap-1.5 py-0.5">
+          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+          <span className="text-[11px] text-slate-500">{label}</span>
+          <span className="text-[12px] font-bold text-slate-800 ml-auto pl-6">{valueFn(d)}</span>
+        </div>
+      ))}
+      {sessionMode && (
+        <div className="mt-1.5 pt-1.5 border-t border-slate-100">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wide mb-1">
+            {sessionMode === 'active'
+              ? `Running now (${list.length}) — session & query`
+              : `Connected now (${list.length}) — who & from where`}
+          </p>
+          {shown.length === 0 && (
+            <p className="text-[11px] text-slate-400">
+              {sessionMode === 'active' ? 'No queries running right now.' : 'No client connections right now.'}
+            </p>
+          )}
+          {shown.map((s, i) => (
+            <div key={s.session_id || i} className="py-0.5">
+              <p className="text-[11px] text-slate-700 truncate">
+                <span className="font-bold">#{s.session_id}</span> {s.username || '—'}
+                {s.client_host ? `@${s.client_host}` : ''} → {s.db_name || '—'}
+                <span className={`ml-1 font-bold ${isRunning(s) ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  {s.state || s.command || 'idle'}
+                </span>
+              </p>
+              {sessionMode === 'active' && s.query && (
+                <p className="text-[10px] font-mono text-slate-500 truncate">{s.query.slice(0, 90)}</p>
+              )}
+            </div>
+          ))}
+          {list.length > 5 && <p className="text-[10px] text-blue-500 font-bold mt-0.5">+{list.length - 5} more — click the card above for all</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Field sets per chart — each tooltip shows only its own graph's data.
+const TIP_CPU = [
+  ['DB CPU', (d) => `${Number(d.db_cpu ?? 0).toFixed(1)}%`, CHART_COLORS.cpu],
+];
+const TIP_SESSIONS = [
+  ['Active Sessions', (d) => d.active_sessions ?? 0, CHART_COLORS.sessions],
+];
+const TIP_QPS = [
+  ['QPS (queries/sec)', (d) => Number(d.qps ?? 0).toFixed(2), CHART_COLORS.qps],
+  ['TPS (transactions/sec)', (d) => Number(d.tps ?? 0).toFixed(2), CHART_COLORS.tps],
+];
+const TIP_CACHE = [
+  ['Buffer Cache Hit', (d) => `${Number(d.cache_hit_pct ?? 0).toFixed(1)}%`, '#0078D4'],
+];
+const TIP_CONN = [
+  ['Connections Used', (d) => d.connections_used ?? 0, '#8764B8'],
+  ['Max Connections', (d) => d.connections_max || '—', '#c4b5fd'],
+  ['Pool Utilization', (d) => d.connections_max ? `${((d.connections_used ?? 0) / d.connections_max * 100).toFixed(1)}%` : '—', '#64748b'],
+];
+
 // ─── sub-components ──────────────────────────────────────────────────────────
 
-const KPICard = ({ label, value, sub, icon: Icon, iconBg = '#DEECF9', iconColor = '#0078D4', alert }) => (
-  <Card className="p-4 bg-white border border-brand-border rounded-xl shadow-sm hover:shadow-md transition-shadow">
+const KPICard = ({ label, value, sub, icon: Icon, iconBg = '#DEECF9', iconColor = '#0078D4', alert, onClick }) => (
+  <Card
+    onClick={onClick}
+    className={`p-4 bg-white border border-brand-border rounded-xl shadow-sm hover:shadow-md transition-shadow ${onClick ? 'cursor-pointer hover:border-blue-400' : ''}`}>
     <div className="flex items-start justify-between gap-2">
       <div className="min-w-0 flex-1">
         <p className="text-[11px] font-semibold text-brand-text-secondary uppercase tracking-wide truncate">{label}</p>
         <p className="text-2xl font-bold text-brand-text-primary mt-1 leading-tight">{value ?? '—'}</p>
         {sub && <p className="text-xs text-brand-text-secondary mt-1 truncate">{sub}</p>}
+        {onClick && <p className="text-[10px] font-bold text-blue-500 mt-1">Click to view sessions →</p>}
       </div>
       <div className="flex-shrink-0 flex flex-col items-end gap-1">
         <div style={{ background: iconBg }} className="p-2 rounded-lg">
@@ -102,6 +187,72 @@ const KPICard = ({ label, value, sub, icon: Icon, iconBg = '#DEECF9', iconColor 
     </div>
   </Card>
 );
+
+function SessionsModal({ agentName, onClose }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState('');
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    getAgentSessions(agentName)
+      .then((d) => { if (alive) setRows(d); })
+      .catch((e) => { if (alive) setErr(e?.response?.data?.detail || e.message || 'Failed to load sessions'); });
+    return () => { alive = false; };
+  }, [agentName]);
+
+  const fmtDur = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200">
+          <h3 className="text-base font-black text-slate-800 flex items-center gap-2">
+            <Users size={17} className="text-orange-500" /> Active Connections {rows ? `(${rows.length})` : ''}
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {err && <p className="text-sm font-bold text-red-600 p-4">{err}</p>}
+          {!rows && !err && <p className="text-sm text-slate-400 p-4">Loading sessions…</p>}
+          {rows && rows.length === 0 && <p className="text-sm text-slate-400 p-4">No active sessions reported by the agent.</p>}
+          {rows && rows.length > 0 && (
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-[11px] uppercase text-slate-400 font-black sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left">PID</th><th className="px-3 py-2 text-left">User</th>
+                  <th className="px-3 py-2 text-left">DB</th><th className="px-3 py-2 text-left">Client</th>
+                  <th className="px-3 py-2 text-left">State</th><th className="px-3 py-2 text-right">Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <React.Fragment key={`${r.session_id}-${i}`}>
+                    <tr onClick={() => setExpanded(expanded === i ? null : i)}
+                      className={`border-t border-slate-100 cursor-pointer ${expanded === i ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
+                      <td className="px-3 py-2 font-mono text-slate-700">{r.session_id}</td>
+                      <td className="px-3 py-2 font-bold text-slate-800">{r.username || '—'}</td>
+                      <td className="px-3 py-2 text-slate-600">{r.db_name || '—'}</td>
+                      <td className="px-3 py-2 text-slate-500 font-mono text-xs">{r.client_host || '—'}</td>
+                      <td className="px-3 py-2"><span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${/active|running|query/i.test(r.state) ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{r.state || r.command || 'idle'}</span></td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{fmtDur(r.duration_ms)}</td>
+                    </tr>
+                    {expanded === i && (
+                      <tr className="bg-slate-50"><td colSpan={6} className="px-4 py-3">
+                        <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Query</p>
+                        <pre className="text-[12px] font-mono text-slate-800 whitespace-pre-wrap break-all bg-white border border-slate-200 rounded-lg p-3">{r.query || '(no active query)'}</pre>
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const ConnBar = ({ used, max }) => {
   const p = pct(used, max);
@@ -223,14 +374,23 @@ const REFRESH_SEC = 30;
 
 export const AgentDetail = () => {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
+  const goSessions = (filter) => navigate(`/agents/${encodeURIComponent(id)}/sessions${filter ? `?filter=${filter}` : ''}`);
   const [hours, setHours] = useState(6);
   const [activeTab, setActiveTab] = useState('perf');
   const [countdown, setCountdown] = useState(REFRESH_SEC);
+  const [showSessions, setShowSessions] = useState(false);
 
   const { data: dashboard, isLoading: dashLoading, refetch: dashRefetch } = useAgentDashboard(id, hours);
   const { data: metrics = [], isLoading: metricsLoading, refetch: metricsRefetch } = useAgentMetrics(id, hours);
   const { data: sqlList = [], isLoading: sqlLoading, refetch: sqlRefetch } = useAgentSQL(id, hours);
   const { data: waitList = [], isLoading: waitsLoading, refetch: waitsRefetch } = useAgentWaitEvents(id, hours);
+  // Live session snapshot — feeds the rich chart tooltips (who is connected + queries).
+  const { data: liveSessions = [] } = useQuery({
+    queryKey: ['agentSessions', id],
+    queryFn: () => getAgentSessions(id),
+    refetchInterval: 60000,
+  });
 
   const isOracle = dashboard?.db_type === 'Oracle';
   const { data: oracleSnap, isLoading: snapLoading } = useOracleSnapshot(id, isOracle);
@@ -308,51 +468,70 @@ export const AgentDetail = () => {
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
 
-      {/* ── HEADER ── */}
-      <div className="bg-white border border-brand-border rounded-xl shadow-sm p-5">
-        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Link to="/agents" className="p-1 text-gray-400 hover:text-brand-primary hover:bg-blue-50 rounded-lg transition-colors">
-                <ArrowLeft size={18} />
-              </Link>
-              <PulseDot online={online} />
-              <h1 className="text-2xl font-bold text-brand-text-primary">{dashboard.agent_name}</h1>
-              <DBTypeBadge type={dashboard.db_type} />
-              <StatusPill status={dashboard.status} />
-              <HealthBadge score={healthScore} />
-            </div>
+      {/* ── HEADER (cloud-blue, full-bleed — matches /databases) ── */}
+      <div className="-mx-6 md:-mx-8 bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 md:px-8 pt-3 pb-4 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
 
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-brand-text-secondary ml-1">
-              <span className="flex items-center gap-1"><Server size={12} />{dashboard.hostname}</span>
-              <span className="flex items-center gap-1"><Wifi size={12} />{dashboard.ip_address}</span>
-              <span className="flex items-center gap-1"><HardDrive size={12} />{dashboard.environment}</span>
-              <span className="flex items-center gap-1"><Clock size={12} />
-                Last seen: <strong className="text-brand-text-primary ml-1">{ago(dashboard.last_heartbeat)}</strong>
-              </span>
+        {/* breadcrumb */}
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+          <Link to="/" className="hover:text-slate-200 transition-colors">ActMon</Link>
+          <ChevronRight size={11} />
+          <Link to="/agents" className="hover:text-slate-200 transition-colors">Agents</Link>
+          <ChevronRight size={11} />
+          <span className="text-white font-semibold truncate max-w-[220px]">{dashboard.agent_name}</span>
+        </div>
+
+        {/* header row */}
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link to="/agents"
+              className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-white transition-all flex-shrink-0" title="Back to agents">
+              <ArrowLeft size={16} />
+            </Link>
+            <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0">
+              <Server size={18} className="text-sky-200" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <PulseDot online={online} />
+                <h1 className="text-lg font-black text-white tracking-tight leading-none truncate">{dashboard.agent_name}</h1>
+                <DBTypeBadge type={dashboard.db_type} />
+                <StatusPill status={dashboard.status} />
+                <HealthBadge score={healthScore} />
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-sky-200/70 mt-1">
+                <span className="flex items-center gap-1"><Server size={11} />{dashboard.hostname}</span>
+                <span className="flex items-center gap-1"><Wifi size={11} />{dashboard.ip_address}</span>
+                <span className="flex items-center gap-1"><HardDrive size={11} />{dashboard.environment}</span>
+                <span className="flex items-center gap-1"><Clock size={11} />Last seen:
+                  <strong className="text-white ml-0.5">{ago(dashboard.last_heartbeat)}</strong>
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col items-end gap-3">
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <div className="flex items-center gap-1.5 text-xs text-brand-text-secondary bg-gray-50 border border-brand-border px-3 py-1.5 rounded-lg">
-                <Timer size={13} className="text-brand-primary" />
-                <span>Refresh in <strong className="text-brand-primary tabular-nums">{countdown}s</strong></span>
-              </div>
-              <Select value={hours} onChange={(_, d) => setHours(Number(d.value))} size="small">
-                <option value={1}>Last 1 Hour</option>
-                <option value={6}>Last 6 Hours</option>
-                <option value={12}>Last 12 Hours</option>
-                <option value={24}>Last 24 Hours</option>
-                <option value={48}>Last 48 Hours</option>
-              </Select>
-              <Button icon={<RefreshCw size={14} />} size="small" appearance="secondary" onClick={handleRefresh}>
-                Refresh
-              </Button>
-              <Button icon={<Download size={14} />} size="small" appearance="primary" onClick={() => exportCSV(id, hours)}>
-                Export CSV
-              </Button>
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+            <div className="flex items-center gap-1.5 text-[11px] text-sky-100 bg-white/10 border border-white/15 px-3 h-9 rounded-lg">
+              <Timer size={13} />
+              <span>Refresh in <strong className="tabular-nums">{countdown}s</strong></span>
             </div>
+            <select value={hours} onChange={(e) => setHours(Number(e.target.value))}
+              className="h-9 px-2.5 rounded-lg bg-white/10 border border-white/15 text-white text-sm font-semibold outline-none cursor-pointer [&>option]:text-slate-800">
+              <option value={1}>Last 1 Hour</option>
+              <option value={6}>Last 6 Hours</option>
+              <option value={12}>Last 12 Hours</option>
+              <option value={24}>Last 24 Hours</option>
+              <option value={48}>Last 48 Hours</option>
+            </select>
+            <button onClick={handleRefresh}
+              className="h-9 px-3 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white text-sm font-bold flex items-center gap-1.5 transition-all">
+              <RefreshCw size={14} /> Refresh
+            </button>
+            <button onClick={() => exportCSV(id, hours)}
+              className="h-9 px-4 rounded-lg bg-white text-blue-700 font-bold text-sm flex items-center gap-1.5 hover:bg-sky-50 shadow-sm transition-all">
+              <Download size={14} /> Export CSV
+            </button>
           </div>
         </div>
       </div>
@@ -373,6 +552,7 @@ export const AgentDetail = () => {
           icon={Users}
           iconBg="#F3F2F1"
           iconColor="#605E5C"
+          onClick={() => goSessions('active')}
         />
         <KPICard label="Cache Hit Rate"
           value={`${(m.cache_hit_pct || 0).toFixed(1)}%`}
@@ -389,6 +569,7 @@ export const AgentDetail = () => {
           iconBg={connPct > 75 ? '#fff7ed' : '#DEECF9'}
           iconColor={connPct > 75 ? '#ea580c' : '#0078D4'}
           alert={connPct > 75}
+          onClick={() => goSessions()}
         />
         <KPICard label="QPS"
           value={`${(m.qps || 0).toFixed(2)}`}
@@ -419,6 +600,7 @@ export const AgentDetail = () => {
           iconColor="#ea580c"
         />
       </div>
+
 
       {/* ── CONNECTION HEALTH BAR ── */}
       <Card className="p-4 bg-white border border-brand-border rounded-xl shadow-sm">
@@ -473,7 +655,7 @@ export const AgentDetail = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#F3F2F1" />
                         <XAxis dataKey="ts" fontSize={10} tickLine={false} />
                         <YAxis domain={[0, 100]} fontSize={10} tickLine={false} tickFormatter={v => `${v}%`} />
-                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v?.toFixed(2)}%`, 'DB CPU']} />
+                        <Tooltip content={<ChartTip title="Database CPU" fields={TIP_CPU} />} />
                         <Area type="monotone" dataKey="db_cpu" name="DB CPU" stroke={CHART_COLORS.cpu} fill="url(#gradCpu)" strokeWidth={2} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -490,7 +672,7 @@ export const AgentDetail = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#F3F2F1" />
                         <XAxis dataKey="ts" fontSize={10} tickLine={false} />
                         <YAxis fontSize={10} tickLine={false} />
-                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => [v, 'Sessions']} />
+                        <Tooltip content={<ChartTip title="Active Sessions" fields={TIP_SESSIONS} sessions={liveSessions} sessionMode="active" />} />
                         <Area type="monotone" dataKey="active_sessions" name="Sessions" stroke={CHART_COLORS.sessions} fill="url(#gradSess)" strokeWidth={2} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -506,7 +688,7 @@ export const AgentDetail = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#F3F2F1" />
                         <XAxis dataKey="ts" fontSize={10} tickLine={false} />
                         <YAxis fontSize={10} tickLine={false} />
-                        <Tooltip contentStyle={tooltipStyle} />
+                        <Tooltip content={<ChartTip title="Query & Transaction Throughput" fields={TIP_QPS} />} />
                         <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
                         <Line type="monotone" dataKey="qps" name="QPS" stroke={CHART_COLORS.qps} strokeWidth={2} dot={false} />
                         <Line type="monotone" dataKey="tps" name="TPS" stroke={CHART_COLORS.tps} strokeWidth={2} dot={false} strokeDasharray="4 2" />
@@ -525,7 +707,7 @@ export const AgentDetail = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#F3F2F1" />
                         <XAxis dataKey="ts" fontSize={10} tickLine={false} />
                         <YAxis domain={[0, 100]} fontSize={10} tickLine={false} tickFormatter={v => `${v}%`} />
-                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v?.toFixed(2)}%`, 'Cache Hit']} />
+                        <Tooltip content={<ChartTip title="Buffer Cache Hit Rate" fields={TIP_CACHE} />} />
                         <Area type="monotone" dataKey="cache_hit_pct" name="Cache Hit" stroke="#0078D4" fill="url(#gradCache)" strokeWidth={2} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -542,7 +724,7 @@ export const AgentDetail = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#F3F2F1" />
                         <XAxis dataKey="ts" fontSize={10} tickLine={false} />
                         <YAxis fontSize={10} tickLine={false} />
-                        <Tooltip contentStyle={tooltipStyle} formatter={(v) => [v, 'Connections']} />
+                        <Tooltip content={<ChartTip title="Connection Pool" fields={TIP_CONN} sessions={liveSessions} sessionMode="all" />} />
                         <Area type="monotone" dataKey="connections_used" name="Connections" stroke="#8764B8" fill="url(#gradConn)" strokeWidth={2} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>

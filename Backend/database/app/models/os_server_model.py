@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database.base import Base
@@ -23,6 +23,12 @@ class OsServer(Base):
     status = Column(String(50), default="Unknown")
     monitoring_enabled = Column(Boolean, default=True)
     auto_discovery = Column(Boolean, default=True)
+
+    # Connection transport: 'ssh' (poll over SSH) or 'agent' (host agent pushes data)
+    collector = Column(String(20), default="ssh")
+    agent_token = Column(String(128), index=True, nullable=True)
+    last_infra_json = Column(Text, nullable=True)     # latest agent-pushed snapshot
+    last_infra_at = Column(DateTime, nullable=True)
 
     # Live metrics (refreshed via SSH)
     cpu_usage = Column(String(20))

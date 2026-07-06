@@ -596,7 +596,7 @@ export default function MySQLDashboard() {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── Drill-down Modal ─── */}
       {drillModal && (

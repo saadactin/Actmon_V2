@@ -181,7 +181,7 @@ export default function MSSQLDashboard() {
   };
 
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── TOP HEADER ─── */}
       <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 text-white shadow-xl">

@@ -123,3 +123,8 @@ docker-compose.override.yml
 *.swp
 *.swo
 *.bak
+# Never commit browser-download junk / large binaries
+presentations/Download/
+*.exe
+*.msi
+*.tgz

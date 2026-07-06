@@ -85,8 +85,38 @@ def _num(s, cast=float):
 # Level 1 — host CPU / RAM / Disk
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _agent_host_metrics(conn_id: int, db) -> dict | None:
+    """Host CPU/RAM/Disk from the ActMon agent's last pushed snapshot (no SSH needed)."""
+    import json
+    from app.models.os_server_model import OsServer, DatabaseInstance
+    inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+    if not inst:
+        return None
+    server = db.query(OsServer).filter(
+        OsServer.id == inst.server_id, OsServer.collector == "agent").first()
+    if not server or not server.last_infra_json:
+        return None
+    try:
+        d = json.loads(server.last_infra_json)
+    except Exception:
+        return None
+    mem = d.get("memory") or {}
+    fs = d.get("filesystems") or []
+    disk = max((f.get("use_pct", 0) for f in fs), default=None)
+    load = d.get("load") or {}
+    load_avg = f"{load.get('one')} {load.get('five')} {load.get('fifteen')}" if isinstance(load, dict) and load.get("one") is not None else None
+    return {
+        "source": "agent", "cpu_pct": d.get("cpu_pct"), "ram_pct": mem.get("used_pct"),
+        "ram_used_mb": mem.get("used_mb"), "ram_total_mb": mem.get("total_mb"),
+        "disk_pct": disk, "load_avg": load_avg, "cpu_cores": None,
+    }
+
+
 def host_metrics(connection_id: int, db: Session) -> dict:
     conn = _get_conn_or_404(connection_id, db)
+    am = _agent_host_metrics(connection_id, db)
+    if am:
+        return am
     ssh = _ssh_connect(conn, db)
     try:
         cpu = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
@@ -156,8 +186,45 @@ def _collect_processes(ssh, cores: int):
     return rows
 
 
+_DB_PROC_KEYS = ("mysqld", "mariadb", "postgres", "sqlservr", "oracle", "ora_", "mongod", "clickhouse")
+
+
+def _agent_processes(conn_id: int, db, sort: str = "cpu", limit: int = 25) -> dict | None:
+    """Top processes from the ActMon agent's last snapshot (no SSH needed)."""
+    import json
+    from app.models.os_server_model import OsServer, DatabaseInstance
+    inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+    if not inst:
+        return None
+    server = db.query(OsServer).filter(
+        OsServer.id == inst.server_id, OsServer.collector == "agent").first()
+    if not server or not server.last_infra_json:
+        return None
+    try:
+        d = json.loads(server.last_infra_json)
+    except Exception:
+        return None
+    rows = []
+    for p in (d.get("processes") or []):
+        cmd = str(p.get("command") or "")
+        rows.append({
+            "pid": str(p.get("pid") or ""), "user": p.get("user") or "",
+            "cpu_pct": float(p.get("cpu") or 0), "mem_pct": float(p.get("mem") or 0),
+            "command": cmd, "is_db": any(k in cmd.lower() for k in _DB_PROC_KEYS),
+        })
+    key = "mem_pct" if sort == "mem" else "cpu_pct"
+    rows.sort(key=lambda r: r.get(key) or 0, reverse=True)
+    rows = rows[: int(limit)]
+    return {"processes": rows, "sort": sort, "cpu_cores": None,
+            "system_cpu_pct": d.get("cpu_pct"),
+            "db_cpu_pct": round(sum(r["cpu_pct"] for r in rows if r["is_db"]), 1), "source": "agent"}
+
+
 def processes(connection_id: int, db: Session, sort: str = "cpu", limit: int = 25) -> dict:
     conn = _get_conn_or_404(connection_id, db)
+    am = _agent_processes(connection_id, db, sort=sort, limit=limit)
+    if am:
+        return am
     ssh = _ssh_connect(conn, db)
     cores = _num(_run(ssh, "nproc"), int) or 1
     rows = _collect_processes(ssh, cores)
@@ -353,14 +420,24 @@ def rca(connection_id: int, db: Session, pid: Optional[int] = None, resource: st
     conn = _get_conn_or_404(connection_id, db)
 
     # ── 1) Host process snapshot → is the pressure DB or external? ──
-    ssh = _ssh_connect(conn, db)
-    cores = _num(_run(ssh, "nproc"), int) or 1
-    all_procs = _collect_processes(ssh, cores)
-    if resource == "cpu":
-        host_util = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+    # Agent-connected host → use the agent's last push instead of SSH.
+    ap = _agent_processes(connection_id, db, sort=("mem" if resource != "cpu" else "cpu"), limit=200)
+    if ap:
+        all_procs = ap["processes"]
+        if resource == "cpu":
+            host_util = ap.get("system_cpu_pct")
+        else:
+            am = _agent_host_metrics(connection_id, db)
+            host_util = (am or {}).get("ram_pct")
     else:
-        host_util = _num(_run(ssh, "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'"))
-    ssh.close()
+        ssh = _ssh_connect(conn, db)
+        cores = _num(_run(ssh, "nproc"), int) or 1
+        all_procs = _collect_processes(ssh, cores)
+        if resource == "cpu":
+            host_util = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+        else:
+            host_util = _num(_run(ssh, "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'"))
+        ssh.close()
 
     metric = "cpu_pct" if resource == "cpu" else "mem_pct"
     # shares computed over the FULL snapshot (normalized to total host = <=100%)
@@ -372,7 +449,7 @@ def rca(connection_id: int, db: Session, pid: Optional[int] = None, resource: st
     # If a specific process was clicked, the RCA focuses on IT.
     target = None
     if pid:
-        target = next((p for p in all_procs if p["pid"] == pid), None)
+        target = next((p for p in all_procs if str(p["pid"]) == str(pid)), None)
     if target is None and target_cmd:
         target = next((p for p in all_procs if p["command"] == target_cmd), None)
 

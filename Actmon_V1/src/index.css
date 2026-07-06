@@ -7,6 +7,91 @@
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* Dynamic UI settings: HIGH CONTRAST (Appearance → High contrast) — strengthens
+   the common slate text/border utilities so the effect is visible in every theme. */
+html[data-theme="light"][data-contrast="on"] .text-slate-400 { color: #475569 !important; }
+html[data-theme="light"][data-contrast="on"] .text-slate-500 { color: #334155 !important; }
+html[data-theme="light"][data-contrast="on"] .text-slate-600 { color: #1e293b !important; }
+html[data-theme="light"][data-contrast="on"] .text-slate-700,
+html[data-theme="light"][data-contrast="on"] .text-slate-800,
+html[data-theme="light"][data-contrast="on"] .text-slate-900 { color: #0f172a !important; }
+html[data-theme="light"][data-contrast="on"] .border-slate-100,
+html[data-theme="light"][data-contrast="on"] .border-slate-200 { border-color: #94a3b8 !important; }
+html[data-theme="dim"][data-contrast="on"] .text-slate-400,  html[data-theme="dark"][data-contrast="on"] .text-slate-400,
+html[data-theme="dim"][data-contrast="on"] .text-slate-500,  html[data-theme="dark"][data-contrast="on"] .text-slate-500,
+html[data-theme="dim"][data-contrast="on"] .text-slate-600,  html[data-theme="dark"][data-contrast="on"] .text-slate-600 { color: #e2e8f0 !important; }
+
+/* Dynamic UI settings: corner roundness (Appearance → Corner roundness) */
+html[data-radius="sharp"] .rounded-2xl { border-radius: 0.5rem !important; }
+html[data-radius="sharp"] .rounded-xl  { border-radius: 0.375rem !important; }
+html[data-radius="sharp"] .rounded-lg  { border-radius: 0.25rem !important; }
+html[data-radius="round"] .rounded-2xl { border-radius: 1.75rem !important; }
+html[data-radius="round"] .rounded-xl  { border-radius: 1.25rem !important; }
+html[data-radius="round"] .rounded-lg  { border-radius: 1rem !important; }
+
+/* Dynamic UI settings: honor the "reduce motion" toggle globally */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   DARK / DIM THEME — global retrofit layer.
+   Remaps the common hard-coded utilities (bg-white, page greys, slate text
+   & borders) to the theme CSS variables so EVERY screen switches together,
+   without editing each page. Semantic colors (status pills, gradients,
+   white-on-color) are intentionally left untouched.
+   ══════════════════════════════════════════════════════════════════════ */
+html[data-theme="dim"], html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="dim"] body, html[data-theme="dark"] body { background: var(--color-bg); color: var(--color-text-primary); }
+
+/* surfaces (cards, inputs, panels) → surface */
+html[data-theme="dim"] .bg-white,  html[data-theme="dark"] .bg-white,
+html[data-theme="dim"] .bg-slate-50, html[data-theme="dark"] .bg-slate-50,
+html[data-theme="dim"] .bg-slate-100, html[data-theme="dark"] .bg-slate-100,
+html[data-theme="dim"] .bg-gray-50, html[data-theme="dark"] .bg-gray-50,
+html[data-theme="dim"] .bg-gray-100, html[data-theme="dark"] .bg-gray-100 {
+  background-color: var(--color-surface) !important;
+}
+
+/* page backgrounds (the arbitrary greys used across pages) → app bg */
+html[data-theme="dim"] .bg-\[\#f1f5f9\], html[data-theme="dark"] .bg-\[\#f1f5f9\],
+html[data-theme="dim"] .bg-\[\#f1f4f9\], html[data-theme="dark"] .bg-\[\#f1f4f9\],
+html[data-theme="dim"] .bg-\[\#f8fafc\], html[data-theme="dark"] .bg-\[\#f8fafc\] {
+  background-color: var(--color-bg) !important;
+}
+
+/* text → theme text colors */
+html[data-theme="dim"] .text-slate-900, html[data-theme="dark"] .text-slate-900,
+html[data-theme="dim"] .text-slate-800, html[data-theme="dark"] .text-slate-800,
+html[data-theme="dim"] .text-slate-700, html[data-theme="dark"] .text-slate-700,
+html[data-theme="dim"] .text-gray-800, html[data-theme="dark"] .text-gray-800,
+html[data-theme="dim"] .text-gray-900, html[data-theme="dark"] .text-gray-900 {
+  color: var(--color-text-primary) !important;
+}
+html[data-theme="dim"] .text-slate-600, html[data-theme="dark"] .text-slate-600,
+html[data-theme="dim"] .text-slate-500, html[data-theme="dark"] .text-slate-500,
+html[data-theme="dim"] .text-gray-600, html[data-theme="dark"] .text-gray-600,
+html[data-theme="dim"] .text-gray-500, html[data-theme="dark"] .text-gray-500 {
+  color: var(--color-text-secondary) !important;
+}
+
+/* borders → theme border */
+html[data-theme="dim"] .border-slate-200, html[data-theme="dark"] .border-slate-200,
+html[data-theme="dim"] .border-slate-100, html[data-theme="dark"] .border-slate-100,
+html[data-theme="dim"] .border-gray-200, html[data-theme="dark"] .border-gray-200,
+html[data-theme="dim"] .border-gray-100, html[data-theme="dark"] .border-gray-100,
+html[data-theme="dim"] .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="dark"] .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="dim"] .divide-slate-200 > :not([hidden]) ~ :not([hidden]),
+html[data-theme="dark"] .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--color-border) !important;
+}
+
 @theme {
   --color-brand-primary: var(--color-primary);
   --color-brand-primary-hover: var(--color-primary-hover);
@@ -21,6 +106,12 @@
   --color-text-primary: var(--color-text-primary);
   --color-text-secondary: var(--color-text-secondary);
   --color-text-disabled: var(--color-text-disabled);
+
+  /* brand-text-* aliases so text-brand-text-primary/secondary resolve to the
+     themed variables (they were missing → dark text on dark backgrounds). */
+  --color-brand-text-primary: var(--color-text-primary);
+  --color-brand-text-secondary: var(--color-text-secondary);
+  --color-brand-text-disabled: var(--color-text-disabled);
   
   --color-brand-success: var(--color-success);
   --color-brand-warning: var(--color-warning);

@@ -201,7 +201,7 @@ export default function PostgreSQLDashboard() {
   const DB_COLORS = [C.pg, C.indigo, C.green, C.orange, C.purple, C.cyan, C.yellow, C.red];
 
   return (
-    <div className="min-h-full bg-[#f1f5f9] flex flex-col">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9] flex flex-col">
 
       {/* ════════ HEADER ════════ */}
       <div style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e3a5f 55%,#312e81 100%)' }} className="text-white shadow-2xl">

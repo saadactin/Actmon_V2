@@ -25,6 +25,7 @@ from app.services.agent.agent_service import (
     svc_export_metrics_csv,
     svc_get_agent_dashboard,
     svc_get_agent_metrics,
+    svc_get_agent_sessions,
     svc_get_agent_sql,
     svc_get_agent_wait_events,
     svc_get_notifications,
@@ -111,6 +112,11 @@ def route_get_agent_sql(
     db: Session = Depends(get_db),
 ):
     return svc_get_agent_sql(agent_name, hours, limit, db)
+
+
+@router.get("/{agent_name}/sessions", summary="Live DB connections/sessions")
+def route_get_agent_sessions(agent_name: str, db: Session = Depends(get_db)):
+    return svc_get_agent_sessions(agent_name, db)
 
 
 @router.get("/{agent_name}/wait-events", summary="Wait event drilldown")

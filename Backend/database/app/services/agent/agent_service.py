@@ -14,6 +14,7 @@ from app.models.agent_model import (
     AgentMetric,
     AgentNotification,
     AgentOracleSnapshot,
+    AgentSession,
     AgentTopSQL,
     AgentWaitEvent,
 )
@@ -82,6 +83,17 @@ class OracleSnapshotIngest(BaseModel):
     instance_role: Optional[str] = None
 
 
+class SessionIngest(BaseModel):
+    session_id: Optional[str] = None
+    username: Optional[str] = None
+    db_name: Optional[str] = None
+    client_host: Optional[str] = None
+    state: Optional[str] = None
+    command: Optional[str] = None
+    duration_ms: float = 0.0
+    query: Optional[str] = None
+
+
 class AgentDataIngest(BaseModel):
     """Payload pushed by an external lightweight agent or internal collector."""
     agent_name: str
@@ -89,6 +101,7 @@ class AgentDataIngest(BaseModel):
     top_sql: Optional[List[SQLIngest]] = []
     wait_events: Optional[List[WaitEventIngest]] = []
     oracle_snapshot: Optional[OracleSnapshotIngest] = None
+    sessions: Optional[List[SessionIngest]] = None
 
 
 class NotificationReadRequest(BaseModel):
@@ -203,6 +216,17 @@ def svc_ingest_agent_data(payload: AgentDataIngest, db: Session):
             rows_sent=s.rows_sent,
         ))
 
+    # Live sessions — keep only the current snapshot (replace previous).
+    if payload.sessions is not None:
+        db.query(AgentSession).filter(AgentSession.agent_name == payload.agent_name).delete(synchronize_session=False)
+        for s in payload.sessions:
+            db.add(AgentSession(
+                agent_name=payload.agent_name,
+                session_id=s.session_id, username=s.username, db_name=s.db_name,
+                client_host=s.client_host, state=s.state, command=s.command,
+                duration_ms=s.duration_ms, query=(s.query or "")[:2000],
+            ))
+
     for w in (payload.wait_events or []):
         db.add(AgentWaitEvent(
             agent_name=payload.agent_name,
@@ -237,7 +261,10 @@ def svc_ingest_agent_data(payload: AgentDataIngest, db: Session):
 
 
 def svc_list_agents(db: Session):
+    from app.models.os_server_model import OsServer
     agents = db.query(Agent).order_by(Agent.agent_name).all()
+    # Map agent_name → its host agent_token (so the Add-DB wizard can attach to it).
+    token_map = {s.server_name: s.agent_token for s in db.query(OsServer).filter(OsServer.agent_token.isnot(None)).all()}
     result = []
     for a in agents:
         latest = (
@@ -248,6 +275,7 @@ def svc_list_agents(db: Session):
         )
         result.append({
             "name": a.agent_name,
+            "agent_token": token_map.get(a.agent_name),
             "db_type": a.db_type or "MySQL",
             "hostname": a.hostname or "",
             "ip_address": a.ip_address or "",
@@ -311,6 +339,24 @@ def svc_get_agent_dashboard(agent_name: str, hours: int, db: Session):
         .order_by(desc(AgentMetric.timestamp))
         .first()
     )
+    # Host-infra pushes and DB pushes are separate rows; merge so the KPI cards show
+    # both (a host-only row must not blank out the DB metrics and vice-versa).
+    db_row = (
+        db.query(AgentMetric)
+        .filter(AgentMetric.agent_name == agent_name)
+        .filter((AgentMetric.connections_used > 0) | (AgentMetric.active_sessions > 0)
+                | (AgentMetric.qps > 0) | (AgentMetric.cache_hit_pct > 0))
+        .order_by(desc(AgentMetric.timestamp))
+        .first()
+    )
+    host_row = (
+        db.query(AgentMetric)
+        .filter(AgentMetric.agent_name == agent_name)
+        .filter((AgentMetric.host_cpu > 0) | (AgentMetric.host_memory > 0))
+        .order_by(desc(AgentMetric.timestamp))
+        .first()
+    ) or latest
+    d = db_row or latest
 
     return {
         "agent_name": agent.agent_name,
@@ -325,18 +371,34 @@ def svc_get_agent_dashboard(agent_name: str, hours: int, db: Session):
             agent.last_heartbeat.isoformat() if agent.last_heartbeat else None
         ),
         "metrics": {
-            "host_cpu": latest.host_cpu if latest else 0.0,
-            "host_memory": latest.host_memory if latest else 0.0,
-            "db_cpu": latest.db_cpu if latest else 0.0,
-            "active_sessions": latest.active_sessions if latest else 0,
-            "connections_used": latest.connections_used if latest else 0,
-            "connections_max": latest.connections_max if latest else 0,
-            "cache_hit_pct": latest.cache_hit_pct if latest else 0.0,
-            "qps": latest.qps if latest else 0.0,
-            "tps": latest.tps if latest else 0.0,
-            "uptime_seconds": latest.uptime_seconds if latest else 0,
+            "host_cpu": host_row.host_cpu if host_row else 0.0,
+            "host_memory": host_row.host_memory if host_row else 0.0,
+            "db_cpu": d.db_cpu if d else 0.0,
+            "active_sessions": d.active_sessions if d else 0,
+            "connections_used": d.connections_used if d else 0,
+            "connections_max": d.connections_max if d else 0,
+            "cache_hit_pct": d.cache_hit_pct if d else 0.0,
+            "qps": d.qps if d else 0.0,
+            "tps": d.tps if d else 0.0,
+            "uptime_seconds": d.uptime_seconds if d else 0,
         },
     }
+
+
+def svc_get_agent_sessions(agent_name: str, db: Session):
+    rows = (
+        db.query(AgentSession)
+        .filter(AgentSession.agent_name == agent_name)
+        .order_by(desc(AgentSession.duration_ms))
+        .all()
+    )
+    return [{
+        "session_id": r.session_id or "", "username": r.username or "",
+        "db_name": r.db_name or "", "client_host": r.client_host or "",
+        "state": r.state or "", "command": r.command or "",
+        "duration_ms": r.duration_ms or 0.0, "query": r.query or "",
+        "captured_at": r.captured_at.isoformat() if r.captured_at else None,
+    } for r in rows]
 
 
 def svc_get_agent_metrics(agent_name: str, hours: int, db: Session):

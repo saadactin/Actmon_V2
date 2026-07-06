@@ -1,25 +1,23 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAgentsList } from '../hooks/useAgents';
-import { useNotifications } from '../hooks/useNotifications';
-import { DBTypeBadge } from '../components/ui/DBTypeBadge';
-import { StatusPill } from '../components/ui/StatusPill';
-import { MetricBar } from '../components/ui/MetricBar';
-import { formatTimeAgo } from '../utils/formatters';
+import { listActiveAlerts } from '../api/alerts';
+import { usePermissions } from '../hooks/usePermissions';
+import { listOsServers, getServerSummary } from '../api/servers';
+import { listAccounts } from '../api/cloud';
 import { Spinner } from '@fluentui/react-components';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, AreaChart, Area,
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, RadialBarChart, RadialBar, Legend,
 } from 'recharts';
 import {
-  Server, CheckCircle, ShieldAlert, AlertTriangle, WifiOff,
-  Bell, ArrowRight, RefreshCw, Activity, Cpu, Users, Timer,
-  ChevronRight, Database, Search, Globe, TrendingUp, TrendingDown,
-  HardDrive,
+  Server, CheckCircle, Bell, ArrowRight, RefreshCw, Activity, ChevronRight,
+  Database, Cloud, Cpu, ShieldCheck, Settings, Bot, Brain, HardDrive,
+  MemoryStick, TrendingUp,
 } from 'lucide-react';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
-
 const statusLevel = (s) => {
   const v = s?.toLowerCase();
   if (v === 'online' || v === 'healthy') return 'online';
@@ -27,7 +25,6 @@ const statusLevel = (s) => {
   if (v === 'offline') return 'offline';
   return 'critical';
 };
-
 const ago = (ts) => {
   if (!ts) return 'Never';
   const d = Math.floor((Date.now() - new Date(ts)) / 1000);
@@ -36,621 +33,480 @@ const ago = (ts) => {
   if (d < 86400) return Math.floor(d / 3600) + 'h ago';
   return Math.floor(d / 86400) + 'd ago';
 };
+const pct = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+const avg = (arr) => (arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0);
 
-const STATUS_COLORS = {
-  online:   '#22c55e',
-  warning:  '#f59e0b',
-  offline:  '#94a3b8',
-  critical: '#ef4444',
-};
+const osCounts = (list) => ({
+  total:   list.length,
+  online:  list.filter((s) => s.status === 'Connected').length,
+  warning: list.filter((s) => s.status === 'Warning').length,
+  offline: list.filter((s) => s.status !== 'Connected' && s.status !== 'Warning').length,
+});
 
-const DB_COLORS = {
-  mysql:      '#f59e0b',
-  postgresql: '#3b82f6',
-  oracle:     '#ef4444',
-  mssql:      '#a855f7',
-  sqlserver:  '#a855f7',
-  mongodb:    '#22c55e',
-  clickhouse: '#f97316',
-};
+const DB_TECHS = [
+  { id: 'mysql',      name: 'MySQL',      emoji: '🐬', color: '#ea580c' },
+  { id: 'postgresql', name: 'PostgreSQL', emoji: '🐘', color: '#4f46e5' },
+  { id: 'oracle',     name: 'Oracle',     emoji: '☀️', color: '#dc2626' },
+  { id: 'mssql',      name: 'SQL Server', emoji: '🖥️', color: '#0284c7' },
+  { id: 'mongodb',    name: 'MongoDB',    emoji: '🍃', color: '#059669' },
+  { id: 'clickhouse', name: 'ClickHouse', emoji: '⚡', color: '#d97706' },
+];
+function serverMatchesTech(server, tech) {
+  const svcs = (server.database_services || []).map((s) => s.toLowerCase());
+  if (tech === 'mysql') return svcs.some((s) => s === 'mysql' || s === 'mariadb');
+  return svcs.some((s) => s === tech);
+}
 
-const getDbColor = (type) => DB_COLORS[type?.toLowerCase()] || '#64748b';
-
-const cpuColor = (v) => {
-  if (v == null) return '#22c55e';
-  if (v >= 80) return '#ef4444';
-  if (v >= 60) return '#f59e0b';
-  return '#22c55e';
-};
-
-const metricTextColor = (v) => {
-  if (v == null) return '#22c55e';
-  if (v >= 80) return '#ef4444';
-  if (v >= 60) return '#f59e0b';
-  return '#22c55e';
-};
-
-// Custom tooltip for BarChart
-const CustomBarTooltip = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs shadow-xl">
-      <p className="text-slate-300 font-semibold mb-1">{label}</p>
-      {payload.map((p) => (
-        <p key={p.dataKey} style={{ color: p.fill }} className="font-bold">
-          {p.name}: {(p.value ?? 0).toFixed(1)}%
-        </p>
-      ))}
+const ST = { online: '#22c55e', warning: '#f59e0b', offline: '#ef4444' };
+// ─── clean light chart tooltips (no black boxes, clear short labels) ─────────
+const TipCard = ({ title, line, dot }) => (
+  <div className="bg-white border border-slate-200 shadow-lg rounded-lg px-3 py-1.5">
+    <div className="text-[12px] font-bold text-slate-800 flex items-center gap-1.5">
+      {dot && <span className="w-2 h-2 rounded-full" style={{ background: dot }} />}{title}
     </div>
-  );
+    <div className="text-[11px] text-slate-500 mt-0.5">{line}</div>
+  </div>
+);
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// pies / status donuts — payload[0].name is the slice
+const CountTip = ({ active, payload, noun = 'items' }) =>
+  active && payload?.length ? <TipCard title={payload[0].name} line={plural(payload[0].value, noun)} dot={payload[0].payload?.color || payload[0].color} /> : null;
+// top-hosts CPU bar — label is the host
+const CpuTip = ({ active, payload, label }) =>
+  active && payload?.length ? <TipCard title={label} line={`CPU ${payload[0].value}%`} /> : null;
+// radial resource gauges — payload[0].payload.name
+const ResTip = ({ active, payload }) =>
+  active && payload?.length ? <TipCard title={payload[0].payload?.name} line={`${payload[0].value}% used`} dot={payload[0].payload?.fill} /> : null;
+// servers-by-technology stacked bar — label is the engine
+const TechTip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  const g = (k) => payload.find((p) => p.dataKey === k)?.value ?? 0;
+  return <TipCard title={label} line={`Online ${g('online')} · Warning ${g('warning')} · Offline ${g('offline')}`} />;
 };
+// alerts-by-severity bar — payload[0].payload.name
+const SevTip = ({ active, payload }) =>
+  active && payload?.length ? <TipCard title={payload[0].payload?.name} line={plural(payload[0].value, 'alert')} dot={payload[0].payload?.color} /> : null;
+const ENVS = ['Production', 'UAT', 'Development', 'Testing'];
+const ENV_COLORS = { Production: '#2563eb', UAT: '#7c3aed', Development: '#0891b2', Testing: '#65a30d', Other: '#94a3b8' };
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── UI pieces ───────────────────────────────────────────────────────────────
+const Kpi = ({ icon, iconBg, iconColor, value, label, sub, onClick }) => (
+  <button onClick={onClick}
+    className="group text-left bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3 flex items-center gap-3 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-slate-300">
+    <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${iconBg} ${iconColor}`}>{icon}</div>
+    <div className="min-w-0 flex-1">
+      <div className="text-2xl font-black text-slate-800 leading-none">{value}</div>
+      <div className="text-[12px] font-bold text-slate-600 mt-0.5 truncate">{label}</div>
+      {sub && <div className="text-[10px] text-slate-400 truncate">{sub}</div>}
+    </div>
+    <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-500 transition-colors flex-shrink-0" />
+  </button>
+);
 
-const StatPill = ({ icon, label, value, color = '#94a3b8' }) => (
-  <div
-    className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold"
-    style={{ backgroundColor: `${color}18`, border: `1px solid ${color}40`, color: '#f1f5f9' }}
-  >
-    <span style={{ color }}>{icon}</span>
-    <span className="text-slate-400">{label}:</span>
-    <span style={{ color }} className="font-bold">{value}</span>
+const Panel = ({ title, icon, action, children, className = '' }) => (
+  <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm flex flex-col ${className}`}>
+    <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+      <h2 className="text-[13px] font-black text-slate-700 flex items-center gap-2">{icon}{title}</h2>
+      {action}
+    </div>
+    <div className="p-4 flex-1">{children}</div>
   </div>
 );
 
-const KPICard = ({ icon, label, value, sub, iconBg, valueColor = '#0f172a', trend, onClick, active }) => {
-  const Tag = onClick ? 'button' : 'div';
-  return (
-  <Tag
-    onClick={onClick}
-    className={`text-left w-full bg-white rounded-xl border shadow-sm px-4 py-3 flex items-center gap-3 transition-all ${
-      onClick ? 'cursor-pointer hover:shadow-md hover:-translate-y-0.5' : 'hover:shadow-md'
-    } ${active ? 'border-transparent ring-2 ring-blue-400' : 'border-slate-200'}`}
-  >
-    <div
-      className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-      style={{ backgroundColor: iconBg }}
-    >
-      {icon}
-    </div>
-    <div className="min-w-0 flex-1">
-      <div className="flex items-center gap-2">
-        <span className="text-2xl font-extrabold tracking-tight leading-none" style={{ color: valueColor }}>
-          {value}
-        </span>
-        {trend !== undefined && (
-          <span
-            className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
-            style={{
-              color: trend >= 0 ? '#16a34a' : '#ef4444',
-              backgroundColor: trend >= 0 ? '#dcfce7' : '#fee2e2',
-            }}
-          >
-            {trend >= 0 ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
-            {Math.abs(trend)}
-          </span>
-        )}
-      </div>
-      <div className="text-[12px] font-semibold text-slate-700 mt-0.5 truncate">{label}</div>
-      {sub && <div className="text-[10px] text-slate-400 truncate">{sub}</div>}
-    </div>
-  </Tag>
-  );
-};
-
-const AgentChip = ({ agent, onClick }) => {
-  const level = statusLevel(agent.status);
-  const color = STATUS_COLORS[level];
-  return (
-    <button
-      onClick={() => onClick(agent)}
-      className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border whitespace-nowrap transition-all hover:scale-105 hover:shadow-md"
-      style={{
-        backgroundColor: `${color}12`,
-        borderColor: `${color}40`,
-        color: '#334155',
-      }}
-    >
-      <span
-        className="w-2 h-2 rounded-full flex-shrink-0 animate-pulse"
-        style={{ backgroundColor: color }}
-      />
-      <span className="font-bold" style={{ color }}>{agent.name}</span>
-      <span className="text-slate-400">{agent.db_type}</span>
-    </button>
-  );
-};
-
 const NotifItem = ({ notif }) => {
   const sev = notif.severity?.toLowerCase();
-  const borderColor = sev === 'critical' ? '#ef4444' : sev === 'warning' ? '#f59e0b' : '#3b82f6';
+  const bc = sev === 'critical' ? '#ef4444' : sev === 'warning' ? '#f59e0b' : '#3b82f6';
   const bg = sev === 'critical' ? '#fef2f2' : sev === 'warning' ? '#fffbeb' : '#eff6ff';
-  const textColor = sev === 'critical' ? '#991b1b' : sev === 'warning' ? '#92400e' : '#1e40af';
-
+  const tc = sev === 'critical' ? '#991b1b' : sev === 'warning' ? '#92400e' : '#1e40af';
   return (
-    <div
-      className="p-3 rounded-lg text-xs leading-relaxed"
-      style={{
-        borderLeft: `3px solid ${borderColor}`,
-        backgroundColor: bg,
-        paddingLeft: '12px',
-      }}
-    >
+    <div className="p-2.5 rounded-lg text-xs leading-relaxed" style={{ borderLeft: `3px solid ${bc}`, backgroundColor: bg }}>
       <div className="flex items-center justify-between mb-1">
-        <span
-          className="font-bold text-xs px-1.5 py-0.5 rounded uppercase tracking-wide"
-          style={{ backgroundColor: borderColor, color: '#fff' }}
-        >
-          {notif.severity}
-        </span>
-        <span className="text-slate-400">{ago(notif.timestamp || notif.created_at)}</span>
+        <span className="font-bold text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ backgroundColor: bc, color: '#fff' }}>{notif.severity}</span>
+        <span className="text-slate-400 text-[10px]">{ago(notif.timestamp || notif.created_at)}</span>
       </div>
-      {notif.agent_name && (
-        <div className="font-semibold text-slate-600 mb-0.5">{notif.agent_name}</div>
-      )}
-      <p style={{ color: textColor }}>{notif.message}</p>
+      {(notif.source || notif.agent_name) && <div className="font-semibold text-slate-600 mb-0.5 text-[11px]">{notif.source || notif.agent_name}</div>}
+      <p style={{ color: tc }}>{notif.message}</p>
     </div>
   );
 };
 
-// ─── Main Component ──────────────────────────────────────────────────────────
+const donutLabel = (total, subtitle) => (
+  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+    <span className="text-3xl font-black text-slate-800 leading-none">{total}</span>
+    <span className="text-[10px] font-semibold text-slate-400 mt-0.5">{subtitle}</span>
+  </div>
+);
 
+// ─── Main ──────────────────────────────────────────────────────────────────
 export const Dashboard = () => {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { can, isHub, isGoverned } = usePermissions();
+  const showModule = (r) => can(r, 'view') || isHub(r) || !isGoverned(r);
 
-  const {
-    data: agents = [],
-    isLoading: agentsLoading,
-    isError: agentsError,
-    refetch,
-  } = useAgentsList(true);
+  const { data: serversData, isLoading } = useQuery({ queryKey: ['dashOsServers'], queryFn: () => listOsServers(), refetchInterval: 60000 });
+  const { data: summaryData } = useQuery({ queryKey: ['dashServerSummary'], queryFn: getServerSummary, refetchInterval: 30000 });
+  const { data: cloudAccounts } = useQuery({ queryKey: ['dashCloudAccounts'], queryFn: listAccounts, retry: false, refetchInterval: 60000 });
+  const { data: agents = [] } = useAgentsList(true);
+  // same gated feed as the Alerts page (shared query cache) → both stay in sync
+  const { data: activeAlerts = [] } = useQuery({ queryKey: ['activeAlerts'], queryFn: listActiveAlerts, refetchInterval: 15000 });
 
-  const {
-    notifications = [],
-    isLoading: notifLoading,
-    unreadCount,
-    markAllRead,
-  } = useNotifications(20);
-
-  // Live clock
   const [clock, setClock] = useState(new Date());
-  useEffect(() => {
-    const t = setInterval(() => setClock(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  // 30s countdown
+  useEffect(() => { const t = setInterval(() => setClock(new Date()), 1000); return () => clearInterval(t); }, []);
   const [countdown, setCountdown] = useState(30);
+  const refreshAll = () => {
+    ['dashOsServers', 'dashServerSummary', 'dashCloudAccounts'].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+    setCountdown(30);
+  };
   useEffect(() => {
-    const t = setInterval(() => {
-      setCountdown((c) => {
-        if (c <= 1) { refetch(); return 30; }
-        return c - 1;
-      });
-    }, 1000);
+    const t = setInterval(() => setCountdown((c) => { if (c <= 1) { refreshAll(); return 30; } return c - 1; }), 1000);
     return () => clearInterval(t);
-  }, [refetch]);
+  }, []); // eslint-disable-line
 
-  // Search + sort + status filter for agent table
-  const [search, setSearch] = useState('');
-  const [sortKey, setSortKey] = useState('name');
-  const [sortDir, setSortDir] = useState('asc');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const allServers = serversData?.data || [];
+  const infra = summaryData || {};
+  const infraCounts = {
+    total: infra.total ?? allServers.length,
+    online: infra.connected ?? osCounts(allServers).online,
+    warning: infra.warning ?? osCounts(allServers).warning,
+    offline: infra.disconnected ?? osCounts(allServers).offline,
+  };
+  const infraHealth = infraCounts.total ? Math.round((infraCounts.online / infraCounts.total) * 100) : 0;
 
-  const handleSort = useCallback((key) => {
-    setSortKey((k) => {
-      if (k === key) { setSortDir((d) => (d === 'asc' ? 'desc' : 'asc')); return key; }
-      setSortDir('asc');
-      return key;
+  const perTech = useMemo(() => {
+    const m = {};
+    DB_TECHS.forEach((t) => { m[t.id] = osCounts(allServers.filter((s) => serverMatchesTech(s, t.id))); });
+    return m;
+  }, [allServers]);
+  const dbServers = useMemo(() => allServers.filter((s) => DB_TECHS.some((t) => serverMatchesTech(s, t.id))), [allServers]);
+  const dbCounts = osCounts(dbServers);
+
+  const agentCounts = useMemo(() => ({
+    total: agents.length,
+    online: agents.filter((a) => statusLevel(a.status) === 'online').length,
+    warning: agents.filter((a) => statusLevel(a.status) === 'warning').length,
+    offline: agents.filter((a) => ['critical', 'offline'].includes(statusLevel(a.status))).length,
+  }), [agents]);
+
+  const cloudList = Array.isArray(cloudAccounts) ? cloudAccounts : [];
+
+  // ── chart datasets ──
+  const healthData = [
+    { name: 'Online', value: infraCounts.online, color: ST.online },
+    { name: 'Warning', value: infraCounts.warning, color: ST.warning },
+    { name: 'Offline', value: infraCounts.offline, color: ST.offline },
+  ].filter((d) => d.value > 0);
+
+  const allowedTechs = DB_TECHS.filter((t) => can(`/${t.id}-servers`, 'view'));
+  const dbTechs = allowedTechs.length ? allowedTechs : DB_TECHS;
+  const canDb = allowedTechs.length > 0 || showModule('/databases');
+
+  const techBar = dbTechs.map((t) => ({ id: t.id, name: t.name, color: t.color, ...perTech[t.id] }));
+  const enginePie = techBar.filter((t) => t.total > 0).map((t) => ({ id: t.id, name: t.name, value: t.total, color: t.color }));
+
+  const topCpu = useMemo(() => allServers
+    .map((s) => ({ name: s.server_name || s.ip_address || '—', cpu: pct(s.cpu_usage) }))
+    .filter((s) => s.cpu > 0)
+    .sort((a, b) => b.cpu - a.cpu)
+    .slice(0, 8)
+    .map((s) => ({ ...s, name: s.name.length > 16 ? s.name.slice(0, 15) + '…' : s.name })), [allServers]);
+
+  const resAvg = useMemo(() => {
+    const cpu = allServers.map((s) => pct(s.cpu_usage)).filter((v) => v > 0);
+    const ram = allServers.map((s) => pct(s.ram_usage)).filter((v) => v > 0);
+    const disk = allServers.map((s) => pct(s.disk_usage)).filter((v) => v > 0);
+    return { cpu: avg(cpu), ram: avg(ram), disk: avg(disk) };
+  }, [allServers]);
+  const radialData = [
+    { name: 'Disk', value: resAvg.disk, fill: '#3b82f6' },
+    { name: 'RAM', value: resAvg.ram, fill: '#a855f7' },
+    { name: 'CPU', value: resAvg.cpu, fill: '#f97316' },
+  ];
+
+  const envPie = useMemo(() => {
+    const m = {};
+    allServers.forEach((s) => { const e = ENVS.includes(s.environment) ? s.environment : 'Other'; m[e] = (m[e] || 0) + 1; });
+    return Object.entries(m).map(([name, value]) => ({ name, value, color: ENV_COLORS[name] || '#94a3b8' }));
+  }, [allServers]);
+
+  const cloudPie = useMemo(() => {
+    const m = {};
+    cloudList.forEach((a) => { const p = (a.provider || a.cloud_provider || 'Other').toUpperCase(); m[p] = (m[p] || 0) + 1; });
+    const C = { AWS: '#ff9900', AZURE: '#0078d4', OCI: '#c74634', GCP: '#ea4335', OTHER: '#94a3b8' };
+    return Object.entries(m).map(([name, value]) => ({ name, value, color: C[name] || '#94a3b8' }));
+  }, [cloudList]);
+
+  const alertsBySev = useMemo(() => {
+    const m = { Critical: 0, Warning: 0, Info: 0 };
+    activeAlerts.forEach((n) => {
+      const s = (n.severity || 'info').toLowerCase();
+      if (s === 'critical') m.Critical++; else if (s === 'warning') m.Warning++; else m.Info++;
     });
-  }, []);
+    return [
+      { name: 'Critical', value: m.Critical, color: '#ef4444' },
+      { name: 'Warning', value: m.Warning, color: '#f59e0b' },
+      { name: 'Info', value: m.Info, color: '#3b82f6' },
+    ];
+  }, [activeAlerts]);
 
-  // KPI metrics
-  const metrics = useMemo(() => {
-    const total = agents.length;
-    const online = agents.filter((a) => statusLevel(a.status) === 'online').length;
-    const warning = agents.filter((a) => statusLevel(a.status) === 'warning').length;
-    const critical = agents.filter((a) => {
-      const l = statusLevel(a.status);
-      return l === 'critical' || l === 'offline';
-    }).length;
-    const avgCpu =
-      total > 0
-        ? agents.reduce((s, a) => s + (Number(a.db_cpu) || Number(a.cpu_usage) || 0), 0) / total
-        : 0;
-    const sessions = agents.reduce((s, a) => s + (Number(a.active_sessions) || 0), 0);
-    const allOk = critical === 0 && warning === 0;
-    return { total, online, warning, critical, avgCpu, sessions, allOk };
-  }, [agents]);
+  const clockStr = clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  const dateStr = clock.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
 
-  // DB type distribution
-  const dbDistribution = useMemo(() => {
-    const map = {};
-    agents.forEach((a) => {
-      const k = a.db_type || 'Unknown';
-      map[k] = (map[k] || 0) + 1;
-    });
-    return Object.entries(map).map(([type, count]) => ({ type, count }));
-  }, [agents]);
+  const goTech = (id) => id && navigate(`/${id}-servers`);
+  const pickId = (d) => d?.id || d?.payload?.id;
 
-  // CPU chart data (top 12)
-  const cpuChartData = useMemo(
-    () =>
-      [...agents]
-        .sort((a, b) => (Number(b.db_cpu) || 0) - (Number(a.db_cpu) || 0))
-        .slice(0, 12)
-        .map((a) => ({
-          name: a.name?.length > 14 ? a.name.slice(0, 13) + '…' : a.name,
-          cpu: Number(a.db_cpu) || 0,
-          fullName: a.name,
-        })),
-    [agents]
-  );
-
-  // Filtered + sorted agents for table
-  const filteredAgents = useMemo(() => {
-    let list = agents;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (a) =>
-          a.name?.toLowerCase().includes(q) ||
-          a.hostname?.toLowerCase().includes(q) ||
-          a.ip_address?.includes(q)
-      );
-    }
-    if (statusFilter !== 'all') {
-      list = list.filter((a) => {
-        const l = statusLevel(a.status);
-        // "Critical / Offline" KPI counts both levels — match both here too.
-        return statusFilter === 'critical' ? (l === 'critical' || l === 'offline') : l === statusFilter;
-      });
-    }
-    list = [...list].sort((a, b) => {
-      let va = a[sortKey] ?? '';
-      let vb = b[sortKey] ?? '';
-      if (typeof va === 'string') va = va.toLowerCase();
-      if (typeof vb === 'string') vb = vb.toLowerCase();
-      if (va < vb) return sortDir === 'asc' ? -1 : 1;
-      if (va > vb) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    return list;
-  }, [agents, search, statusFilter, sortKey, sortDir]);
-
-  const clockStr = clock.toLocaleTimeString('en-IN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  });
-  const dateStr = clock.toLocaleDateString('en-IN', {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-
-  if (agentsLoading && agents.length === 0) {
+  if (isLoading && allServers.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
-        <Spinner size="large" />
-        <p className="text-slate-500 text-sm font-medium">Loading ACTMON dashboard...</p>
+        <Spinner size="large" /><p className="text-slate-500 text-sm font-medium">Loading ACTMON dashboard…</p>
       </div>
     );
   }
 
-  const SortIcon = ({ col }) => (
-    <span className="ml-1 text-slate-400 text-xs">
-      {sortKey === col ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
-    </span>
-  );
+  const tiles = [
+    { route: '/chatbot',       icon: <Bot size={16} />,        c: 'bg-sky-50 text-sky-600',         title: 'ActMon AI' },
+  ].filter((t) => showModule(t.route));
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f4f9]">
 
-      {/* ── HERO HEADER ─────────────────────────────────────────────────── */}
-      <div
-        className="rounded-2xl overflow-hidden shadow-xl"
-        style={{ background: 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)' }}
-      >
-        {/* Top row */}
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 px-6 pt-6 pb-4">
-          {/* Left — branding */}
-          <div>
-            <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center"
-                style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}
-              >
-                <Database className="h-5 w-5 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-extrabold text-white tracking-tight">ACTMON</h1>
-                <p className="text-xs text-slate-400 font-medium">Database Monitoring Platform</p>
-              </div>
+      {/* HERO */}
+      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 md:px-8 pt-3 pb-4 relative overflow-hidden sticky top-0 z-30 shadow-md">
+        <div className="absolute inset-0 opacity-[0.04]"
+          style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+          <span>ActMon</span><ChevronRight size={11} /><span className="text-white font-semibold">Dashboard</span>
+        </div>
+        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0">
+              <Activity size={18} className="text-sky-200" />
+            </div>
+            <div>
+              <h1 className="text-lg font-black text-white tracking-tight leading-none">Monitoring Overview</h1>
+              <p className="text-sky-200/70 text-[11px] mt-0.5">Live analytics across every ActMon module</p>
             </div>
           </div>
-
-          {/* Right — clock + refresh + status badge */}
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex items-center gap-3">
-              {/* Clock */}
-              <div className="text-right">
-                <div className="text-2xl font-mono font-bold text-white tabular-nums">{clockStr}</div>
-                <div className="text-xs text-slate-400">{dateStr}</div>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {tiles.length > 0 && (
+              <div className="hidden lg:flex items-center gap-1.5">
+                {tiles.map((t) => (
+                  <button key={t.route} onClick={() => navigate(t.route)} title={t.title}
+                    className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-colors">
+                    {t.icon}<span className="hidden xl:inline">{t.title}</span>
+                  </button>
+                ))}
               </div>
-
-              {/* Refresh */}
-              <div className="flex flex-col items-center gap-1">
-                <button
-                  onClick={() => { refetch(); setCountdown(30); }}
-                  className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white transition-colors"
-                  title="Refresh now"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </button>
-                <span className="text-xs text-slate-500 tabular-nums">{countdown}s</span>
-              </div>
+            )}
+            <div className="text-right">
+              <div className="text-xl font-mono font-bold text-white tabular-nums leading-none">{clockStr}</div>
+              <div className="text-[10px] text-sky-200/70 mt-0.5">{dateStr}</div>
+            </div>
+            <div className="flex flex-col items-center gap-0.5">
+              <button onClick={refreshAll} title="Refresh now"
+                className="w-9 h-9 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 border border-white/15 text-white transition-colors">
+                <RefreshCw className="h-4 w-4" />
+              </button>
+              <span className="text-[10px] text-sky-200/60 tabular-nums">{countdown}s</span>
             </div>
           </div>
         </div>
+      </div>
 
-        {agentsError && (
-          <div className="mx-6 mb-4 px-4 py-2 rounded-lg bg-red-900/40 border border-red-700/50 text-red-300 text-xs font-medium flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 flex-shrink-0" />
-            Unable to reach the backend API. Showing cached data.
+      <div className="px-6 md:px-8 py-6 space-y-6 max-w-[1800px] mx-auto">
+
+        {/* KPI strip */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {canDb && <Kpi icon={<Database className="h-5 w-5" />} iconBg="bg-blue-50" iconColor="text-blue-600" value={dbCounts.total} label="Database Servers" sub={`${dbCounts.online} online · ${dbCounts.offline} offline`} onClick={() => navigate('/databases')} />}
+          {showModule('/infra') && <Kpi icon={<Server className="h-5 w-5" />} iconBg="bg-emerald-50" iconColor="text-emerald-600" value={infraCounts.total} label="Infra Hosts" sub={`${infraHealth}% healthy`} onClick={() => navigate('/infra')} />}
+          {showModule('/cloud') && <Kpi icon={<Cloud className="h-5 w-5" />} iconBg="bg-sky-50" iconColor="text-sky-600" value={cloudList.length} label="Cloud Accounts" sub={cloudPie.map((c) => c.name).join(' · ') || 'None'} onClick={() => navigate('/cloud')} />}
+          {showModule('/agents') && <Kpi icon={<Cpu className="h-5 w-5" />} iconBg="bg-violet-50" iconColor="text-violet-600" value={agentCounts.total} label="Agents" sub={`${agentCounts.online} online`} onClick={() => navigate('/agents')} />}
+          {showModule('/alerts') && <Kpi icon={<Bell className="h-5 w-5" />} iconBg="bg-amber-50" iconColor="text-amber-600" value={activeAlerts.length} label="Active Alerts" sub={`${alertsBySev[0].value} critical · ${alertsBySev[1].value} warning`} onClick={() => navigate('/alerts')} />}
+        </div>
+
+        {/* Alerts row — surfaced first so problems are visible before the charts */}
+        {showModule('/alerts') && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <Panel title="Alerts by Severity" icon={<Bell size={14} className="text-amber-500" />}>
+              <div style={{ height: 220 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={alertsBySev} margin={{ top: 10, right: 10, left: -18, bottom: 0 }} barCategoryGap="30%">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip content={<SevTip />} cursor={{ fill: '#f1f5f9' }} />
+                    <Bar dataKey="value" name="Alerts" radius={[6, 6, 0, 0]} barSize={54}>
+                      {alertsBySev.map((e, i) => <Cell key={i} fill={e.color} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+
+            <Panel title="Recent Alerts" icon={<Bell size={14} className="text-blue-500" />} className="lg:col-span-2"
+              action={
+                <button onClick={() => navigate('/alerts')} className="text-[11px] text-slate-500 hover:text-blue-600 flex items-center gap-1 font-medium">View all <ArrowRight size={11} /></button>
+              }>
+              <div className="overflow-y-auto space-y-2 pr-1" style={{ maxHeight: 240 }}>
+                {activeAlerts.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-40 text-center">
+                    <CheckCircle className="h-8 w-8 text-green-400 mb-2" />
+                    <p className="text-sm font-semibold text-slate-600">All Clear</p>
+                    <p className="text-xs text-slate-400">No active alerts.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {activeAlerts.slice(0, 10).map((nf, i) => <NotifItem key={nf.id ?? i} notif={nf} />)}
+                  </div>
+                )}
+              </div>
+            </Panel>
           </div>
         )}
-      </div>
 
-      {/* ── KPI CARDS ────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-        <KPICard
-          icon={<Server className="h-5 w-5 text-blue-600" />}
-          label="Total Agents"
-          value={metrics.total}
-          sub="Registered monitors"
-          iconBg="#dbeafe"
-          onClick={() => setStatusFilter('all')}
-          active={statusFilter === 'all'}
-        />
-        <KPICard
-          icon={<CheckCircle className="h-5 w-5 text-green-600" />}
-          label="Online"
-          value={metrics.online}
-          sub="Healthy agents"
-          iconBg="#dcfce7"
-          valueColor="#16a34a"
-          trend={metrics.total > 0 ? metrics.online : undefined}
-          onClick={() => setStatusFilter('online')}
-          active={statusFilter === 'online'}
-        />
-        <KPICard
-          icon={<AlertTriangle className="h-5 w-5 text-amber-600" />}
-          label="Warnings"
-          value={metrics.warning}
-          sub="Degraded agents"
-          iconBg="#fef3c7"
-          valueColor={metrics.warning > 0 ? '#d97706' : '#0f172a'}
-          onClick={() => setStatusFilter('warning')}
-          active={statusFilter === 'warning'}
-        />
-        <KPICard
-          icon={<ShieldAlert className="h-5 w-5 text-red-600" />}
-          label="Critical / Offline"
-          value={metrics.critical}
-          sub="Needs attention"
-          iconBg="#fee2e2"
-          valueColor={metrics.critical > 0 ? '#dc2626' : '#0f172a'}
-          onClick={() => setStatusFilter('critical')}
-          active={statusFilter === 'critical'}
-        />
-        <KPICard
-          icon={<Cpu className="h-5 w-5 text-indigo-600" />}
-          label="Avg DB CPU"
-          value={`${metrics.avgCpu.toFixed(1)}%`}
-          sub="Across all agents"
-          iconBg="#e0e7ff"
-          valueColor={cpuColor(metrics.avgCpu)}
-        />
-        <KPICard
-          icon={<Users className="h-5 w-5 text-cyan-600" />}
-          label="Active Sessions"
-          value={metrics.sessions.toLocaleString()}
-          sub="Total connections"
-          iconBg="#cffafe"
-        />
-      </div>
-
-      {/* ── AGENTS TABLE + ALERTS ─────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-        {/* Agents table — full-featured */}
-        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-          {/* Table header */}
-          <div className="p-4 border-b border-slate-100">
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-              <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                <Server className="h-4 w-4 text-blue-500" />
-                Monitored Agents
-                <span className="text-xs font-normal text-slate-400">({filteredAgents.length})</span>
-              </h2>
-              {/* Search */}
-              <div className="relative w-full sm:w-56">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search agents..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-slate-50"
-                />
-              </div>
+        {/* Charts row 1 */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Fleet health donut */}
+          <Panel title="Fleet Health" icon={<Activity size={14} className="text-emerald-500" />}
+            action={<span className="text-[11px] font-bold text-emerald-600">{infraHealth}% healthy</span>}>
+            <div className="relative" style={{ height: 220 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={healthData.length ? healthData : [{ name: 'No data', value: 1, color: '#e2e8f0' }]}
+                    dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={62} outerRadius={90} paddingAngle={2} stroke="none">
+                    {(healthData.length ? healthData : [{ color: '#e2e8f0' }]).map((e, i) => <Cell key={i} fill={e.color} />)}
+                  </Pie>
+                  <Tooltip content={<CountTip noun="host" />} />
+                </PieChart>
+              </ResponsiveContainer>
+              {donutLabel(infraCounts.total, 'total hosts')}
             </div>
+            <div className="flex items-center justify-center gap-4 mt-1">
+              {[['Online', infraCounts.online, ST.online], ['Warning', infraCounts.warning, ST.warning], ['Offline', infraCounts.offline, ST.offline]].map(([l, v, c]) => (
+                <div key={l} className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ background: c }} />{l} <b className="text-slate-700">{v}</b>
+                </div>
+              ))}
+            </div>
+          </Panel>
 
-          </div>
+          {/* Servers by technology (clickable) */}
+          {canDb && (
+            <Panel title="Servers by Technology" icon={<Database size={14} className="text-blue-500" />}
+              action={<button onClick={() => navigate('/databases')} className="text-[11px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">All <ArrowRight size={11} /></button>}>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={techBar} margin={{ top: 6, right: 6, left: -18, bottom: 0 }} barCategoryGap="22%">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} interval={0} angle={-18} textAnchor="end" height={46} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip content={<TechTip />} cursor={{ fill: '#f1f5f9' }} />
+                    <Bar dataKey="online" stackId="s" name="Online" fill={ST.online} radius={[0, 0, 0, 0]} cursor="pointer" onClick={(d) => goTech(pickId(d))} />
+                    <Bar dataKey="warning" stackId="s" name="Warning" fill={ST.warning} cursor="pointer" onClick={(d) => goTech(pickId(d))} />
+                    <Bar dataKey="offline" stackId="s" name="Offline" fill={ST.offline} radius={[4, 4, 0, 0]} cursor="pointer" onClick={(d) => goTech(pickId(d))} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-center text-[10px] text-slate-400 mt-1">Click a bar to open that technology’s servers</p>
+            </Panel>
+          )}
 
-          {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  {[
-                    { key: 'name', label: 'Agent / Host' },
-                    { key: 'db_type', label: 'Engine' },
-                    { key: 'environment', label: 'Env' },
-                    { key: 'status', label: 'Status' },
-                    { key: 'db_cpu', label: 'DB CPU' },
-                    { key: 'active_sessions', label: 'Sessions' },
-                    { key: 'last_heartbeat', label: 'Last Seen' },
-                  ].map(({ key, label }) => (
-                    <th
-                      key={key}
-                      onClick={() => handleSort(key)}
-                      className="text-left px-4 py-2.5 font-semibold text-slate-500 cursor-pointer hover:text-slate-700 select-none whitespace-nowrap"
-                    >
-                      {label} <SortIcon col={key} />
-                    </th>
+          {/* Engine distribution pie (clickable) */}
+          {canDb && (
+            <Panel title="Engine Distribution" icon={<Database size={14} className="text-indigo-500" />}>
+              {enginePie.length ? (
+                <div className="flex items-center gap-2" style={{ height: 240 }}>
+                  <ResponsiveContainer width="60%" height="100%">
+                    <PieChart>
+                      <Pie data={enginePie} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={88} innerRadius={0} paddingAngle={1} stroke="#fff" strokeWidth={2}
+                        cursor="pointer" onClick={(d) => goTech(pickId(d))}>
+                        {enginePie.map((e, i) => <Cell key={i} fill={e.color} />)}
+                      </Pie>
+                      <Tooltip content={<CountTip noun="server" />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex-1 space-y-1.5">
+                    {enginePie.map((e) => (
+                      <button key={e.id} onClick={() => goTech(e.id)} className="w-full flex items-center gap-2 text-[11px] font-semibold text-slate-600 hover:text-slate-900 group">
+                        <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: e.color }} />
+                        <span className="truncate group-hover:underline">{e.name}</span>
+                        <span className="ml-auto font-black text-slate-800">{e.value}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : <div className="flex items-center justify-center text-slate-400 text-sm" style={{ height: 240 }}>No database servers yet</div>}
+            </Panel>
+          )}
+        </div>
+
+        {/* Charts row 2 */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Top hosts by CPU */}
+          <Panel title="Top Hosts by CPU" icon={<TrendingUp size={14} className="text-orange-500" />} className="lg:col-span-1">
+            {topCpu.length ? (
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topCpu} layout="vertical" margin={{ top: 4, right: 26, left: 6, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} unit="%" />
+                    <YAxis type="category" dataKey="name" width={104} tick={{ fontSize: 10, fill: '#475569' }} />
+                    <Tooltip content={<CpuTip />} cursor={{ fill: '#f1f5f9' }} />
+                    <Bar dataKey="cpu" radius={[0, 4, 4, 0]} barSize={14}>
+                      {topCpu.map((s, i) => <Cell key={i} fill={s.cpu >= 85 ? '#ef4444' : s.cpu >= 65 ? '#f59e0b' : '#22c55e'} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : <div className="flex items-center justify-center text-slate-400 text-sm" style={{ height: 240 }}>No CPU data</div>}
+          </Panel>
+
+          {/* Avg resource usage — radial */}
+          <Panel title="Avg Resource Usage" icon={<Cpu size={14} className="text-purple-500" />}>
+            <div className="relative" style={{ height: 200 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <RadialBarChart innerRadius="35%" outerRadius="100%" data={radialData} startAngle={90} endAngle={-270}>
+                  <RadialBar minAngle={2} background={{ fill: '#f1f5f9' }} dataKey="value" cornerRadius={8} />
+                  <Tooltip content={<ResTip />} />
+                </RadialBarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex items-center justify-center gap-4 mt-1">
+              {[['CPU', resAvg.cpu, '#f97316', <Cpu size={12} key="c" />], ['RAM', resAvg.ram, '#a855f7', <MemoryStick size={12} key="m" />], ['Disk', resAvg.disk, '#3b82f6', <HardDrive size={12} key="d" />]].map(([l, v, c, ic]) => (
+                <div key={l} className="flex flex-col items-center">
+                  <span className="flex items-center gap-1 text-[11px] font-bold" style={{ color: c }}>{ic}{l}</span>
+                  <span className="text-lg font-black text-slate-800 leading-none">{v}%</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          {/* Environment / Cloud distribution */}
+          <Panel title={cloudPie.length ? 'Cloud by Provider' : 'Hosts by Environment'} icon={cloudPie.length ? <Cloud size={14} className="text-sky-500" /> : <Server size={14} className="text-blue-500" />}>
+            {(cloudPie.length ? cloudPie : envPie).length ? (
+              <div className="flex items-center gap-2" style={{ height: 232 }}>
+                <ResponsiveContainer width="58%" height="100%">
+                  <PieChart>
+                    <Pie data={cloudPie.length ? cloudPie : envPie} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={44} outerRadius={84} paddingAngle={2} stroke="#fff" strokeWidth={2}>
+                      {(cloudPie.length ? cloudPie : envPie).map((e, i) => <Cell key={i} fill={e.color} />)}
+                    </Pie>
+                    <Tooltip content={<CountTip noun={cloudPie.length ? 'account' : 'host'} />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex-1 space-y-1.5">
+                  {(cloudPie.length ? cloudPie : envPie).map((e) => (
+                    <div key={e.name} className="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: e.color }} />
+                      <span className="truncate">{e.name}</span>
+                      <span className="ml-auto font-black text-slate-800">{e.value}</span>
+                    </div>
                   ))}
-                  <th className="px-4 py-2.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAgents.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="text-center py-12 text-slate-400">
-                      <Server className="h-8 w-8 mx-auto mb-2 text-slate-200" />
-                      No agents match the current filters.
-                    </td>
-                  </tr>
-                )}
-                {filteredAgents.map((agent) => {
-                  const level = statusLevel(agent.status);
-                  const statusColor = STATUS_COLORS[level];
-                  const cpu = Number(agent.db_cpu) || 0;
-                  return (
-                    <tr
-                      key={agent.name}
-                      onClick={() => navigate(`/agents/${agent.name}`)}
-                      className="border-b border-slate-50 hover:bg-blue-50/40 cursor-pointer transition-colors group"
-                      style={{ borderLeft: `4px solid ${statusColor}` }}
-                    >
-                      <td className="px-4 py-3">
-                        <div className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">
-                          {agent.name}
-                        </div>
-                        <div className="text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Globe className="h-3 w-3" />
-                          {agent.hostname || agent.ip_address || '—'}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <DBTypeBadge type={agent.db_type} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold text-xs">
-                          {agent.environment || '—'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusPill status={agent.status} />
-                      </td>
-                      <td className="px-4 py-3 w-28">
-                        <div className="flex flex-col gap-1">
-                          <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                              className="h-full rounded-full transition-all"
-                              style={{ width: `${Math.min(cpu, 100)}%`, backgroundColor: cpuColor(cpu) }}
-                            />
-                          </div>
-                          <span className="text-xs font-bold" style={{ color: cpuColor(cpu) }}>
-                            {cpu.toFixed(1)}%
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className="font-semibold text-slate-700">
-                          {(agent.active_sessions ?? 0).toLocaleString()}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                        {ago(agent.last_heartbeat)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-500 transition-colors" />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                </div>
+              </div>
+            ) : <div className="flex items-center justify-center text-slate-400 text-sm" style={{ height: 232 }}>No data</div>}
+          </Panel>
         </div>
 
-        {/* Alerts panel */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-              <Bell className="h-4 w-4 text-blue-500" />
-              Alerts
-              {unreadCount > 0 && (
-                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-                  {unreadCount}
-                </span>
-              )}
-            </h2>
-            <div className="flex items-center gap-2">
-              {unreadCount > 0 && (
-                <button
-                  onClick={markAllRead}
-                  className="text-xs text-blue-600 hover:text-blue-800 font-semibold underline underline-offset-2"
-                >
-                  Mark all read
-                </button>
-              )}
-              <button
-                onClick={() => navigate('/alerts')}
-                className="text-xs text-slate-500 hover:text-blue-600 flex items-center gap-1 font-medium"
-              >
-                View all <ArrowRight className="h-3 w-3" />
-              </button>
-            </div>
-          </div>
-
-          {/* Notification list */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 max-h-[520px]">
-            {notifLoading && notifications.length === 0 ? (
-              <div className="flex items-center justify-center h-32">
-                <Spinner size="tiny" />
-              </div>
-            ) : notifications.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-32 text-center">
-                <CheckCircle className="h-8 w-8 text-green-400 mb-2" />
-                <p className="text-sm font-semibold text-slate-600">All Clear</p>
-                <p className="text-xs text-slate-400">No active alerts.</p>
-              </div>
-            ) : (
-              notifications.slice(0, 15).map((n, i) => (
-                <NotifItem key={n.id ?? i} notif={n} />
-              ))
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="px-4 py-2 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
-            <span className="text-xs text-slate-400">
-              {notifications.length} total &middot; {unreadCount} unread
-            </span>
-            <button
-              onClick={() => navigate('/alerts')}
-              className="text-xs text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
-            >
-              Manage <ArrowRight className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

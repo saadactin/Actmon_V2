@@ -1,0 +1,13 @@
+{
+  "clickhouse": {
+    "host": "localhost",
+    "port": 8123,
+    "username": "default",
+    "password": "",
+    "database": "actmon"
+  },
+  "table": "metric_logs",
+  "retention_days": 30,
+  "sample_interval_sec": 10,
+  "metrics": ["cpu", "host_cpu", "memory", "connections", "sessions", "cache_hit", "qps", "tps"]
+}

@@ -306,6 +306,15 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
                         file_error = (file_error or "") + f" | SSH error: {ssh_err}"
 
         all_queries = perf_queries if perf_queries else file_queries
+        # Agent-connected DBs don't need SSH: the agent already delivers query
+        # internals via performance_schema. The UI uses this to hide the SSH nag.
+        agent_connected = (rec.registration_mode or "").lower() == "agent"
+        if not agent_connected:
+            from app.models.os_server_model import OsServer, DatabaseInstance
+            inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == rec.id).first()
+            if inst:
+                srv = db.query(OsServer).filter(OsServer.id == inst.server_id).first()
+                agent_connected = bool(srv and srv.collector == "agent")
         return {
             "status": "success",
             "slow_log_config": {
@@ -324,6 +333,7 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             "file_error":              file_error,
             "total":                   len(all_queries),
             "ssh_configured":          bool(rec.ssh_user and rec.ssh_password),
+            "agent_connected":         agent_connected,
             "ssh_user":                rec.ssh_user or "",
             "ssh_host":                rec.ssh_host or rec.host,
         }

@@ -4,9 +4,13 @@ import {
   Settings, Save, ShieldAlert, Sliders, Database,
   Mail, Plus, Trash2, CheckCircle2, XCircle, RefreshCw,
   Eye, EyeOff, TestTube2, Edit2, Star, StarOff, Wifi,
-  AlertTriangle, Server, Clock,
+  AlertTriangle, Server, Clock, ChevronRight, ChevronLeft,
+  Palette, PanelLeft, LayoutDashboard, Monitor, Moon, Sun, Laptop,
+  RotateCcw, Search, Check,
 } from 'lucide-react';
 import client from '../../api/client';
+import { useSettingsStore } from '../../store/settingsStore';
+import { useUIStore } from '../../store/uiStore';
 
 /* ─── API ─── */
 const smtpApi = {
@@ -378,162 +382,203 @@ function SmtpConfigSection() {
   );
 }
 
-/* ─── Main Settings Page ─── */
-export const SettingsPage = () => {
-  const [refreshRate, setRefreshRate] = useState('30');
-  const [alertSound, setAlertSound]   = useState('normal');
-  const [toasts, setToasts]           = useState(true);
-  const [highContrast, setHighContrast] = useState(true);
-  const [autoDiscovery, setAutoDiscovery] = useState(true);
-  const [retention, setRetention]     = useState('90');
-  const [saved, setSaved]             = useState(false);
+/* ─── Reusable controls ─── */
+function Toggle({ checked, onChange }) {
+  return (
+    <button type="button" onClick={() => onChange(!checked)}
+      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${checked ? 'bg-brand-primary' : 'bg-slate-300'}`}>
+      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
+    </button>
+  );
+}
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+function Segment({ value, options, onChange }) {
+  return (
+    <div className="flex items-center gap-1 bg-slate-500/10 rounded-lg p-0.5">
+      {options.map(([val, label, Icon]) => (
+        <button key={val} onClick={() => onChange(val)}
+          className={`h-8 px-3 rounded-md text-xs font-bold flex items-center gap-1.5 transition-all ${value === val ? 'bg-brand-surface shadow text-brand-primary' : 'text-brand-text-secondary hover:text-brand-text-primary'}`}>
+          {Icon && <Icon size={13} />}{label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const ACCENTS = ['#0078D4', '#2563eb', '#4f46e5', '#7c3aed', '#0891b2', '#059669', '#d97706', '#e11d48', '#db2777', '#334155'];
+function AccentPicker({ value, onChange }) {
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[248px]">
+      {ACCENTS.map((c) => (
+        <button key={c} onClick={() => onChange(c)} title={c}
+          className="w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center"
+          style={{ background: c, borderColor: String(value).toLowerCase() === c ? '#0f172a' : 'transparent' }}>
+          {String(value).toLowerCase() === c && <Check size={13} className="text-white" />}
+        </button>
+      ))}
+      <label className="w-6 h-6 rounded-full border border-brand-border overflow-hidden cursor-pointer relative flex items-center justify-center" title="Custom color">
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
+        <Palette size={12} className="text-slate-400" />
+      </label>
+    </div>
+  );
+}
+
+function AboutCards() {
+  const info = [
+    ['Product Version', 'ActMon Enterprise v2026.1', 'text-brand-text-primary'],
+    ['Active Environment', 'Production Gateway', 'text-emerald-600 font-black'],
+    ['API Server Endpoint', 'http://192.168.8.100:8000', 'font-mono text-brand-primary'],
+    ['System Local Time', new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }), 'text-brand-text-primary'],
+  ];
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {info.map(([label, value, cls]) => (
+        <div key={label} className="bg-brand-surface rounded-xl p-4 border border-brand-border">
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{label}</p>
+          <p className={`text-sm mt-1 font-semibold ${cls}`}>{value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─── Main Settings Page (VS Code-style workbench) ─── */
+export const SettingsPage = () => {
+  const s = useSettingsStore();
+  const { sidebarOpen, setSidebarOpen } = useUIStore();
+  const [active, setActive] = useState('appearance');
+  const [q, setQ] = useState('');
+
+  const GROUPS = [
+    { id: 'appearance', title: 'Appearance', icon: Palette },
+    { id: 'navigation', title: 'Navigation', icon: PanelLeft },
+    { id: 'dashboard',  title: 'Dashboard',  icon: LayoutDashboard },
+    { id: 'smtp',       title: 'SMTP Email',  icon: Mail },
+    { id: 'data',       title: 'Data & Telemetry', icon: Database },
+    { id: 'about',      title: 'About',       icon: ShieldAlert },
+  ];
+
+  const ROWS = [
+    { group: 'appearance', title: 'Color theme', desc: 'Light, dim, dark — or follow your system.', kw: 'theme dark light dim mode color system', type: 'segment', key: 'theme', options: [['light', 'Light', Sun], ['dim', 'Dim', Monitor], ['dark', 'Dark', Moon], ['system', 'System', Laptop]] },
+    { group: 'appearance', title: 'Accent color', desc: 'Primary highlight color used across the UI.', kw: 'accent color primary highlight brand', type: 'accent', key: 'accent' },
+    { group: 'appearance', title: 'Sidebar style', desc: 'Color of the left navigation sidebar.', kw: 'sidebar color navigation dark', type: 'segment', key: 'sidebarStyle', options: [['slate', 'Slate'], ['midnight', 'Midnight'], ['ocean', 'Ocean'], ['match', 'Accent']] },
+    { group: 'appearance', title: 'Interface size', desc: 'Make everything a bit smaller or larger.', kw: 'size scale font zoom text bigger smaller', type: 'segment', key: 'fontScale', options: [['compact', 'Compact'], ['default', 'Default'], ['large', 'Large']] },
+    { group: 'appearance', title: 'Font style', desc: 'Typeface used throughout the app.', kw: 'font typeface family serif mono rounded', type: 'segment', key: 'fontStyle', options: [['system', 'System'], ['rounded', 'Rounded'], ['serif', 'Serif'], ['mono', 'Mono']] },
+    { group: 'appearance', title: 'Corner roundness', desc: 'How rounded cards and buttons look.', kw: 'corner radius rounded sharp shape', type: 'segment', key: 'radius', options: [['sharp', 'Sharp'], ['default', 'Default'], ['round', 'Round']] },
+    { group: 'appearance', title: 'High contrast', desc: 'Stronger text contrast for easier reading.', kw: 'contrast accessibility readable bold', type: 'toggle', key: 'contrast' },
+    { group: 'appearance', title: 'Reduce motion', desc: 'Minimise animations and transitions.', kw: 'motion animation accessibility reduce', type: 'toggle', key: 'reduceMotion' },
+    { group: 'navigation', title: 'Hide menu names', desc: 'Collapse the sidebar to icons only.', kw: 'sidebar menu labels hide names collapse', type: 'toggle', key: 'sidebarLabels', invert: true },
+    { group: 'navigation', title: 'Collapse sidebar', desc: 'Start with a compact icon sidebar.', kw: 'sidebar collapse compact narrow', type: 'toggleUI' },
+    { group: 'dashboard', title: 'Refresh interval', desc: 'How often live widgets poll for data.', kw: 'refresh interval poll rate seconds', type: 'select', key: 'refreshInterval', num: true, options: [[15, '15 seconds'], [30, '30 seconds'], [60, '60 seconds'], [300, '5 minutes']] },
+    { group: 'dashboard', title: 'Toast notifications', desc: 'Show real-time pop-up notifications.', kw: 'toast notification popup alert', type: 'toggle', key: 'toasts' },
+    { group: 'data', title: 'Audit log retention', desc: 'How long to keep audit and history logs.', kw: 'retention audit log data history', type: 'select', key: 'retention', num: true, options: [[30, '30 days'], [90, '90 days'], [180, '180 days'], [365, '1 year']] },
+    { group: 'data', title: 'Automatic discovery', desc: 'Periodically scan for new resources.', kw: 'discovery scan auto agents', type: 'toggle', key: 'autoDiscovery' },
+  ];
+
+  const control = (r) => {
+    if (r.type === 'toggle') { const v = r.invert ? !s[r.key] : s[r.key]; return <Toggle checked={!!v} onChange={(nv) => s.update({ [r.key]: r.invert ? !nv : nv })} />; }
+    if (r.type === 'toggleUI') return <Toggle checked={!sidebarOpen} onChange={(nv) => setSidebarOpen(!nv)} />;
+    if (r.type === 'segment') return <Segment value={s[r.key]} options={r.options} onChange={(v) => s.update({ [r.key]: v })} />;
+    if (r.type === 'accent') return <AccentPicker value={s.accent} onChange={(v) => s.update({ accent: v })} />;
+    if (r.type === 'select') return (
+      <select value={s[r.key]} onChange={(e) => s.update({ [r.key]: r.num ? Number(e.target.value) : e.target.value })}
+        className="h-9 px-3 rounded-lg border border-brand-border bg-brand-surface text-sm text-brand-text-primary outline-none focus:border-brand-primary">
+        {r.options.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+      </select>
+    );
+    return null;
   };
 
-  const selClass = 'w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:border-blue-400 focus:outline-none bg-white';
+  const Row = (r) => (
+    <div key={r.title} className="py-4 border-b border-brand-border last:border-0 flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-sm font-bold text-brand-text-primary">{r.title}</p>
+        <p className="text-xs text-brand-text-secondary mt-0.5">{r.desc}</p>
+      </div>
+      <div className="flex-shrink-0">{control(r)}</div>
+    </div>
+  );
+
+  const ql = q.trim().toLowerCase();
+  const matches = ql ? ROWS.filter((r) => (r.title + ' ' + r.desc + ' ' + r.kw).toLowerCase().includes(ql)) : [];
+  const activeGroup = GROUPS.find((g) => g.id === active);
+  const card = (children) => <div className="bg-brand-surface rounded-2xl border border-brand-border shadow-sm px-5">{children}</div>;
 
   return (
-    <div className="min-h-screen bg-[#f1f5f9] p-6 space-y-6">
-
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-black text-slate-900 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg,#1e3a5f,#0891b2)' }}>
-            <Settings size={18} className="text-white" />
-          </div>
-          System Settings
-        </h1>
-        <p className="text-sm text-slate-500 mt-1 ml-13">
-          Global configuration — SMTP, dashboard preferences, telemetry, and platform info
-        </p>
-      </div>
-
-      {/* ══ SMTP CONFIGURATION ══ */}
-      <SmtpConfigSection />
-
-      {/* ══ DASHBOARD & UI ══ */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
-          style={{ borderLeft: '4px solid #6366F1' }}>
-          <Sliders size={18} className="text-indigo-500" />
-          <div>
-            <h3 className="font-black text-slate-800 text-sm">Dashboard & UI Controls</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Refresh rates, alerts, and display preferences</p>
-          </div>
+    <div className="-mx-6 md:-mx-8 -mb-6 md:-mb-8 h-full bg-brand-bg flex flex-col">
+      {/* HEADER */}
+      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 md:px-8 pt-3 pb-4 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
+        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
+          <span>ActMon</span><ChevronRight size={11} /><span className="text-white font-semibold">Settings</span>
         </div>
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-4">
+        <div className="relative flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0"><Settings size={18} className="text-sky-200" /></div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">Default Refresh Interval</label>
-              <select value={refreshRate} onChange={e => setRefreshRate(e.target.value)} className={selClass}>
-                <option value="15">15 Seconds (Aggressive)</option>
-                <option value="30">30 Seconds (Default)</option>
-                <option value="60">60 Seconds (Balanced)</option>
-                <option value="300">5 Minutes (Telemetry)</option>
-              </select>
-              <p className="text-[11px] text-slate-400 mt-1">Polling rate for real-time dashboard widgets</p>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">System Alert Sound</label>
-              <select value={alertSound} onChange={e => setAlertSound(e.target.value)} className={selClass}>
-                <option value="mute">Muted</option>
-                <option value="quiet">Low volume</option>
-                <option value="normal">Normal volume (Default)</option>
-              </select>
+              <h1 className="text-lg font-black text-white tracking-tight leading-none">Settings</h1>
+              <p className="text-sky-200/70 text-[11px] mt-0.5">Personalise ActMon — theme, colors, navigation &amp; more</p>
             </div>
           </div>
-          <div className="space-y-3">
-            <p className="text-xs font-bold text-slate-500 mb-2">Display Options</p>
-            {[
-              [toasts, setToasts, 'Enable Real-Time Toast Notifications'],
-              [highContrast, setHighContrast, 'Enable High-Contrast Charts for Accessibility'],
-            ].map(([checked, setter, label]) => (
-              <label key={label} className="flex items-center gap-3 cursor-pointer p-3 rounded-xl border border-slate-100 hover:bg-slate-50">
-                <div onClick={() => setter(c => !c)}
-                  className={`w-10 h-5 rounded-full transition-all relative ${checked ? 'bg-indigo-500' : 'bg-slate-200'}`}>
-                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${checked ? 'left-5' : 'left-0.5'}`} />
+          <div className="relative w-64 max-w-[45vw]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search settings…"
+              className="w-full h-9 pl-9 pr-3 rounded-lg bg-white/10 border border-white/15 text-white text-sm placeholder-white/50 outline-none focus:bg-white/15" />
+          </div>
+        </div>
+      </div>
+
+      {/* BODY: category nav + settings pane */}
+      <div className="flex flex-1 min-h-0">
+        <aside className="w-56 flex-shrink-0 border-r border-brand-border bg-brand-surface/50 py-3 overflow-y-auto flex flex-col">
+          <p className="px-4 pb-2 text-[10px] font-black text-slate-400 uppercase tracking-wider">Categories</p>
+          {GROUPS.map((g) => {
+            const Icon = g.icon; const on = !ql && active === g.id;
+            return (
+              <button key={g.id} onClick={() => { setQ(''); setActive(g.id); }}
+                className={`mx-2 px-3 h-10 rounded-lg flex items-center gap-2.5 text-sm font-semibold transition-colors ${on ? 'bg-brand-primary-light text-brand-primary' : 'text-brand-text-secondary hover:bg-slate-500/10'}`}>
+                <Icon size={16} /> {g.title}
+              </button>
+            );
+          })}
+          <div className="flex-1" />
+          <button onClick={() => s.reset()} className="mx-2 mt-2 px-3 h-9 rounded-lg flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-red-500 hover:bg-red-500/10 transition-colors">
+            <RotateCcw size={14} /> Reset to defaults
+          </button>
+        </aside>
+
+        <main className="flex-1 overflow-y-auto px-6 md:px-8 py-6">
+          <div className="max-w-[860px]">
+            {ql ? (
+              matches.length ? (
+                <>
+                  <p className="text-sm font-bold text-brand-text-secondary mb-3">{matches.length} setting{matches.length !== 1 ? 's' : ''} matching “{q}”</p>
+                  {card(matches.map((r) => (
+                    <div key={r.title} className="py-4 border-b border-brand-border last:border-0 flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{GROUPS.find((g) => g.id === r.group)?.title}</p>
+                        <p className="text-sm font-bold text-brand-text-primary">{r.title}</p>
+                        <p className="text-xs text-brand-text-secondary mt-0.5">{r.desc}</p>
+                      </div>
+                      <div className="flex-shrink-0 pt-3">{control(r)}</div>
+                    </div>
+                  )))}
+                </>
+              ) : <div className="text-center py-16 text-slate-400 text-sm">No settings match “{q}”.</div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-4">
+                  {activeGroup && <activeGroup.icon size={18} className="text-brand-primary" />}
+                  <h2 className="text-lg font-black text-brand-text-primary">{activeGroup?.title}</h2>
                 </div>
-                <span className="text-sm text-slate-700">{label}</span>
-              </label>
-            ))}
+                {active === 'smtp' ? <SmtpConfigSection />
+                  : active === 'about' ? <AboutCards />
+                  : card(ROWS.filter((r) => r.group === active).map(Row))}
+              </>
+            )}
           </div>
-        </div>
-      </div>
-
-      {/* ══ TELEMETRY & AGENTS ══ */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
-          style={{ borderLeft: '4px solid #14B8A6' }}>
-          <Database size={18} className="text-teal-500" />
-          <div>
-            <h3 className="font-black text-slate-800 text-sm">Telemetry & Agent Collectors</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Log retention, discovery scanning, and agent settings</p>
-          </div>
-        </div>
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 mb-1">Audit Log Retention</label>
-            <select value={retention} onChange={e => setRetention(e.target.value)} className={selClass}>
-              <option value="30">30 Days</option>
-              <option value="90">90 Days (Recommended)</option>
-              <option value="180">180 Days (Compliance)</option>
-              <option value="365">1 Year</option>
-            </select>
-          </div>
-          <div className="space-y-3">
-            {[
-              [autoDiscovery, setAutoDiscovery, 'Enable Automatic Discovery Scanning'],
-            ].map(([checked, setter, label]) => (
-              <label key={label} className="flex items-center gap-3 cursor-pointer p-3 rounded-xl border border-slate-100 hover:bg-slate-50">
-                <div onClick={() => setter(c => !c)}
-                  className={`w-10 h-5 rounded-full transition-all relative ${checked ? 'bg-teal-500' : 'bg-slate-200'}`}>
-                  <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${checked ? 'left-5' : 'left-0.5'}`} />
-                </div>
-                <span className="text-sm text-slate-700">{label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* ══ PLATFORM INFO ══ */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100"
-          style={{ borderLeft: '4px solid #C74634' }}>
-          <ShieldAlert size={18} className="text-red-500" />
-          <h3 className="font-black text-slate-800 text-sm">Platform Information</h3>
-        </div>
-        <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            ['Product Version',      'ActMon Enterprise v2026.1',      'text-slate-800'],
-            ['Active Environment',   'Production Gateway',             'text-emerald-600 font-black'],
-            ['API Server Endpoint',  'http://192.168.8.100:8000',      'font-mono text-blue-700'],
-            ['System Local Time',    new Date().toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}), 'text-slate-700'],
-          ].map(([label, value, cls]) => (
-            <div key={label} className="bg-slate-50 rounded-xl p-4 border border-slate-100">
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{label}</p>
-              <p className={`text-sm mt-1 font-semibold ${cls}`}>{value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ══ SAVE BAR ══ */}
-      <div className="flex justify-end items-center gap-3 pt-2">
-        {saved && (
-          <span className="flex items-center gap-2 text-sm text-green-700 font-bold">
-            <CheckCircle2 size={16} /> Settings saved successfully
-          </span>
-        )}
-        <button onClick={handleSave}
-          className="flex items-center gap-2 px-6 py-2.5 text-sm font-black text-white rounded-xl shadow-lg"
-          style={{ background: 'linear-gradient(135deg,#1e3a5f,#0891b2)' }}>
-          <Save size={15} /> Save Settings
-        </button>
+        </main>
       </div>
     </div>
   );

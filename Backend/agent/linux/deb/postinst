@@ -1,0 +1,28 @@
+#!/bin/sh
+# postinst — configure from the install environment and start the service.
+#   ACTMON_ACCESS_TOKEN=<tok> ACTMON_URL=<url> dpkg -i actmon-agent.deb   (as root)
+# An env-provided token ALWAYS wins: reinstalling with a new token must
+# replace a stale/placeholder config, not silently keep it.
+set -e
+case "$1" in
+  configure)
+    systemctl daemon-reload || true
+    if [ -n "${ACTMON_ACCESS_TOKEN:-}" ]; then
+      mkdir -p /etc/actmon
+      printf 'ACTMON_ACCESS_TOKEN=%s\nACTMON_URL=%s\n' "$ACTMON_ACCESS_TOKEN" "${ACTMON_URL:-}" > /etc/actmon/agent.conf
+      chmod 600 /etc/actmon/agent.conf
+    fi
+    if [ -f /etc/actmon/agent.conf ]; then
+      systemctl enable --now actmon-agent.service || true
+      # Restart so a replaced config (or upgraded payload) takes effect immediately.
+      systemctl restart actmon-agent.service || true
+      echo "ActMon Agent installed and started."
+    else
+      echo "ActMon Agent installed. Create /etc/actmon/agent.conf with:"
+      echo "  ACTMON_ACCESS_TOKEN=<token>"
+      echo "  ACTMON_URL=<url>"
+      echo "then run: systemctl enable --now actmon-agent"
+    fi
+    ;;
+esac
+exit 0

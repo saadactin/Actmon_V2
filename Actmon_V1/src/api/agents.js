@@ -35,6 +35,11 @@ export const getAgentSQL = async (
   return ensureArray(response.data);
 };
 
+export const getAgentSessions = async (agentName) => {
+  const response = await client.get(`/agents/${agentName}/sessions`);
+  return ensureArray(response.data);
+};
+
 export const getWaitEvents = async (
   agentName,
   hours = 6
@@ -94,4 +99,23 @@ export const registerAgent = async (payload) => {
 export const syncConnections = async () => {
   const response = await client.post('/agents/sync-connections');
   return response.data;
+};
+
+// Persist the ingestion token the deploy wizard bakes into the install command.
+export const createInstallToken = async (payload) => {
+  const response = await client.post('/agents/install-token', payload);
+  return response.data;
+};
+
+// Hand DB credentials to the agent (by token) so it collects the DB locally.
+export const saveAgentDbConfig = async (payload) => {
+  const response = await client.post('/agents/db-config', payload);
+  return response.data;
+};
+
+// LAN IPs of the ActMon server — used to build install URLs that the TARGET
+// host can actually reach (window.location "localhost" would make it dial itself).
+export const getHostIps = async () => {
+  const response = await client.get('/agents/host-ips');
+  return response.data; // { primary, ips: [] }
 };

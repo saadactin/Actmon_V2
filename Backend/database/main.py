@@ -18,6 +18,7 @@ from app.models.mysql_report_schedule_model import MysqlReportSchedule        # 
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
 from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
+from app.models.alert_rule_model import AlertRule                         # noqa: F401
 # Access-Control / Administration (RBAC) schema — organization, employee, role,
 # module, page, permission, user, sessions, audit, etc.
 from app.models.admin_models import (                                # noqa: F401
@@ -72,7 +73,10 @@ from app.routes.os_server.test_connection_routes import router as test_connectio
 from app.routes.auth.auth_routes import router as auth_router
 from app.routes.admin.admin_crud_routes import admin_crud_routers
 from app.routes.agent.agent_routes import router as agent_router
+from app.routes.agent.agent_install_routes import router as agent_install_router
 from app.routes.chatbot.chatbot_routes import router as chatbot_router
+from app.routes.alerts.alert_routes import router as alerts_router
+from app.routes.logs.logs_routes import router as logs_router
 
 # Create all tables in PostgreSQL (graceful — won't crash if DB is offline at import time)
 try:
@@ -95,6 +99,12 @@ async def lifespan(app_instance):
     # Start centralized agent collector (polls monitored DBs every 60s)
     from app.services.agent.agent_collector_service import start_agent_collector
     start_agent_collector(interval_sec=60)
+    # Start ActMon metric logger → ClickHouse (per-metric time-series)
+    try:
+        from app.services.logs.actmon_logs_service import start_metric_logger
+        start_metric_logger()
+    except Exception as _log_err:
+        import warnings; warnings.warn(f"[actmon_logs] logger not started: {_log_err}")
     # Start PostgreSQL resource history collector (logs CPU/RAM/Disk + spike evidence)
     from app.services.postgres.postgres_resource_collector import start_resource_collector
     start_resource_collector()
@@ -188,9 +198,12 @@ for _admin_router in admin_crud_routers:
 
 # Centralized Agent routes
 app.include_router(agent_router)
+app.include_router(agent_install_router)
 
 # ActMon AI Chatbot
 app.include_router(chatbot_router)
+app.include_router(alerts_router)
+app.include_router(logs_router)
 
 
 @app.get("/")

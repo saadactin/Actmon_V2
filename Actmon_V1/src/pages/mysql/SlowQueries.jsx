@@ -1135,17 +1135,23 @@ export default function SlowQueries() {
               <div className="flex items-center justify-between mb-4">
                 <p className="text-sm font-bold text-slate-700">Data Source Configuration</p>
                 {/* SSH config button */}
-                <button
-                  onClick={() => setShowSSH(true)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    data?.ssh_configured
-                      ? 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200'
-                      : 'bg-slate-800 text-white hover:bg-slate-700'
-                  }`}
-                >
-                  <Terminal size={12} />
-                  {data?.ssh_configured ? `SSH: ${data.ssh_user}@${data.ssh_host}` : 'Configure SSH'}
-                </button>
+                {data?.agent_connected && !data?.ssh_configured ? (
+                  <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-100 text-sky-700 border border-sky-300">
+                    <Terminal size={12} /> Connected via Agent — SSH not required
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setShowSSH(true)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      data?.ssh_configured
+                        ? 'bg-green-100 text-green-700 border border-green-300 hover:bg-green-200'
+                        : 'bg-slate-800 text-white hover:bg-slate-700'
+                    }`}
+                  >
+                    <Terminal size={12} />
+                    {data?.ssh_configured ? `SSH: ${data.ssh_user}@${data.ssh_host}` : 'Configure SSH'}
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                 <div className="space-y-2">
@@ -1169,21 +1175,22 @@ export default function SlowQueries() {
                     ['Log file path',   data?.slow_log_config?.log_file || '—'],
                     ['long_query_time', (data?.slow_log_config?.long_query_time ?? '—') + 's'],
                     ['File queries',    (data?.file_queries || []).length],
-                    ['SSH configured',  data?.ssh_configured ? `✓ ${data.ssh_user}@${data.ssh_host}` : '✗ Not configured'],
+                    ['SSH configured',  data?.ssh_configured ? `✓ ${data.ssh_user}@${data.ssh_host}` : (data?.agent_connected ? '— Via agent (not needed)' : '✗ Not configured')],
                     ['File error',      data?.file_error || 'None'],
                   ].map(([l, v]) => (
                     <div key={l} className="flex justify-between gap-2 py-1.5 border-b border-slate-50">
                       <span className="text-slate-500">{l}</span>
                       <span className={`font-mono text-xs font-semibold text-right max-w-[230px] truncate ${
-                        l === 'SSH configured' ? (data?.ssh_configured ? 'text-green-600' : 'text-orange-500') : 'text-slate-700'
+                        l === 'SSH configured' ? (data?.ssh_configured ? 'text-green-600' : (data?.agent_connected ? 'text-sky-600' : 'text-orange-500')) : 'text-slate-700'
                       }`}>{String(v)}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* SSH not configured warning */}
-              {!data?.ssh_configured && data?.slow_log_config?.enabled && (
+              {/* SSH not configured warning (irrelevant for agent-connected DBs —
+                  the agent already delivers query data via performance_schema) */}
+              {!data?.ssh_configured && !data?.agent_connected && data?.slow_log_config?.enabled && (
                 <div className="mt-4 flex items-start gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
                   <Terminal size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
                   <div className="flex-1 text-xs text-amber-700">

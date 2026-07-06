@@ -21,6 +21,57 @@ class Agent(Base):
     collection_interval_sec = Column(Integer, default=60)
 
 
+class AgentToken(Base):
+    """Ingestion token issued by the Add-Agent wizard. A host agent enrolls with
+    this token to resolve its agent identity, then pushes metrics to /data."""
+    __tablename__ = "agent_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(128), unique=True, index=True, nullable=False)
+    token_name = Column(String(255), nullable=True)
+    agent_name = Column(String(255), nullable=True)
+    os_type = Column(String(50), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentDbTarget(Base):
+    """A database the agent monitors locally (credentials supplied in the Add-DB
+    wizard). The agent fetches these by token, connects to the DB on the host, and
+    pushes DB internals — the backend never connects to the monitored DB."""
+    __tablename__ = "agent_db_targets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(128), index=True, nullable=False)
+    db_type = Column(String(50), nullable=False, default="MySQL")
+    connection_name = Column(String(255), nullable=True)
+    host = Column(String(255), nullable=True, default="localhost")
+    port = Column(Integer, nullable=True)
+    username = Column(String(255), nullable=True)
+    password = Column(String(500), nullable=True)
+    database_name = Column(String(255), nullable=True)
+    environment = Column(String(100), default="Production")
+    enabled = Column(Boolean, default=True)
+    connection_id = Column(Integer, nullable=True)   # linked connection_master.id (for the DB dashboard)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AgentSession(Base):
+    """Live DB connections/sessions the agent captured (current snapshot per agent)."""
+    __tablename__ = "agent_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_name = Column(String(255), index=True, nullable=False)
+    captured_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    session_id = Column(String(64), nullable=True)
+    username = Column(String(255), nullable=True)
+    db_name = Column(String(255), nullable=True)
+    client_host = Column(String(255), nullable=True)
+    state = Column(String(100), nullable=True)
+    command = Column(String(255), nullable=True)
+    duration_ms = Column(Float, default=0.0)
+    query = Column(Text, nullable=True)
+
+
 class AgentMetric(Base):
     __tablename__ = "agent_metrics"
 

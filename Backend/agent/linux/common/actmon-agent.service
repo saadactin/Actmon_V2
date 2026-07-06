@@ -1,0 +1,14 @@
+[Unit]
+Description=ActMon Host Monitoring Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/actmon/agent.conf
+ExecStart=/bin/bash /usr/lib/actmon/actmon-agent.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

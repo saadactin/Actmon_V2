@@ -862,7 +862,7 @@ export default function MongoDBDashboard() {
 
   /* ─────────────────────────────────────────────────────────────── */
   return (
-    <div className="min-h-full bg-slate-50 flex flex-col">
+    <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── Collection Detail Modal ─── */}
       {selectedColl && (
