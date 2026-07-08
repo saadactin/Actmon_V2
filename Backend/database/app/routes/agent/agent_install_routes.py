@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal
 from app.services.agent.agent_install_service import (
     DEB_PATH,
+    EXE_PATH,
     MSI_PATH,
     RPM_PATH,
     AgentInfraIngest,
@@ -18,8 +19,11 @@ from app.services.agent.agent_install_service import (
     EnrollRequest,
     InstallTokenRequest,
     build_linux_setup_sh,
+    build_token_msi,
+    build_windows_install_bat,
     build_windows_setup_ps1,
     deb_available,
+    exe_available,
     get_agent_script,
     msi_available,
     rpm_available,
@@ -86,14 +90,69 @@ def route_agent_ps1():
     return PlainTextResponse(get_agent_script("windows"), media_type="text/plain")
 
 
-@router.get("/install/actmon-setup.ps1", summary="Windows one-shot MSI+service setup")
+@router.get("/install/actmon-setup.ps1", summary="Windows one-shot exe+service setup")
 def route_setup_ps1(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64")):
     return PlainTextResponse(build_windows_setup_ps1(token, url), media_type="text/plain")
+
+
+@router.get("/install/actmon-install.bat", summary="Double-clickable Windows installer (token baked in)")
+def route_install_bat(token: str = Query(...), url: str = Query(...)):
+    return PlainTextResponse(
+        build_windows_install_bat(token, url),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": "attachment; filename=actmon-install.bat"},
+    )
+
+
+@router.get("/install/actmon-agent.msi", summary="Self-configuring MSI (token + URL baked in)")
+def route_configured_msi(token: str = Query(...), url: str = Query(...)):
+    """Build & return an MSI with this deployment's token/URL baked in as defaults —
+    a plain double-click installs a fully-configured, auto-starting agent."""
+    try:
+        path = build_token_msi(token, url)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not build MSI on the server: {e}")
+    return FileResponse(path, media_type="application/x-msi", filename="actmon-agent.msi")
+
+
+@router.get("/download/actmon.msi", summary="Universal one-click ActMon Agent MSI (self-registers)")
+def route_universal_msi(url: str = Query(...), db: Session = Depends(get_db)):
+    """The 'like any product' installer: mints + persists a fresh token, bakes it and
+    the server URL into an MSI, and returns it as ActMon-Agent.msi. Just download and
+    double-click — the host self-registers by its own name. No wizard, no token to manage."""
+    import uuid
+    from app.models.agent_model import AgentToken
+    token = "actmon-" + uuid.uuid4().hex
+    db.add(AgentToken(token=token, token_name="ActMon Agent", agent_name="ActMon Agent", os_type="windows"))
+    db.commit()
+    try:
+        path = build_token_msi(token, url)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not build MSI on the server: {e}")
+    return FileResponse(path, media_type="application/x-msi", filename="ActMon-Agent.msi")
 
 
 @router.get("/install/actmon-setup.sh", summary="Linux one-shot systemd setup (deb & rpm distros)")
 def route_setup_sh(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64")):
     return PlainTextResponse(build_linux_setup_sh(token, url), media_type="text/x-shellscript")
+
+
+@router.get("/fs-poll", summary="Agent long-polls for pending file-browse jobs")
+def route_fs_poll(token: str, hold: int = 15):
+    from fastapi.responses import PlainTextResponse
+    from app.services.agent import agent_fs_service
+    return PlainTextResponse(agent_fs_service.poll(token, hold))
+
+
+@router.post("/fs-result", summary="Agent delivers a file-browse job's output")
+def route_fs_result(payload: dict):
+    from app.services.agent import agent_fs_service
+    ok = agent_fs_service.result(
+        str(payload.get("id") or ""),
+        payload.get("data_b64"),
+        payload.get("error"),
+    )
+    return {"status": "success" if ok else "expired"}
 
 
 @router.get("/host-ips", summary="LAN IPs of the ActMon server (build install URLs reachable from target hosts)")
@@ -128,7 +187,9 @@ def route_host_ips():
 @router.get("/download/{os_name}", summary="Download the host agent installer")
 def route_download(os_name: str, fmt: str = Query("deb")):
     is_win = os_name.lower().startswith("win")
-    # Windows → serve the built MSI installer when available.
+    # Windows → raw .exe when explicitly requested, else the built MSI installer.
+    if is_win and fmt == "exe" and exe_available():
+        return FileResponse(EXE_PATH, media_type="application/vnd.microsoft.portable-executable", filename="actmon-agent.exe")
     if is_win and msi_available():
         return FileResponse(MSI_PATH, media_type="application/x-msi", filename="actmon-agent.msi")
     # Linux → serve the requested package format when available (fmt=rpm|deb).

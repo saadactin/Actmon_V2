@@ -87,7 +87,48 @@ def _check_thresholds(agent_name: str, connections_used: int, connections_max: i
 # MySQL collector
 # ─────────────────────────────────────────────────────────────
 
+def _store_mysql_metrics(agent_name, status, variables, db):
+    uptime = _ti(status.get("Uptime", 1)) or 1
+    threads_connected = _ti(status.get("Threads_connected", 0))
+    threads_running = _ti(status.get("Threads_running", 0))
+    max_connections = _ti(variables.get("max_connections", 151))
+    questions = _ti(status.get("Questions", 0))
+    commits = _ti(status.get("Com_commit", 0))
+    rollbacks = _ti(status.get("Com_rollback", 0))
+    bp_read_req = _ti(status.get("Innodb_buffer_pool_read_requests", 0))
+    bp_reads = _ti(status.get("Innodb_buffer_pool_reads", 0))
+
+    _bp_total = bp_read_req + bp_reads
+    cache_hit = round(bp_read_req / _bp_total * 100, 2) if _bp_total > 0 else 100.0
+    qps = round(questions / uptime, 2)
+    tps = round((commits + rollbacks) / uptime, 2)
+    db_cpu_pct = round(threads_running / max(max_connections, 1) * 100, 2)
+
+    db.add(AgentMetric(
+        agent_name=agent_name, host_cpu=0.0, host_memory=0.0, db_cpu=db_cpu_pct,
+        active_sessions=threads_running, connections_used=threads_connected,
+        connections_max=max_connections, cache_hit_pct=cache_hit,
+        qps=qps, tps=tps, uptime_seconds=uptime,
+    ))
+    _check_thresholds(agent_name, threads_connected, max_connections, cache_hit, db)
+
+
 def _collect_mysql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
+    # Prefer the host agent (the DB is usually on the agent host's localhost, which
+    # the backend cannot reach directly). Falls through to a direct connection if the
+    # connection isn't linked to an agent host, or the agent is unreachable.
+    try:
+        from app.services.common.db_proxy_service import make_runner
+        runner = make_runner(conn_rec, db)
+        if getattr(runner, "via", "direct") == "agent":
+            status = {r[0]: r[1] for r in runner("SHOW GLOBAL STATUS")}
+            variables = {r[0]: r[1] for r in runner("SHOW GLOBAL VARIABLES")}
+            _store_mysql_metrics(agent_name, status, variables, db)
+            return True
+    except Exception as exc:
+        logger.error(f"[agent_collector] MySQL (agent) failed for {agent_name}: {exc}")
+        # fall through to direct
+
     enc_pass = quote_plus(conn_rec.password or "")
     url = (
         f"mysql+pymysql://{conn_rec.username}:{enc_pass}"
@@ -102,44 +143,13 @@ def _collect_mysql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
         with eng.connect() as conn:
             status = {r[0]: r[1] for r in conn.execute(text("SHOW GLOBAL STATUS")).fetchall()}
             variables = {r[0]: r[1] for r in conn.execute(text("SHOW GLOBAL VARIABLES")).fetchall()}
+            _store_mysql_metrics(agent_name, status, variables, db)
 
-            uptime = _ti(status.get("Uptime", 1)) or 1
-            threads_connected = _ti(status.get("Threads_connected", 0))
-            threads_running = _ti(status.get("Threads_running", 0))
-            max_connections = _ti(variables.get("max_connections", 151))
-            questions = _ti(status.get("Questions", 0))
-            commits = _ti(status.get("Com_commit", 0))
-            rollbacks = _ti(status.get("Com_rollback", 0))
-            bp_read_req = _ti(status.get("Innodb_buffer_pool_read_requests", 0))
-            bp_reads = _ti(status.get("Innodb_buffer_pool_reads", 0))
-
-            _bp_total = bp_read_req + bp_reads
-            cache_hit = round(bp_read_req / _bp_total * 100, 2) if _bp_total > 0 else 100.0
-            qps = round(questions / uptime, 2)
-            tps = round((commits + rollbacks) / uptime, 2)
-            db_cpu_pct = round(threads_running / max(max_connections, 1) * 100, 2)
-
-            db.add(AgentMetric(
-                agent_name=agent_name,
-                host_cpu=0.0,
-                host_memory=0.0,
-                db_cpu=db_cpu_pct,
-                active_sessions=threads_running,
-                connections_used=threads_connected,
-                connections_max=max_connections,
-                cache_hit_pct=cache_hit,
-                qps=qps,
-                tps=tps,
-                uptime_seconds=uptime,
-            ))
-
-            # Performance Schema — Top SQL & Wait Events
+            # Performance Schema — Top SQL & Wait Events (direct connection only)
             ps_enabled = variables.get("performance_schema", "OFF").upper() == "ON"
             if ps_enabled:
                 _collect_mysql_top_sql(agent_name, conn, db)
                 _collect_mysql_wait_events(agent_name, conn, db)
-
-            _check_thresholds(agent_name, threads_connected, max_connections, cache_hit, db)
 
         eng.dispose()
         return True

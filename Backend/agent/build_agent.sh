@@ -8,7 +8,10 @@ cd "$(dirname "$0")"
 echo "[1/3] Building actmon-agent.exe ..."
 python -m PyInstaller --onefile --name actmon-agent --distpath dist --workpath build --specpath build \
   --hidden-import pymysql --collect-submodules pymysql \
-  --hidden-import psycopg2 --hidden-import pymssql --collect-submodules pymssql actmon_agent.py
+  --hidden-import psycopg2 --hidden-import pymssql --collect-submodules pymssql \
+  --hidden-import win32timezone --hidden-import win32serviceutil \
+  --hidden-import win32service --hidden-import win32event --hidden-import servicemanager \
+  actmon_agent.py
 
 WIX=wix/wix311
 if [ ! -x "$WIX/candle.exe" ]; then

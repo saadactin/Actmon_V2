@@ -121,15 +121,24 @@ function getDashboardPath(conn) {
   return map[type] || '/connections';
 }
 
-function findConn(allConnections, server) {
+const normDb = (t) => ((t === 'mariadb' ? 'mysql' : t) || '').toLowerCase();
+
+// Resolve the connection for a host, biased to a specific technology when given —
+// so a host running BOTH MySQL and PostgreSQL resolves to the right one per tab.
+function findConn(allConnections, server, preferType = null) {
   const services = (server.database_services || []).map((d) => d.toLowerCase());
-  const normalise = (t) => t === 'mariadb' ? 'mysql' : t;
-  return allConnections.find((c) => {
+  const want = preferType ? normDb(preferType) : null;
+  const candidates = allConnections.filter((c) => {
     const sameHost = c.host === server.ip_address;
-    const connType = normalise((c.db_type || '').toLowerCase());
-    const sameType = services.some((s) => normalise(s) === connType);
+    const connType = normDb(c.db_type);
+    const sameType = services.some((s) => normDb(s) === connType);
     return sameHost && sameType;
-  }) || null;
+  });
+  if (want) {
+    const exact = candidates.find((c) => normDb(c.db_type) === want);
+    if (exact) return exact;
+  }
+  return candidates[0] || null;
 }
 
 const XTerminal = lazy(() => import('../../components/terminal/XTerminal'));
@@ -735,8 +744,8 @@ export default function DatabaseServersPage({ tech = null }) {
 
                     <div className="px-6 py-6 overflow-x-auto">
                       {galera
-                        ? <GaleraTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections}/>
-                        : <ReplicationTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections}/>
+                        ? <GaleraTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections} tech={selectedTech}/>
+                        : <ReplicationTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections} tech={selectedTech}/>
                       }
                     </div>
                   </div>
@@ -767,6 +776,7 @@ export default function DatabaseServersPage({ tech = null }) {
                   openTerminal={setTerminalServer}
                   refreshMutation={refreshMutation}
                   allConnections={allConnections}
+                  tech={selectedTech}
                   onDelete={() => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
                   showMetricsInline
                 />
@@ -803,7 +813,7 @@ export default function DatabaseServersPage({ tech = null }) {
 /* ══════════════════════════════════════════════════════
    REPLICATION TOPOLOGY
 ══════════════════════════════════════════════════════ */
-function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[] }) {
+function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[], tech=null }) {
   const primary     = nodes.filter((n)=>n.node_type==='Primary'||n.node_type==='Master');
   const secondaries = nodes.filter((n)=>!['Primary','Master'].includes(n.node_type));
   const ordered     = [...primary, ...secondaries];
@@ -813,7 +823,7 @@ function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, a
       {ordered.map((node, idx) => (
         <React.Fragment key={node.id}>
           <div className="flex-shrink-0 w-[296px]">
-            <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} fullWidth/>
+            <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} fullWidth/>
           </div>
           {idx < ordered.length-1 && (
             <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
@@ -836,7 +846,7 @@ function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, a
 /* ══════════════════════════════════════════════════════
    GALERA TOPOLOGY
 ══════════════════════════════════════════════════════ */
-function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[] }) {
+function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[], tech=null }) {
   return (
     <div>
       <div className="flex justify-center mb-5">
@@ -849,7 +859,7 @@ function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allCon
         {nodes.map((node, idx) => (
           <React.Fragment key={node.id}>
             <div className="flex-shrink-0 w-[296px]">
-              <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} fullWidth/>
+              <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} fullWidth/>
             </div>
             {idx < nodes.length-1 && (
               <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
@@ -874,14 +884,20 @@ function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allCon
 /* ══════════════════════════════════════════════════════
    NODE CARD — uniform height via h-full + flex-col
 ══════════════════════════════════════════════════════ */
-function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false, fullWidth=false }) {
+function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false, fullWidth=false, tech=null }) {
   const [hovered, setHovered] = useState(false);
   const m = nodeMeta(node.node_type);
   const hasMetrics = node.cpu_usage || node.ram_usage || node.disk_usage;
   const isRefreshing = refreshMutation.isPending && refreshMutation.variables === node.id;
-  // A DB instance may carry a linked connection_id (agent-registered DBs) — that IS the dashboard.
-  const linkedInst = (node.db_instances || []).find((i) => i.connection_id);
-  const conn = (linkedInst && allConnections.find((c) => c.id === linkedInst.connection_id)) || findConn(allConnections, node);
+  // A DB instance may carry a linked connection_id (agent-registered DBs) — that IS the
+  // dashboard. On a host running MULTIPLE engines, resolve to the one for THIS tab's tech
+  // (else the PostgreSQL tab would open the MySQL dashboard, and vice-versa).
+  const want = tech ? normDb(tech) : null;
+  const linkedInst = want
+    ? (node.db_instances || []).find((i) => i.connection_id && normDb(i.db_type) === want)
+    : (node.db_instances || []).find((i) => i.connection_id);
+  const conn = (linkedInst && allConnections.find((c) => c.id === linkedInst.connection_id))
+    || findConn(allConnections, node, tech);
 
   const osUp   = node.status === 'Connected';
   const osWarn = node.status === 'Warning';
@@ -942,15 +958,20 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
           </div>
         </div>
 
-        {/* server name + IP */}
+        {/* connection name (for this tech) + host/IP */}
         <div className="mb-4">
-          <h3 className="text-[17px] font-black text-slate-900 leading-tight truncate">{node.server_name}</h3>
+          <h3 className="text-[17px] font-black text-slate-900 leading-tight truncate">{conn?.connection_name || node.server_name}</h3>
           <div className="flex items-center gap-2 mt-1">
             <span className="font-mono text-[12px] text-slate-500 font-semibold">{node.ip_address}</span>
             {node.os_type && (
               <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-md">{node.os_type}</span>
             )}
           </div>
+          {conn?.connection_name && conn.connection_name !== node.server_name && (
+            <p className="text-[11px] text-slate-400 mt-1 truncate flex items-center gap-1">
+              <Server size={10} /> {node.server_name}
+            </p>
+          )}
         </div>
 
         {/* DB services */}
@@ -1035,7 +1056,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
             const onClick = () => {
               if (conn) { navigate(getDashboardPath(conn)); return; }
               if (linkedInst) { navigate(getDashboardPath({ db_type: linkedInst.db_type, id: linkedInst.connection_id })); return; }
-              const db = node.database_services?.[0]?.toLowerCase() || 'mysql';
+              const db = want || node.database_services?.[0]?.toLowerCase() || 'mysql';
               const portMap = { mysql:3306, postgresql:5432, oracle:1521, mssql:1433, mongodb:27017, clickhouse:8123 };
               navigate(`/connections/add?type=${db}&host=${node.ip_address}&port=${portMap[db]||3306}&name=${encodeURIComponent(node.server_name+'-'+db)}`);
             };

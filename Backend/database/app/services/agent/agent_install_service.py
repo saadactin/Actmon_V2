@@ -26,12 +26,59 @@ from app.models.agent_model import Agent, AgentToken
 # Backend/agent/dist/* (this file: Backend/database/app/services/agent/…)
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), *([os.pardir] * 4)))
 MSI_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.msi")
+EXE_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.exe")
 DEB_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.deb")
 RPM_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.rpm")
 
 
 def msi_available() -> bool:
     return os.path.isfile(MSI_PATH)
+
+
+def exe_available() -> bool:
+    return os.path.isfile(EXE_PATH)
+
+
+# ── Per-download MSI build (token/URL baked in) ────────────────────────────────
+import subprocess as _subprocess
+import tempfile as _tempfile
+import threading as _threading
+
+_WIX_DIR = os.path.join(_BACKEND_DIR, "agent", "wix", "wix311")
+_WXS_PATH = os.path.join(_BACKEND_DIR, "agent", "wix", "product.wxs")
+_MSI_BUILD_LOCK = _threading.Lock()
+
+
+def wix_available() -> bool:
+    return os.path.isfile(os.path.join(_WIX_DIR, "candle.exe")) and os.path.isfile(os.path.join(_WIX_DIR, "light.exe"))
+
+
+def build_token_msi(token: str, url: str) -> str:
+    """Compile a self-configuring MSI with the token + URL baked in as defaults, so a
+    plain double-click installs a working agent. Returns the built .msi path."""
+    if not exe_available():
+        raise RuntimeError("Agent exe not built on the server.")
+    if not wix_available():
+        raise RuntimeError("WiX toolset not available on the server (cannot build MSI).")
+    safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
+    safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
+    if not safe_url.lower().startswith("http"):
+        raise RuntimeError("Invalid ActMon URL.")
+    candle = os.path.join(_WIX_DIR, "candle.exe")
+    light = os.path.join(_WIX_DIR, "light.exe")
+    out_dir = _tempfile.mkdtemp(prefix="actmon-msi-")
+    wixobj = os.path.join(out_dir, "product.wixobj")
+    msi = os.path.join(out_dir, "actmon-agent.msi")
+    with _MSI_BUILD_LOCK:   # candle/light write fixed intermediate names → serialize
+        _subprocess.run(
+            [candle, "-nologo", "-arch", "x64", f"-dAgentExe={EXE_PATH}",
+             f"-dToken={safe_token}", f"-dUrl={safe_url}", "-ext", "WixUtilExtension",
+             "-out", wixobj, _WXS_PATH],
+            check=True, capture_output=True, text=True, timeout=90)
+        _subprocess.run(
+            [light, "-nologo", "-ext", "WixUtilExtension", "-out", msi, wixobj],
+            check=True, capture_output=True, text=True, timeout=90)
+    return msi
 
 
 def deb_available() -> bool:
@@ -293,7 +340,12 @@ while ($true) {
 
 
 def get_agent_script(os_name: str) -> str:
-    return WINDOWS_AGENT if (os_name or "").lower().startswith("win") else LINUX_AGENT
+    # Linux → the real, full-featured infra agent (collector push + file/net/fw/service
+    # job channel + self-update). This is the SAME payload the setup.sh installer bakes
+    # in, so an installed agent's self-update fetch matches byte-for-byte (LF-normalised).
+    if (os_name or "").lower().startswith("win"):
+        return WINDOWS_AGENT
+    return _read_linux_agent()
 
 
 # Canonical Linux agent script (infra-push) — single source of truth for the setup
@@ -318,9 +370,12 @@ WantedBy=multi-user.target
 
 
 def _read_linux_agent() -> str:
+    # LF-normalise: the file may be checked out CRLF on Windows, but a bash script
+    # with CRLF fails to run on Linux — and the agent's self-update compares this
+    # byte-for-byte against the on-disk copy, so both must be identical LF text.
     try:
         with open(_LINUX_AGENT_PATH, "r", encoding="utf-8") as f:
-            return f.read()
+            return f.read().replace("\r\n", "\n").replace("\r", "\n")
     except OSError:
         return LINUX_AGENT
 
@@ -356,42 +411,107 @@ echo "ActMon Agent installed and started (systemd service: actmon-agent)."
 """
 
 
-def build_windows_setup_ps1(token: str, url: str) -> str:
-    """One-shot elevated installer: install MSI, write registry token/URL, create
-    + start the boot-time SYSTEM scheduled task. token/url are baked in."""
-    # Basic sanitisation — these are reflected into a script.
+def _to_ascii(s: str) -> str:
+    """Guarantee generated install scripts are pure ASCII. Windows PowerShell 5.1
+    mis-decodes non-ASCII bytes fetched via DownloadString (em dash -> 'â€"'), which
+    breaks the parser. Map common Unicode punctuation to ASCII, drop anything else."""
+    repl = {
+        "—": "-", "–": "-", "―": "-",          # em / en / horizontal dash
+        "‘": "'", "’": "'",                          # smart single quotes
+        "“": '"', "”": '"',                          # smart double quotes
+        "…": "...", "→": "->", "•": "*",        # ellipsis, arrow, bullet
+        " ": " ", "­": "",                            # nbsp, soft hyphen
+    }
+    for k, v in repl.items():
+        s = s.replace(k, v)
+    return s.encode("ascii", "ignore").decode("ascii")
+
+
+def build_windows_install_bat(token: str, url: str) -> str:
+    """A double-clickable installer (.bat) with token+URL baked in. It self-elevates
+    (UAC) and runs the exe-based setup — so the user can just download and run it,
+    no PowerShell copy-paste needed."""
+    from urllib.parse import quote
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
-    safe_url = (url or "").strip().replace("'", "")
+    safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
+    setup_url = f"{safe_url}/agents/install/actmon-setup.ps1?token={safe_token}&url={quote(safe_url, safe='')}"
+    # CRLF line endings — it's a Windows batch file.
+    lines = [
+        "@echo off",
+        "title ActMon Agent Installer",
+        "net session >nul 2>&1",
+        "if %errorlevel% neq 0 (",
+        "  echo Requesting administrator privileges...",
+        "  powershell -NoProfile -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"",
+        "  exit /b",
+        ")",
+        "echo Installing ActMon Agent...",
+        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"iex ((New-Object Net.WebClient).DownloadString('{setup_url}'))\"",
+        "echo.",
+        "pause",
+    ]
+    return _to_ascii("\r\n".join(lines) + "\r\n")
+
+
+def build_windows_setup_ps1(token: str, url: str) -> str:
+    """One-shot elevated installer (STRICT ASCII — PS 5.1 safe). Validates admin +
+    connectivity + download integrity, downloads the agent exe to C:\\ProgramData\\ActMon,
+    writes token/URL to the registry, and registers + starts a boot-time SYSTEM task.
+    Every step is logged to install.log; failures produce plain messages, not stack traces."""
+    safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
+    safe_url = (url or "").strip().replace("'", "").rstrip("/")
     if not safe_url.lower().startswith("http"):
         safe_url = ""
-    return f"""$ErrorActionPreference = 'Stop'
+    script = f"""$ErrorActionPreference = 'Stop'
 $token = '{safe_token}'
 $url   = '{safe_url}'
-$exe   = 'C:\\ProgramData\\ActMon\\actmon-agent.exe'
-$msi   = "$env:TEMP\\actmon-agent.msi"
-Write-Host 'Downloading ActMon Agent installer...'
-Invoke-WebRequest -Uri "$url/agents/download/windows" -OutFile $msi
-Write-Host 'Installing MSI...'
-Start-Process msiexec.exe -Wait -ArgumentList '/i', "$msi", '/qb', '/norestart'
-
-New-Item -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Force | Out-Null
-Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Name Token -Value $token
-Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Name Url   -Value $url
-
-# Persistent boot-time SYSTEM task (Register-ScheduledTask surfaces errors, unlike schtasks.exe).
-try {{
-    $action    = New-ScheduledTaskAction -Execute $exe
-    $trigger   = New-ScheduledTaskTrigger -AtStartup
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    Register-ScheduledTask -TaskName 'ActMonAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-    Start-ScheduledTask -TaskName 'ActMonAgent'
-    Write-Host 'Scheduled task ActMonAgent registered and started.'
-}} catch {{
-    Write-Warning "Scheduled task setup failed: $($_.Exception.Message)"
+$dir   = 'C:\\ProgramData\\ActMon'
+$exe   = "$dir\\actmon-agent.exe"
+$log   = "$dir\\install.log"
+function Log($m) {{
+  $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m"
+  Write-Host $line
+  try {{ New-Item -ItemType Directory -Force -Path $dir | Out-Null; Add-Content -Path $log -Value $line }} catch {{}}
 }}
 
-# Start immediately (hidden) so the agent reports right away, even if the task lags.
-Start-Process -FilePath $exe -WindowStyle Hidden
-Write-Host 'ActMon Agent installed and started. It also starts automatically on every boot.'
+try {{
+  $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  if (-not $admin) {{ throw "This installer must run as Administrator." }}
+  if (-not $url)   {{ throw "No ActMon server URL was provided." }}
+
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  Log "ActMon Agent install starting. Server: $url"
+
+  schtasks /End /TN ActMonAgent 2>$null | Out-Null
+  Get-Process actmon-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 600
+
+  Log "Downloading agent from $url/agents/download/windows?fmt=exe"
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  Invoke-WebRequest -Uri "$url/agents/download/windows?fmt=exe" -OutFile $exe -UseBasicParsing
+  $size = (Get-Item $exe).Length
+  if ($size -lt 1000000) {{ throw "Downloaded file is too small ($size bytes). Is the ActMon server URL reachable from THIS machine?" }}
+  Log ("Downloaded {{0:N1}} MB" -f ($size / 1MB))
+
+  New-Item -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Force | Out-Null
+  Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Name Token -Value $token
+  Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Name Url   -Value $url
+  Log "Token and URL written to registry."
+
+  $action    = New-ScheduledTaskAction -Execute $exe
+  $trigger   = New-ScheduledTaskTrigger -AtStartup
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName 'ActMonAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  Start-ScheduledTask -TaskName 'ActMonAgent'
+  Log "Scheduled task ActMonAgent registered and started."
+  Log "SUCCESS - ActMon Agent installed and reporting. It also starts on every boot."
+  Start-Sleep -Seconds 3
+}} catch {{
+  Log ("FAILED: " + $_.Exception.Message)
+  Write-Host ""
+  Write-Host ("Installation failed: " + $_.Exception.Message) -ForegroundColor Red
+  Write-Host ("Check that the ActMon server URL (" + $url + ") is reachable from THIS machine. Log: " + $log) -ForegroundColor Yellow
+}}
 """
+    return _to_ascii(script)

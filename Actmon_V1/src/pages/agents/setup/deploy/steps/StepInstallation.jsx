@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Copy, Check, Info, Loader2, CheckCircle2, Globe } from 'lucide-react';
+import { AlertTriangle, Copy, Check, Info, Loader2, CheckCircle2, Globe, Download } from 'lucide-react';
 import { createInstallToken, listAgents, getHostIps } from '../../../../../api/agents';
 
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
@@ -57,14 +57,20 @@ export default function StepInstallation({ data, onInstalled }) {
   // Server URL as reachable from the TARGET host. Browsing on localhost, the origin
   // is useless to a remote VM — auto-detect this machine's LAN IP and let the user
   // pick/edit (VMware/Hyper-V hosts have several adapters).
+  // The server URL is auto-detected from how you opened ActMon (window.origin) —
+  // the installer is downloaded FROM this server, so it already knows the address.
+  // You normally never touch this. Only when browsing on localhost do we offer the
+  // machine's LAN IPs, because 'localhost' isn't reachable from a *different* target.
   const [serverBase, setServerBase] = useState(ORIGIN);
   const [candidates, setCandidates] = useState([]);
   useEffect(() => {
-    if (!IS_LOCAL) return;
+    if (!IS_LOCAL) return;   // browsing via a real IP/hostname → origin is already correct
     getHostIps().then(({ primary, ips }) => {
       const port = window.location.port ? `:${window.location.port}` : '';
       const proto = window.location.protocol;
-      setCandidates((ips || []).map((ip) => `${proto}//${ip}${port}`));
+      const list = (ips || []).map((ip) => `${proto}//${ip}${port}`);
+      setCandidates(list);
+      // Prefer a LAN IP over 'localhost' so a remote target can reach it.
       if (primary) setServerBase(`${proto}//${primary}${port}`);
     }).catch(() => {});
   }, []);
@@ -82,15 +88,21 @@ export default function StepInstallation({ data, onInstalled }) {
       .catch(() => {});
   }, [data.token, data.tokenName, data.os]);
 
-  // Poll for the agent coming online after the script is executed on the host.
+  // Poll for the agent coming online. Flip when EITHER a host matching this token's
+  // name appears, OR any brand-new online host shows up (the universal MSI self-names
+  // by hostname, so we detect it as "new since this page loaded").
+  const seenAgentsRef = useRef(null);
   useEffect(() => {
     if (installed) return undefined;
     const timer = setInterval(async () => {
       try {
         const agents = await listAgents();
+        const online = agents.filter((a) => a.status === 'online').map((a) => (a.name || ''));
+        if (seenAgentsRef.current === null) { seenAgentsRef.current = new Set(online); return; }
         const base = (agentNameRef.current || data.tokenName || '').toLowerCase();
-        const hit = agents.find((a) => a.status === 'online' && base && (a.name || '').toLowerCase().startsWith(base));
-        if (hit) { setInstalled(true); onInstalled?.(true); clearInterval(timer); }
+        const hitByName = base && agents.find((a) => a.status === 'online' && (a.name || '').toLowerCase().startsWith(base));
+        const hitNew = online.find((n) => !seenAgentsRef.current.has(n));
+        if (hitByName || hitNew) { setInstalled(true); onInstalled?.(true); clearInterval(timer); }
       } catch { /* ignore polling errors */ }
     }, 5000);
     return () => clearInterval(timer);
@@ -108,18 +120,12 @@ export default function StepInstallation({ data, onInstalled }) {
         <a href="#" onClick={(e) => e.preventDefault()} className="text-blue-600 font-semibold hover:underline">Agent installation parameters</a>.
       </p>
 
-      {/* Server URL as reachable from the target host (editable — pick the right adapter) */}
-      <div className="mt-5 max-w-xl">
-        <label className="flex items-center gap-1.5 text-[15px] font-black text-slate-800 mb-1.5">
-          <Globe size={15} className="text-slate-400" /> ActMon Server URL
-        </label>
-        <input value={serverBase} onChange={(e) => setServerBase(e.target.value)} list="server-base-options" spellCheck={false}
-          className="w-full h-11 px-3.5 rounded-lg border border-slate-300 text-[15px] font-mono outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50" />
-        <datalist id="server-base-options">{candidates.map((c) => <option key={c} value={c} />)}</datalist>
-        <p className="text-[13px] text-slate-500 mt-1.5">
-          Must be reachable <span className="font-bold">from the target host</span> — not <span className="font-mono">localhost</span>.
-          {candidates.length > 1 && ' Multiple network adapters detected; pick the one on the same network as the target (e.g. the VMware host-only adapter).'}
-        </p>
+      {/* Server URL is fully automatic (window.origin, with a LAN-IP fallback when on
+          localhost) — the installer is downloaded from this server and points back to
+          it, so there's nothing to configure. */}
+      <div className="mt-4 flex items-center gap-2 text-[13px] text-slate-500">
+        <Globe size={14} className="text-slate-400" />
+        <span>Agent reports to <span className="font-mono font-semibold text-slate-600">{serverBase}</span> — detected automatically from this server.</span>
       </div>
 
       {/* Package download link (distro chosen on the Distribution step) */}
@@ -128,6 +134,28 @@ export default function StepInstallation({ data, onInstalled }) {
           className="inline-block mt-4 text-[15px] font-semibold text-blue-600 hover:underline break-all">
           {`${apiBase}/agents/download/linux?fmt=${data.distro.fmt}`}
         </a>
+      )}
+
+      {/* Windows downloads. The .bat is a ONE-CLICK installer with the token+URL
+          baked in — download it, double-click, approve UAC. The MSI/exe are raw
+          binaries and do NOT self-configure (they need the command's token). */}
+      {isWin && (
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <a href={`${apiBase}/agents/download/actmon.msi?url=${encodeURIComponent(apiBase)}`} download
+              className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
+              <Download size={16} /> Download ActMon Agent (.msi)
+            </a>
+            <a href={`${apiBase}/agents/install/actmon-install.bat?token=${data.token}&url=${encodeURIComponent(apiBase)}`} download
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-lg border border-slate-300 bg-white text-slate-700 text-[14px] font-bold hover:bg-slate-50">
+              <Download size={15} /> Installer .bat
+            </a>
+          </div>
+          <p className="text-[13px] text-slate-500 mt-2">
+            Download it, run it on the machine you want to monitor, <b>More info → Run anyway → Yes</b>. It installs, auto-starts, and the host
+            appears in <b>Infrastructure</b> under its own name — nothing to type. (SmartScreen shows "unknown publisher" because the installer isn't code-signed; that's expected.)
+          </p>
+        </div>
       )}
 
       {/* Warning */}

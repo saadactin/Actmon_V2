@@ -80,8 +80,30 @@ def _get_text(url, timeout=15):
         return resp.read().decode("utf-8")
 
 
+_LOG_PATH = None
+
+
 def _log(msg):
-    print(f"{time.strftime('%H:%M:%S')}  {msg}", flush=True)
+    """Print to stdout AND append to C:\\ProgramData\\ActMon\\agent.log — the agent runs
+    as a SYSTEM task with no console, so the file log is the only way to see failures."""
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}"
+    print(line, flush=True)
+    global _LOG_PATH
+    try:
+        if _LOG_PATH is None:
+            base = os.environ.get("ProgramData") or r"C:\ProgramData"
+            _LOG_PATH = os.path.join(base, "ActMon", "agent.log")
+            os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
+        # keep it from growing forever
+        try:
+            if os.path.isfile(_LOG_PATH) and os.path.getsize(_LOG_PATH) > 512 * 1024:
+                os.replace(_LOG_PATH, _LOG_PATH + ".1")
+        except OSError:
+            pass
+        with open(_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:  # noqa: BLE001 — logging must never crash the agent
+        pass
 
 
 def collect_windows(collector_ps):
@@ -97,6 +119,388 @@ def collect_windows(collector_ps):
 def _get_json(url, timeout=15):
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+# ─────────────────────────────────────────────────────────────
+# Interactive job channel — file edit / firewall / services / reboot.
+# Mirrors the Linux agent: long-poll /agents/fs-poll, run the op locally with
+# PowerShell / Python, and POST the base64 result to /agents/fs-result. The
+# backend parsers expect the SAME output formats the Linux agent produces
+# (ls -lAH lines, SIZE:<n> + bytes, OK:/ERR:) plus WINFW| lines for firewall.
+# ─────────────────────────────────────────────────────────────
+_ETC_DIR = r"C:\Windows\System32\drivers\etc"
+# Editable Windows config files (the ones that actually live on disk — most network
+# settings are registry/netsh, but these text files are commonly edited).
+_WIN_CONFIG_FILES = [
+    (r"C:\Windows\System32\drivers\etc\hosts", "Hosts file"),
+    (r"C:\Windows\System32\drivers\etc\lmhosts.sam", "LMHOSTS (sample)"),
+    (r"C:\Windows\System32\drivers\etc\networks", "Networks"),
+    (r"C:\Windows\System32\drivers\etc\protocol", "Protocols"),
+    (r"C:\Windows\System32\drivers\etc\services", "Services (ports)"),
+]
+_HOSTS_FILE = r"C:\Windows\System32\drivers\etc\hosts"
+
+
+def _win_netfiles():
+    lines = []
+    for path, _label in _WIN_CONFIG_FILES:
+        if os.path.exists(path):
+            lines.append("FILE:" + path)
+    if not lines:                       # hosts always exists — safety net
+        lines.append("FILE:" + _HOSTS_FILE)
+    lines.append("UNIT:Dnscache")       # restart target: flush DNS after hosts edit
+    return "\n".join(lines)
+
+
+def _b64d(s):
+    try:
+        return base64.b64decode(s or "").decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _job_result(url, token, job_id, data_b64=None, error=None):
+    body = {"token": token, "id": job_id}
+    if error is not None:
+        body["error"] = str(error)
+    else:
+        body["data_b64"] = data_b64 or ""
+    try:
+        _post(f"{url}/agents/fs-result", body)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _ps(script, timeout=30):
+    """Run a PowerShell snippet (UTF-16LE -EncodedCommand) and return combined output."""
+    b = base64.b64encode(script.encode("utf-16-le")).decode()
+    try:
+        p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", b],
+                           capture_output=True, text=True, timeout=timeout)
+        out = p.stdout or ""
+        if p.returncode != 0 and p.stderr:
+            out += ("\n" + p.stderr)
+        return out
+    except Exception as e:  # noqa: BLE001
+        return f"ERR:{e}"
+
+
+def _win_norm(path):
+    """Accept POSIX-ish ('/C:/x'), bare drive ('C:'), or native ('C:\\x') → native."""
+    p = (path or "").strip().lstrip("/").replace("/", "\\")
+    if len(p) == 2 and p[1] == ":":
+        p += "\\"
+    return p
+
+
+def _ls_line(name, st, is_dir, is_link):
+    perms = ("d" if is_dir else "l" if is_link else "-") + "rwxr-xr-x"
+    try:
+        lt = time.localtime(st.st_mtime if st else 0)
+        date, tm = time.strftime("%Y-%m-%d", lt), time.strftime("%H:%M", lt)
+    except Exception:  # noqa: BLE001
+        date, tm = "1970-01-01", "00:00"
+    size = st.st_size if st else 0
+    return f"{perms} 1 - - {size} {date} {tm} {name}"
+
+
+def _win_list(path):
+    raw = (path or "/").strip()
+    p = raw.lstrip("/").replace("/", "\\")
+    if p == "":                                   # root → drive letters as folders
+        lines = []
+        try:
+            import ctypes
+            bm = ctypes.windll.kernel32.GetLogicalDrives()
+        except Exception:  # noqa: BLE001
+            bm = 0
+        import string
+        for i, letter in enumerate(string.ascii_uppercase):
+            if bm & (1 << i):
+                lines.append(_ls_line(letter + ":", None, True, False))
+        return "\n".join(lines)
+    if len(p) == 2 and p[1] == ":":
+        p += "\\"
+    out = []
+    for name in os.listdir(p):
+        full = os.path.join(p, name)
+        try:
+            stt = os.stat(full)
+        except OSError:
+            stt = None
+        out.append(_ls_line(name, stt, os.path.isdir(full), os.path.islink(full)))
+    return "\n".join(out)
+
+
+def _win_read(path):
+    p = _win_norm(path)
+    try:
+        sz = os.path.getsize(p)
+    except OSError:
+        sz = -1
+    blob = b""
+    if sz >= 0:
+        try:
+            with open(p, "rb") as f:
+                blob = f.read(65536)
+        except OSError:
+            sz = -1
+    return b"SIZE:" + str(sz).encode() + b"\n" + blob
+
+
+def _win_write(path, data):
+    p = _win_norm(path)
+    try:
+        if os.path.isfile(p):
+            import shutil
+            try:
+                shutil.copy2(p, p + ".actmon.bak")
+            except OSError:
+                pass
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            f.write(data)
+        return "OK:" + str(os.path.getsize(p))
+    except Exception as e:  # noqa: BLE001
+        return "ERR:" + str(e)
+
+
+def _win_fwctl(arg):
+    verb = arg.split(":", 1)[0] if arg else "list"
+    if verb == "add":
+        bits = (arg.split(":", 2) + ["", ""])[:3]
+        action, ip = bits[1], bits[2]
+        act = "Allow" if action == "allow" else "Block"
+        name = f"ActMon {action} {ip}"
+        _ps(f'New-NetFirewallRule -DisplayName "{name}" -Group ActMon -Direction Inbound '
+            f'-RemoteAddress "{ip}" -Action {act} -Profile Any -ErrorAction SilentlyContinue | Out-Null')
+    elif verb == "del":
+        name = arg.partition(":")[2]
+        _ps(f'Remove-NetFirewallRule -DisplayName "{name}" -ErrorAction SilentlyContinue')
+    return _ps(
+        "Get-NetFirewallRule -Group ActMon -ErrorAction SilentlyContinue | ForEach-Object { "
+        "$ip=($_ | Get-NetFirewallAddressFilter).RemoteAddress; "
+        '"WINFW|$($_.DisplayName)|$($_.Action)|$ip" }')
+
+
+def _win_svcctl(arg):
+    verb = arg.split(":", 1)[0] if arg else "services"
+    if verb in ("start", "stop", "restart"):
+        u = arg.partition(":")[2]
+        cmd = {"start": "Start-Service", "stop": "Stop-Service", "restart": "Restart-Service"}[verb]
+        extra = " -Force" if verb in ("stop", "restart") else ""
+        return _ps(f'try {{ {cmd} -Name "{u}"{extra} -ErrorAction Stop; '
+                   f'"OK:{verb}ed {u}; $((Get-Service -Name "{u}").Status)" }} '
+                   f'catch {{ "ERR:$($_.Exception.Message)" }}')
+    # full service inventory with status (name|Running/Stopped|display)
+    return _ps("Get-Service | Select-Object -First 400 "
+               '| ForEach-Object { "$($_.Name)|$($_.Status)|$($_.DisplayName)" }')
+
+
+def _reg_ps_path(key):
+    k = (key or "").strip()
+    for a, b in (("HKEY_LOCAL_MACHINE\\", "HKLM:\\"), ("HKEY_CURRENT_USER\\", "HKCU:\\"),
+                 ("HKEY_CLASSES_ROOT\\", "HKCR:\\"), ("HKEY_USERS\\", "HKU:\\"),
+                 ("HKLM\\", "HKLM:\\"), ("HKCU\\", "HKCU:\\"), ("HKCR\\", "HKCR:\\"), ("HKU\\", "HKU:\\")):
+        if k.upper().startswith(a):
+            return b + k[len(a):]
+    return k
+
+
+def _win_regget(key):
+    p = _reg_ps_path(key).replace("'", "''")
+    return _ps("try { (Get-ItemProperty -Path '" + p + "' -ErrorAction Stop).PSObject.Properties | "
+               "Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object { \"$($_.Name)=$($_.Value)\" } } "
+               "catch { \"ERR:$($_.Exception.Message)\" }")
+
+
+def _win_regset(arg):
+    parts = (arg or "").split("|", 2)
+    if len(parts) < 3:
+        return "ERR:bad args"
+    p = _reg_ps_path(parts[0]).replace("'", "''")
+    name = parts[1].replace("'", "''")
+    value = parts[2].replace("'", "''")
+    return _ps("try { Set-ItemProperty -Path '" + p + "' -Name '" + name + "' -Value '" + value + "' -ErrorAction Stop; "
+               "'OK:set " + name + "' } catch { \"ERR:$($_.Exception.Message)\" }")
+
+
+def _win_runcmd(cmd):
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                           capture_output=True, text=True, timeout=60)
+        out = r.stdout or ""
+        if r.returncode != 0 and r.stderr:
+            out += ("\n" + r.stderr)
+        return out or "(no output)"
+    except Exception as e:  # noqa: BLE001
+        return "ERR:" + str(e)
+
+
+def _self_update(url, token):
+    """Download this deployment's token-baked MSI and launch a silent upgrade that
+    keeps our identity (token/url are baked into the MSI). The upgrade stops+replaces
+    +restarts our own service, so it's run from an independent SYSTEM scheduled task
+    (falling back to a detached process) so it survives us being stopped."""
+    import tempfile
+    import datetime
+    import urllib.parse
+    try:
+        msi_url = "%s/agents/install/actmon-agent.msi?token=%s&url=%s" % (
+            (url or "").rstrip("/"), urllib.parse.quote(token or ""), urllib.parse.quote(url or ""))
+        tmp = os.path.join(tempfile.gettempdir(), "actmon-agent-update.msi")
+        urllib.request.urlretrieve(msi_url, tmp)
+        if not os.path.isfile(tmp) or os.path.getsize(tmp) < 100000:
+            return "ERR:downloaded MSI looks invalid"
+        pd = os.environ.get("ProgramData") or r"C:\ProgramData"
+        log = os.path.join(pd, "ActMon", "update.log")
+        run = 'msiexec /i "%s" /qn /norestart /l*v "%s"' % (tmp, log)
+        when = (datetime.datetime.now() + datetime.timedelta(minutes=1)).strftime("%H:%M")
+        r = subprocess.run(["schtasks", "/Create", "/F", "/TN", "ActMonAgentUpdate",
+                            "/SC", "ONCE", "/ST", when, "/RU", "SYSTEM", "/RL", "HIGHEST",
+                            "/TR", run], capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            return "OK:update scheduled - the agent will upgrade and reconnect within ~1-2 minutes"
+        # Fallback: launch detached (0x8 DETACHED | 0x200 NEW_GROUP | 0x1000000 BREAKAWAY)
+        subprocess.Popen(["msiexec", "/i", tmp, "/qn", "/norestart", "/l*v", log],
+                         creationflags=0x08 | 0x200 | 0x01000000, close_fds=True)
+        return "OK:upgrade launched - the agent will restart shortly"
+    except Exception as e:  # noqa: BLE001
+        return "ERR:" + str(e)
+
+
+def _dbquery(arg):
+    """Run a read query against a DB on THIS host. Because the agent runs where the
+    database lives, a 'localhost' connection resolves correctly (unlike the backend).
+    Returns JSON {columns, rows} or {error}."""
+    try:
+        req = json.loads(arg)
+    except Exception as e:  # noqa: BLE001
+        return json.dumps({"error": "bad request: %s" % e})
+    dbtype = (req.get("db_type") or "").lower().strip()
+    host = req.get("host") or "127.0.0.1"
+    if host.lower() in ("localhost", "::1"):
+        host = "127.0.0.1"
+    port = int(req.get("port") or 0)
+    user = req.get("user") or ""
+    pw = req.get("password") or ""
+    dbname = req.get("database") or None
+    sql = req.get("sql") or ""
+    try:
+        if dbtype in ("mysql", "mariadb"):
+            import pymysql
+            cn = pymysql.connect(host=host, port=port or 3306, user=user, password=pw,
+                                 database=dbname, connect_timeout=10, read_timeout=25)
+        elif dbtype in ("postgres", "postgresql"):
+            import psycopg2
+            cn = psycopg2.connect(host=host, port=port or 5432, user=user, password=pw,
+                                  dbname=dbname or "postgres", connect_timeout=10)
+        elif dbtype == "mssql":
+            import pymssql
+            cn = pymssql.connect(server=host, port=str(port or 1433), user=user, password=pw,
+                                 database=dbname or "master", login_timeout=10, timeout=25)
+        else:
+            return json.dumps({"error": "unsupported db_type '%s'" % dbtype})
+    except Exception as e:  # noqa: BLE001
+        return json.dumps({"error": "connect failed: %s" % e})
+    try:
+        cur = cn.cursor()
+        cur.execute(sql)
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = cur.fetchall() if cur.description else []
+        return json.dumps({"columns": list(cols), "rows": [list(r) for r in rows]}, default=str)
+    except Exception as e:  # noqa: BLE001
+        return json.dumps({"error": "query failed: %s" % e})
+    finally:
+        try:
+            cn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _win_diag(arg):
+    kind = arg.split(":", 1)[0]
+    rest = arg.partition(":")[2]
+    if kind == "ping":
+        return _ps(f"ping -n 4 {rest}")
+    if kind == "port":
+        host, _, port = rest.rpartition(":")
+        return _ps(f'Test-NetConnection -ComputerName "{host}" -Port {port} -WarningAction SilentlyContinue '
+                   '| Select-Object ComputerName,RemoteAddress,RemotePort,TcpTestSucceeded,PingSucceeded '
+                   '| Format-List | Out-String')
+    if kind == "dns":
+        return _ps(f'try {{ Resolve-DnsName -Name "{rest}" -ErrorAction Stop | Format-Table -AutoSize | Out-String }} '
+                   f'catch {{ nslookup "{rest}" 2>&1 | Out-String }}')
+    return "unsupported diag: " + kind
+
+
+def _handle_job(url, token, job_id, op, path, data):
+    try:
+        if op == "list":
+            out = _win_list(path).encode("utf-8", "replace")
+        elif op == "read":
+            out = _win_read(path)
+        elif op == "write":
+            out = _win_write(path, data).encode("utf-8", "replace")
+        elif op == "netfiles":
+            out = _win_netfiles().encode("utf-8")
+        elif op == "netcfg":
+            out = _ps("Get-NetIPConfiguration | Out-String").encode("utf-8", "replace")
+        elif op == "fwctl":
+            out = _win_fwctl(path).encode("utf-8", "replace")
+        elif op == "diag":
+            out = _win_diag(path).encode("utf-8", "replace")
+        elif op == "regget":
+            out = _win_regget(path).encode("utf-8", "replace")
+        elif op == "regset":
+            out = _win_regset(path).encode("utf-8", "replace")
+        elif op == "runcmd":
+            out = _win_runcmd(path).encode("utf-8", "replace")
+        elif op == "dbquery":
+            out = _dbquery(path).encode("utf-8", "replace")
+        elif op == "selfupdate":
+            out = _self_update(url, token).encode("utf-8", "replace")
+        elif op == "killproc":
+            pid = "".join(ch for ch in (path or "") if ch.isdigit())
+            if not pid:
+                out = b"ERR:invalid pid"
+            else:
+                r = _ps(f'try {{ Stop-Process -Id {pid} -Force -ErrorAction Stop; "OK:killed {pid}" }} '
+                        f'catch {{ "ERR:$($_.Exception.Message)" }}')
+                out = r.encode("utf-8", "replace")
+        elif op == "svcctl":
+            if (path or "").split(":", 1)[0] == "reboot":
+                _job_result(url, token, job_id, base64.b64encode(b"OK:rebooting").decode())
+                try:
+                    subprocess.Popen(["shutdown", "/r", "/t", "5"])
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+            out = _win_svcctl(path).encode("utf-8", "replace")
+        else:
+            out = f"unsupported op: {op}".encode("utf-8")
+        _job_result(url, token, job_id, base64.b64encode(out).decode())
+    except Exception as e:  # noqa: BLE001
+        _job_result(url, token, job_id, error=e)
+
+
+def _poll_jobs_until(url, token, until_ts, stop_event=None):
+    """Answer host jobs until the next infra push is due (spends the idle window)."""
+    while time.time() < until_ts and not (stop_event is not None and stop_event.is_set()):
+        try:
+            jobs = _get_text(f"{url}/agents/fs-poll?token={token}&hold=12", timeout=20)
+        except Exception:  # noqa: BLE001
+            time.sleep(1)
+            continue
+        if not jobs.strip():
+            continue
+        for line in jobs.splitlines():
+            parts = line.split("|")
+            if len(parts) < 2 or not parts[0]:
+                continue
+            job_id, op = parts[0], parts[1]
+            jp = _b64d(parts[2]) if len(parts) > 2 else ""
+            jd = _b64d(parts[3]) if len(parts) > 3 else ""
+            _handle_job(url, token, job_id, op, jp, jd)
 
 
 def collect_mysql(tgt, state):
@@ -357,7 +761,12 @@ def collect_mssql(tgt, state):
         conn.close()
 
 
-def main():
+def run_agent(stop_event=None):
+    """The monitoring loop. Runs from the Windows Service, a scheduled task, or the
+    command line. `stop_event` (threading.Event) lets the service stop it cleanly."""
+    def _stopping():
+        return bool(stop_event is not None and stop_event.is_set())
+
     token, url = _resolve_config()
     if not token or not url:
         _log("ERROR: token/URL not configured (registry, --args, or env).")
@@ -369,26 +778,43 @@ def main():
 
     # Fetch the exact collector command the backend expects (no drift vs SSH).
     collector_ps = None
-    while collector_ps is None:
+    while collector_ps is None and not _stopping():
         try:
             collector_ps = _get_text(f"{url}/agents/collector/windows")
         except Exception as e:  # noqa: BLE001
             _log(f"cannot reach backend ({e}); retry in 10s")
-            time.sleep(10)
+            for _ in range(10):
+                if _stopping():
+                    return 0
+                time.sleep(1)
+    if _stopping():
+        return 0
 
     # Identity for DB metric pushes (enroll returns the agent name for this token).
     agent_name = None
     db_state = {}
 
-    while True:
+    while not _stopping():
+        # Refresh the collector each cycle so backend collector changes (e.g. metric
+        # fixes) apply to already-running agents WITHOUT a reinstall or restart.
+        try:
+            fresh = _get_text(f"{url}/agents/collector/windows")
+            if fresh and fresh.strip():
+                collector_ps = fresh
+        except Exception:  # noqa: BLE001 — keep the cached collector on a transient failure
+            pass
+
         # 1) Host infra (always). The response tells us this agent's name.
         try:
             raw = collect_windows(collector_ps)
             res = _post(f"{url}/agents/infra", {"token": token, "os_type": "windows", "raw": raw})
             agent_name = res.get("agent_name") or agent_name
-            _log(f"infra pushed -> {res.get('status')}")
+            if res.get("status") == "success":
+                _log(f"infra pushed -> {res.get('server_id')} / {agent_name}")
+            else:
+                _log(f"infra push rejected by server: {res}")
         except Exception as e:  # noqa: BLE001
-            _log(f"infra push failed: {e}")
+            _log(f"infra push to {url}/agents/infra FAILED — cannot reach server: {e}")
 
         # 2) DB internals for any DBs the wizard assigned to this agent.
         try:
@@ -415,8 +841,71 @@ def main():
                 except Exception as e:  # noqa: BLE001
                     _log(f"{dbt} collect failed: {e}")
 
-        time.sleep(max(5, interval))
+        # Spend the wait window answering interactive host jobs (file edit / firewall /
+        # services / reboot) instead of sleeping — same channel the Linux agent uses.
+        _poll_jobs_until(url, token, time.time() + max(5, interval), stop_event)
+    _log("ActMon Agent stopping.")
+    return 0
+
+
+def main():
+    return run_agent()
+
+
+# ── Windows Service wrapper (preferred install mode) ───────────────────────────
+try:
+    import win32serviceutil
+    import win32service
+    import win32event
+    import servicemanager
+    _HAS_PYWIN32 = True
+except Exception:  # noqa: BLE001 — not on Windows / pywin32 absent → standalone only
+    _HAS_PYWIN32 = False
+
+if _HAS_PYWIN32:
+    class ActMonService(win32serviceutil.ServiceFramework):
+        _svc_name_ = "ActMonAgent"
+        _svc_display_name_ = "ActMon Monitoring Agent"
+        _svc_description_ = "Collects host metrics/inventory and reports them to the ActMon server."
+
+        def __init__(self, args):
+            win32serviceutil.ServiceFramework.__init__(self, args)
+            self._wait = win32event.CreateEvent(None, 0, 0, None)
+            self._stop = __import__("threading").Event()
+
+        def SvcStop(self):
+            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+            self._stop.set()
+            win32event.SetEvent(self._wait)
+
+        def SvcDoRun(self):
+            try:
+                servicemanager.LogInfoMsg("ActMon Agent service starting")
+            except Exception:  # noqa: BLE001
+                pass
+            t = __import__("threading").Thread(target=run_agent, args=(self._stop,), daemon=True)
+            t.start()
+            win32event.WaitForSingleObject(self._wait, win32event.INFINITE)
+
+
+def _entry():
+    """Dispatch: service verbs -> pywin32; no args under SCM -> run as service;
+    otherwise (scheduled task / manual / --token) -> run standalone in the foreground."""
+    verbs = {"install", "update", "remove", "start", "stop", "restart", "status", "--startup"}
+    if _HAS_PYWIN32 and len(sys.argv) > 1 and sys.argv[1] in verbs:
+        win32serviceutil.HandleCommandLine(ActMonService)
+        return 0
+    if _HAS_PYWIN32 and len(sys.argv) == 1:
+        try:
+            servicemanager.Initialize()
+            servicemanager.PrepareToHostSingle(ActMonService)
+            servicemanager.StartServiceCtrlDispatcher()   # blocks while SCM controls us
+            return 0
+        except Exception as e:  # noqa: BLE001 — 1063 = not launched by SCM → standalone
+            if getattr(e, "winerror", None) != 1063:
+                _log(f"service dispatch fell back to standalone: {e}")
+    return run_agent()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_entry())

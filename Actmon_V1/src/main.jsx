@@ -77,6 +77,7 @@ const AlertsPage              = React.lazy(() => import('./pages/alerts/AlertsPa
 const LogsPage                = React.lazy(() => import('./pages/logs/LogsPage'));
 const InfraPage               = React.lazy(() => import('./pages/infra/InfraPage').then(m => ({ default: m.InfraPage })));
 const InfraHostDetail         = React.lazy(() => import('./pages/infra/InfraHostDetail').then(m => ({ default: m.InfraHostDetail })));
+const InfraFileExplorer       = React.lazy(() => import('./pages/infra/InfraFileExplorer'));
 const SettingsPage            = React.lazy(() => import('./pages/settings/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const NotFound                = React.lazy(() => import('./pages/NotFound').then(m => ({ default: m.NotFound })));
 const ChatbotPage             = React.lazy(() => import('./pages/chatbot/ChatbotPage'));
@@ -278,6 +279,10 @@ const router = createBrowserRouter([
       {
         path: 'infra',
         element: <InfraPage />,
+      },
+      {
+        path: 'infra/:id/files',
+        element: <InfraFileExplorer />,
       },
       {
         path: 'infra/:id',

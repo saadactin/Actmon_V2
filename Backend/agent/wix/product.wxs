@@ -1,27 +1,78 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<!-- Production ActMon Agent MSI.
+     - Installs actmon-agent.exe to C:\Program Files\ActMon
+     - Stores Server URL + Token in HKLM\SOFTWARE\ActMon\Agent
+     - Registers a Windows SERVICE (ActMonAgent), auto-start, LocalSystem
+     - Configures the service to restart on failure
+     - Starts the service immediately; stops+removes it on uninstall
+     - Supports silent install (msiexec /qn), upgrade, repair, clean uninstall
+     Token/URL are baked at build time (candle -dToken=... -dUrl=...); still
+     overridable on the command line: msiexec /i actmon-agent.msi ACCESS_TOKEN=.. ACTMON_URL=.. -->
+<?ifndef Token ?><?define Token = "" ?><?endif ?>
+<?ifndef Url ?><?define Url = "" ?><?endif ?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Product Id="*" Name="ActMon Agent" Language="1033" Version="1.0.0.0"
            Manufacturer="ActMon" UpgradeCode="A1B2C3D4-1111-2222-3333-444455556666">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
              Description="ActMon Host Monitoring Agent" Manufacturer="ActMon" />
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of ActMon Agent is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of ActMon Agent is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- Passed on the command line: msiexec /i actmon-agent.msi ACCESS_TOKEN=... ACTMON_URL=... -->
+    <!-- Defaults baked at build time; overridable on the msiexec command line.
+         When no token/url is baked (base build) the properties are left unset
+         so WiX doesn't reject an empty Value attribute. -->
+    <?if "$(var.Token)" != "" ?>
+    <Property Id="ACCESS_TOKEN" Value="$(var.Token)" Secure="yes" />
+    <?else?>
     <Property Id="ACCESS_TOKEN" Secure="yes" />
+    <?endif?>
+    <?if "$(var.Url)" != "" ?>
+    <Property Id="ACTMON_URL" Value="$(var.Url)" Secure="yes" />
+    <?else?>
     <Property Id="ACTMON_URL" Secure="yes" />
+    <?endif?>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="CommonAppDataFolder">
+      <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="ActMon" />
       </Directory>
     </Directory>
 
     <ComponentGroup Id="AgentComponents" Directory="INSTALLFOLDER">
+      <!-- The agent exe + the Windows service definition. -->
       <Component Id="AgentExe" Guid="*">
         <File Id="ActMonAgentExe" Source="$(var.AgentExe)" KeyPath="yes" Name="actmon-agent.exe" />
+
+        <ServiceInstall Id="ActMonServiceInstall"
+                        Name="ActMonAgent"
+                        DisplayName="ActMon Monitoring Agent"
+                        Description="Collects host metrics/inventory and reports them to the ActMon server."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes">
+          <!-- Restart the service on the 1st, 2nd, and subsequent failures. -->
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="30"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+
+        <!-- Start on install; stop on uninstall; remove on uninstall. -->
+        <ServiceControl Id="ActMonServiceControl"
+                        Name="ActMonAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="no" />
       </Component>
+
+      <!-- Server URL + token in the registry (the service reads these on start). -->
       <Component Id="AgentConfig" Guid="*">
         <RegistryKey Root="HKLM" Key="SOFTWARE\ActMon\Agent">
           <RegistryValue Type="string" Name="Token" Value="[ACCESS_TOKEN]" KeyPath="yes" />
@@ -33,37 +84,5 @@
     <Feature Id="MainFeature" Title="ActMon Agent" Level="1">
       <ComponentGroupRef Id="AgentComponents" />
     </Feature>
-
-    <!-- ── Scheduled-task lifecycle via WixQuietExec (deferred, runs as SYSTEM) ── -->
-    <CustomAction Id="SetCreateTask" Property="CreateTask"
-      Value="schtasks.exe /create /tn ActMonAgent /tr &quot;[INSTALLFOLDER]actmon-agent.exe&quot; /sc onstart /ru SYSTEM /rl HIGHEST /f" />
-    <CustomAction Id="CreateTask" BinaryKey="WixCA" DllEntry="WixQuietExec"
-      Execute="deferred" Impersonate="no" Return="ignore" />
-
-    <CustomAction Id="SetRunTask" Property="RunTask" Value="schtasks.exe /run /tn ActMonAgent" />
-    <CustomAction Id="RunTask" BinaryKey="WixCA" DllEntry="WixQuietExec"
-      Execute="deferred" Impersonate="no" Return="ignore" />
-
-    <CustomAction Id="SetKillProc" Property="KillProc" Value="taskkill.exe /im actmon-agent.exe /f" />
-    <CustomAction Id="KillProc" BinaryKey="WixCA" DllEntry="WixQuietExec"
-      Execute="deferred" Impersonate="no" Return="ignore" />
-
-    <CustomAction Id="SetDeleteTask" Property="DeleteTask" Value="schtasks.exe /delete /tn ActMonAgent /f" />
-    <CustomAction Id="DeleteTask" BinaryKey="WixCA" DllEntry="WixQuietExec"
-      Execute="deferred" Impersonate="no" Return="ignore" />
-
-    <InstallExecuteSequence>
-      <!-- Uninstall: stop the process and remove the task before files are removed -->
-      <Custom Action="SetKillProc" Before="KillProc">REMOVE="ALL"</Custom>
-      <Custom Action="KillProc" Before="RemoveFiles">REMOVE="ALL"</Custom>
-      <Custom Action="SetDeleteTask" After="KillProc">REMOVE="ALL"</Custom>
-      <Custom Action="DeleteTask" Before="RemoveFiles">REMOVE="ALL"</Custom>
-
-      <!-- Install: create the task then run it immediately -->
-      <Custom Action="SetCreateTask" After="InstallFiles">NOT Installed</Custom>
-      <Custom Action="CreateTask" After="SetCreateTask">NOT Installed</Custom>
-      <Custom Action="SetRunTask" After="CreateTask">NOT Installed</Custom>
-      <Custom Action="RunTask" After="SetRunTask">NOT Installed</Custom>
-    </InstallExecuteSequence>
   </Product>
 </Wix>
