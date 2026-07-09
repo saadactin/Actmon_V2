@@ -1190,9 +1190,12 @@ export default function MySQLDashboard() {
                   </div>
                   )}
 
+                  {/* ── COLLAPSIBLE DETAIL CARDS (grid) ── */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                   {/* ── TOP STATEMENTS (PS) ── */}
                   {(perfSection==='all'||perfSection==='queries') && ps && stm.length > 0 && (
-                  <Panel title="Top SQL Statements by Total Latency (Performance Schema)">
+                  <Panel title="Top SQL Statements by Total Latency (Performance Schema)" collapsible
+                    subtitle="Slowest statements by total latency — click to view (10 per page)" count={stm.length} icon={TrendingUp}>
                     <div className="flex items-center gap-3 mb-3">
                       <div className="relative flex-1">
                         <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
@@ -1202,49 +1205,43 @@ export default function MySQLDashboard() {
                       </div>
                       <span className="text-[11px] text-slate-400">{filteredStm.length} of {stm.length} statements</span>
                     </div>
-                    <div className="overflow-x-auto rounded-xl border border-slate-100">
-                      <table className="w-full text-[11px]">
-                        <thead className="bg-slate-50 sticky top-0">
-                          <tr>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 w-[35%]">SQL Digest</th>
-                            <SortTh label="Count"    k="count"/>
-                            <SortTh label="Avg (ms)" k="avg_ms"/>
-                            <SortTh label="Max (ms)" k="max_ms"/>
-                            <SortTh label="Total (ms)" k="sum_ms"/>
-                            <SortTh label="Rows Exam" k="rows_examined"/>
-                            <SortTh label="Rows Sent" k="rows_sent"/>
-                            <SortTh label="No Index"  k="no_index"/>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500">Last Seen</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredStm.map((s, i) => (
-                            <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50/80 ${s.no_index>0?'bg-amber-50/40':''}`}>
-                              <td className="px-3 py-1.5 font-mono text-[10px] text-slate-700 max-w-[300px]">
-                                <div className="truncate" title={s.digest_text}>{s.digest_text}</div>
-                                {s.no_index > 0 && <span className="inline-flex items-center gap-1 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5">⚠ no-index ×{s.no_index}</span>}
-                                {s.tmp_disk > 0 && <span className="inline-flex items-center gap-1 text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5 ml-1">tmp-disk ×{s.tmp_disk}</span>}
-                              </td>
-                              <td className="px-3 py-1.5 text-center font-semibold text-slate-700">{fmtNum(s.count)}</td>
-                              <td className="px-3 py-1.5 text-center font-mono text-blue-700">{Number(s.avg_ms||0).toFixed(2)}</td>
-                              <td className="px-3 py-1.5 text-center font-mono text-orange-700">{Number(s.max_ms||0).toFixed(2)}</td>
-                              <td className="px-3 py-1.5 text-center font-mono font-bold text-slate-800">{fmtNum(s.sum_ms)}</td>
-                              <td className="px-3 py-1.5 text-center text-slate-600">{Number(s.rows_examined||0).toFixed(1)}</td>
-                              <td className="px-3 py-1.5 text-center text-slate-600">{Number(s.rows_sent||0).toFixed(1)}</td>
-                              <td className="px-3 py-1.5 text-center">
-                                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${s.no_index>0?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{s.no_index}</span>
-                              </td>
-                              <td className="px-3 py-1.5 text-slate-400 text-[10px] whitespace-nowrap">{s.last_seen}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {!ps && <p className="text-[10px] text-slate-400 mt-2">Enable performance_schema=ON to see statement analysis.</p>}
+                    <PagedTable pageSize={10} rows={filteredStm}
+                      headerRow={(
+                        <tr>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 w-[35%]">SQL Digest</th>
+                          <SortTh label="Count"    k="count"/>
+                          <SortTh label="Avg (ms)" k="avg_ms"/>
+                          <SortTh label="Max (ms)" k="max_ms"/>
+                          <SortTh label="Total (ms)" k="sum_ms"/>
+                          <SortTh label="Rows Exam" k="rows_examined"/>
+                          <SortTh label="Rows Sent" k="rows_sent"/>
+                          <SortTh label="No Index"  k="no_index"/>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500">Last Seen</th>
+                        </tr>
+                      )}
+                      renderRow={(s, i) => (
+                        <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50/80 ${s.no_index>0?'bg-amber-50/40':''}`}>
+                          <td className="px-3 py-1.5 font-mono text-[10px] text-slate-700 max-w-[300px]">
+                            <div className="truncate" title={s.digest_text}>{s.digest_text}</div>
+                            {s.no_index > 0 && <span className="inline-flex items-center gap-1 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5">⚠ no-index ×{s.no_index}</span>}
+                            {s.tmp_disk > 0 && <span className="inline-flex items-center gap-1 text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5 ml-1">tmp-disk ×{s.tmp_disk}</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-center font-semibold text-slate-700">{fmtNum(s.count)}</td>
+                          <td className="px-3 py-1.5 text-center font-mono text-blue-700">{Number(s.avg_ms||0).toFixed(2)}</td>
+                          <td className="px-3 py-1.5 text-center font-mono text-orange-700">{Number(s.max_ms||0).toFixed(2)}</td>
+                          <td className="px-3 py-1.5 text-center font-mono font-bold text-slate-800">{fmtNum(s.sum_ms)}</td>
+                          <td className="px-3 py-1.5 text-center text-slate-600">{Number(s.rows_examined||0).toFixed(1)}</td>
+                          <td className="px-3 py-1.5 text-center text-slate-600">{Number(s.rows_sent||0).toFixed(1)}</td>
+                          <td className="px-3 py-1.5 text-center">
+                            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${s.no_index>0?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{s.no_index}</span>
+                          </td>
+                          <td className="px-3 py-1.5 text-slate-400 text-[10px] whitespace-nowrap">{s.last_seen}</td>
+                        </tr>
+                      )}/>
                   </Panel>
                   )}
                   {(perfSection==='all'||perfSection==='queries') && !ps && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex items-start gap-3">
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex items-start gap-3 lg:col-span-2">
                       <AlertTriangle size={20} className="text-amber-500 flex-shrink-0 mt-0.5"/>
                       <div>
                         <p className="font-bold text-amber-800 text-sm">Performance Schema Disabled</p>
@@ -1255,8 +1252,8 @@ export default function MySQLDashboard() {
 
                   {/* ── LOCKING DEEP DIVE ── */}
                   {(perfSection==='all'||perfSection==='locking') && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                    <Panel title="Locking Details">
+                  <>
+                    <Panel title="Locking Details" collapsible subtitle="Deadlocks, lock waits & contention" icon={Lock}>
                       <div className="grid grid-cols-2 gap-2">
                         {[
                           ['Deadlocks',          fmtNum(lk.deadlocks||0),              lk.deadlocks>0?'text-red-600 font-black':'text-slate-800'],
@@ -1276,7 +1273,7 @@ export default function MySQLDashboard() {
                       </div>
                     </Panel>
 
-                    <Panel title="Sort & Temp Operations">
+                    <Panel title="Sort & Temp Operations" collapsible subtitle="Sort buffers & temporary tables" icon={Layers}>
                       <div className="grid grid-cols-2 gap-2">
                         {[
                           ['Sort Rows',          fmtNum(so.rows||0),          'text-slate-800'],
@@ -1295,13 +1292,13 @@ export default function MySQLDashboard() {
                         ))}
                       </div>
                     </Panel>
-                  </div>
+                  </>
                   )}
 
                   {/* ── HANDLER STATS + QUERY QUALITY ── */}
                   {(perfSection==='all'||perfSection==='queries') && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                    <Panel title="Handler Statistics (Read Pattern Analysis)">
+                  <>
+                    <Panel title="Handler Statistics (Read Pattern Analysis)" collapsible subtitle="Row access patterns — index vs full-scan" icon={Cpu}>
                       <div className="space-y-2">
                         {[
                           { l:'read_key',      v:hd.read_key||0,      desc:'Index key lookups (good)', good:true },
@@ -1333,7 +1330,7 @@ export default function MySQLDashboard() {
                       </div>
                     </Panel>
 
-                    <Panel title="Query Quality & Throughput">
+                    <Panel title="Query Quality & Throughput" collapsible subtitle="QPS/TPS, slow queries & scans" icon={Activity}>
                       <div className="grid grid-cols-2 gap-2">
                         {[
                           ['QPS',          qq.qps||0,                  'Queries per second',      'text-cyan-700'],
@@ -1355,12 +1352,12 @@ export default function MySQLDashboard() {
                         ))}
                       </div>
                     </Panel>
-                  </div>
+                  </>
                   )}
 
                   {/* ── CONNECTION EFFICIENCY ── */}
                   {(perfSection==='all'||perfSection==='queries') && (
-                  <Panel title="Connection & Thread Efficiency">
+                  <Panel title="Connection & Thread Efficiency" collapsible subtitle="Connections, threads & cache hit rate" icon={Users}>
                     <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
                       {[
                         ['Active Conns',      co.current||0,              co.current>co.max_connections*0.8?'text-red-600':'text-slate-800'],
@@ -1387,112 +1384,100 @@ export default function MySQLDashboard() {
 
                   {/* ── TABLE I/O STATS (PS) ── */}
                   {(perfSection==='all'||perfSection==='io') && ps && tio.length > 0 && (
-                  <Panel title="Table I/O Wait Statistics (Performance Schema)">
-                    <div className="overflow-x-auto rounded-xl border border-slate-100">
-                      <table className="w-full text-[11px]">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            {['Schema','Table','Fetch','Insert','Update','Delete','Total Wait (ms)','Avg Wait (ms)','Fetch ms','Insert ms','Update ms','Delete ms'].map(h => (
-                              <th key={h} className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {tio.map((t,i) => (
-                            <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/80">
-                              <td className="px-3 py-1.5 text-slate-500 font-mono text-[10px]">{t.schema}</td>
-                              <td className="px-3 py-1.5 font-semibold text-slate-800">{t.table}</td>
-                              <td className="px-3 py-1.5 text-right text-blue-700">{fmtNum(t.fetch)}</td>
-                              <td className="px-3 py-1.5 text-right text-green-700">{fmtNum(t.insert)}</td>
-                              <td className="px-3 py-1.5 text-right text-orange-700">{fmtNum(t.update)}</td>
-                              <td className="px-3 py-1.5 text-right text-red-700">{fmtNum(t.delete)}</td>
-                              <td className="px-3 py-1.5 text-right font-bold text-slate-800">{fmtNum(t.total_ms)}</td>
-                              <td className="px-3 py-1.5 text-right text-slate-600">{t.avg_ms}</td>
-                              <td className="px-3 py-1.5 text-right text-blue-600">{t.fetch_ms}</td>
-                              <td className="px-3 py-1.5 text-right text-green-600">{t.insert_ms}</td>
-                              <td className="px-3 py-1.5 text-right text-orange-600">{t.update_ms}</td>
-                              <td className="px-3 py-1.5 text-right text-red-600">{t.delete_ms}</td>
-                            </tr>
+                  <Panel title="Table I/O Wait Statistics (Performance Schema)" collapsible
+                    subtitle="Per-table I/O waits — click to view (10 per page)" count={tio.length} icon={Table}>
+                    <PagedTable pageSize={10} rows={tio}
+                      headerRow={(
+                        <tr>
+                          {['Schema','Table','Fetch','Insert','Update','Delete','Total Wait (ms)','Avg Wait (ms)','Fetch ms','Insert ms','Update ms','Delete ms'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        </tr>
+                      )}
+                      renderRow={(t,i) => (
+                        <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/80">
+                          <td className="px-3 py-1.5 text-slate-500 font-mono text-[10px]">{t.schema}</td>
+                          <td className="px-3 py-1.5 font-semibold text-slate-800">{t.table}</td>
+                          <td className="px-3 py-1.5 text-right text-blue-700">{fmtNum(t.fetch)}</td>
+                          <td className="px-3 py-1.5 text-right text-green-700">{fmtNum(t.insert)}</td>
+                          <td className="px-3 py-1.5 text-right text-orange-700">{fmtNum(t.update)}</td>
+                          <td className="px-3 py-1.5 text-right text-red-700">{fmtNum(t.delete)}</td>
+                          <td className="px-3 py-1.5 text-right font-bold text-slate-800">{fmtNum(t.total_ms)}</td>
+                          <td className="px-3 py-1.5 text-right text-slate-600">{t.avg_ms}</td>
+                          <td className="px-3 py-1.5 text-right text-blue-600">{t.fetch_ms}</td>
+                          <td className="px-3 py-1.5 text-right text-green-600">{t.insert_ms}</td>
+                          <td className="px-3 py-1.5 text-right text-orange-600">{t.update_ms}</td>
+                          <td className="px-3 py-1.5 text-right text-red-600">{t.delete_ms}</td>
+                        </tr>
+                      )}/>
                   </Panel>
                   )}
 
                   {/* ── MEMORY CONSUMERS (PS) ── */}
                   {(perfSection==='all'||perfSection==='bufpool') && ps && mem.length > 0 && (
-                  <Panel title="Memory Consumers (Performance Schema)">
-                    <div className="overflow-x-auto rounded-xl border border-slate-100">
-                      <table className="w-full text-[11px]">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500">Memory Event</th>
-                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">Current (MB)</th>
-                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">High (MB)</th>
-                            <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">Alloc Count</th>
-                            <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 w-[25%]">Usage Bar</th>
+                  <Panel title="Memory Consumers (Performance Schema)" collapsible
+                    subtitle="Top memory allocations — click to view (10 per page)" count={mem.length} icon={MemoryStick}>
+                    <PagedTable pageSize={10} rows={mem}
+                      headerRow={(
+                        <tr>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500">Memory Event</th>
+                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">Current (MB)</th>
+                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">High (MB)</th>
+                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">Alloc Count</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 w-[25%]">Usage Bar</th>
+                        </tr>
+                      )}
+                      renderRow={(m2, i) => {
+                        const maxMem = mem[0]?.current_mb || 1;
+                        const pct = Math.round(m2.current_mb / maxMem * 100);
+                        return (
+                          <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/80">
+                            <td className="px-3 py-1.5 font-mono text-[10px] text-slate-700 truncate max-w-[250px]">{m2.event_name.replace('memory/','')}</td>
+                            <td className="px-3 py-1.5 text-right font-bold text-blue-700">{Number(m2.current_mb||0).toFixed(2)}</td>
+                            <td className="px-3 py-1.5 text-right text-slate-500">{Number(m2.high_mb||0).toFixed(2)}</td>
+                            <td className="px-3 py-1.5 text-right text-slate-500">{fmtNum(m2.count_used)}</td>
+                            <td className="px-3 py-1.5">
+                              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-400 rounded-full" style={{width:`${pct}%`}}/>
+                              </div>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {mem.map((m2, i) => {
-                            const maxMem = mem[0]?.current_mb || 1;
-                            const pct = Math.round(m2.current_mb / maxMem * 100);
-                            return (
-                              <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/80">
-                                <td className="px-3 py-1.5 font-mono text-[10px] text-slate-700 truncate max-w-[250px]">{m2.event_name.replace('memory/','')}</td>
-                                <td className="px-3 py-1.5 text-right font-bold text-blue-700">{Number(m2.current_mb||0).toFixed(2)}</td>
-                                <td className="px-3 py-1.5 text-right text-slate-500">{Number(m2.high_mb||0).toFixed(2)}</td>
-                                <td className="px-3 py-1.5 text-right text-slate-500">{fmtNum(m2.count_used)}</td>
-                                <td className="px-3 py-1.5">
-                                  <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                                    <div className="h-full bg-blue-400 rounded-full" style={{width:`${pct}%`}}/>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                        );
+                      }}/>
                   </Panel>
                   )}
 
                   {/* ── ACTIVE TRANSACTIONS ── */}
                   {(perfSection==='all'||perfSection==='locking') && trx.length > 0 && (
-                  <Panel title={`Active Transactions (${trx.length})`}>
-                    <div className="overflow-x-auto rounded-xl border border-slate-100">
-                      <table className="w-full text-[11px]">
-                        <thead className="bg-slate-50">
-                          <tr>
-                            {['TRX ID','State','Duration','User','Host','Rows Locked','Rows Modified','Isolation','SQL'].map(h=>(
-                              <th key={h} className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {trx.map((t,i) => (
-                            <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50 ${t.duration_sec>30?'bg-red-50/60':t.duration_sec>10?'bg-amber-50/40':''}`}>
-                              <td className="px-3 py-1.5 font-mono text-[10px] text-slate-600">{t.trx_id}</td>
-                              <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${t.state==='RUNNING'?'bg-green-100 text-green-700':t.state==='LOCK WAIT'?'bg-red-100 text-red-700':'bg-slate-100 text-slate-600'}`}>{t.state}</span></td>
-                              <td className="px-3 py-1.5 font-semibold text-center whitespace-nowrap"><span className={t.duration_sec>30?'text-red-600':t.duration_sec>10?'text-orange-500':'text-slate-700'}>{t.duration_sec}s</span></td>
-                              <td className="px-3 py-1.5 text-slate-700">{t.user}</td>
-                              <td className="px-3 py-1.5 text-slate-500 text-[10px]">{t.host}</td>
-                              <td className="px-3 py-1.5 text-center font-bold text-red-600">{t.rows_locked}</td>
-                              <td className="px-3 py-1.5 text-center font-semibold text-slate-700">{t.rows_modified}</td>
-                              <td className="px-3 py-1.5 text-[10px] text-slate-500">{t.isolation}</td>
-                              <td className="px-3 py-1.5 font-mono text-[10px] text-slate-600 max-w-[200px]"><div className="truncate" title={t.query}>{t.query||'—'}</div></td>
-                            </tr>
+                  <Panel title="Active Transactions" collapsible
+                    subtitle="Currently running transactions — click to view (10 per page)" count={trx.length} icon={Activity}>
+                    <PagedTable pageSize={10} rows={trx}
+                      headerRow={(
+                        <tr>
+                          {['TRX ID','State','Duration','User','Host','Rows Locked','Rows Modified','Isolation','SQL'].map(h=>(
+                            <th key={h} className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
+                        </tr>
+                      )}
+                      renderRow={(t,i) => (
+                        <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50 ${t.duration_sec>30?'bg-red-50/60':t.duration_sec>10?'bg-amber-50/40':''}`}>
+                          <td className="px-3 py-1.5 font-mono text-[10px] text-slate-600">{t.trx_id}</td>
+                          <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${t.state==='RUNNING'?'bg-green-100 text-green-700':t.state==='LOCK WAIT'?'bg-red-100 text-red-700':'bg-slate-100 text-slate-600'}`}>{t.state}</span></td>
+                          <td className="px-3 py-1.5 font-semibold text-center whitespace-nowrap"><span className={t.duration_sec>30?'text-red-600':t.duration_sec>10?'text-orange-500':'text-slate-700'}>{t.duration_sec}s</span></td>
+                          <td className="px-3 py-1.5 text-slate-700">{t.user}</td>
+                          <td className="px-3 py-1.5 text-slate-500 text-[10px]">{t.host}</td>
+                          <td className="px-3 py-1.5 text-center font-bold text-red-600">{t.rows_locked}</td>
+                          <td className="px-3 py-1.5 text-center font-semibold text-slate-700">{t.rows_modified}</td>
+                          <td className="px-3 py-1.5 text-[10px] text-slate-500">{t.isolation}</td>
+                          <td className="px-3 py-1.5 font-mono text-[10px] text-slate-600 max-w-[200px]"><div className="truncate" title={t.query}>{t.query||'—'}</div></td>
+                        </tr>
+                      )}/>
                   </Panel>
                   )}
 
                   {/* ── LOCK WAITS ── */}
                   {(perfSection==='all'||perfSection==='locking') && lkw.length > 0 && (
-                  <Panel title={`Lock Wait Chain (${lkw.length} waiters)`}>
+                  <Panel title="Lock Wait Chain" collapsible subtitle="Blocked → blocking query chains" count={`${lkw.length} waiters`} icon={Lock}>
                     <div className="space-y-3">
                       {lkw.map((lw,i) => (
                         <div key={i} className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3">
@@ -1513,7 +1498,7 @@ export default function MySQLDashboard() {
 
                   {/* ── SERVER CONFIG ── */}
                   {(perfSection==='all'||perfSection==='config') && (
-                  <Panel title="Server Configuration (Performance-Relevant Parameters)">
+                  <Panel title="Server Configuration (Performance-Relevant Parameters)" collapsible subtitle="InnoDB & server tuning parameters" icon={Settings}>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
                       {[
                         ['innodb_buffer_pool_size',       `${cfg.innodb_buffer_pool_size_mb||0} MB`],
@@ -1557,7 +1542,7 @@ export default function MySQLDashboard() {
 
                   {/* ── KEY CACHE (MyISAM) ── */}
                   {(perfSection==='all'||perfSection==='bufpool') && (kc.read_requests||0) > 0 && (
-                  <Panel title="MyISAM Key Cache">
+                  <Panel title="MyISAM Key Cache" collapsible subtitle="MyISAM key buffer efficiency" icon={MemoryStick}>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {[
                         ['Key Buffer Size', `${kc.buffer_size_mb||0} MB`,'text-slate-800'],
@@ -1577,6 +1562,7 @@ export default function MySQLDashboard() {
                     </div>
                   </Panel>
                   )}
+                  </div>
 
                 </>
               );
@@ -2681,10 +2667,11 @@ export default function MySQLDashboard() {
                   <ChartCard title="Database Size Distribution">
                     <ResponsiveContainer width="100%" height={280}>
                       <PieChart>
-                        <Pie data={databases.filter(d=>d.size_mb>0)} dataKey="size_mb" nameKey="name" innerRadius={50} outerRadius={90} label={({ name, percent }) => `${name} ${(percent*100).toFixed(0)}%`}>
-                          {databases.map((_, i) => <Cell key={i} fill={[C.teal,C.blue,C.green,C.orange,C.purple,C.cyan][i%6]} />)}
+                        <Pie data={databases.filter(d=>d.size_mb>0)} dataKey="size_mb" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={1} labelLine={false}
+                          label={({ name, percent }) => (percent >= 0.05 ? `${name} ${(percent*100).toFixed(0)}%` : '')}>
+                          {databases.filter(d=>d.size_mb>0).map((_, i) => <Cell key={i} fill={[C.teal,C.blue,C.green,C.orange,C.purple,C.cyan][i%6]} />)}
                         </Pie>
-                        <Tooltip formatter={v => `${v} MB`} />
+                        <Tooltip formatter={(v, n) => [`${v} MB`, n]} />
                       </PieChart>
                     </ResponsiveContainer>
                     <div className="mt-3 space-y-1.5">
@@ -3152,12 +3139,77 @@ function ChartCard({ title, children }) {
     </div>
   );
 }
-function Panel({ title, children }) {
+function Panel({ title, children, collapsible = false, defaultOpen = false, subtitle, count, icon: Icon }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!collapsible) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 p-5">
+        {title && <h3 className="font-bold text-slate-800 text-sm mb-4">{title}</h3>}
+        {children}
+      </div>
+    );
+  }
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5">
-      {title && <h3 className="font-bold text-slate-800 text-sm mb-4">{title}</h3>}
-      {children}
+    <div className={`bg-white rounded-2xl border border-slate-200 overflow-hidden self-start ${open ? 'lg:col-span-2' : ''}`}>
+      <button onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-slate-50 transition-colors">
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${open ? 'bg-cyan-100 text-cyan-700' : 'bg-slate-100 text-slate-500'}`}>
+          {Icon ? <Icon size={16} /> : <BarChart2 size={16} />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="font-bold text-slate-800 text-sm leading-tight">{title}</h3>
+          {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+        </div>
+        {count != null && <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold flex-shrink-0">{count}</span>}
+        {!open && <span className="text-[11px] font-bold text-cyan-600 flex items-center gap-1 flex-shrink-0"><Eye size={12} /> View</span>}
+        <ChevronDown size={16} className={`text-slate-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && <div className="px-5 pb-5">{children}</div>}
     </div>
+  );
+}
+
+// Pager stepper: ‹ 1 2 3 … › — compact numbered pages.
+function Stepper({ page, pages, total, pageSize, onChange }) {
+  if (pages <= 1) return <p className="text-[10px] text-slate-400 mt-2">{total} row{total === 1 ? '' : 's'} total</p>;
+  const nums = [...new Set([1, pages, page, page - 1, page + 1])].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+  const items = []; let prev = 0;
+  nums.forEach((n) => { if (n - prev > 1) items.push('…' + n); items.push(n); prev = n; });
+  const btn = 'min-w-[28px] h-7 px-2 rounded-lg text-xs font-bold transition-colors';
+  return (
+    <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
+      <span className="text-[10px] text-slate-400">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}</span>
+      <div className="flex items-center gap-1">
+        <button disabled={page === 1} onClick={() => onChange(page - 1)}
+          className={`${btn} border border-slate-200 text-slate-500 disabled:opacity-40 hover:bg-slate-50`}>‹</button>
+        {items.map((it, i) => typeof it === 'string'
+          ? <span key={i} className="px-1 text-slate-400 text-xs">…</span>
+          : <button key={i} onClick={() => onChange(it)}
+              className={`${btn} ${page === it ? 'bg-cyan-600 text-white shadow' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{it}</button>)}
+        <button disabled={page === pages} onClick={() => onChange(page + 1)}
+          className={`${btn} border border-slate-200 text-slate-500 disabled:opacity-40 hover:bg-slate-50`}>›</button>
+      </div>
+    </div>
+  );
+}
+
+// A table that shows `pageSize` rows at a time with a numbered stepper.
+function PagedTable({ headerRow, rows = [], renderRow, pageSize = 10 }) {
+  const [page, setPage] = useState(1);
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  useEffect(() => { setPage(1); }, [rows.length]);
+  const cur = Math.min(page, pages);
+  const slice = rows.slice((cur - 1) * pageSize, cur * pageSize);
+  return (
+    <>
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
+        <table className="w-full text-[11px]">
+          <thead className="bg-slate-50">{headerRow}</thead>
+          <tbody>{slice.map(renderRow)}</tbody>
+        </table>
+      </div>
+      <Stepper page={cur} pages={pages} total={rows.length} pageSize={pageSize} onChange={setPage} />
+    </>
   );
 }
 function InfoBox({ label, value }) {

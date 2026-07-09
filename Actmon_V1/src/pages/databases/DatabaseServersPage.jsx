@@ -493,6 +493,7 @@ export default function DatabaseServersPage({ tech = null }) {
     }
   }
 
+
   return (
     <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f4f9]">
 
@@ -884,7 +885,7 @@ function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allCon
 /* ══════════════════════════════════════════════════════
    NODE CARD — uniform height via h-full + flex-col
 ══════════════════════════════════════════════════════ */
-function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false, fullWidth=false, tech=null }) {
+function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false, fullWidth=false, tech=null, connectionOnly=false }) {
   const [hovered, setHovered] = useState(false);
   const m = nodeMeta(node.node_type);
   const hasMetrics = node.cpu_usage || node.ram_usage || node.disk_usage;
@@ -940,21 +941,25 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
             {m.label}
           </span>
           <div className="flex items-center gap-3">
-            <div className="flex flex-col items-center gap-0.5" title={`OS: ${node.status||'Unknown'}`}>
-              <PulsingDot status={node.status}/>
-              <span className={`text-[9px] font-black ${osUp?'text-emerald-600':osDown?'text-red-500':'text-slate-400'}`}>OS</span>
-            </div>
+            {!connectionOnly && (
+              <div className="flex flex-col items-center gap-0.5" title={`OS: ${node.status||'Unknown'}`}>
+                <PulsingDot status={node.status}/>
+                <span className={`text-[9px] font-black ${osUp?'text-emerald-600':osDown?'text-red-500':'text-slate-400'}`}>OS</span>
+              </div>
+            )}
             <div className="flex flex-col items-center gap-0.5" title={`DB: ${dbStatus}`}>
               <DbDot status={dbStatus}/>
               <span className={`text-[9px] font-black ${dbUp?'text-emerald-600':dbDown?'text-red-500':dbDegraded?'text-amber-500':'text-slate-400'}`}>DB</span>
             </div>
-            <button
-              onClick={() => openTerminal(node)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-[10px] font-bold transition-all shadow-sm hover:shadow-md"
-              title="Open SSH Terminal"
-            >
-              <Terminal size={12}/>SSH
-            </button>
+            {!connectionOnly && (
+              <button
+                onClick={() => openTerminal(node)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-[10px] font-bold transition-all shadow-sm hover:shadow-md"
+                title="Open SSH Terminal"
+              >
+                <Terminal size={12}/>SSH
+              </button>
+            )}
           </div>
         </div>
 
@@ -993,7 +998,8 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
         )}
 
         {/* OS + DB status badges */}
-        <div className="grid grid-cols-2 gap-2 mb-4">
+        <div className={`grid gap-2 mb-4 ${connectionOnly ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          {!connectionOnly && (
           <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
             osUp   ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
             osWarn ? 'bg-amber-50 border-amber-200 text-amber-700' :
@@ -1002,6 +1008,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
             <Server size={11}/>
             <span>{osUp?'OS Online':osDown?'OS Offline':node.status||'OS Unknown'}</span>
           </div>
+          )}
           <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
             dbUp       ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
             dbDegraded ? 'bg-amber-50 border-amber-200 text-amber-700' :
@@ -1069,14 +1076,16 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
               </button>
             );
           })()}
-          <button
-            onClick={() => refreshMutation.mutate(node.id)}
-            className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all
-              ${isRefreshing?'border-indigo-300 bg-indigo-50 text-indigo-500':'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-400 hover:text-indigo-500'}`}
-            title="Deep refresh (SSH)"
-          >
-            <RefreshCw size={13} className={isRefreshing?'animate-spin':''}/>
-          </button>
+          {!connectionOnly && (
+            <button
+              onClick={() => refreshMutation.mutate(node.id)}
+              className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all
+                ${isRefreshing?'border-indigo-300 bg-indigo-50 text-indigo-500':'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-400 hover:text-indigo-500'}`}
+              title="Deep refresh (SSH)"
+            >
+              <RefreshCw size={13} className={isRefreshing?'animate-spin':''}/>
+            </button>
+          )}
           {onDelete && (
             <button
               onClick={onDelete}

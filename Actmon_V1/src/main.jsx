@@ -9,6 +9,8 @@ import { ProtectedRoute } from './auth/ProtectedRoute';
 import { AppShell } from './components/layout/AppShell';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Login } from './pages/Login';
+import FirstRunSetup from './pages/SetupWizard';
+import LandingPage from './pages/LandingPage';
 // Heavy pages are LAZY-loaded → each becomes its own JS chunk fetched only when first
 // navigated to, instead of bloating the initial bundle. This is the biggest first-load win.
 // (Login + ADMIN_CONFIGS stay eager: Login is the first paint, ADMIN_CONFIGS is just data.)
@@ -100,6 +102,16 @@ const queryClient = new QueryClient({
 // Configure client routes
 const router = createBrowserRouter([
   {
+    // Public product page (ActMon by Actin Technologies) — shown at the root,
+    // before login. The app itself lives at /dashboard and below.
+    path: '/',
+    element: <LandingPage />,
+  },
+  {
+    path: '/setup',
+    element: <FirstRunSetup />,
+  },
+  {
     path: '/login',
     element: <Login />,
   },
@@ -112,7 +124,7 @@ const router = createBrowserRouter([
     ),
     children: [
       {
-        path: '',
+        path: 'home',
         element: <Navigate to="/dashboard" replace />,
       },
       {

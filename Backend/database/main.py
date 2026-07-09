@@ -71,6 +71,7 @@ from app.routes.os_server.os_server_routes import router as os_server_router
 from app.routes.os_server.terminal_routes import router as terminal_router
 from app.routes.os_server.test_connection_routes import router as test_connection_router
 from app.routes.auth.auth_routes import router as auth_router
+from app.routes.setup.setup_routes import router as setup_router
 from app.routes.admin.admin_crud_routes import admin_crud_routers
 from app.routes.agent.agent_routes import router as agent_router
 from app.routes.agent.agent_install_routes import router as agent_install_router
@@ -99,6 +100,9 @@ async def lifespan(app_instance):
     # Start centralized agent collector (polls monitored DBs every 60s)
     from app.services.agent.agent_collector_service import start_agent_collector
     start_agent_collector(interval_sec=60)
+    # Start agent reaper (marks uninstalled/offline agents, removes dead hosts)
+    from app.services.agent.agent_reaper_service import start_agent_reaper
+    start_agent_reaper(interval_sec=60)
     # Start ActMon metric logger → ClickHouse (per-metric time-series)
     try:
         from app.services.logs.actmon_logs_service import start_metric_logger
@@ -124,6 +128,8 @@ async def lifespan(app_instance):
     # Graceful shutdown
     from app.services.agent.agent_collector_service import stop_agent_collector
     stop_agent_collector()
+    from app.services.agent.agent_reaper_service import stop_agent_reaper
+    stop_agent_reaper()
 
 app = FastAPI(
     title="ACTMON API",
@@ -190,6 +196,7 @@ app.include_router(os_server_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
 app.include_router(auth_router)
+app.include_router(setup_router)   # first-run: create the initial Super Admin
 
 # Administration / Access Control (roles, permissions, modules, pages, orgs,
 # departments, designations, employees, users, statuses, audit-logs — all generic)

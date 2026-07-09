@@ -263,11 +263,11 @@ function NetConfigEditor({ id }) {
               {/* editor */}
               <div>
                 {!openPath ? (
-                  <div className="h-64 flex items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
+                  <div className="min-h-[440px] flex items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
                     <p className="text-[15px] text-slate-400">Select a config file on the left to view &amp; edit it.</p>
                   </div>
                 ) : loadingFile ? (
-                  <div className="h-64 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-500" /></div>
+                  <div className="min-h-[440px] flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-500" /></div>
                 ) : (
                   <>
                     <div className="flex items-center gap-2 mb-2">
@@ -283,7 +283,7 @@ function NetConfigEditor({ id }) {
                       </div>
                     </div>
                     <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false}
-                      className="w-full h-72 p-3.5 rounded-xl border border-slate-300 text-[13px] font-mono text-slate-800 outline-none focus:border-blue-400 resize-y bg-slate-900/[0.02]" />
+                      className="w-full h-[calc(100vh-340px)] min-h-[440px] p-3.5 rounded-xl border border-slate-300 text-[13px] leading-relaxed font-mono text-slate-800 outline-none focus:border-blue-400 resize-y bg-slate-900/[0.02]" />
                     {msg && <p className={`text-[13px] font-semibold mt-2 flex items-center gap-1.5 ${msg.ok ? 'text-emerald-600' : 'text-red-600'}`}>
                       {msg.ok ? <Check size={14} /> : <AlertTriangle size={14} />}{msg.text}</p>}
                     {dirtyApplied && (
@@ -1656,10 +1656,10 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
                     className="w-8 h-8 rounded-lg border border-slate-300 text-slate-500 hover:bg-slate-100 flex items-center justify-center flex-shrink-0"><X size={14} /></button>
                 </div>
                 {browse.loading ? (
-                  <div className="h-64 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-amber-500" /></div>
+                  <div className="min-h-[440px] flex items-center justify-center"><Loader2 size={20} className="animate-spin text-amber-500" /></div>
                 ) : browse.err ? <p className="text-[15px] text-red-500 py-4">{browse.err}</p>
                   : (
-                    <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[420px] overflow-y-auto divide-y divide-slate-100">
+                    <div className="border border-slate-200 rounded-xl overflow-hidden max-h-[calc(100vh-360px)] min-h-[440px] overflow-y-auto divide-y divide-slate-100">
                       {browse.entries.length === 0 && <p className="text-[14px] text-slate-400 px-4 py-6 text-center">This folder is empty.</p>}
                       {browse.entries.map((e) => {
                         const child = joinPath(browse.path, e.name);
@@ -1679,11 +1679,11 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
                 <p className="text-[12px] text-slate-400 mt-2">{browse.entries.length} item{browse.entries.length === 1 ? '' : 's'} · click a folder to open it, a file to view &amp; edit — all in place.</p>
               </div>
             ) : !openPath ? (
-              <div className="h-64 flex items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
+              <div className="min-h-[440px] flex items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
                 <p className="text-[15px] text-slate-400">Select a file or folder on the left to open it here.</p>
               </div>
             ) : loadingFile ? (
-              <div className="h-64 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-500" /></div>
+              <div className="min-h-[440px] flex items-center justify-center"><Loader2 size={20} className="animate-spin text-blue-500" /></div>
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-2">
@@ -1699,7 +1699,7 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
                   </div>
                 </div>
                 <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false}
-                  className="w-full h-72 p-3.5 rounded-xl border border-slate-300 text-[13px] font-mono text-slate-800 outline-none focus:border-blue-400 resize-y bg-slate-900/[0.02]" />
+                  className="w-full h-[calc(100vh-340px)] min-h-[440px] p-3.5 rounded-xl border border-slate-300 text-[13px] leading-relaxed font-mono text-slate-800 outline-none focus:border-blue-400 resize-y bg-slate-900/[0.02]" />
                 {msg && <p className={`text-[13px] font-semibold mt-2 flex items-center gap-1.5 ${msg.ok ? 'text-emerald-600' : 'text-red-600'}`}>
                   {msg.ok ? <Check size={14} /> : <AlertTriangle size={14} />}{msg.text}</p>}
                 {saved && restartFor(openPath) && (
@@ -1774,11 +1774,11 @@ function OsRegistryPanel({ id, keys, title = 'Operating System — Registry', on
           {/* values */}
           <div>
             {!sel ? (
-              <div className="h-64 flex items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
+              <div className="min-h-[440px] flex items-center justify-center text-center border-2 border-dashed border-slate-200 rounded-xl">
                 <p className="text-[15px] text-slate-400">Select a registry key to view &amp; edit its values.</p>
               </div>
             ) : loading ? (
-              <div className="h-64 flex items-center justify-center"><Loader2 size={20} className="animate-spin text-violet-500" /></div>
+              <div className="min-h-[440px] flex items-center justify-center"><Loader2 size={20} className="animate-spin text-violet-500" /></div>
             ) : err ? <p className="text-[15px] text-red-500">{err}</p>
               : (
                 <>

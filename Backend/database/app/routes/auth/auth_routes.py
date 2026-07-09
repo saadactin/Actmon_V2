@@ -92,6 +92,10 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=403,
                             detail="Access denied — your role has no modules assigned. Please contact your administrator.")
+    # Super Admin (role 1, org 1) is the break-glass account and skips the email OTP,
+    # so the first sign-in works even before SMTP is configured.
+    if int(user.get("role_id") or 0) == 1 and int(user.get("org_id") or 0) == 1:
+        return {"otp_required": False, **_issue_session(db, user, request)}
     otp = otp_service.generate_and_send(db, user)
     return {"otp_required": True, **otp}   # otp_token, email_masked, expires_in (+ dev_otp if OTP_DEBUG)
 

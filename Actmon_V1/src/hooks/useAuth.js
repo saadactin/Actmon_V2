@@ -13,7 +13,12 @@ export const useAuth = () => {
     setError(null);
     try {
       const res = await apiLogin(username, password);
-      // 2-step: never a token here, only OTP context
+      // Super Admin bypasses OTP: the backend returns a token directly.
+      if (res.access_token) {
+        setAuth(res.access_token, res);
+        return { otpRequired: false, loggedIn: true, data: res };
+      }
+      // Everyone else: 2-step, only OTP context here (no token yet).
       return {
         otpRequired: !!res.otp_required,
         otpToken: res.otp_token,

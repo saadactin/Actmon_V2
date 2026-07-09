@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { getSetupStatus } from '../api/setup';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as zod from 'zod';
@@ -50,6 +51,15 @@ export const Login = () => {
   const { login, verifyOtp, resendOtp, loading, error: authError, setError } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
+  // First-run gate: if no admin exists yet, send the user to the setup wizard.
+  useEffect(() => {
+    let alive = true;
+    getSetupStatus()
+      .then((s) => { if (alive && s?.needs_setup) navigate('/setup', { replace: true }); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [navigate]);
   const [showPassword, setShowPassword] = useState(false);
 
   const [step, setStep] = useState('credentials');
@@ -66,6 +76,7 @@ export const Login = () => {
 
   const onCredentials = async (data) => {
     const res = await login(data.username, data.password);
+    if (res?.loggedIn && res.data) { navigate(firstAllowedPath(res.data.menu), { replace: true }); return; }
     if (res?.otpRequired) { setOtpToken(res.otpToken); setEmail(res.email || ''); setDevOtp(res.devOtp || null); setStep('otp'); }
   };
   // first page the user is actually allowed to open (menu is already View-filtered server-side)

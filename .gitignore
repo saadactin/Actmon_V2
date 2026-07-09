@@ -20,9 +20,11 @@ dist/
 # Logs
 *.log
 
-# Environment Variables
+# Environment Variables (never ship real secrets, but DO ship the template)
 .env
 .env.*
+!.env.example
+!**/.env.example
 
 # Pytest
 .pytest_cache/

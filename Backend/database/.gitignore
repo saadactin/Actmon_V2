@@ -18,9 +18,10 @@ dist/
 # Logs
 *.log
 
-# Environment Variables
+# Environment Variables (ship the template, never the real secrets)
 .env
 .env.*
+!.env.example
 
 # IDE Files
 .vscode/
