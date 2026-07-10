@@ -8,40 +8,40 @@ from app.repository.resource_repo import ResourceRepository
 
 # Approximate AWS pricing (ap-south-1 Mumbai, USD/month)
 EC2_PRICING: Dict[str, float] = {
-    "t2.micro": 8.47, "t2.small": 16.94, "t2.medium": 33.87, "t2.large": 67.74,
-    "t3.micro": 7.59, "t3.small": 15.18, "t3.medium": 30.37, "t3.large": 60.74,
-    "t3.xlarge": 121.47, "t3.2xlarge": 242.95,
-    "m5.large": 70.08, "m5.xlarge": 140.16, "m5.2xlarge": 280.32,
-    "c5.large": 62.05, "c5.xlarge": 124.10,
-    "r5.large": 92.02, "r5.xlarge": 184.03,
+    "t2.micro": 0, "t2.small": 0, "t2.medium": 0, "t2.large": 0,
+    "t3.micro": 0, "t3.small": 0, "t3.medium": 0, "t3.large": 0,
+    "t3.xlarge": 0, "t3.2xlarge": 0,
+    "m5.large": 0, "m5.xlarge": 0, "m5.2xlarge": 0,
+    "c5.large": 0, "c5.xlarge": 0,
+    "r5.large": 0, "r5.xlarge": 0,
 }
 
 RDS_PRICING: Dict[str, float] = {
-    "db.t3.micro": 12.41, "db.t3.small": 24.82, "db.t3.medium": 49.64,
-    "db.t3.large": 99.28, "db.m5.large": 140.16, "db.m5.xlarge": 280.32,
-    "db.r5.large": 184.03,
+    "db.t3.micro": 0, "db.t3.small": 0, "db.t3.medium": 0,
+    "db.t3.large": 0, "db.m5.large": 0, "db.m5.xlarge": 0,
+    "db.r5.large": 0,
 }
 
-LAMBDA_COST_PER_GB_SECOND = 0.0000166667
+LAMBDA_COST_PER_GB_SECOND = 0
 LAMBDA_FREE_TIER_REQUESTS = 1_000_000
-DYNAMODB_COST_PER_WCU = 0.000735
-DYNAMODB_COST_PER_RCU = 0.000147
-DYNAMODB_STORAGE_GB = 0.285
-S3_STORAGE_GB = 0.023
+DYNAMODB_COST_PER_WCU = 0
+DYNAMODB_COST_PER_RCU = 0
+DYNAMODB_STORAGE_GB = 0
+S3_STORAGE_GB = 0
 
 
 def _lambda_estimate(config: Dict) -> float:
     memory_mb = config.get("memory_mb", 128)
     gb_seconds = 100_000 * 0.5 * (memory_mb / 1024)
     compute_cost = gb_seconds * LAMBDA_COST_PER_GB_SECOND
-    request_cost = max(0, 100_000 - LAMBDA_FREE_TIER_REQUESTS) * 0.0000002
+    request_cost = max(0, 100_000 - LAMBDA_FREE_TIER_REQUESTS) * 0
     return round(compute_cost + request_cost, 4)
 
 
 def _dynamodb_estimate(config: Dict) -> float:
     billing = config.get("billing_mode", "PROVISIONED")
     if billing == "PAY_PER_REQUEST":
-        return round(1_000_000 * 0.000000285 + 500_000 * 0.00000142, 4)
+        return round(1_000_000 * 0 + 500_000 * 0, 4)
     rcu = config.get("read_capacity", 5) or 5
     wcu = config.get("write_capacity", 5) or 5
     size_bytes = config.get("size_bytes", 0) or 0
@@ -55,19 +55,19 @@ def _dynamodb_estimate(config: Dict) -> float:
 
 def _ec2_estimate(config: Dict) -> float:
     instance_type = config.get("instance_type", "t3.micro")
-    return EC2_PRICING.get(instance_type, 15.0)
+    return EC2_PRICING.get(instance_type, 0)
 
 
 def _rds_estimate(config: Dict) -> float:
     instance_class = config.get("instance_class", "db.t3.micro")
     storage_gb = config.get("storage_gb", 20) or 20
-    base = RDS_PRICING.get(instance_class, 25.0)
-    storage_cost = storage_gb * 0.115
+    base = RDS_PRICING.get(instance_class, 0)
+    storage_cost = storage_gb * 0
     return round(base + storage_cost, 2)
 
 
 def _s3_estimate(_config: Dict) -> float:
-    return 0.5
+    return 0
 
 
 TYPE_ESTIMATORS = {
@@ -209,13 +209,13 @@ class CostService:
                     # Assume a default 30GB gp3 volume ($3.00/mo) if volume size isn't fetched
                     if not block_devices:
                         # Fallback if no block devices listed
-                        total_waste = 3.00
-                        sub_resources.append({"name": "Root Volume (estimated 30GB)", "cost": 3.00})
+                        total_waste = 0
+                        sub_resources.append({"name": "Root Volume (estimated 30GB)", "cost": 0})
                     else:
                         for bd in block_devices:
                             ebs = bd.get("Ebs", {})
                             vid = ebs.get("VolumeId", "Unknown Volume")
-                            est_cost = 3.00
+                            est_cost = 0
                             sub_resources.append({"name": f"EBS Volume {vid}", "cost": est_cost})
                             total_waste += est_cost
 
@@ -236,8 +236,8 @@ class CostService:
                 # New rule: Legacy Instance Types
                 instance_type = config.get("instance_type", "")
                 if instance_type.startswith("t2.") or instance_type.startswith("m4.") or instance_type.startswith("c4."):
-                    savings_pct = 0.15 # Upgrading usually saves ~15%
-                    curr_cost = EC2_PRICING.get(instance_type, 15.0)
+                    savings_pct = 0 # Upgrading usually saves ~15%
+                    curr_cost = EC2_PRICING.get(instance_type, 0)
                     savings = curr_cost * savings_pct
                     
                     optimizations.append({
@@ -283,7 +283,7 @@ class CostService:
                         "id": str(uuid.uuid4()),
                         "rule": "Missing S3 Lifecycle Policies",
                         "description": f"Bucket '{r.resource_name}' has no lifecycle policies. Old objects are indefinitely stored in expensive Standard tier.",
-                        "potential_savings": 5.0, # Estimated potential
+                        "potential_savings": 0, # Estimated potential
                         "affected_resource": r.resource_name,
                         "resource_id": rid,
                         "severity": "MEDIUM",
@@ -291,7 +291,7 @@ class CostService:
                         "recommendation": "Create a lifecycle rule to transition objects older than 30 days to Standard-IA or Glacier.",
                         "sub_resources": []
                     })
-                    potential_savings += 5.0
+                    potential_savings += 0
 
             if rtype == "DynamoDBTable" and config.get("billing_mode") == "PROVISIONED":
                 item_count = config.get("item_count", 0) or 0
@@ -300,7 +300,7 @@ class CostService:
                     wcu = config.get("write_capacity", 5) or 5
                     # Calculate exact provisioned cost vs pay-per-request cost
                     prov_cost = (rcu * DYNAMODB_COST_PER_RCU * 730) + (wcu * DYNAMODB_COST_PER_WCU * 730)
-                    savings = prov_cost * 0.95 # Pay per request is usually 95% cheaper for idle tables
+                    savings = prov_cost * 0 # Pay per request is usually 95% cheaper for idle tables
                     
                     sub_resources = [
                         {"name": f"Provisioned RCU ({rcu})", "cost": round(rcu * DYNAMODB_COST_PER_RCU * 730, 2)},
@@ -369,7 +369,7 @@ class CostService:
             if rtype == "RDSInstance":
                 if r.status == "stopped":
                     storage_gb = config.get("storage_gb", 20) or 20
-                    storage_cost = storage_gb * 0.115
+                    storage_cost = storage_gb * 0
                     
                     sub_resources = [
                         {"name": f"Provisioned Storage ({storage_gb} GB)", "cost": round(storage_cost, 2)}
@@ -393,8 +393,8 @@ class CostService:
                 multi_az = config.get("multi_az", False)
                 is_prod = any(v.lower() == "prod" or v.lower() == "production" for k, v in (r.tags or {}).items())
                 if multi_az and not is_prod:
-                    base_cost = RDS_PRICING.get(config.get("instance_class", "db.t3.micro"), 25.0)
-                    savings = base_cost * 0.5 # Disabling Multi-AZ roughly cuts cost in half
+                    base_cost = RDS_PRICING.get(config.get("instance_class", "db.t3.micro"), 0)
+                    savings = base_cost * 0 # Disabling Multi-AZ roughly cuts cost in half
                     
                     optimizations.append({
                         "id": str(uuid.uuid4()),
@@ -412,7 +412,7 @@ class CostService:
             
             if rtype == "EKSCluster":
                 # Idle control plane warning
-                control_plane_cost = 73.0
+                control_plane_cost = 0
                 optimizations.append({
                     "id": str(uuid.uuid4()),
                     "rule": "Review EKS Control Plane Utilization",
@@ -429,7 +429,7 @@ class CostService:
                 })
                 # Don't automatically add $73 to total potential savings unless we know it's completely idle,
                 # but we'll add a fraction for the dashboard impact
-                potential_savings += control_plane_cost * 0.5
+                potential_savings += control_plane_cost * 0
 
         return {
             "account_id": str(account_id),

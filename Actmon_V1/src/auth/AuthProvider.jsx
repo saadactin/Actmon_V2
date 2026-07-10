@@ -3,6 +3,9 @@ import { useAuthStore } from '../store/authStore';
 import { getMe, getMenu, getPermissions } from '../api/auth';
 import { Spinner } from '@fluentui/react-components';
 
+// DEVELOPMENT: Set to true to bypass authentication (DEV ONLY - REMOVE IN PRODUCTION)
+const DEV_BYPASS_AUTH = true;
+
 export const AuthContext = createContext({ isLoading: true });
 
 export const AuthProvider = ({ children }) => {
@@ -11,6 +14,12 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const initAuth = async () => {
+      // Development bypass - skip all auth checks
+      if (DEV_BYPASS_AUTH) {
+        setIsLoading(false);
+        return;
+      }
+
       if (!token) { setIsLoading(false); return; }
       if (checkTokenExpiry()) { setIsLoading(false); return; }
       try {

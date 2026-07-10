@@ -12,6 +12,24 @@ from app.repository.cloud_account_repo import CloudAccountRepository
 logger = logging.getLogger("cloud_svc.topology")
 
 
+def _extract_resource_group(provider_id: str | None) -> str | None:
+    """Pull the resource-group name out of an Azure resource ID.
+
+    Azure IDs look like:
+      /subscriptions/{sub}/resourceGroups/{RG}/providers/{ns}/{type}/{name}
+    Returns None for non-Azure IDs (no /resourceGroups/ segment).
+    """
+    if not provider_id:
+        return None
+    marker = "/resourcegroups/"
+    lower = provider_id.lower()
+    idx = lower.find(marker)
+    if idx == -1:
+        return None
+    rest = provider_id[idx + len(marker):]
+    return rest.split("/")[0] if rest else None
+
+
 async def get_topology(account_id: uuid.UUID | str, db: AsyncSession) -> Dict[str, Any]:
     res_repo = ResourceRepository(db)
     acc_repo = CloudAccountRepository(db)
@@ -170,6 +188,38 @@ async def get_topology(account_id: uuid.UUID | str, db: AsyncSession) -> Dict[st
             vpcs = [n for n in nodes if n["type"] == "VPC"]
             if len(vpcs) == 1:
                 add_edge(rid, vpcs[0]["id"], "contains")
+
+    # ── Azure / resource-group grouping ──────────────────────────────────────
+    # Azure resource IDs embed their resource group:
+    #   /subscriptions/{sub}/resourceGroups/{RG}/providers/{ns}/{type}/{name}
+    # Create one synthetic hub node per resource group and link its resources
+    # with a "contains" edge, producing a readable tree even when the network
+    # layer (VNets/NICs/NSGs) hasn't been discovered.
+    # Azure RG names are case-insensitive, so key hubs by lowercase to merge
+    # variants like "actin" / "ACTIN" that reference the same group.
+    rg_hub_by_name: Dict[str, str] = {}
+    for r in resources:
+        rg = _extract_resource_group(r.provider_resource_id)
+        if not rg:
+            continue
+        rg_key = rg.lower()
+        hub_id = rg_hub_by_name.get(rg_key)
+        if hub_id is None:
+            hub_id = f"rg::{rg_key}"
+            rg_hub_by_name[rg_key] = hub_id
+            nodes.append({
+                "id": hub_id,
+                "name": rg,
+                "type": "ResourceGroup",
+                "status": "active",
+                "cost": 0.0,
+                "region": r.region_or_zone,
+                "provider_id": rg,
+                "account_name": account_map.get(str(r.account_id), "Unknown"),
+                "account_id": str(r.account_id),
+                "is_default": False,
+            })
+        add_edge(hub_id, str(r.id), "contains")
 
     return {
         "account_id": str(account_id),

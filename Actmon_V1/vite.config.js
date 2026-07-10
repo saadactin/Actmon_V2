@@ -40,10 +40,10 @@ export default defineConfig({
             ws: true,
             changeOrigin: true,
           },
-          // Cloud Discovery microservice (separate FastAPI on :8001). Must come
+          // Cloud Discovery microservice (separate FastAPI on :8002). Must come
           // BEFORE the generic /api rule so cloud calls don't hit the DB backend.
           '/api/v1/cloud': {
-            target: 'http://127.0.0.1:8001',
+            target: 'http://127.0.0.1:8002',
             changeOrigin: true,
           },
           '/api': {
