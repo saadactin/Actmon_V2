@@ -5,65 +5,65 @@ import { useTopology } from '../hooks/useTopology';
 import { useCloudStore } from '../state/cloudStore';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
 import {
-  ArrowLeft, ZoomIn, ZoomOut, Maximize2, Search, ExternalLink, X,
-  RefreshCw, Info
+  ZoomIn, ZoomOut, Maximize2, Search, ExternalLink, X,
+  RefreshCw, Info, Share2, Loader2, Network
 } from 'lucide-react';
 
 // ── Type Metadata ──────────────────────────────────────────────────
-const TYPE_META: Record<string, { icon: string; color: string; label: string }> = {
+const TYPE_META: Record<string, { color: string; label: string }> = {
   // ── AWS ──
-  EC2Instance:          { icon: '🖥️', color: '#f59e0b', label: 'EC2 Instance' },
-  S3Bucket:             { icon: '🪣', color: '#3b82f6', label: 'S3 Bucket' },
-  LambdaFunction:       { icon: 'λ',  color: '#a855f7', label: 'Lambda' },
-  DynamoDBTable:        { icon: '🗄️', color: '#10b981', label: 'DynamoDB Table' },
-  RDSInstance:          { icon: '💾', color: '#06b6d4', label: 'RDS Database' },
-  EKSCluster:           { icon: '⚓', color: '#6366f1', label: 'EKS Cluster' },
-  LoadBalancer:         { icon: '⚖️', color: '#ec4899', label: 'Load Balancer' },
-  SecurityGroup:        { icon: '🛡️', color: '#eab308', label: 'Security Group' },
-  VPC:                  { icon: '🌐', color: '#14b8a6', label: 'VPC Network' },
-  IAMRole:              { icon: '👤', color: '#64748b', label: 'IAM Role' },
-  APIGateway:           { icon: '🔌', color: '#ec4899', label: 'API Gateway' },
-  BedrockModel:         { icon: '🤖', color: '#10b981', label: 'Bedrock Model' },
-  BedrockAgent:         { icon: '🧠', color: '#ec4899', label: 'Bedrock Agent' },
-  BedrockKnowledgeBase: { icon: '📚', color: '#3b82f6', label: 'Bedrock KB' },
+  EC2Instance:          { color: '#f59e0b', label: 'EC2 Instance' },
+  S3Bucket:             { color: '#3b82f6', label: 'S3 Bucket' },
+  LambdaFunction:       { color: '#a855f7', label: 'Lambda' },
+  DynamoDBTable:        { color: '#10b981', label: 'DynamoDB Table' },
+  RDSInstance:          { color: '#06b6d4', label: 'RDS Database' },
+  EKSCluster:           { color: '#6366f1', label: 'EKS Cluster' },
+  LoadBalancer:         { color: '#ec4899', label: 'Load Balancer' },
+  SecurityGroup:        { color: '#eab308', label: 'Security Group' },
+  VPC:                  { color: '#14b8a6', label: 'VPC Network' },
+  IAMRole:              { color: '#64748b', label: 'IAM Role' },
+  APIGateway:           { color: '#ec4899', label: 'API Gateway' },
+  BedrockModel:         { color: '#10b981', label: 'Bedrock Model' },
+  BedrockAgent:         { color: '#ec4899', label: 'Bedrock Agent' },
+  BedrockKnowledgeBase: { color: '#3b82f6', label: 'Bedrock KB' },
   // ── Azure ──
-  VirtualMachine:       { icon: '🖥️', color: '#0078D4', label: 'Virtual Machine' },
-  StorageAccount:       { icon: '📦', color: '#3b82f6', label: 'Storage Account' },
-  SQLDatabase:          { icon: '🛢️', color: '#10b981', label: 'SQL Database' },
-  AKSCluster:           { icon: '⚓', color: '#6366f1', label: 'AKS Cluster' },
-  AppService:           { icon: '🌐', color: '#a855f7', label: 'App Service' },
-  FunctionApp:          { icon: 'λ',  color: '#a855f7', label: 'Function App' },
-  VirtualNetwork:       { icon: '🌐', color: '#14b8a6', label: 'Virtual Network' },
-  NetworkSecurityGroup: { icon: '🛡️', color: '#eab308', label: 'Network Security Group' },
-  PublicIP:             { icon: '📡', color: '#06b6d4', label: 'Public IP' },
-  NetworkInterface:     { icon: '🔗', color: '#14b8a6', label: 'Network Interface' },
-  ResourceGroup:        { icon: '📁', color: '#0078D4', label: 'Resource Group' },
-  ManagedDisk:          { icon: '💽', color: '#06b6d4', label: 'Managed Disk' },
-  KeyVault:             { icon: '🔐', color: '#eab308', label: 'Key Vault' },
-  CosmosDB:             { icon: '🪐', color: '#10b981', label: 'Cosmos DB' },
-  RedisCache:           { icon: '⚡', color: '#ef4444', label: 'Redis Cache' },
-  SQLServer:            { icon: '🗃️', color: '#10b981', label: 'SQL Server' },
-  MySQLServer:          { icon: '🐬', color: '#06b6d4', label: 'MySQL Server' },
-  PostgreSQLServer:     { icon: '🐘', color: '#3b82f6', label: 'PostgreSQL Server' },
-  ContainerRegistry:    { icon: '📦', color: '#6366f1', label: 'Container Registry' },
-  AppServicePlan:       { icon: '📐', color: '#a855f7', label: 'App Service Plan' },
-  ApplicationGateway:   { icon: '🚪', color: '#ec4899', label: 'App Gateway' },
-  LogAnalytics:         { icon: '📊', color: '#0ea5e9', label: 'Log Analytics' },
-  AppInsights:          { icon: '📈', color: '#0ea5e9', label: 'App Insights' },
-  LogicApp:             { icon: '🔄', color: '#a855f7', label: 'Logic App' },
-  ManagedIdentity:      { icon: '🪪', color: '#64748b', label: 'Managed Identity' },
-  PrivateEndpoint:      { icon: '🔒', color: '#14b8a6', label: 'Private Endpoint' },
-  EventHub:             { icon: '📨', color: '#f59e0b', label: 'Event Hub' },
-  ServiceBus:           { icon: '🚌', color: '#f59e0b', label: 'Service Bus' },
-  APIManagement:        { icon: '🔌', color: '#ec4899', label: 'API Management' },
-  VMScaleSet:           { icon: '🖧', color: '#0078D4', label: 'VM Scale Set' },
-  RecoveryVault:        { icon: '🛟', color: '#0ea5e9', label: 'Recovery Vault' },
+  VirtualMachine:       { color: '#0078D4', label: 'Virtual Machine' },
+  StorageAccount:       { color: '#3b82f6', label: 'Storage Account' },
+  SQLDatabase:          { color: '#10b981', label: 'SQL Database' },
+  AKSCluster:           { color: '#6366f1', label: 'AKS Cluster' },
+  AppService:           { color: '#a855f7', label: 'App Service' },
+  FunctionApp:          { color: '#a855f7', label: 'Function App' },
+  VirtualNetwork:       { color: '#14b8a6', label: 'Virtual Network' },
+  NetworkSecurityGroup: { color: '#eab308', label: 'Network Security Group' },
+  PublicIP:             { color: '#06b6d4', label: 'Public IP' },
+  NetworkInterface:     { color: '#14b8a6', label: 'Network Interface' },
+  ResourceGroup:        { color: '#0078D4', label: 'Resource Group' },
+  ManagedDisk:          { color: '#06b6d4', label: 'Managed Disk' },
+  KeyVault:             { color: '#eab308', label: 'Key Vault' },
+  CosmosDB:             { color: '#10b981', label: 'Cosmos DB' },
+  RedisCache:           { color: '#ef4444', label: 'Redis Cache' },
+  SQLServer:            { color: '#10b981', label: 'SQL Server' },
+  MySQLServer:          { color: '#06b6d4', label: 'MySQL Server' },
+  PostgreSQLServer:     { color: '#3b82f6', label: 'PostgreSQL Server' },
+  ContainerRegistry:    { color: '#6366f1', label: 'Container Registry' },
+  AppServicePlan:       { color: '#a855f7', label: 'App Service Plan' },
+  ApplicationGateway:   { color: '#ec4899', label: 'App Gateway' },
+  LogAnalytics:         { color: '#0ea5e9', label: 'Log Analytics' },
+  AppInsights:          { color: '#0ea5e9', label: 'App Insights' },
+  LogicApp:             { color: '#a855f7', label: 'Logic App' },
+  ManagedIdentity:      { color: '#64748b', label: 'Managed Identity' },
+  PrivateEndpoint:      { color: '#14b8a6', label: 'Private Endpoint' },
+  EventHub:             { color: '#f59e0b', label: 'Event Hub' },
+  ServiceBus:           { color: '#f59e0b', label: 'Service Bus' },
+  APIManagement:        { color: '#ec4899', label: 'API Management' },
+  VMScaleSet:           { color: '#0078D4', label: 'VM Scale Set' },
+  RecoveryVault:        { color: '#0ea5e9', label: 'Recovery Vault' },
   // ── OCI ──
-  Instance:             { icon: '🖥️', color: '#f59e0b', label: 'Compute Instance' },
-  BlockVolume:          { icon: '💽', color: '#3b82f6', label: 'Block Volume' },
-  Bucket:               { icon: '🪣', color: '#3b82f6', label: 'Object Storage' },
-  AutonomousDatabase:   { icon: '🛢️', color: '#10b981', label: 'Autonomous DB' },
-  VCN:                  { icon: '🌐', color: '#14b8a6', label: 'Virtual Cloud Network' },
+  Instance:             { color: '#f59e0b', label: 'Compute Instance' },
+  BlockVolume:          { color: '#3b82f6', label: 'Block Volume' },
+  Bucket:               { color: '#3b82f6', label: 'Object Storage' },
+  AutonomousDatabase:   { color: '#10b981', label: 'Autonomous DB' },
+  VCN:                  { color: '#14b8a6', label: 'Virtual Cloud Network' },
 };
 
 const CARD_W = 200;
@@ -209,37 +209,39 @@ export const CloudTopologyPage = () => {
   // ── Selected node detail ───────────────────────────────────────
   const selectedNode    = nodes.find((n: any) => n.id === selectedNodeId);
   const selectedNodeMeta = selectedNode
-    ? TYPE_META[selectedNode.type] ?? { icon: '☁️', color: '#94a3b8', label: selectedNode.type }
+    ? TYPE_META[selectedNode.type] ?? { color: '#94a3b8', label: selectedNode.type }
     : null;
 
   const inbound  = selectedNodeId ? edges.filter((e: any) => e.target === selectedNodeId).map((e: any) => ({ edge: e, node: nodes.find((n: any) => n.id === e.source) })).filter(c => c.node) : [];
   const outbound = selectedNodeId ? edges.filter((e: any) => e.source === selectedNodeId).map((e: any) => ({ edge: e, node: nodes.find((n: any) => n.id === e.target) })).filter(c => c.node) : [];
 
   return (
-    <div style={S.page}>
+    <div className="h-screen flex flex-col overflow-hidden bg-slate-100 px-7 pt-6 pb-0">
       {/* ── Header ──────────────────────────────────────────────── */}
-      <div style={S.header}>
+      <div className="flex items-start justify-between gap-4 flex-wrap mb-3 shrink-0">
         <div>
-          <button onClick={() => navigate('/cloud')} style={S.backBtn}>
-            <ArrowLeft size={14} /> Cloud Control Center
-          </button>
-          <h1 style={S.title}>Resource Topology Map</h1>
-          <p style={S.subtitle}>Visual dependency graph · drag to pan · scroll to zoom</p>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
+            <span className="p-2 rounded-lg bg-blue-50 text-blue-600">
+              <Share2 size={20} />
+            </span>
+            Resource Topology Map
+          </h1>
+          <p className="text-sm text-gray-500 mt-1">Visual dependency graph · drag to pan · scroll to zoom</p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div className="flex items-center gap-3 flex-wrap">
           {/* Search */}
-          <div style={S.searchBox}>
-            <Search size={14} color="#64748b" />
+          <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg px-3 py-1.5 w-[210px] focus-within:ring-2 focus-within:ring-blue-500">
+            <Search size={14} className="text-gray-400 shrink-0" />
             <input
               type="text"
               placeholder="Search resource…"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              style={S.searchInput}
+              className="w-full bg-transparent border-none outline-none text-sm text-gray-700 placeholder:text-gray-400"
             />
             {searchQuery && (
-              <button onClick={() => setSearchQuery('')} style={S.clearBtn}><X size={12} /></button>
+              <button onClick={() => setSearchQuery('')} className="text-gray-400 hover:text-gray-600 flex items-center shrink-0"><X size={12} /></button>
             )}
           </div>
 
@@ -254,44 +256,43 @@ export const CloudTopologyPage = () => {
           )}
 
           {/* Refresh */}
-          <button onClick={() => refetch()} style={S.iconBtn} title="Refresh">
+          <button
+            onClick={() => refetch()}
+            className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg px-3 py-1.5 text-sm font-semibold inline-flex items-center gap-1.5"
+            title="Refresh"
+          >
             <RefreshCw size={15} />
           </button>
         </div>
       </div>
 
       {/* ── Legend ──────────────────────────────────────────────── */}
-      <div style={S.legend}>
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-2.5 flex items-center gap-4 flex-wrap mb-3 shrink-0">
         {[
           { color: '#eab308', label: 'Security edge' },
           { color: '#10b981', label: 'Data flow' },
           { color: '#14b8a6', label: 'Contains' },
-          { color: '#94a3b8', label: 'IAM role' },
-          { color: 'rgba(148,163,184,0.4)', label: 'Default resource', dashed: true },
+          { color: '#9ca3af', label: 'IAM role' },
+          { color: '#d1d5db', label: 'Default resource' },
         ].map(l => (
-          <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{
-              width: 24, height: 2,
-              background: l.color,
-              borderTop: l.dashed ? `2px dashed ${l.color}` : undefined,
-              opacity: 0.85,
-            }} />
-            <span style={{ color: '#64748b', fontSize: 11 }}>{l.label}</span>
+          <div key={l.label} className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: l.color }} />
+            {l.label}
           </div>
         ))}
-        <div style={{ marginLeft: 'auto', color: '#475569', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Info size={11} />{nodes.length} nodes · {edges.length} edges
+        <div className="ml-auto inline-flex items-center gap-1.5 text-xs text-gray-500">
+          <Info size={12} />{nodes.length} nodes · {edges.length} edges
         </div>
       </div>
 
       {/* ── Main area ───────────────────────────────────────────── */}
-      <div style={S.mainArea}>
+      <div className="flex gap-4 flex-1 min-h-0 pb-6">
 
         {/* Canvas */}
         <div
           ref={canvasRef}
+          className="relative bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-0 select-none transition-[flex] duration-300"
           style={{
-            ...S.canvas,
             cursor: isDragging ? 'grabbing' : 'grab',
             flex: selectedNode ? '1 1 0%' : '1 1 100%',
           }}
@@ -301,32 +302,37 @@ export const CloudTopologyPage = () => {
           onMouseLeave={handleMouseUp}
         >
           {/* Column headers */}
-          <div style={S.colHeaders}>
-            <div style={S.colHeaderCell}>Identity &amp; Network</div>
-            <div style={S.colHeaderCell}>Compute &amp; Logic</div>
-            <div style={S.colHeaderCell}>Storage &amp; Database</div>
+          <div className="absolute top-0 left-0 right-0 h-11 flex items-center bg-white/95 border-b border-gray-200 pointer-events-none z-[5]">
+            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">Identity &amp; Network</div>
+            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">Compute &amp; Logic</div>
+            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">Storage &amp; Database</div>
           </div>
 
           {/* Zoom controls */}
-          <div style={S.zoomControls}>
-            <button onClick={() => setZoom(p => Math.min(3, p + 0.12))} style={S.zoomBtn} title="Zoom in"><ZoomIn size={15} /></button>
-            <span style={{ color: '#475569', fontSize: 11, fontWeight: 700, textAlign: 'center', lineHeight: 1 }}>{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom(p => Math.max(0.3, p - 0.12))} style={S.zoomBtn} title="Zoom out"><ZoomOut size={15} /></button>
-            <div style={{ width: '100%', height: 1, background: '#ffffff' }} />
-            <button onClick={resetView} style={S.zoomBtn} title="Reset view"><Maximize2 size={15} /></button>
+          <div className="absolute bottom-5 left-4 z-10 flex flex-col items-center gap-1.5 bg-white border border-gray-200 rounded-lg shadow-md p-1.5">
+            <button onClick={() => setZoom(p => Math.min(3, p + 0.12))} className="w-8 h-8 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center justify-center" title="Zoom in"><ZoomIn size={15} /></button>
+            <span className="text-[11px] font-semibold text-gray-600 text-center leading-none">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom(p => Math.max(0.3, p - 0.12))} className="w-8 h-8 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center justify-center" title="Zoom out"><ZoomOut size={15} /></button>
+            <div className="w-full h-px bg-gray-200" />
+            <button onClick={resetView} className="w-8 h-8 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center justify-center" title="Reset view"><Maximize2 size={15} /></button>
           </div>
 
-          {/* Node count badge */}
+          {/* Loading state */}
           {isLoading && (
-            <div style={S.loadingOverlay}>
-              <div style={S.spinner} />
-              <span style={{ color: '#94a3b8', fontSize: 14, fontWeight: 500, marginTop: 12 }}>Building topology graph…</span>
+            <div className="absolute inset-0 z-[8] flex flex-col items-center justify-center gap-3">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+              <span className="text-sm text-gray-500">Building topology graph…</span>
             </div>
           )}
 
+          {/* Empty state */}
           {!isLoading && nodes.length === 0 && (
-            <div style={S.loadingOverlay}>
-              <span style={{ color: '#94a3b8', fontSize: 14, marginTop: 10 }}>No topology data. Run a discovery scan first.</span>
+            <div className="absolute inset-0 z-[8] flex flex-col items-center justify-center text-center px-6">
+              <span className="p-3 rounded-full bg-gray-100 text-gray-400 mb-3">
+                <Network size={24} />
+              </span>
+              <h3 className="text-base font-semibold text-gray-900">No topology data</h3>
+              <p className="text-sm text-gray-500 mt-1">Run a discovery scan to build the dependency graph.</p>
             </div>
           )}
 
@@ -368,7 +374,7 @@ export const CloudTopologyPage = () => {
                   contains: '#14b8a6',
                   role:     '#94a3b8',
                 };
-                const c = colors[edge.type] || '#ffffff';
+                const c = colors[edge.type] || '#9ca3af';
 
                 return (
                   <g key={edge.id} style={{ opacity: hl && qm ? 1 : 0.15, transition: 'opacity 0.25s' }}>
@@ -395,7 +401,7 @@ export const CloudTopologyPage = () => {
                 if (!pos) return null;
 
                 const isDefault = node.is_default || node.name?.toLowerCase() === 'default';
-                const meta = TYPE_META[node.type] ?? { icon: '☁️', color: '#94a3b8', label: node.type };
+                const meta = TYPE_META[node.type] ?? { color: '#94a3b8', label: node.type };
                 const hl = isHighlighted(node.id);
                 const qm = matchesSearch(node);
                 const isSel = selectedNodeId === node.id;
@@ -496,25 +502,25 @@ export const CloudTopologyPage = () => {
 
         {/* ── Detail Sidebar ───────────────────────────────────── */}
         {selectedNode && selectedNodeMeta && (
-          <div style={S.sidebar}>
-            {/* Sidebar header with × close */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 20 }}>
-              <div style={{
-                width: 5, alignSelf: 'stretch', minHeight: 40, borderRadius: 3, flexShrink: 0,
-                background: selectedNodeMeta.color,
-              }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#1e293b', wordBreak: 'break-all', lineHeight: 1.3 }}>
+          <div className="w-80 shrink-0 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col overflow-y-auto">
+            {/* Sidebar header with close */}
+            <div className="flex items-start gap-3 mb-5">
+              <div
+                className="w-1.5 self-stretch min-h-10 rounded-full shrink-0"
+                style={{ background: selectedNodeMeta.color }}
+              />
+              <div className="flex-1 min-w-0">
+                <h3 className="text-[15px] font-semibold text-gray-900 break-all leading-snug">
                   {selectedNode.name}
                 </h3>
-                <span style={{ fontSize: 10, fontWeight: 700, color: selectedNodeMeta.color, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: selectedNodeMeta.color }}>
                   {selectedNodeMeta.label}
                 </span>
               </div>
               {/* Close button */}
               <button
                 onClick={() => setSelectedNodeId(null)}
-                style={S.closeBtn}
+                className="w-7 h-7 rounded-md border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 flex items-center justify-center shrink-0"
                 title="Close details"
               >
                 <X size={16} />
@@ -522,44 +528,38 @@ export const CloudTopologyPage = () => {
             </div>
 
             {/* Meta rows */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginBottom: 20, background: '#f8fafc', borderRadius: 10, overflow: 'hidden', border: '2px solid #e2e8f0' }}>
+            <dl className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden mb-5">
               {[
-                { label: 'Status', value: selectedNode.status?.toUpperCase() ?? 'N/A', color: '#10b981' },
+                { label: 'Status', value: selectedNode.status?.toUpperCase() ?? 'N/A', accent: true },
                 { label: 'Region', value: selectedNode.region },
                 { label: 'Cloud Account', value: selectedNode.account_name },
                 { label: 'Est. Cost', value: selectedNode.cost > 0 ? `$${Number(selectedNode.cost).toFixed(2)}/mo` : 'N/A' },
                 { label: 'Resource ID', value: selectedNode.provider_id, mono: true },
-              ].map((row, i) => (
-                <div key={row.label} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-                  padding: '12px 16px',
-                  background: i % 2 === 0 ? '#ffffff' : '#fafafa',
-                  gap: 10,
-                }}>
-                  <span style={{ color: '#64748b', fontSize: 12, flexShrink: 0, fontWeight: 600 }}>{row.label}</span>
-                  <span style={{
-                    color: row.color ?? '#1e293b',
-                    fontSize: 12,
-                    fontFamily: row.mono ? 'monospace' : 'inherit',
-                    wordBreak: 'break-all',
-                    textAlign: 'right',
-                    fontWeight: row.color ? 800 : 600,
-                  }}>
+              ].map(row => (
+                <div key={row.label} className="flex items-start justify-between gap-3 px-3.5 py-2.5">
+                  <dt className="text-xs text-gray-500 uppercase font-semibold shrink-0">{row.label}</dt>
+                  <dd className={`text-right break-all ${
+                    row.accent
+                      ? 'text-sm font-semibold text-emerald-600'
+                      : row.mono
+                        ? 'text-xs font-mono text-gray-800'
+                        : 'text-sm text-gray-800'
+                  }`}>
                     {row.value}
-                  </span>
+                  </dd>
                 </div>
               ))}
-            </div>
+            </dl>
 
             {/* Connections */}
             <ConnectionList title="Inputs" connections={inbound} onSelect={setSelectedNodeId} />
-            <div style={{ marginTop: 12 }} />
+            <div className="mt-3" />
             <ConnectionList title="Outputs" connections={outbound} onSelect={setSelectedNodeId} />
 
             {/* CTA */}
             <button
               onClick={() => navigate(`/cloud/resources/${selectedNode.id}`)}
-              style={S.detailsBtn}
+              className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 py-2.5 text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
             >
               View Full Resource Details <ExternalLink size={13} />
             </button>
@@ -577,47 +577,34 @@ function ConnectionList({ title, connections, onSelect }: {
   onSelect: (id: string) => void;
 }) {
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#334155', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 10 }}>
-        {title} <span style={{ color: '#64748b', fontWeight: 700 }}>({connections.length})</span>
+    <div className="mb-2">
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+        {title} <span className="text-gray-400">({connections.length})</span>
       </div>
       {connections.length === 0
-        ? <div style={{ color: '#94a3b8', fontSize: 13, fontStyle: 'italic', paddingLeft: 4 }}>None</div>
+        ? <div className="text-sm text-gray-400 italic pl-1">None</div>
         : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="flex flex-col gap-1.5">
             {connections.map((c, i) => {
               const m = TYPE_META[c.node.type] ?? { color: '#94a3b8' };
               return (
-                <div
+                <button
                   key={i}
+                  type="button"
                   onClick={() => onSelect(c.node.id)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    padding: '10px 12px',
-                    background: '#f8fafc',
-                    border: '2px solid #e2e8f0',
-                    borderRadius: 10, cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = '#e0e7ff';
-                    e.currentTarget.style.borderColor = '#c7d2fe';
-                    e.currentTarget.style.transform = 'translateX(4px)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = '#f8fafc';
-                    e.currentTarget.style.borderColor = '#e2e8f0';
-                    e.currentTarget.style.transform = 'translateX(0)';
-                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 bg-white border border-gray-200 rounded-lg text-left cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition-colors"
                 >
-                  <span style={{ width: 4, height: 24, borderRadius: 2, background: m.color, flexShrink: 0 }} />
-                  <span style={{ color: '#1e293b', fontSize: 12, fontWeight: 600, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span className="w-1 h-6 rounded-sm shrink-0" style={{ background: m.color }} />
+                  <span className="flex-1 text-sm font-medium text-gray-800 truncate">
                     {c.node.name}
                   </span>
-                  <span style={{ fontSize: 10, color: m.color, background: `${m.color}25`, padding: '3px 8px', borderRadius: 6, fontWeight: 800, flexShrink: 0 }}>
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0"
+                    style={{ color: m.color, background: `${m.color}20` }}
+                  >
                     {c.edge.type}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -626,243 +613,3 @@ function ConnectionList({ title, connections, onSelect }: {
     </div>
   );
 }
-
-// ── Styles ────────────────────────────────────────────────────────
-const S: Record<string, React.CSSProperties> = {
-  page: {
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    overflow: 'hidden',
-    background: 'linear-gradient(160deg, #f1f5f9 0%, #f1f5f9 55%, #f1f5f9 100%)',
-    padding: '24px 28px 0',
-    fontFamily: "'Inter', -apple-system, sans-serif",
-    boxSizing: 'border-box',
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-    flexShrink: 0,
-  },
-  backBtn: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '5px 12px',
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: 7,
-    color: '#94a3b8',
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    marginBottom: 6,
-  },
-  title: {
-    margin: '0 0 2px',
-    fontSize: 26,
-    fontWeight: 800,
-    color: '#1e293b',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    margin: 0,
-    color: '#475569',
-    fontSize: 13,
-  },
-  searchBox: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: 9,
-    padding: '7px 12px',
-    width: 210,
-  },
-  searchInput: {
-    background: 'none',
-    border: 'none',
-    outline: 'none',
-    color: '#334155',
-    fontSize: 13,
-    width: '100%',
-    fontFamily: 'inherit',
-  },
-  clearBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#475569',
-    cursor: 'pointer',
-    padding: 0,
-    display: 'flex',
-    alignItems: 'center',
-  },
-  select: {
-    background: '#ffffff',
-    border: '1px solid #e2e8f0',
-    borderRadius: 9,
-    color: '#334155',
-    fontSize: 13,
-    padding: '7px 12px',
-    fontFamily: 'inherit',
-    outline: 'none',
-    cursor: 'pointer',
-  },
-  iconBtn: {
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: 9,
-    color: '#94a3b8',
-    padding: '7px 10px',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-  },
-  legend: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 20,
-    padding: '8px 14px',
-    background: '#f8fafc',
-    border: '1px solid #e2e8f0',
-    borderRadius: 10,
-    marginBottom: 14,
-    flexShrink: 0,
-    flexWrap: 'wrap',
-  },
-  mainArea: {
-    display: 'flex',
-    gap: 16,
-    flex: 1,
-    minHeight: 0,
-    paddingBottom: 24,
-  },
-  canvas: {
-    position: 'relative',
-    background: 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)',
-    border: '2px solid #e2e8f0',
-    borderRadius: 16,
-    overflow: 'hidden',
-    minHeight: 0,
-    userSelect: 'none',
-    transition: 'flex 0.3s ease',
-  },
-  colHeaders: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 46,
-    display: 'flex',
-    alignItems: 'center',
-    background: 'linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.95) 100%)',
-    borderBottom: '2px solid #e2e8f0',
-    pointerEvents: 'none',
-    zIndex: 5,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-  },
-  colHeaderCell: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 12,
-    fontWeight: 800,
-    textTransform: 'uppercase',
-    color: '#334155',
-    letterSpacing: 0.8,
-  },
-  zoomControls: {
-    position: 'absolute',
-    bottom: 20,
-    left: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: 6,
-    background: 'rgba(255,255,255,0.98)',
-    border: '2px solid #cbd5e1',
-    borderRadius: 12,
-    padding: '8px 6px',
-    zIndex: 10,
-    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-  },
-  zoomBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    border: '1px solid #e2e8f0',
-    background: '#f8fafc',
-    color: '#334155',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    transition: 'all 0.15s',
-    fontWeight: 600,
-  },
-  loadingOverlay: {
-    position: 'absolute',
-    inset: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 8,
-  },
-  spinner: {
-    width: 40,
-    height: 40,
-    borderRadius: '50%',
-    border: '3px solid rgba(96,165,250,0.15)',
-    borderTopColor: '#60a5fa',
-    animation: 'spin 0.9s linear infinite',
-  },
-  sidebar: {
-    width: 320,
-    flexShrink: 0,
-    background: '#ffffff',
-    border: '2px solid #e2e8f0',
-    borderRadius: 16,
-    padding: '24px 20px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 0,
-    overflowY: 'auto',
-    boxShadow: '-4px 0 20px rgba(0,0,0,0.08)',
-  },
-  closeBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 7,
-    border: '1px solid #e2e8f0',
-    background: '#f8fafc',
-    color: '#64748b',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    flexShrink: 0,
-    transition: 'all 0.15s',
-  },
-  detailsBtn: {
-    marginTop: 18,
-    width: '100%',
-    padding: '13px',
-    borderRadius: 10,
-    border: '2px solid #3b82f6',
-    background: '#eff6ff',
-    color: '#1e40af',
-    fontSize: 13,
-    fontWeight: 800,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    transition: 'all 0.15s',
-  },
-};

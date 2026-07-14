@@ -8,7 +8,7 @@
  *   mode="multi"   → "ALL" + per-account selection (Dashboard)
  */
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Cloud, Plus, Search } from 'lucide-react';
+import { ChevronDown, Cloud, Globe, Plus, Search } from 'lucide-react';
 import { CloudAccount } from '../types/cloud';
 import { usePermissions } from '../../../hooks/usePermissions';
 
@@ -47,6 +47,34 @@ export function getProviderColor(provider: string): string {
 export function getProviderDot(provider: string): string {
   return PROVIDER_META[provider]?.logo ?? '⚪';
 }
+
+// ─── Presentation-only styling maps (light theme) ─────────────────────────────
+
+const BADGE_BASE = 'inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border';
+
+const PROVIDER_BADGE_CLASS: Record<string, string> = {
+  AWS: 'bg-orange-50 text-orange-700 border-orange-200',
+  Azure: 'bg-sky-50 text-sky-700 border-sky-200',
+  OCI: 'bg-red-50 text-red-700 border-red-200',
+};
+
+const PROVIDER_HEADER_TEXT: Record<string, string> = {
+  AWS: 'text-orange-700',
+  Azure: 'text-sky-700',
+  OCI: 'text-red-700',
+};
+
+const PROVIDER_ACTIVE_PILL: Record<string, string> = {
+  AWS: 'border-orange-300 bg-orange-50',
+  Azure: 'border-sky-300 bg-sky-50',
+  OCI: 'border-red-300 bg-red-50',
+};
+
+const PROVIDER_COUNT_ACTIVE: Record<string, string> = {
+  AWS: 'bg-orange-100 text-orange-700',
+  Azure: 'bg-sky-100 text-sky-700',
+  OCI: 'bg-red-100 text-red-700',
+};
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -115,117 +143,66 @@ export const CloudProviderSelector: React.FC<Props> = ({
   const hasResults = providers.some(p => filteredGrouped[p].length > 0);
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div className="flex items-center gap-2.5">
       {/* ── Trigger Button ── */}
-      <div ref={ref} style={{ position: 'relative' }}>
+      <div ref={ref} className="relative">
         <button
           onClick={() => setOpen(v => !v)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '9px 16px',
-            background: open ? '#e2e8f0' : '#e2e8f0',
-            border: `1.5px solid ${open ? 'rgba(255,255,255,0.2)' : '#e2e8f0'}`,
-            borderRadius: 12,
-            color: '#334155',
-            fontSize: 13, fontWeight: 600,
-            cursor: 'pointer', fontFamily: 'inherit',
-            transition: 'all 0.15s',
-            minWidth: 200,
-            whiteSpace: 'nowrap',
-          }}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px] whitespace-nowrap transition-colors"
         >
           {triggerProvider ? (
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 22, height: 22, borderRadius: 6,
-              background: PROVIDER_META[triggerProvider]?.accent,
-              fontSize: 13,
-            }}>
-              {getProviderDot(triggerProvider)}
-            </span>
-          ) : (
-            <Cloud size={15} style={{ color: '#64748b' }} />
-          )}
-          <span style={{ flex: 1, textAlign: 'left' }}>{triggerLabel}</span>
-          {triggerProvider && (
-            <span style={{
-              fontSize: 10, fontWeight: 700,
-              padding: '2px 7px', borderRadius: 8,
-              background: PROVIDER_META[triggerProvider]?.accent,
-              color: PROVIDER_META[triggerProvider]?.color,
-              letterSpacing: 0.5,
-            }}>
+            <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[triggerProvider] ?? 'bg-gray-50 text-gray-700 border-gray-200'}`}>
               {triggerProvider}
             </span>
+          ) : (
+            <Cloud size={15} className="text-gray-500" />
           )}
-          <ChevronDown size={14} style={{
-            color: '#64748b',
-            transform: open ? 'rotate(180deg)' : 'none',
-            transition: 'transform 0.2s',
-          }} />
+          <span className="flex-1 text-left truncate">{triggerLabel}</span>
+          <ChevronDown
+            size={14}
+            className={`text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          />
         </button>
 
         {/* ── Dropdown Panel ── */}
         {open && (
-          <div style={{
-            position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 9999,
-            minWidth: 320,
-            background: '#f1f5f9',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 16,
-            boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
-            overflow: 'hidden',
-            animation: 'fadeSlideDown 0.15s ease',
-          }}>
+          <div className="absolute left-0 top-full mt-2 z-[9999] min-w-[320px] bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
             {/* Search */}
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid #e2e8f0' }}>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                background: '#ffffff',
-                border: '1px solid #e2e8f0',
-                borderRadius: 8, padding: '7px 12px',
-              }}>
-                <Search size={13} style={{ color: '#64748b', flexShrink: 0 }} />
+            <div className="px-3 py-3 border-b border-gray-200">
+              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5">
+                <Search size={13} className="shrink-0 text-gray-400" />
                 <input
                   autoFocus
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Search accounts..."
-                  style={{
-                    background: 'none', border: 'none', outline: 'none',
-                    color: '#334155', fontSize: 13, fontFamily: 'inherit', width: '100%',
-                  }}
+                  className="w-full bg-transparent border-none outline-none text-sm text-gray-700 placeholder:text-gray-400"
                 />
               </div>
             </div>
 
-            <div style={{ maxHeight: 380, overflowY: 'auto', padding: '8px 0' }}>
+            <div className="max-h-[380px] overflow-y-auto py-2">
               {/* ALL option (only in multi mode) */}
               {mode === 'multi' && (
                 <button
                   onClick={() => { onSelect('ALL'); setOpen(false); setSearch(''); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    width: '100%', padding: '10px 16px',
-                    background: selected === 'ALL' ? 'rgba(96,165,250,0.1)' : 'transparent',
-                    border: 'none',
-                    color: selected === 'ALL' ? '#60a5fa' : '#94a3b8',
-                    fontSize: 13, fontWeight: 600,
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    textAlign: 'left', transition: 'background 0.1s',
-                  }}
+                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors ${
+                    selected === 'ALL'
+                      ? 'bg-blue-50 text-blue-700 font-semibold'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
                 >
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 28, height: 28, borderRadius: 8,
-                    background: 'rgba(96,165,250,0.12)', fontSize: 16,
-                  }}>🌐</span>
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                    <Globe size={14} />
+                  </span>
                   <div>
-                    <div style={{ fontWeight: 700 }}>All Providers</div>
-                    <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>{accounts.length} accounts total</div>
+                    <div className={selected === 'ALL' ? 'font-semibold text-blue-700' : 'font-medium text-gray-900'}>
+                      All Providers
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">{accounts.length} accounts total</div>
                   </div>
                   {selected === 'ALL' && (
-                    <span style={{ marginLeft: 'auto', width: 8, height: 8, borderRadius: '50%', background: '#60a5fa' }} />
+                    <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-blue-600" />
                   )}
                 </button>
               )}
@@ -238,24 +215,16 @@ export const CloudProviderSelector: React.FC<Props> = ({
                 return (
                   <div key={provider}>
                     {/* Provider header */}
-                    <div style={{
-                      display: 'flex', alignItems: 'center', gap: 8,
-                      padding: '8px 16px 4px',
-                      marginTop: 4,
-                    }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        width: 20, height: 20, borderRadius: 5,
-                        background: meta.accent, fontSize: 12,
-                      }}>{meta.logo}</span>
-                      <span style={{
-                        fontSize: 10, fontWeight: 800, textTransform: 'uppercase',
-                        letterSpacing: 1, color: meta.color,
-                      }}>{meta.label}</span>
-                      <span style={{
-                        marginLeft: 'auto', fontSize: 10, fontWeight: 700,
-                        color: '#475569',
-                      }}>{provAccounts.length} acct{provAccounts.length !== 1 ? 's' : ''}</span>
+                    <div className="flex items-center gap-2 px-3 pt-3 pb-1">
+                      <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[provider]}`}>
+                        {provider}
+                      </span>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider ${PROVIDER_HEADER_TEXT[provider]}`}>
+                        {meta.label}
+                      </span>
+                      <span className="ml-auto text-[10px] font-semibold text-gray-400">
+                        {provAccounts.length} acct{provAccounts.length !== 1 ? 's' : ''}
+                      </span>
                     </div>
 
                     {/* Account chips */}
@@ -265,34 +234,23 @@ export const CloudProviderSelector: React.FC<Props> = ({
                         <button
                           key={acc.id}
                           onClick={() => { onSelect(acc.id); setOpen(false); setSearch(''); }}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10,
-                            width: '100%', padding: '9px 16px 9px 36px',
-                            background: isSelected ? meta.accent : 'transparent',
-                            border: 'none',
-                            color: isSelected ? meta.color : '#94a3b8',
-                            fontSize: 13, fontWeight: isSelected ? 700 : 500,
-                            cursor: 'pointer', fontFamily: 'inherit',
-                            textAlign: 'left', transition: 'background 0.1s',
-                          }}
+                          className={`flex w-full items-center gap-2.5 px-3 py-2 pl-6 text-left text-sm transition-colors ${
+                            isSelected
+                              ? 'bg-blue-50 text-blue-700 font-semibold'
+                              : 'text-gray-700 hover:bg-gray-50'
+                          }`}
                         >
-                          <div style={{
-                            width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-                            background: isSelected ? meta.color : '#334155',
-                          }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{
-                              fontWeight: 600, color: isSelected ? '#f1f5f9' : '#cbd5e1',
-                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                            }}>
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                          <div className="min-w-0 flex-1">
+                            <div className={`truncate ${isSelected ? 'font-semibold text-blue-700' : 'font-medium text-gray-900'}`}>
                               {acc.account_name}
                             </div>
-                            <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
+                            <div className="text-xs text-gray-500 mt-0.5">
                               {acc.environment || 'production'} · {acc.tenant_or_region || 'multi-region'}
                             </div>
                           </div>
                           {isSelected && (
-                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flexShrink: 0 }} />
+                            <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
                           )}
                         </button>
                       );
@@ -302,7 +260,7 @@ export const CloudProviderSelector: React.FC<Props> = ({
               })}
 
               {!hasResults && (
-                <div style={{ padding: '24px 16px', textAlign: 'center', color: '#475569', fontSize: 13 }}>
+                <div className="px-4 py-6 text-center text-sm text-gray-500">
                   No accounts match "{search}"
                 </div>
               )}
@@ -310,23 +268,12 @@ export const CloudProviderSelector: React.FC<Props> = ({
 
             {/* Footer: add account (gated by Add permission) */}
             {onAddAccount && canHere('add') && (
-              <div style={{ borderTop: '1px solid #e2e8f0', padding: '8px 0' }}>
+              <div className="border-t border-gray-200 py-2">
                 <button
                   onClick={() => { onAddAccount(); setOpen(false); }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    width: '100%', padding: '10px 16px',
-                    background: 'transparent', border: 'none',
-                    color: '#60a5fa', fontSize: 13, fontWeight: 600,
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    textAlign: 'left',
-                  }}
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"
                 >
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 28, height: 28, borderRadius: 8,
-                    background: 'rgba(96,165,250,0.12)', flexShrink: 0,
-                  }}>
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
                     <Plus size={14} />
                   </span>
                   Connect New Cloud Account
@@ -339,14 +286,6 @@ export const CloudProviderSelector: React.FC<Props> = ({
 
       {/* ── Inline scan / action button beside selector ── */}
       {ScanButton}
-
-      {/* Animation keyframe (injected once) */}
-      <style>{`
-        @keyframes fadeSlideDown {
-          from { opacity: 0; transform: translateY(-6px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
     </div>
   );
 };
@@ -367,35 +306,30 @@ export const ProviderSummaryBar: React.FC<ProviderSummaryBarProps> = ({
   const providers = ['AWS', 'Azure', 'OCI'] as const;
 
   return (
-    <div style={{
-      display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 24,
-    }}>
+    <div className="mb-6 flex flex-wrap gap-3">
       {/* All */}
       <button
         onClick={() => onSelectProvider(null)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 10,
-          padding: '10px 18px',
-          background: !selectedProvider ? 'rgba(96,165,250,0.1)' : '#eef2f6',
-          border: `1.5px solid ${!selectedProvider ? '#60a5fa' : '#e2e8f0'}`,
-          borderRadius: 14,
-          cursor: 'pointer', fontFamily: 'inherit',
-          transition: 'all 0.15s',
-        }}
+        className={`flex items-center gap-2.5 rounded-xl border px-4 py-2.5 transition-colors ${
+          !selectedProvider
+            ? 'border-blue-500 bg-blue-50'
+            : 'border-gray-200 bg-white hover:bg-gray-50'
+        }`}
       >
-        <span style={{ fontSize: 18 }}>🌐</span>
-        <div style={{ textAlign: 'left' }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: !selectedProvider ? '#60a5fa' : '#e2e8f0', letterSpacing: 0.3 }}>
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+          <Globe size={18} />
+        </span>
+        <div className="text-left">
+          <div className={`text-xs font-bold tracking-wide ${!selectedProvider ? 'text-blue-700' : 'text-gray-700'}`}>
             All Clouds
           </div>
-          <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
+          <div className="text-[11px] text-gray-500 mt-0.5">
             {accounts.length} accounts
           </div>
         </div>
       </button>
 
       {providers.map(provider => {
-        const meta = PROVIDER_META[provider];
         const count = accounts.filter(a => a.provider === provider).length;
         const isActive = selectedProvider === provider;
 
@@ -403,51 +337,32 @@ export const ProviderSummaryBar: React.FC<ProviderSummaryBarProps> = ({
           <button
             key={provider}
             onClick={() => onSelectProvider(provider === selectedProvider ? null : provider)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '10px 18px',
-              background: isActive ? meta.accent : '#eef2f6',
-              border: `1.5px solid ${isActive ? meta.color : '#e2e8f0'}`,
-              borderRadius: 14,
-              cursor: 'pointer', fontFamily: 'inherit',
-              transition: 'all 0.15s',
-              opacity: count === 0 ? 0.4 : 1,
-            }}
+            className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+              isActive
+                ? PROVIDER_ACTIVE_PILL[provider]
+                : 'border-gray-200 bg-white hover:bg-gray-50'
+            }`}
             disabled={count === 0}
           >
-            {/* Provider logo */}
-            <span style={{
-              width: 36, height: 36, borderRadius: 10,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: meta.bg, fontSize: 20, flexShrink: 0,
-            }}>
-              {meta.logo}
+            {/* Provider badge */}
+            <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[provider]}`}>
+              {provider}
             </span>
 
-            <div style={{ textAlign: 'left' }}>
-              <div style={{
-                fontSize: 13, fontWeight: 800,
-                color: isActive ? meta.color : '#e2e8f0',
-                letterSpacing: 0.3,
-              }}>
+            <div className="text-left">
+              <div className={`text-[13px] font-bold tracking-wide ${isActive ? PROVIDER_HEADER_TEXT[provider] : 'text-gray-700'}`}>
                 {provider}
               </div>
-              <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
+              <div className="text-[11px] text-gray-500 mt-0.5">
                 {count} account{count !== 1 ? 's' : ''}
               </div>
             </div>
 
             {/* Account count badge */}
             {count > 0 && (
-              <span style={{
-                marginLeft: 4,
-                width: 22, height: 22, borderRadius: '50%',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: isActive ? meta.color : '#e2e8f0',
-                color: isActive ? '#fff' : '#94a3b8',
-                fontSize: 11, fontWeight: 800,
-                flexShrink: 0,
-              }}>
+              <span className={`ml-1 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+                isActive ? PROVIDER_COUNT_ACTIVE[provider] : 'bg-gray-100 text-gray-600'
+              }`}>
                 {count}
               </span>
             )}

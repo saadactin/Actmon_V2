@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bell, Settings, Send, CheckCircle, AlertTriangle, ShieldAlert } from 'lucide-react';
+import { Bell, Send, CheckCircle2, AlertTriangle, ShieldAlert, Loader2 } from 'lucide-react';
+
+const SEVERITY_PILL_CLASSES: Record<string, string> = {
+  CRITICAL: 'bg-red-50 text-red-700 border-red-200',
+  HIGH: 'bg-orange-50 text-orange-700 border-orange-200',
+  MEDIUM: 'bg-amber-50 text-amber-700 border-amber-200',
+  LOW: 'bg-blue-50 text-blue-700 border-blue-200',
+  INFO: 'bg-gray-100 text-gray-600 border-gray-200',
+};
 
 export const AlertsPage = () => {
   const navigate = useNavigate();
@@ -60,81 +68,69 @@ export const AlertsPage = () => {
   };
 
   return (
-    <div style={PAGE_STYLE}>
-      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
-        <div>
-          <button 
-            onClick={() => navigate('/cloud')} 
-            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, padding: 0 }}
+    <div className="p-6 space-y-6">
+      <div className="max-w-[1000px] mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
+                <Bell size={20} />
+              </div>
+              Real-Time Alerts
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">
+              In-app anomaly detection and security incident alerts.
+            </p>
+          </div>
+          <button
+            onClick={handleSimulate}
+            disabled={simulating}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <ArrowLeft size={16} /> Cloud Control Center
+            <Send size={16} /> {simulating ? 'Simulating...' : 'Simulate Anomaly'}
           </button>
-          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
-            🚨 Real-Time Alerts
-          </h1>
-          <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
-            In-app anomaly detection and security incident alerts.
-          </p>
         </div>
-        <button 
-          onClick={handleSimulate}
-          disabled={simulating}
-          style={{
-            padding: '10px 16px', background: 'rgba(245,158,11,0.15)', color: '#f59e0b',
-            border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, fontWeight: 600, cursor: simulating ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s', fontSize: 13
-          }}
-        >
-          <Send size={16} /> {simulating ? 'Simulating...' : 'Simulate Anomaly'}
-        </button>
-      </div>
 
-      <div style={{
-        background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 12, padding: 24, minHeight: 400
-      }}>
         {loading ? (
-          <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: 40 }}>Loading alerts...</div>
+          <div className="flex flex-col items-center justify-center gap-3 py-24">
+            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+            <p className="text-sm text-gray-500">Loading alerts...</p>
+          </div>
         ) : alerts.length === 0 ? (
-          <div style={{ color: '#94a3b8', textAlign: 'center', marginTop: 80, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <Bell size={48} style={{ opacity: 0.2, marginBottom: 16 }} />
-            <div style={{ fontSize: 16, fontWeight: 600, color: '#475569' }}>No alerts yet</div>
-            <div style={{ fontSize: 13, marginTop: 4 }}>You will see anomalies and critical issues here.</div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-12 px-6">
+            <CheckCircle2 size={40} className="text-green-500 mb-3" />
+            <h3 className="text-base font-semibold text-gray-900">No alerts yet</h3>
+            <p className="text-sm text-gray-500 mt-1">You will see anomalies and critical issues here.</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="space-y-4">
             {alerts.map((alert) => (
-              <div key={alert.id} style={{
-                background: alert.is_read ? 'rgba(0,0,0,0.15)' : 'rgba(239,68,68,0.05)',
-                border: `1px solid ${alert.is_read ? '#e2e8f0' : 'rgba(239,68,68,0.2)'}`,
-                borderLeft: `4px solid ${alert.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b'}`,
-                borderRadius: 8, padding: 20, display: 'flex', gap: 16, alignItems: 'flex-start'
-              }}>
-                <div style={{ color: alert.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b', marginTop: 2 }}>
-                  {alert.severity === 'CRITICAL' ? <ShieldAlert size={24} /> : <AlertTriangle size={24} />}
+              <div
+                key={alert.id}
+                className={`bg-white rounded-xl border border-gray-200 shadow-sm border-l-4 p-5 flex items-start gap-4 ${alert.severity === 'CRITICAL' ? 'border-l-red-500' : 'border-l-amber-500'} ${alert.is_read ? 'opacity-70' : ''}`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${alert.severity === 'CRITICAL' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
+                  {alert.severity === 'CRITICAL' ? <ShieldAlert size={20} /> : <AlertTriangle size={20} />}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <h3 style={{ margin: 0, color: '#1e293b', fontSize: 16, fontWeight: 700 }}>{alert.anomaly_type}</h3>
-                    <span style={{ fontSize: 12, color: '#64748b' }}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="text-[15px] font-semibold text-gray-900">{alert.anomaly_type}</h3>
+                    <span className="text-xs text-gray-500 whitespace-nowrap">
                       {new Date(alert.created_at).toLocaleString()}
                     </span>
                   </div>
-                  <p style={{ margin: '8px 0 16px 0', color: '#94a3b8', fontSize: 14, lineHeight: 1.5 }}>
+                  <p className="text-sm text-gray-600 mt-1.5 leading-relaxed">
                     {alert.details}
                   </p>
-                  <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                    <span style={{
-                      padding: '4px 8px', background: alert.severity === 'CRITICAL' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)',
-                      color: alert.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b', borderRadius: 4, fontSize: 11, fontWeight: 700, letterSpacing: 0.5
-                    }}>
+                  <div className="flex items-center gap-3 mt-3">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border ${SEVERITY_PILL_CLASSES[alert.severity] || SEVERITY_PILL_CLASSES.INFO}`}>
                       {alert.severity}
                     </span>
                     {!alert.is_read && (
-                      <button 
+                      <button
                         onClick={() => handleMarkRead(alert.id)}
-                        style={{ background: 'transparent', border: 'none', color: '#3b82f6', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                        className="text-sm font-semibold text-blue-600 hover:text-blue-700"
                       >
                         Mark as read
                       </button>
@@ -147,13 +143,5 @@ export const AlertsPage = () => {
         )}
       </div>
     </div>
-    </div>
   );
-};
-
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100%',
-  background: '#f1f5f9',
-  padding: '28px 32px',
-  fontFamily: "'Inter', -apple-system, sans-serif",
 };

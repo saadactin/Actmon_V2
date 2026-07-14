@@ -1,7 +1,6 @@
 import React from 'react';
 import { useTriggerDiscovery } from '../hooks/useDiscovery';
-import { Button, Spinner } from '@fluentui/react-components';
-import { Search } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useCloudStore } from '../state/cloudStore';
 import { usePermissions } from '../../../hooks/usePermissions';
 
@@ -21,14 +20,17 @@ export const TriggerScanButton: React.FC<Props> = ({ accountId }) => {
   // Running discovery is a state-changing action → requires Execute on this page.
   if (!canHere('execute')) return null;
 
+  const isScanning = isPending || !!activeJobId;
+
   return (
-    <Button 
-      appearance="primary" 
-      icon={isPending || activeJobId ? <Spinner size="tiny" /> : <Search className="h-4 w-4" />} 
+    <button
+      type="button"
       onClick={handleScan}
-      disabled={isPending || !!activeJobId}
+      disabled={isScanning}
+      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
     >
+      <RefreshCw className={`h-4 w-4 ${isScanning ? 'animate-spin' : ''}`} />
       {activeJobId ? 'Scan Running...' : 'Run Discovery Scan'}
-    </Button>
+    </button>
   );
 };

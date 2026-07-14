@@ -9,14 +9,14 @@ import { useNavigate } from 'react-router-dom';
 
 type Provider = 'AWS' | 'Azure' | 'OCI';
 
-const PROVIDERS: { id: Provider; label: string; hint: string; color: string; bg: string }[] = [
-  { id: 'AWS', label: 'AWS', hint: 'Amazon Web Services', color: '#b45309', bg: '#fff7ed' },
-  { id: 'Azure', label: 'Azure', hint: 'Microsoft Azure', color: '#1d4ed8', bg: '#eff6ff' },
-  { id: 'OCI', label: 'OCI', hint: 'Oracle Cloud', color: '#b91c1c', bg: '#fef2f2' },
+const PROVIDERS: { id: Provider; label: string; hint: string; activeText: string; activeBg: string }[] = [
+  { id: 'AWS', label: 'AWS', hint: 'Amazon Web Services', activeText: 'text-orange-700', activeBg: 'bg-orange-50' },
+  { id: 'Azure', label: 'Azure', hint: 'Microsoft Azure', activeText: 'text-sky-700', activeBg: 'bg-sky-50' },
+  { id: 'OCI', label: 'OCI', hint: 'Oracle Cloud', activeText: 'text-red-700', activeBg: 'bg-red-50' },
 ];
 
-const LBL = 'block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1.5';
-const INP = 'w-full h-10 px-3 rounded-xl border border-slate-200 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 bg-white transition-all';
+const LBL = 'block text-sm font-medium text-gray-700 mb-1';
+const INP = 'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500';
 
 export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) => {
   const [provider, setProvider] = useState<Provider>('AWS');
@@ -47,7 +47,7 @@ export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) =
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       {/* Provider selector */}
       <div>
         <label className={LBL}>Cloud Provider</label>
@@ -56,10 +56,11 @@ export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) =
             const active = provider === p.id;
             return (
               <button key={p.id} type="button" onClick={() => setProvider(p.id)}
-                className={`rounded-xl border-2 px-3 py-3 text-left transition-all ${active ? 'border-blue-500 shadow-sm' : 'border-slate-200 hover:border-slate-300'}`}
-                style={active ? { background: p.bg } : { background: '#ffffff' }}>
-                <span className="block text-sm font-black" style={{ color: active ? p.color : '#334155' }}>{p.label}</span>
-                <span className="block text-[10px] text-slate-400 mt-0.5 leading-tight">{p.hint}</span>
+                className={`rounded-lg border-2 px-3 py-3 text-left transition-colors ${
+                  active ? `border-blue-500 shadow-sm ${p.activeBg}` : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}>
+                <span className={`block text-sm font-bold ${active ? p.activeText : 'text-gray-700'}`}>{p.label}</span>
+                <span className="block text-[11px] text-gray-500 mt-0.5 leading-tight">{p.hint}</span>
               </button>
             );
           })}
@@ -90,8 +91,8 @@ export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) =
       </div>
 
       {/* Credentials — per provider */}
-      <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 space-y-4">
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Credentials</p>
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Credentials</p>
 
         {provider === 'AWS' && (
           <>
@@ -115,20 +116,20 @@ export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) =
             <div><label className={LBL}>User OCID</label><input className={INP} {...register('oci_user_ocid', { required: provider === 'OCI' })} /></div>
             <div><label className={LBL}>Fingerprint</label><input className={INP} {...register('oci_fingerprint', { required: provider === 'OCI' })} /></div>
             <div><label className={LBL}>Private Key Content</label><textarea className={`${INP} h-24 py-2 resize-none font-mono text-xs`} {...register('oci_private_key_content', { required: provider === 'OCI' })} placeholder="-----BEGIN PRIVATE KEY-----" /></div>
-            <div><label className={LBL}>Passphrase <span className="text-slate-300 font-normal normal-case">(optional)</span></label><input className={INP} type="password" {...register('oci_passphrase')} /></div>
+            <div><label className={LBL}>Passphrase <span className="text-gray-400 font-normal">(optional)</span></label><input className={INP} type="password" {...register('oci_passphrase')} /></div>
           </>
         )}
       </div>
 
       <label className="flex items-center gap-2.5 cursor-pointer select-none">
-        <input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" {...register('auto_discovery')} />
-        <span className="text-sm text-slate-600 font-medium">Enable Auto-Discovery after connecting</span>
+        <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" {...register('auto_discovery')} />
+        <span className="text-sm font-medium text-gray-700">Enable Auto-Discovery after connecting</span>
       </label>
 
-      <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+      <div className="flex justify-end gap-2 pt-4 border-t border-gray-100">
         <button type="submit" disabled={isPending}
-          className="inline-flex items-center gap-2 h-10 px-6 rounded-xl text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-all shadow-sm">
-          {isPending ? <><Loader2 size={15} className="animate-spin" /> Connecting…</> : 'Add Account'}
+          className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+          {isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Connecting…</> : 'Add Account'}
         </button>
       </div>
     </form>

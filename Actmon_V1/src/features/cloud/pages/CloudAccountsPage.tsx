@@ -1,46 +1,39 @@
 import React from 'react';
 import { CloudAccountList } from '../components/CloudAccountList';
 import { useCloudStore } from '../state/cloudStore';
-import { Button } from '@fluentui/react-components';
-import { Plus } from 'lucide-react';
+import { Cloud, Plus } from 'lucide-react';
 import { usePermissions } from '../../../hooks/usePermissions';
-
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100%',
-  background: '#f1f5f9',
-  padding: '28px 32px',
-  fontFamily: "'Inter', -apple-system, sans-serif",
-};
-
-const UI_BTN_STYLE: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid #e2e8f0',
-  color: '#475569',
-};
 
 export const CloudAccountsPage = () => {
   const setDrawerOpen = useCloudStore(state => state.setAddAccountDrawerOpen);
   const { canHere } = usePermissions();
 
   return (
-    <div style={PAGE_STYLE}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+    <div className="p-6 space-y-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5 }}>
-            ☁️ Cloud Accounts
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
+            <span className="p-2 rounded-lg bg-blue-50 text-blue-600">
+              <Cloud className="h-5 w-5" />
+            </span>
+            Cloud Accounts
           </h1>
-          <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
+          <p className="text-sm text-gray-500 mt-1">
             Manage connections to AWS, Azure, and OCI.
           </p>
         </div>
         {canHere('add') && (
-          <Button appearance="primary" icon={<Plus className="h-4 w-4" />} onClick={() => setDrawerOpen(true)}>
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
             Add Account
-          </Button>
+          </button>
         )}
       </div>
 
-      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 16, padding: '20px 24px' }}>
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
         <CloudAccountList />
       </div>
     </div>
