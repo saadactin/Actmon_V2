@@ -1,10 +1,15 @@
 """Cost estimation service — calculates approximate monthly costs from resource configs."""
 from __future__ import annotations
 
+import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repository.resource_repo import ResourceRepository
+
+# Real billing-API lookups are slow (2-10s) and rate-limited, so cache per account.
+_REAL_COST_TTL_SECONDS = 900
+_real_cost_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
 
 # Approximate AWS pricing (ap-south-1 Mumbai, USD/month)
 EC2_PRICING: Dict[str, float] = {
@@ -118,6 +123,41 @@ class CostService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
+    async def _fetch_real_costs(self, account) -> List[Dict[str, Any]]:
+        """Last-30-day actual spend from the provider's billing API (cached).
+
+        Returns [] when the provider reports no cost records — e.g. sponsored /
+        credit Azure subscriptions, whose spend Microsoft does not expose via
+        the Cost Management API — or when the query fails. Callers fall back
+        to config-based estimates in that case.
+        """
+        key = str(account.id)
+        cached = _real_cost_cache.get(key)
+        if cached and time.time() - cached[0] < _REAL_COST_TTL_SECONDS:
+            return cached[1]
+
+        from app.utils.encryption import decrypt_credentials
+        from app.providers.aws.aws_provider import AWSProvider
+        from app.providers.azure.azure_provider import AzureProvider
+        from app.providers.oci.oci_provider import OCIProvider
+
+        provider_map = {
+            "AWS": AWSProvider,
+            "AZURE": AzureProvider,
+            "ORACLE": OCIProvider,
+            "OCI": OCIProvider,
+        }
+        cls = provider_map.get((account.provider or "").upper())
+        rows: List[Dict[str, Any]] = []
+        if cls:
+            try:
+                provider = cls(decrypt_credentials(account.credentials_enc))
+                rows = await provider.get_cost_data() or []
+            except Exception:
+                rows = []
+        _real_cost_cache[key] = (time.time(), rows)
+        return rows
+
     async def get_cost_summary(self, account_id: uuid.UUID) -> Dict[str, Any]:
         from app.repository.cloud_account_repo import CloudAccountRepository
         acc_repo = CloudAccountRepository(self.db)
@@ -158,6 +198,41 @@ class CostService:
 
         total_monthly_cost = sum(r.cost_monthly or 0.0 for r in resources)
         total_resources = len(resources)
+
+        # Prefer actual billed spend from the provider's billing API
+        # (AWS Cost Explorer / Azure Cost Management / OCI Usage) when it
+        # returns data; keep the DB estimate as the fallback.
+        from app.repository.cloud_account_repo import CloudAccountRepository
+        acc_repo = CloudAccountRepository(self.db)
+        if account_id == "ALL":
+            accounts = await acc_repo.list_all()
+        else:
+            acc = await acc_repo.get_by_id(aid)
+            accounts = [acc] if acc else []
+
+        cost_source = "estimated"
+        currency = "USD"
+        by_service: List[Dict[str, Any]] = []
+        real_total = 0.0
+        real_found = False
+        for acc in accounts:
+            rows = await self._fetch_real_costs(acc)
+            if rows:
+                real_found = True
+                real_total += sum(float(r.get("monthly_cost") or 0.0) for r in rows)
+                currency = rows[0].get("currency") or currency
+                for r in rows:
+                    by_service.append({
+                        "account": acc.account_name,
+                        "provider": acc.provider,
+                        "service": r.get("resource_name", "Unknown"),
+                        "monthly_cost": round(float(r.get("monthly_cost") or 0.0), 2),
+                        "currency": r.get("currency") or currency,
+                    })
+        if real_found:
+            total_monthly_cost = real_total
+            cost_source = "billing_api"
+            by_service.sort(key=lambda x: -x["monthly_cost"])
 
         import math
         from datetime import datetime, timedelta, timezone
@@ -437,7 +512,10 @@ class CostService:
             "optimizations": optimizations,
             "total_monthly_cost": round(total_monthly_cost, 2),
             "potential_savings": round(potential_savings, 2),
-            "net_projected_cost": round(max(0.0, total_monthly_cost - potential_savings), 2)
+            "net_projected_cost": round(max(0.0, total_monthly_cost - potential_savings), 2),
+            "cost_source": cost_source,
+            "currency": currency,
+            "by_service": by_service[:20],
         }
 
 

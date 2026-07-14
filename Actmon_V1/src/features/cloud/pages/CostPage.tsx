@@ -52,6 +52,10 @@ export const CostPage = () => {
 
   const trends = analytics?.trends || [];
   const optimizations = analytics?.optimizations || [];
+  const isBilled = analytics?.cost_source === 'billing_api';
+  const currencySymbol =
+    ({ USD: '$', INR: '₹', EUR: '€', GBP: '£' } as Record<string, string>)[analytics?.currency ?? 'USD']
+    ?? `${analytics?.currency ?? ''} `;
 
   return (
     <div style={PAGE_STYLE}>
@@ -102,9 +106,14 @@ export const CostPage = () => {
                   <DollarSign size={24} />
                 </div>
                 <div>
-                  <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Projected Monthly Spend</p>
+                  <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>
+                    {isBilled ? 'Billed Spend (Last 30 Days)' : 'Projected Monthly Spend'}
+                  </p>
                   <p style={{ color: '#1e293b', fontSize: 26, fontWeight: 800, margin: '4px 0 0' }}>
-                    ${analytics.total_monthly_cost.toFixed(2)}
+                    {currencySymbol}{analytics.total_monthly_cost.toFixed(2)}
+                  </p>
+                  <p style={{ color: '#94a3b8', fontSize: 11, margin: '2px 0 0' }}>
+                    {isBilled ? 'Actual spend from the cloud billing API' : 'Estimated — billing API returned no cost data'}
                   </p>
                 </div>
               </div>
@@ -119,7 +128,7 @@ export const CostPage = () => {
                 <div>
                   <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Potential Savings</p>
                   <p style={{ color: '#10b981', fontSize: 26, fontWeight: 800, margin: '4px 0 0' }}>
-                    -${analytics.potential_savings.toFixed(2)}
+                    -{currencySymbol}{analytics.potential_savings.toFixed(2)}
                   </p>
                 </div>
               </div>
@@ -134,7 +143,7 @@ export const CostPage = () => {
                 <div>
                   <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Optimized Net Spend</p>
                   <p style={{ color: '#a855f7', fontSize: 26, fontWeight: 800, margin: '4px 0 0' }}>
-                    ${analytics.net_projected_cost.toFixed(2)}
+                    {currencySymbol}{analytics.net_projected_cost.toFixed(2)}
                   </p>
                 </div>
               </div>

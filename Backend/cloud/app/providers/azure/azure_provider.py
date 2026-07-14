@@ -56,7 +56,7 @@ class AzureProvider(BaseCloudProvider):
         def _fetch():
             from azure.mgmt.costmanagement import CostManagementClient
             from azure.mgmt.costmanagement.models import (
-                QueryDefinition, QueryTimePeriod, GranularityType,
+                QueryDefinition, QueryTimePeriod,
                 QueryDataset, QueryAggregation, QueryGrouping
             )
 
@@ -70,7 +70,9 @@ class AzureProvider(BaseCloudProvider):
                 timeframe="Custom",
                 time_period=QueryTimePeriod(from_property=start, to=end),
                 dataset=QueryDataset(
-                    granularity=GranularityType.MONTHLY,
+                    # granularity=None → one total per group over the whole period.
+                    # (SDK 4.x GranularityType only defines DAILY; MONTHLY was removed.)
+                    granularity=None,
                     aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
                     grouping=[QueryGrouping(type="Dimension", name="ServiceName")],
                 ),
@@ -87,7 +89,7 @@ class AzureProvider(BaseCloudProvider):
                         "resource_name": row_dict.get("ServiceName", "Unknown"),
                         "region": "global",
                         "monthly_cost": float(row_dict.get("Cost", 0)),
-                        "currency": "USD",
+                        "currency": row_dict.get("Currency", "USD"),
                     }
                 )
             return costs
