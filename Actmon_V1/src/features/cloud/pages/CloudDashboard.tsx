@@ -6,9 +6,9 @@ import { useQueries } from '@tanstack/react-query';
 import { getSecurityPosture } from '../api/security.api';
 import { getCostEstimate } from '../api/cost.api';
 import { useCloudStore } from '../state/cloudStore';
-import { Cloud, Server, DollarSign, Activity, ShieldAlert, ShieldCheck, ArrowRight, Clock, Loader2, Layers, Globe, Sparkles } from 'lucide-react';
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { ProviderSummaryBar, PROVIDER_META } from '../components/CloudProviderSelector';
+import { Cloud, Server, DollarSign, Activity, ShieldAlert, ShieldCheck, ArrowRight, ArrowLeft, Clock, Loader2, Layers, Globe, Sparkles, Plus } from 'lucide-react';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PROVIDER_META } from '../components/CloudProviderSelector';
 
 const PROVIDER_BADGE_CLASSES: Record<string, string> = {
   AWS: 'bg-orange-50 text-orange-700 border-orange-200',
@@ -139,8 +139,15 @@ export const CloudDashboard = () => {
     return acc;
   }, {} as Record<string, number>);
 
-  const COLORS = ['#2563eb', '#0d9488', '#7c3aed', '#f59e0b', '#db2777', '#0891b2', '#dc2626', '#65a30d', '#6366f1'];
-  const pieData = Object.entries(typeCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const COLORS = ['#2563eb', '#0d9488', '#7c3aed', '#f59e0b', '#db2777', '#0891b2', '#dc2626', '#65a30d', '#6b7280'];
+  // Cap the donut at the top 8 types; everything else rolls into "Other"
+  // (some accounts have 50+ types — a full legend overflows the card).
+  const allTypes = Object.entries(typeCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const otherCount = allTypes.slice(8).reduce((sum, t) => sum + t.value, 0);
+  const otherTypes = allTypes.length - 8;
+  const pieData = otherCount > 0
+    ? [...allTypes.slice(0, 8), { name: `Other (${otherTypes} types)`, value: otherCount }]
+    : allTypes;
 
   // 2. Bar chart data: region breakdown
   const regionCounts = filteredResources.reduce((acc, r) => {
@@ -163,21 +170,89 @@ export const CloudDashboard = () => {
     setTimeout(() => setDrawerOpen(true), 100);
   };
 
+  // Per-provider rollups for the three provider cards ("Oracle" counts as OCI)
+  const providerKeyOf = (p: string) => (p === 'Oracle' ? 'OCI' : p);
+  const providerStats = ['AWS', 'Azure', 'OCI'].map(key => {
+    const provAccounts = (accounts || []).filter(a => providerKeyOf(a.provider) === key);
+    const provAccountIds = new Set(provAccounts.map(a => a.id));
+    const provResources = (allResources || []).filter(r => provAccountIds.has(r.account_id));
+    return { key, accounts: provAccounts, resourceCount: provResources.length };
+  });
+
   return (
     <div className="p-6 space-y-6">
-      {/* ── Provider Summary Bar (AWS / Azure / OCI panels) ── */}
-      <ProviderSummaryBar
-        accounts={accounts || []}
-        selectedProvider={selectedProvider}
-        onSelectProvider={p => {
-          setSelectedProvider(p);
-          setSelectedView('ALL');
-        }}
-      />
+      {/* ── Provider cards: click a cloud to drill into it ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {providerStats.map(({ key, accounts: provAccounts, resourceCount }) => {
+          const meta = PROVIDER_META[key];
+          const isSelected = selectedProvider === key;
+          const isEmpty = provAccounts.length === 0;
+          return (
+            <button
+              key={key}
+              onClick={() => {
+                if (isEmpty) { handleAddAccount(); return; }
+                setSelectedProvider(isSelected ? null : key);
+                setSelectedView('ALL');
+              }}
+              className={`text-left w-full rounded-xl p-5 transition-all cursor-pointer ${
+                isEmpty
+                  ? 'bg-white border-2 border-dashed border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  : isSelected
+                    ? 'bg-white border-2 shadow-md'
+                    : 'bg-white border border-gray-200 shadow-sm hover:shadow-md hover:-translate-y-0.5'
+              }`}
+              style={isSelected ? { borderColor: meta?.color } : undefined}
+            >
+              <div className="flex items-center gap-4">
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: meta?.bg, color: meta?.color }}
+                >
+                  <Cloud size={24} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-gray-900">{key}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${PROVIDER_BADGE_CLASSES[key] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                      {meta?.label || key}
+                    </span>
+                  </div>
+                  {isEmpty ? (
+                    <div className="flex items-center gap-1.5 text-sm text-gray-400 mt-1">
+                      <Plus size={14} /> Not connected — add an account
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 text-sm text-gray-500 mt-1">
+                      <span><span className="font-bold text-gray-900">{provAccounts.length}</span> account{provAccounts.length > 1 ? 's' : ''}</span>
+                      <span className="text-gray-300">·</span>
+                      <span><span className="font-bold text-gray-900">{resourceCount}</span> resources</span>
+                    </div>
+                  )}
+                </div>
+                {!isEmpty && (
+                  <ArrowRight
+                    size={18}
+                    className={`shrink-0 transition-transform ${isSelected ? '' : 'text-gray-300'}`}
+                    style={isSelected ? { color: meta?.color } : undefined}
+                  />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
-      {/* ── Per-provider account chips (only when a provider is selected) ── */}
+      {/* ── Inside a provider: back link + its account chips ── */}
       {selectedProvider && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => { setSelectedProvider(null); setSelectedView('ALL'); }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            <ArrowLeft size={13} /> All clouds
+          </button>
+          <span className="h-4 w-px bg-gray-200" />
           <button
             onClick={() => setSelectedView('ALL')}
             className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
@@ -299,42 +374,47 @@ export const CloudDashboard = () => {
             <Layers size={16} className="text-blue-600" />
             Resource Type Distribution
           </h3>
-          <div className="relative h-[260px]">
-            {pieData.length === 0 ? (
-              <div className="h-full flex items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
-                No resources found
+          {pieData.length === 0 ? (
+            <div className="h-[260px] flex items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
+              No resources found
+            </div>
+          ) : (
+            <>
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={58}
+                      outerRadius={85}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={CHART_TOOLTIP_STYLE}
+                      itemStyle={{ color: '#374151', fontSize: 12 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={65}
-                    outerRadius={90}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                    itemStyle={{ color: '#374151', fontSize: 12 }}
-                  />
-                  <Legend
-                    verticalAlign="bottom"
-                    height={36}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ fontSize: 11, color: '#6b7280' }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+              {/* Capped legend in normal flow — wraps inside the card instead of overflowing it */}
+              <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-3">
+                {pieData.map((entry, index) => (
+                  <span key={entry.name} className="inline-flex items-center gap-1.5 text-[11px] text-gray-600">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ background: COLORS[index % COLORS.length] }} />
+                    {entry.name}
+                    <span className="text-gray-400 font-semibold">{entry.value}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Region Heatmap Bar */}
