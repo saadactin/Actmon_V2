@@ -1,0 +1,44 @@
+"""Service layer for Cloud Account operations."""
+from __future__ import annotations
+
+import uuid
+from typing import List
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.repository.cloud_account_repo import CloudAccountRepository
+from app.schemas.cloud_account import CloudAccountCreate, CloudAccountResponse
+from app.utils.encryption import encrypt_credentials
+
+
+class CloudAccountService:
+    def __init__(self, db: AsyncSession) -> None:
+        self.repo = CloudAccountRepository(db)
+
+    async def create_account(self, payload: CloudAccountCreate) -> CloudAccountResponse:
+        credentials = payload.extract_credentials()
+        encrypted = encrypt_credentials(credentials)
+
+        account = await self.repo.create(
+            account_name=payload.account_name,
+            provider=payload.provider,
+            environment=payload.environment,
+            tenant_or_region=payload.tenant_or_region,
+            auth_mode=payload.auth_mode,
+            auto_discovery=payload.auto_discovery,
+            credentials_enc=encrypted,
+        )
+        return CloudAccountResponse.model_validate(account)
+
+    async def list_accounts(self) -> List[CloudAccountResponse]:
+        accounts = await self.repo.list_all()
+        return [CloudAccountResponse.model_validate(a) for a in accounts]
+
+    async def get_account(self, account_id: uuid.UUID) -> CloudAccountResponse | None:
+        account = await self.repo.get_by_id(account_id)
+        if not account:
+            return None
+        return CloudAccountResponse.model_validate(account)
+
+    async def delete_account(self, account_id: uuid.UUID) -> bool:
+        return await self.repo.delete(account_id)

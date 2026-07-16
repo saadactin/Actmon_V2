@@ -88,8 +88,12 @@ class AzureScanner:
 
         def _fetch():
             from azure.mgmt.compute import ComputeManagementClient
+            from azure.mgmt.network import NetworkManagementClient
 
             compute = ComputeManagementClient(
+                self.auth.get_credential(), self.auth.subscription_id
+            )
+            net = NetworkManagementClient(
                 self.auth.get_credential(), self.auth.subscription_id
             )
             results = []
@@ -98,11 +102,6 @@ class AzureScanner:
                 # Try to get public IP if available
                 ip = None
                 try:
-                    from azure.mgmt.network import NetworkManagementClient
-
-                    net = NetworkManagementClient(
-                        self.auth.get_credential(), self.auth.subscription_id
-                    )
                     nic_ref = (
                         vm.network_profile.network_interfaces[0].id
                         if vm.network_profile
@@ -138,7 +137,7 @@ class AzureScanner:
                                 else None
                             ),
                             "os_type": (
-                                vm.storage_profile.os_disk.os_type.value
+                                getattr(vm.storage_profile.os_disk.os_type, "value", None)
                                 if vm.storage_profile
                                 and vm.storage_profile.os_disk
                                 else None

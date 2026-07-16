@@ -168,31 +168,41 @@ class OCIProvider(BaseCloudProvider):
             import oci
 
             usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
+            # Usage API requires midnight-aligned UTC timestamps; MONTHLY
+            # granularity additionally requires month-aligned starts, so use
+            # DAILY over a rolling 30-day window and aggregate per service.
             today = date.today()
-            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00.000Z")
-            end = today.strftime("%Y-%m-%dT23:59:59.000Z")
+            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT00:00:00Z")
             request = oci.usage_api.models.RequestSummarizedUsagesDetails(
                 tenant_id=self.auth.tenancy_ocid,
                 time_usage_started=start,
                 time_usage_ended=end,
-                granularity="MONTHLY",
+                granularity="DAILY",
                 query_type="COST",
                 group_by=["service"],
             )
             response = usage_client.request_summarized_usages(
                 request_summarized_usages_details=request
             )
-            results = []
+            by_service: Dict[str, Dict[str, Any]] = {}
             for item in response.data.items or []:
-                results.append(
+                service = item.service or "Unknown"
+                row = by_service.setdefault(
+                    service,
                     {
-                        "resource_type": item.service or "Unknown",
-                        "resource_name": item.service or "Unknown",
+                        "resource_type": service,
+                        "resource_name": service,
                         "region": self.auth.region,
-                        "monthly_cost": float(item.computed_amount or 0),
+                        "monthly_cost": 0.0,
                         "currency": item.currency or "USD",
-                    }
+                    },
                 )
+                row["monthly_cost"] += float(item.computed_amount or 0)
+            results = list(by_service.values())
+            for row in results:
+                row["monthly_cost"] = round(row["monthly_cost"], 2)
+            results.sort(key=lambda r: -r["monthly_cost"])
             return results
 
         loop = asyncio.get_event_loop()

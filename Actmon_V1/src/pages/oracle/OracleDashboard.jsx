@@ -179,6 +179,9 @@ export default function OracleDashboard() {
     wait_events   = [],
     top_sql       = [],
     redo_logs     = [],
+    errors        = [],
+    degraded      = false,
+    collector,
   } = data || {};
 
   const hs          = health_summary;
@@ -297,6 +300,29 @@ export default function OracleDashboard() {
 
       {/* ─── TAB CONTENT ─── */}
       <div className="flex-1 p-5 overflow-auto">
+
+        {/* Every metric silently defaults to 0/"—" on its own query failure (so the
+            connection stays inspectable instead of one bad view breaking the whole
+            page) — surface that here instead of leaving admins to guess why a
+            perfectly real database shows all zeros. */}
+        {errors.length > 0 && (
+          <div className={`mb-4 rounded-2xl border p-4 ${degraded ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={18} className={degraded ? 'text-red-600 mt-0.5' : 'text-amber-600 mt-0.5'} />
+              <div className="flex-1">
+                <p className={`font-bold text-sm ${degraded ? 'text-red-700' : 'text-amber-700'}`}>
+                  {degraded
+                    ? `Could not reach this Oracle instance (via ${collector || 'unknown'} connection) — every metric below is unavailable, not actually zero.`
+                    : `${errors.length} metric${errors.length === 1 ? '' : 's'} failed to collect (via ${collector || 'unknown'} connection) — values for those are shown as 0/"—" below.`}
+                </p>
+                <ul className="mt-1.5 space-y-0.5 text-xs text-slate-600 font-mono">
+                  {errors.slice(0, 8).map((e, i) => <li key={i}>• {e}</li>)}
+                  {errors.length > 8 && <li>…and {errors.length - 8} more</li>}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ══ OVERVIEW ══════════════════════════════════════════════ */}
         {activeTab === 'overview' && (

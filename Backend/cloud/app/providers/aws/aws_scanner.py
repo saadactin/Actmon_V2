@@ -128,6 +128,17 @@ class AWSScanner:
                     public_access_block = pab.get("PublicAccessBlockConfiguration", {})
                 except Exception:
                     public_access_block = None
+                try:
+                    versioning = s3.get_bucket_versioning(Bucket=bucket["Name"]).get("Status") or "Disabled"
+                except Exception:
+                    versioning = None
+                try:
+                    enc_rules = s3.get_bucket_encryption(Bucket=bucket["Name"])[
+                        "ServerSideEncryptionConfiguration"]["Rules"]
+                    encryption = (enc_rules[0].get("ApplyServerSideEncryptionByDefault", {})
+                                  .get("SSEAlgorithm")) if enc_rules else None
+                except Exception:
+                    encryption = None
 
                 results.append(
                     {
@@ -137,7 +148,7 @@ class AWSScanner:
                         "region_or_zone": bucket_region,
                         "status": "active",
                         "ip_address": None,
-                        "config": {"versioning": None, "encryption": None, "public_access_block": public_access_block},
+                        "config": {"versioning": versioning, "encryption": encryption, "public_access_block": public_access_block},
                         "metadata": {
                             "creation_date": str(bucket.get("CreationDate"))
                         },
@@ -160,6 +171,11 @@ class AWSScanner:
             results = []
             for page in pages:
                 for fn in page.get("Functions", []):
+                    # list_functions doesn't return tags; fetch them per ARN
+                    try:
+                        fn_tags = lmb.list_tags(Resource=fn["FunctionArn"]).get("Tags", {})
+                    except Exception:
+                        fn_tags = {}
                     results.append(
                         {
                             "provider_resource_id": fn["FunctionArn"],
@@ -184,7 +200,7 @@ class AWSScanner:
                                 "description": fn.get("Description"),
                             },
                             "cost_monthly": None,
-                            "tags": fn.get("Tags", {}),
+                            "tags": fn_tags,
                             "raw_data": fn,
                         }
                     )
@@ -291,7 +307,11 @@ class AWSScanner:
         def _fetch():
             elbv2 = self.auth.get_client("elbv2", region)
             try:
-                lbs = elbv2.describe_load_balancers().get("LoadBalancers", [])
+                lbs = [
+                    lb
+                    for page in elbv2.get_paginator("describe_load_balancers").paginate()
+                    for lb in page.get("LoadBalancers", [])
+                ]
             except Exception:
                 return []
             results = []
@@ -328,7 +348,11 @@ class AWSScanner:
         def _fetch():
             ec2 = self.auth.get_client("ec2", region)
             try:
-                vpcs = ec2.describe_vpcs().get("Vpcs", [])
+                vpcs = [
+                    vpc
+                    for page in ec2.get_paginator("describe_vpcs").paginate()
+                    for vpc in page.get("Vpcs", [])
+                ]
             except Exception:
                 return []
             results = []
@@ -368,7 +392,11 @@ class AWSScanner:
         def _fetch():
             ec2 = self.auth.get_client("ec2", region)
             try:
-                sgs = ec2.describe_security_groups().get("SecurityGroups", [])
+                sgs = [
+                    sg
+                    for page in ec2.get_paginator("describe_security_groups").paginate()
+                    for sg in page.get("SecurityGroups", [])
+                ]
             except Exception:
                 return []
             results = []
@@ -404,7 +432,11 @@ class AWSScanner:
         def _fetch():
             iam = self.auth.get_client("iam")
             try:
-                roles = iam.list_roles().get("Roles", [])
+                roles = [
+                    role
+                    for page in iam.get_paginator("list_roles").paginate()
+                    for role in page.get("Roles", [])
+                ]
             except Exception:
                 return []
             results = []

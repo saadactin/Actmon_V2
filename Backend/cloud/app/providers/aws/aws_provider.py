@@ -43,7 +43,7 @@ class AWSProvider(BaseCloudProvider):
         from datetime import date, timedelta
 
         def _fetch():
-            ce = self.auth.get_client("ce", region="us-east-1")
+            ce = self.auth.get_client("ce", region="us-east-1", slow_api=True)
             today = date.today()
             start = (today - timedelta(days=30)).isoformat()
             end = today.isoformat()

@@ -1,0 +1,1 @@
+import{c as s}from"./query-vendor-DqqYr3NN.js";import{c as r,g as u}from"./resources.api-BuQMzAVU.js";const y=e=>s({queryKey:["resources",e],queryFn:()=>e?r(e):Promise.resolve([]),enabled:!!e}),t=()=>s({queryKey:["allResources"],queryFn:()=>u()});export{y as a,t as u};

@@ -1,0 +1,28 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pymysql
+pymssql
+pymongo
+# Oracle — thin-mode driver (direct connections; agent-hosted DBs route via agent)
+oracledb
+pydantic
+paramiko
+psycopg2-binary
+python-dotenv
+cryptography
+PyJWT
+passlib[bcrypt]
+pyodbc
+python-multipart
+# groq (chatbot, optional) is intentionally NOT listed here — it requires Python
+# >=3.8 and would hard-fail `pip install -r requirements.txt` on any host still on
+# the OS-default Python 3.6 (e.g. Oracle Linux 8 before install.sh's Python 3.11
+# venv is used). install.sh installs it separately as a best-effort extra; install
+# manually with `pip install groq` if you're on Python 3.8+ and want the chatbot.
+# Redis — hot tier for the 15s metrics pipeline (optional; degrades to no-op)
+redis
+# ClickHouse — native driver (enables clickhouse+native:// SQLAlchemy dialect)
+clickhouse-driver>=0.2.9
+clickhouse-sqlalchemy>=0.3.2
+clickhouse-connect==1.4.1

@@ -1,0 +1,243 @@
+﻿from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.database.connection import engine
+from app.database.base import Base
+
+# Import ALL models so Base registers their tables
+from app.models.connection_model import ConnectionMaster          # noqa: F401
+from app.models.os_server_model import OsServer, DatabaseInstance # noqa: F401
+from app.models.backup_model import BackupJob                     # noqa: F401
+from app.models.backup_schedule_model import BackupSchedule       # noqa: F401
+from app.models.agent_model import (                              # noqa: F401
+    Agent, AgentMetric, AgentTopSQL,
+    AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
+)
+from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
+from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
+from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
+from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
+from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
+from app.models.alert_rule_model import AlertRule                         # noqa: F401
+# Access-Control / Administration (RBAC) schema — organization, employee, role,
+# module, page, permission, user, sessions, audit, etc.
+from app.models.admin_models import (                                # noqa: F401
+    StatusMaster, OrganizationMaster, DepartmentMaster, DesignationMaster,
+    EmployeeMaster, Role, ModuleMaster, PageMaster, Permission,
+    GroupRolePagePermission, UserMaster, UserSession, LoginHistory,
+    PasswordHistory, AuditLog,
+)
+
+# Routes
+from app.routes.os_server.server_routes import router as server_router
+from app.routes.mysql.mysql_routes import router as mysql_router
+from app.routes.oracle.oracle_routes import router as oracle_router
+from app.routes.postgres.postgres_routes import router as postgres_router
+from app.routes.mongo.mongo_routes import router as mongo_router
+from app.routes.clickhouse.clickhouse_routes import router as clickhouse_router
+from app.routes.mssql.mssql_routes import router as mssql_router
+
+from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
+from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
+from app.routes.postgres.postgres_drilldown_routes import router as postgres_drilldown_router
+from app.routes.drilldown_routes import router as drilldown_router
+from app.routes.mongo.mongo_error_analysis_routes import router as mongo_error_router
+from app.routes.clickhouse.clickhouse_error_analysis_routes import router as clickhouse_error_router
+from app.routes.clickhouse.clickhouse_monitoring_routes import router as clickhouse_monitoring_router
+from app.routes.mssql.mssql_error_analysis_routes import router as mssql_error_router
+from app.routes.mssql.mssql_monitoring_routes import router as mssql_monitoring_router
+
+from app.routes.mysql.mysql_slow_queries_routes import router as mysql_slow_queries_router
+from app.routes.mysql.mysql_explain_routes import router as mysql_explain_router
+from app.routes.mysql.mysql_error_logs_routes import router as mysql_error_logs_router
+from app.routes.mysql.mysql_index_analysis_routes import router as mysql_index_analysis_router
+from app.routes.mysql.mysql_backup_routes import router as mysql_backup_router
+from app.routes.mysql.mysql_schedule_routes import router as mysql_schedule_router
+from app.routes.mysql.mysql_table_routes import router as mysql_table_router
+from app.routes.mysql.mysql_replication_routes import router as mysql_replication_router
+
+from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
+from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
+from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
+from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
+from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
+from app.routes.smtp.smtp_config_routes import router as smtp_config_router
+from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
+
+from app.routes.postgres.postgres_backup_routes import router as postgres_backup_router
+from app.routes.mssql.mssql_backup_routes import router as mssql_backup_router
+
+from app.routes.os_server.os_server_routes import router as os_server_router
+from app.routes.os_server.terminal_routes import router as terminal_router
+from app.routes.os_server.test_connection_routes import router as test_connection_router
+from app.routes.auth.auth_routes import router as auth_router
+from app.routes.setup.setup_routes import router as setup_router
+from app.routes.admin.admin_crud_routes import admin_crud_routers
+from app.routes.agent.agent_routes import router as agent_router
+from app.routes.agent.agent_install_routes import router as agent_install_router
+from app.routes.chatbot.chatbot_routes import router as chatbot_router
+from app.routes.alerts.alert_routes import router as alerts_router
+from app.routes.logs.logs_routes import router as logs_router
+from app.routes.download.download_routes import router as download_router
+
+# Create all tables in PostgreSQL (graceful — won't crash if DB is offline at import time)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as _db_err:
+    import warnings
+    warnings.warn(f"[ACTMON] Could not create tables: {_db_err}\nStart PostgreSQL and restart the server.")
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    # Start backup scheduler background threads on server startup
+    from app.routes.mysql.mysql_schedule_routes import start_scheduler
+    start_scheduler()
+    from app.services.postgres.postgres_backup_service import start_pg_scheduler
+    start_pg_scheduler()
+    from app.services.mssql.mssql_backup_service import start_mssql_scheduler
+    start_mssql_scheduler()
+    # Start centralized agent collector — METRICS every 15s (feeds the Redis hot
+    # tier at its designed cadence); heavy dashboard snapshots stay at ~60s inside
+    # the collector (SNAPSHOT_INTERVAL_SEC). Override with AGENT_COLLECTOR_INTERVAL.
+    import os as _os
+    from app.services.agent.agent_collector_service import start_agent_collector
+    start_agent_collector(interval_sec=int(_os.getenv("AGENT_COLLECTOR_INTERVAL", "15") or 15))
+    # Metrics pipeline: Redis hot tier (15s samples) + ClickHouse history tier.
+    # Registers an AgentMetric insert hook — every metric write (agent pushes AND
+    # collector cycles) flows through automatically. Degrades to no-op when
+    # Redis/ClickHouse aren't installed.
+    try:
+        from app.services.common import metrics_pipeline
+        metrics_pipeline.register_hooks()
+    except Exception as _mp_err:
+        import warnings; warnings.warn(f"[metrics_pipeline] not started: {_mp_err}")
+    # Start agent reaper (marks uninstalled/offline agents, removes dead hosts)
+    from app.services.agent.agent_reaper_service import start_agent_reaper
+    start_agent_reaper(interval_sec=60)
+    # Start ActMon metric logger → ClickHouse (per-metric time-series)
+    try:
+        from app.services.logs.actmon_logs_service import start_metric_logger
+        start_metric_logger()
+    except Exception as _log_err:
+        import warnings; warnings.warn(f"[actmon_logs] logger not started: {_log_err}")
+    # Start PostgreSQL resource history collector (logs CPU/RAM/Disk + spike evidence)
+    from app.services.postgres.postgres_resource_collector import start_resource_collector
+    start_resource_collector()
+    # Start Oracle report email scheduler
+    from app.services.oracle.oracle_report_email_service import start_oracle_report_scheduler
+    start_oracle_report_scheduler()
+    # Start MySQL report email scheduler
+    from app.services.mysql.mysql_report_email_service import start_mysql_report_scheduler
+    start_mysql_report_scheduler()
+    # Start PostgreSQL report email scheduler
+    from app.services.postgres.postgres_report_email_service import start_postgres_report_scheduler
+    start_postgres_report_scheduler()
+    # Start SQL Server report email scheduler
+    from app.services.mssql.mssql_report_email_service import start_mssql_report_scheduler
+    start_mssql_report_scheduler()
+    yield
+    # Graceful shutdown
+    from app.services.agent.agent_collector_service import stop_agent_collector
+    stop_agent_collector()
+    from app.services.agent.agent_reaper_service import stop_agent_reaper
+    stop_agent_reaper()
+
+app = FastAPI(
+    title="ACTMON API",
+    version="2.0.0",
+    description="ACTMON Database Monitoring Platform",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Connection CRUD routes
+app.include_router(mysql_router)
+app.include_router(oracle_router)
+app.include_router(postgres_router)
+app.include_router(mongo_router)
+app.include_router(clickhouse_router)
+app.include_router(mssql_router)
+app.include_router(server_router)
+
+# Error analysis routes
+app.include_router(postgres_error_router)
+app.include_router(postgres_monitoring_router)
+app.include_router(postgres_drilldown_router)
+app.include_router(drilldown_router)
+app.include_router(mongo_error_router)
+app.include_router(clickhouse_error_router)
+app.include_router(clickhouse_monitoring_router)
+app.include_router(mssql_error_router)
+app.include_router(mssql_monitoring_router)
+
+# MySQL specialty routes
+app.include_router(mysql_slow_queries_router)
+app.include_router(mysql_explain_router)
+app.include_router(mysql_error_logs_router)
+app.include_router(mysql_index_analysis_router)
+app.include_router(mysql_schedule_router)   # must come before backup_router (avoids /{job_id} conflict)
+app.include_router(mysql_backup_router)
+app.include_router(mysql_table_router)
+app.include_router(mysql_replication_router)
+
+# PostgreSQL backup + PITR routes (schedule routes are embedded in the same router — ordered correctly)
+app.include_router(postgres_backup_router)
+
+# MSSQL backup + PITR routes
+app.include_router(mssql_backup_router)
+
+# DB Monitoring routes
+app.include_router(oracle_monitoring_router)
+app.include_router(oracle_report_email_router)
+app.include_router(mysql_report_email_router)
+app.include_router(postgres_report_email_router)
+app.include_router(mssql_report_email_router)
+app.include_router(smtp_config_router)
+app.include_router(mongo_monitoring_router)
+
+# New OS server + terminal routes
+app.include_router(os_server_router)
+app.include_router(terminal_router)
+app.include_router(test_connection_router)
+from app.routes.onboarding_routes import router as onboarding_router
+app.include_router(onboarding_router)
+
+# Metrics pipeline (Redis hot tier + ClickHouse history) read endpoints
+from app.routes.redis.metrics_routes import router as metrics_pipeline_router
+app.include_router(metrics_pipeline_router)
+from app.routes.connection_manage_routes import router as connection_manage_router
+app.include_router(connection_manage_router)
+app.include_router(auth_router)
+app.include_router(setup_router)   # first-run: create the initial Super Admin
+
+# Administration / Access Control (roles, permissions, modules, pages, orgs,
+# departments, designations, employees, users, statuses, audit-logs — all generic)
+for _admin_router in admin_crud_routers:
+    app.include_router(_admin_router)
+
+# Centralized Agent routes
+app.include_router(agent_router)
+app.include_router(agent_install_router)
+
+# ActMon AI Chatbot
+app.include_router(chatbot_router)
+app.include_router(alerts_router)
+app.include_router(logs_router)
+app.include_router(download_router)
+
+
+@app.get("/")
+def home():
+    return {
+        "status": "success",
+        "message": "ACTMON Backend v2.0 Running — PostgreSQL"
+    }

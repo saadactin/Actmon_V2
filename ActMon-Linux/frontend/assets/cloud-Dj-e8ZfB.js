@@ -1,0 +1,1 @@
+import{P as s,W as n}from"./index-OSn4vkye.js";const c=async()=>{const t=await s.get("/cloud/accounts");return n(t.data)},r=async t=>(await s.post("/cloud/accounts",t)).data,u=async(t,a)=>{const o=await s.get(`/cloud/${t.toLowerCase()}/${a}/inventory`);return n(o.data)};export{r as a,u as g,c as l};

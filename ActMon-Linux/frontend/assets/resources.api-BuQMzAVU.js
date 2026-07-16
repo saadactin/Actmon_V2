@@ -1,0 +1,1 @@
+import{c as s}from"./axios-DRMSiJn8.js";const c=async t=>{const{data:e}=await s.get(`/resources/${t}`);return e},r=async()=>{const{data:t}=await s.get("/resources");return t},o=async t=>{const{data:e}=await s.get(`/resources/detail/${t}`);return e},n=async t=>{const{data:e}=await s.get(`/resources/detail/${t}/metrics`);return e};export{o as a,n as b,c,r as g};

@@ -1,0 +1,12 @@
+#!/bin/sh
+# prerm — stop the service before the payload is removed (remove AND upgrade).
+set -e
+case "$1" in
+  remove|deconfigure)
+    systemctl disable --now actmon-agent.service >/dev/null 2>&1 || true
+    ;;
+  upgrade)
+    systemctl stop actmon-agent.service >/dev/null 2>&1 || true
+    ;;
+esac
+exit 0

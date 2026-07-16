@@ -1,0 +1,1 @@
+import{c as s}from"./axios-DRMSiJn8.js";const c=async t=>{const{data:a}=await s.get(`/cost-estimate/${t}`);return a},e=async t=>{const{data:a}=await s.get(`/cost/analytics/${t}`);return a};export{c as a,e as g};

@@ -1,0 +1,46 @@
+#!/bin/sh
+# postinst — configure from the install environment and start the service.
+#   ACTMON_ACCESS_TOKEN=<tok> ACTMON_URL=<url> dpkg -i actmon-agent.deb   (as root)
+# An env-provided token ALWAYS wins: reinstalling with a new token must
+# replace a stale/placeholder config, not silently keep it.
+set -e
+case "$1" in
+  configure)
+    # The agent is written for Python >= 3.5 (production hosts keep THEIR python;
+    # the agent adapts). Fail LOUDLY here instead of a systemd crash-loop.
+    if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 5) else 1)' 2>/dev/null; then
+      PYV="$(python3 -V 2>&1 || echo 'not found')"
+      echo "**********************************************************" >&2
+      echo " ActMon Agent requires Python 3.5 or newer." >&2
+      echo " This host has: $PYV" >&2
+      echo " Contact ActMon support for the legacy shell agent." >&2
+      echo "**********************************************************" >&2
+      exit 1
+    fi
+    # Remove any stale hand-made unit in /etc that would SHADOW this package's unit
+    # (older installs ran the bash agent from /etc; it must not win over the Python one).
+    if [ -f /etc/systemd/system/actmon-agent.service ]; then
+      rm -f /etc/systemd/system/actmon-agent.service
+    fi
+    # Kill any leftover bash-agent process from a previous version.
+    pkill -f /usr/lib/actmon/actmon-agent.sh 2>/dev/null || true
+    systemctl daemon-reload || true
+    if [ -n "${ACTMON_ACCESS_TOKEN:-}" ]; then
+      mkdir -p /etc/actmon
+      printf 'ACTMON_ACCESS_TOKEN=%s\nACTMON_URL=%s\n' "$ACTMON_ACCESS_TOKEN" "${ACTMON_URL:-}" > /etc/actmon/agent.conf
+      chmod 600 /etc/actmon/agent.conf
+    fi
+    if [ -f /etc/actmon/agent.conf ]; then
+      systemctl enable --now actmon-agent.service || true
+      # Restart so a replaced config (or upgraded payload) takes effect immediately.
+      systemctl restart actmon-agent.service || true
+      echo "ActMon Agent installed and started."
+    else
+      echo "ActMon Agent installed. Create /etc/actmon/agent.conf with:"
+      echo "  ACTMON_ACCESS_TOKEN=<token>"
+      echo "  ACTMON_URL=<url>"
+      echo "then run: systemctl enable --now actmon-agent"
+    fi
+    ;;
+esac
+exit 0

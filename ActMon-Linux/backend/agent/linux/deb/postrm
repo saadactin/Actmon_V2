@@ -1,0 +1,10 @@
+#!/bin/sh
+# postrm — clean up after removal; purge also deletes the config.
+set -e
+case "$1" in
+  purge)
+    rm -rf /etc/actmon
+    ;;
+esac
+systemctl daemon-reload >/dev/null 2>&1 || true
+exit 0

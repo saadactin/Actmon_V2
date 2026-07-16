@@ -25,21 +25,40 @@ class AWSAuth:
             region_name=self.region,
         )
 
-    def get_client(self, service: str, region: str | None = None) -> Any:
+    @staticmethod
+    def _ssl_verify() -> bool | str:
+        """SSL verification for AWS endpoints.
+
+        Default: verify. Behind an SSL-intercepting corporate proxy either set
+        AWS_CA_BUNDLE to the proxy CA path (preferred) or CLOUD_SSL_VERIFY=false
+        in Backend/cloud/.env as a last resort.
+        """
+        import os
+        if os.getenv("CLOUD_SSL_VERIFY", "true").strip().lower() in ("false", "0", "no"):
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            return False
+        return os.getenv("AWS_CA_BUNDLE") or True
+
+    def _config(self, slow_api: bool = False):
         from botocore.config import Config
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        config = Config(connect_timeout=5, read_timeout=5, retries={'max_attempts': 1})
+        # Cost Explorer and other slow APIs need generous read timeouts and
+        # retries; throttling (ThrottlingException) is routine on describe_* too.
+        if slow_api:
+            return Config(connect_timeout=10, read_timeout=60,
+                          retries={"max_attempts": 4, "mode": "adaptive"})
+        return Config(connect_timeout=10, read_timeout=30,
+                      retries={"max_attempts": 3, "mode": "adaptive"})
+
+    def get_client(self, service: str, region: str | None = None, slow_api: bool = False) -> Any:
         session = self.get_session()
-        return session.client(service, region_name=region or self.region, config=config, verify=False)
+        return session.client(service, region_name=region or self.region,
+                              config=self._config(slow_api), verify=self._ssl_verify())
 
     def get_resource(self, service: str, region: str | None = None) -> Any:
-        from botocore.config import Config
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        config = Config(connect_timeout=5, read_timeout=5, retries={'max_attempts': 1})
         session = self.get_session()
-        return session.resource(service, region_name=region or self.region, config=config, verify=False)
+        return session.resource(service, region_name=region or self.region,
+                                config=self._config(), verify=self._ssl_verify())
 
     async def validate(self) -> bool:
         """Call STS GetCallerIdentity to confirm credentials are valid."""

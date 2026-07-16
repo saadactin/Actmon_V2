@@ -15,8 +15,30 @@ class CloudAccountService:
     def __init__(self, db: AsyncSession) -> None:
         self.repo = CloudAccountRepository(db)
 
+    @staticmethod
+    async def _validate_credentials(provider: str, credentials: dict) -> None:
+        """Authenticate against the provider before persisting the account.
+
+        Raises ValueError with a provider-specific message on failure.
+        """
+        from app.providers.aws.aws_provider import AWSProvider
+        from app.providers.azure.azure_provider import AzureProvider
+        from app.providers.oci.oci_provider import OCIProvider
+
+        provider_map = {
+            "AWS": AWSProvider,
+            "AZURE": AzureProvider,
+            "ORACLE": OCIProvider,
+            "OCI": OCIProvider,
+        }
+        cls = provider_map.get((provider or "").upper())
+        if not cls:
+            raise ValueError(f"Unknown provider: {provider}")
+        await cls(credentials).authenticate()
+
     async def create_account(self, payload: CloudAccountCreate) -> CloudAccountResponse:
         credentials = payload.extract_credentials()
+        await self._validate_credentials(payload.provider, credentials)
         encrypted = encrypt_credentials(credentials)
 
         account = await self.repo.create(

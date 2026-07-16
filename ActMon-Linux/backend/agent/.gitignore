@@ -1,0 +1,7 @@
+# Build artifacts — regenerate with build_agent.sh
+build/
+dist/
+wix/wix311/
+wix/*.zip
+wix/*.wixobj
+wix/*.wixpdb
