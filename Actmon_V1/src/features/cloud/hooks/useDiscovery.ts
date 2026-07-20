@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { triggerDiscovery, getDiscoveryStatus } from '../api/discovery.api';
+import { triggerDiscovery, triggerAllDiscovery, getDiscoveryStatus } from '../api/discovery.api';
 import { DiscoveryJob } from '../types/cloud';
 import { useCloudStore } from '../state/cloudStore';
 
@@ -19,6 +19,26 @@ export const useTriggerDiscovery = () => {
       console.error('Discovery trigger failed:', error);
       alert('Failed to trigger discovery: ' + (error?.response?.data?.detail || error.message));
     }
+  });
+};
+
+export const useTriggerAllDiscovery = () => {
+  const queryClient = useQueryClient();
+  const setActiveDiscoveryJob = useCloudStore((state) => state.setActiveDiscoveryJob);
+
+  return useMutation({
+    mutationFn: () => triggerAllDiscovery(),
+    onSuccess: (jobs) => {
+      // Register every returned job so the global watcher polls each one.
+      jobs.forEach((job) => {
+        setActiveDiscoveryJob(job.account_id, job.id);
+        queryClient.invalidateQueries({ queryKey: ['discoveryStatus', job.id] });
+      });
+    },
+    onError: (error: any) => {
+      console.error('Scan-all trigger failed:', error);
+      alert('Failed to start scan for all accounts: ' + (error?.response?.data?.detail || error.message));
+    },
   });
 };
 

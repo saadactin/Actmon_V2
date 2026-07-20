@@ -35,7 +35,9 @@ function getMeta(type: string) {
 }
 
 function statusStyle(status?: string | null) {
-  const s = (status || '').toLowerCase();
+  if (!status)
+    return { pill: 'bg-gray-100 text-gray-600 border-gray-200', dot: 'bg-gray-400' };
+  const s = status.toLowerCase();
   if (['running', 'active', 'available'].includes(s))
     return { pill: 'bg-green-50 text-green-700 border-green-200', dot: 'bg-green-500' };
   if (['pending', 'starting'].includes(s))
@@ -146,7 +148,7 @@ function TypeSpecificPanel({ resource }: { resource: any }) {
       <InfoPanel title="S3 Bucket Details" icon={Package}>
         <Row label="Creation Date" value={meta.creation_date ? new Date(meta.creation_date).toLocaleString() : '—'} />
         <Row label="Region" value={resource.region_or_zone} highlight />
-        <Row label="ARN" value={`arn:aws:s3:::${resource.resource_name}`} mono />
+        <Row label="Identifier" value={resource.provider_resource_id || '—'} mono />
       </InfoPanel>
     );
   }
@@ -155,7 +157,7 @@ function TypeSpecificPanel({ resource }: { resource: any }) {
     return (
       <InfoPanel title="EC2 Instance Details" icon={Server}>
         <Row label="Instance Type" value={config.instance_type} highlight />
-        <Row label="Platform" value={config.platform || 'Linux'} />
+        <Row label="Platform" value={config.platform || '—'} />
         <Row label="Image ID (AMI)" value={config.image_id} mono />
         <Row label="Launch Time" value={meta.launch_time ? new Date(meta.launch_time).toLocaleString() : '—'} />
         <Row label="Private IP" value={resource.ip_address} />
@@ -224,7 +226,7 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 min-h-[200px]">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        <span className="text-sm text-gray-500">Fetching CloudWatch metrics…</span>
+        <span className="text-sm text-gray-500">Fetching metrics…</span>
       </div>
     );
   }
@@ -233,40 +235,58 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
     return <Empty icon={BarChart3} msg="No metrics available for this resource." />;
   }
 
-  const metrics    = metricsData.metrics;
+  const metrics    = metricsData.metrics as Record<string, Array<{ timestamp: string; value: number }>>;
   const isRealtime = metricsData.realtime === true;
+  const source     = metricsData.source as string | null | undefined;
 
-  // Check if all series are completely flat-zero (no live CW data)
-  const allZero = Object.values(metrics).every((series: any) =>
-    series.every((dp: any) => dp.value === 0)
-  );
+  // API returns only real datapoints: series may be empty arrays, or metrics may be {} entirely.
+  const metricNames = Object.keys(metrics);
+  const hasAnyData  = metricNames.some(name => (metrics[name] || []).length > 0);
+
+  if (metricNames.length === 0 || !hasAnyData) {
+    return <Empty icon={BarChart3} msg="No metrics available for this resource." />;
+  }
 
   return (
     <div className="flex flex-col gap-6">
       {/* Data source badge */}
       <div className="flex items-center gap-3 flex-wrap">
-        {isRealtime && !allZero ? (
+        {isRealtime && source ? (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-green-50 text-green-700 border-green-200">
             <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-            Live — AWS CloudWatch
+            Live — {source}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-gray-100 text-gray-600 border-gray-200">
             <AlertTriangle size={12} className="text-gray-400" />
-            No CloudWatch data — showing zero baseline
+            No live data — NA
           </span>
         )}
-        <span className="text-[11px] text-gray-500">Last 24h · Hourly resolution</span>
+        <span className="text-[11px] text-gray-500">Last 24h</span>
       </div>
 
-      {Object.entries(metrics).map(([metricName, dataPoints]: [string, any]) => {
-        const chartData = dataPoints.map((dp: any) => ({
+      {Object.entries(metrics).map(([metricName, dataPoints]) => {
+        if (!dataPoints || dataPoints.length === 0) {
+          return (
+            <div key={metricName} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+              <div className="flex items-center justify-between gap-4">
+                <h4 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider">
+                  <Activity size={16} className="text-gray-400" />
+                  {metricName}
+                </h4>
+                <span className="text-[11px] font-semibold text-gray-400">NA</span>
+              </div>
+              <p className="mt-2 text-xs text-gray-400">No datapoints returned for this metric.</p>
+            </div>
+          );
+        }
+
+        const chartData = dataPoints.map((dp) => ({
           time: new Date(dp.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           value: dp.value,
         }));
 
         const seriesMax = Math.max(...chartData.map((d: any) => d.value));
-        const hasData   = seriesMax > 0;
 
         const mn = metricName.toLowerCase();
         let strokeColor = '#2563eb';
@@ -288,21 +308,17 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
                 {metricName}
                 <span className="text-[11px] font-normal normal-case tracking-normal text-gray-400">(Last 24h)</span>
               </h4>
-              {hasData ? (
-                <span className="text-[11px] font-semibold text-green-600">
-                  Max: {seriesMax.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </span>
-              ) : (
-                <span className="text-[11px] text-gray-400">No data</span>
-              )}
+              <span className="text-[11px] font-semibold text-green-600">
+                Max: {seriesMax.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </span>
             </div>
             <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
                   <defs>
                     <linearGradient id={`color-${metricName}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={hasData ? strokeColor : '#9ca3af'} stopOpacity={hasData ? 0.2 : 0.05}/>
-                      <stop offset="95%" stopColor={hasData ? strokeColor : '#9ca3af'} stopOpacity={0.01}/>
+                      <stop offset="5%"  stopColor={strokeColor} stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor={strokeColor} stopOpacity={0.01}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
@@ -316,11 +332,10 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke={hasData ? strokeColor : '#9ca3af'}
-                    strokeWidth={hasData ? 2 : 1}
+                    stroke={strokeColor}
+                    strokeWidth={2}
                     fillOpacity={1}
                     fill={`url(#color-${metricName})`}
-                    strokeDasharray={hasData ? undefined : '4,4'}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -386,15 +401,23 @@ export const ResourceDetailPage: React.FC = () => {
   const tagCount = Object.keys(tags).length;
   const configCount = Object.keys(config).length;
 
+  /* Cost display: only assert a currency symbol/code when the API provides one */
+  const costCurrency: string | null =
+    (resource as any).cost_currency ?? (resource as any).currency ?? null;
+  const costText: string | null =
+    resource.cost_monthly != null
+      ? `${costCurrency ? `${costCurrency} ` : ''}${Number(resource.cost_monthly).toFixed(2)}`
+      : null;
+
   /* Stats depending on type */
   const typeStats = (): { icon: LucideIcon; label: string; value: string }[] => {
     const t = resource.resource_type;
     const c = config;
     const m = metadata_;
     if (t === 'DynamoDBTable') return [
-      { icon: Package,   label: 'Items',   value: c.item_count != null ? c.item_count.toLocaleString() : '0' },
-      { icon: HardDrive, label: 'Size',    value: c.size_bytes != null ? bytes(c.size_bytes) : '0 B' },
-      { icon: Zap,       label: 'Billing', value: c.billing_mode === 'PAY_PER_REQUEST' ? 'On-Demand' : 'Provisioned' },
+      { icon: Package,   label: 'Items',   value: c.item_count != null ? c.item_count.toLocaleString() : '—' },
+      { icon: HardDrive, label: 'Size',    value: c.size_bytes != null ? bytes(c.size_bytes) : '—' },
+      { icon: Zap,       label: 'Billing', value: c.billing_mode ? (c.billing_mode === 'PAY_PER_REQUEST' ? 'On-Demand' : 'Provisioned') : '—' },
     ];
     if (t === 'LambdaFunction') return [
       { icon: Cpu,      label: 'Memory',  value: c.memory_mb ? `${c.memory_mb} MB` : '—' },
@@ -404,7 +427,7 @@ export const ResourceDetailPage: React.FC = () => {
     if (t === 'EC2Instance') return [
       { icon: Server,    label: 'Type',     value: c.instance_type || '—' },
       { icon: Globe,     label: 'IP',       value: resource.ip_address || '—' },
-      { icon: HardDrive, label: 'Platform', value: c.platform || 'Linux' },
+      { icon: HardDrive, label: 'Platform', value: c.platform || '—' },
     ];
     if (t === 'S3Bucket') return [
       { icon: Globe,    label: 'Region',  value: resource.region_or_zone },
@@ -434,10 +457,8 @@ export const ResourceDetailPage: React.FC = () => {
                 <Row label="Region / Zone" value={resource.region_or_zone} />
                 <Row label="IP / Endpoint" value={resource.ip_address || '—'} />
                 <Row label="Status" value={resource.status}
-                  badge={{ text: (resource.status || 'UNKNOWN').toUpperCase(), pill: sc.pill, dot: sc.dot }} />
-                <Row label="Monthly Cost" value={
-                  resource.cost_monthly != null ? `$${Number(resource.cost_monthly).toFixed(2)}/mo` : 'Not tracked'
-                } />
+                  badge={{ text: resource.status ? resource.status.toUpperCase() : 'NA', pill: sc.pill, dot: sc.dot }} />
+                <Row label="Monthly Cost" value={costText != null ? `${costText}/mo` : 'Not tracked'} />
               </InfoPanel>
 
               <TypeSpecificPanel resource={resource} />
@@ -504,17 +525,24 @@ export const ResourceDetailPage: React.FC = () => {
           </InfoPanel>
         );
 
-      case 'Raw JSON':
-        const raw = Object.keys(rawData).length ? rawData : { config, metadata: metadata_, tags };
+      case 'Raw JSON': {
+        const hasRaw = Object.keys(rawData).length > 0;
+        const raw = hasRaw ? rawData : { config, metadata: metadata_, tags };
         return (
-          <InfoPanel title="Raw AWS Response Data" icon={Braces}>
+          <InfoPanel title="Raw Provider Response" icon={Braces}>
             <div className="p-4">
+              {!hasRaw && (
+                <p className="mb-3 text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  No raw provider response stored — showing normalized config.
+                </p>
+              )}
               <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono text-gray-700 overflow-x-auto max-h-[500px] leading-relaxed">
                 {JSON.stringify(raw, null, 2)}
               </pre>
             </div>
           </InfoPanel>
         );
+      }
     }
   };
 
@@ -545,7 +573,7 @@ export const ResourceDetailPage: React.FC = () => {
               </h1>
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border uppercase tracking-wide ${sc.pill}`}>
                 <span className={`h-1.5 w-1.5 rounded-full ${sc.dot}`} />
-                {resource.status || 'UNKNOWN'}
+                {resource.status || 'NA'}
               </span>
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
                 {typeMeta.label}
@@ -575,7 +603,7 @@ export const ResourceDetailPage: React.FC = () => {
             { icon: Clock as LucideIcon, label: 'Discovered', value: resource.discovered_at ? new Date(resource.discovered_at).toLocaleDateString() : '—' },
             { icon: Tags as LucideIcon, label: 'Tags', value: tagCount.toString() },
             { icon: Settings as LucideIcon, label: 'Config Fields', value: configCount.toString() },
-            { icon: DollarSign as LucideIcon, label: 'Cost/mo', value: resource.cost_monthly != null ? `$${Number(resource.cost_monthly).toFixed(2)}` : 'N/A' },
+            { icon: DollarSign as LucideIcon, label: 'Cost/mo', value: costText != null ? costText : 'N/A' },
             ...extraStats,
           ].map(s => {
             const StatIcon = s.icon;

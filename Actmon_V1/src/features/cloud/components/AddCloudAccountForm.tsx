@@ -31,7 +31,6 @@ export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) =
       const payload = {
         ...data,
         provider,
-        tenant_or_region: provider === 'AWS' ? 'us-east-1' : data.tenant_or_region,
       };
       const newAccount = await createAccount(payload);
       addToast('Cloud account added successfully.', 'success');
@@ -81,13 +80,18 @@ export const AddCloudAccountForm = ({ onSuccess }: { onSuccess?: () => void }) =
             <option value="Development">Development</option>
           </select>
         </div>
-        {provider !== 'AWS' && (
-          <div>
-            <label className={LBL}>{provider === 'OCI' ? 'Primary Region' : 'Tenant / Region'}</label>
-            <input className={INP} {...register('tenant_or_region', { required: provider !== 'AWS' })}
-              placeholder={provider === 'OCI' ? 'e.g. ap-mumbai-1' : 'e.g. us-east-1'} />
-          </div>
-        )}
+        <div>
+          <label className={LBL}>
+            {provider === 'AWS' ? 'Default Region' : provider === 'OCI' ? 'Primary Region' : 'Tenant / Region'}
+          </label>
+          <input className={INP} {...register('tenant_or_region', { required: true })}
+            placeholder={provider === 'AWS' ? 'e.g. ap-south-1' : provider === 'OCI' ? 'e.g. ap-mumbai-1' : 'e.g. us-east-1'} />
+          {provider === 'AWS' && (
+            <p className="mt-1 text-[11px] text-gray-500">
+              Used as the default API endpoint; discovery scans all enabled regions.
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Credentials — per provider */}

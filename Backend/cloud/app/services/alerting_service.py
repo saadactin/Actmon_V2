@@ -16,15 +16,18 @@ class AlertingService:
         """Returns all alerts, newest first."""
         return sorted(self.alerts, key=lambda x: x["created_at"], reverse=True)
 
-    def trigger_anomaly_alert(self, anomaly_type: str, details: str, severity: str = "HIGH") -> Dict[str, Any]:
-        """Creates a new in-app alert."""
+    def trigger_anomaly_alert(self, anomaly_type: str, details: str, severity: str = "HIGH",
+                              simulated: bool = False) -> Dict[str, Any]:
+        """Creates a new in-app alert. simulated=True marks test alerts so they
+        can never be mistaken for real anomalies."""
         new_alert = {
             "id": str(uuid.uuid4()),
             "anomaly_type": anomaly_type,
             "details": details,
             "severity": severity,
             "created_at": datetime.datetime.utcnow().isoformat() + "Z",
-            "is_read": False
+            "is_read": False,
+            "simulated": simulated,
         }
         self.alerts.append(new_alert)
         logger.info(f"New in-app alert created: {anomaly_type}")

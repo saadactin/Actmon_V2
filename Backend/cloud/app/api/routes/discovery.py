@@ -12,6 +12,16 @@ from app.services.discovery_service import DiscoveryService
 router = APIRouter(prefix="/cloud/discovery", tags=["Discovery"])
 
 
+# Declared before "/{account_id}" so the literal path is not swallowed by the
+# UUID path parameter.
+@router.post("/scan-all", response_model=list[DiscoveryTriggerResponse], status_code=202)
+async def trigger_discovery_all(
+    svc: DiscoveryService = Depends(get_discovery_service),
+):
+    """Trigger a discovery scan for every cloud account, running concurrently."""
+    return await svc.trigger_scan_all()
+
+
 @router.post("/{account_id}", response_model=DiscoveryTriggerResponse, status_code=202)
 async def trigger_discovery(
     account_id: uuid.UUID,

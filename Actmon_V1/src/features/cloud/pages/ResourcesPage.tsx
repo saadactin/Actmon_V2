@@ -78,7 +78,7 @@ export const ResourcesPage = () => {
           {[
             { label: 'Provider' as const, value: selectedAccount.provider },
             { label: 'Environment' as const, value: selectedAccount.environment || 'N/A' },
-            { label: 'Region' as const, value: selectedAccount.tenant_or_region || 'Multi' },
+            { label: 'Region' as const, value: selectedAccount.tenant_or_region || 'N/A' },
             { label: 'Last Scan' as const, value: selectedAccount.last_discovery ? new Date(selectedAccount.last_discovery).toLocaleString() : 'Never' },
             { label: 'Auto Discovery' as const, value: selectedAccount.auto_discovery ? 'Enabled' : 'Disabled' },
           ].map(stat => {

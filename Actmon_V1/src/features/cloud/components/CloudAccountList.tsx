@@ -67,8 +67,8 @@ export const CloudAccountList = () => {
               </div>
               <div className="mt-1 text-xs text-gray-500">
                 {acc.environment ? <>{acc.environment} &bull; </> : null}
-                Region: {acc.tenant_or_region}
-                <span className="text-gray-400"> &bull; Last Scan: {formatDate(acc.last_discovery || '')}</span>
+                Region: {acc.tenant_or_region || 'NA'}
+                <span className="text-gray-400"> &bull; Last Scan: {acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</span>
               </div>
             </div>
             {canHere('delete') && (

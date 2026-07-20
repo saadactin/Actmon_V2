@@ -181,6 +181,8 @@ class AzureScanner:
                             "sku": acc.sku.name if acc.sku else None,
                             "kind": acc.kind,
                             "access_tier": acc.access_tier,
+                            # Real setting from the API; None = not reported
+                            "allow_blob_public_access": getattr(acc, "allow_blob_public_access", None),
                         },
                         "metadata": {},
                         "cost_monthly": None,
@@ -274,14 +276,15 @@ class AzureScanner:
         def _fetch():
             client = self.auth.get_resource_client()
             results = []
-            for res in client.resources.list():
+            # $expand=provisioningState returns the real ARM provisioning state
+            for res in client.resources.list(expand="provisioningState"):
                 results.append(
                     {
                         "provider_resource_id": res.id,
                         "resource_type": _friendly_type(res.type or ""),
                         "resource_name": res.name,
                         "region_or_zone": res.location or "global",
-                        "status": "active",
+                        "status": getattr(res, "provisioning_state", None),
                         "ip_address": None,
                         "config": {
                             "azure_type": res.type,
@@ -298,9 +301,16 @@ class AzureScanner:
 
         return await loop.run_in_executor(None, _fetch)
 
-    async def scan_all(self) -> List[Dict[str, Any]]:
+    async def scan_all(self, on_batch=None) -> List[Dict[str, Any]]:
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
+
+        async def _emit(batch):
+            if batch and on_batch:
+                try:
+                    await on_batch(batch)
+                except Exception as cb_exc:
+                    logger.warning("Azure on_batch callback failed: %s", cb_exc)
 
         # Detailed scanners run first — they enrich specific types with data the
         # generic ARM listing can't provide (VM public IPs, storage SKUs, SQL DBs
@@ -315,6 +325,7 @@ class AzureScanner:
                 results = await scanner_fn()
                 all_resources.extend(results)
                 logger.info("Azure %s: found %d resources", label, len(results))
+                await _emit(results)
             except Exception as exc:
                 logger.warning("Azure %s scan failed: %s", label, exc)
                 if "AuthorizationFailed" in str(exc) or "forbidden" in str(exc).lower():
@@ -327,12 +338,15 @@ class AzureScanner:
         try:
             generic = await self._scan_generic()
             added = 0
+            new_batch = []
             for r in generic:
                 if r["provider_resource_id"] not in seen_ids:
                     all_resources.append(r)
                     seen_ids.add(r["provider_resource_id"])
+                    new_batch.append(r)
                     added += 1
             logger.info("Azure Generic: found %d resources (%d new)", len(generic), added)
+            await _emit(new_batch)
         except Exception as exc:
             logger.warning("Azure generic scan failed: %s", exc)
             if "AuthorizationFailed" in str(exc) or "forbidden" in str(exc).lower():

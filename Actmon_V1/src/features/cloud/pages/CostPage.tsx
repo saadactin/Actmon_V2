@@ -4,7 +4,8 @@ import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useCostAnalytics } from '../hooks/useCost';
 import { useCloudStore } from '../state/cloudStore';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
-import { DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, ChevronRight, Loader2 } from 'lucide-react';
+import { RecommendationDetailModal } from '../components/RecommendationDetailModal';
+import { DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, ChevronRight, Loader2, Info } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 export const CostPage = () => {
@@ -21,6 +22,8 @@ export const CostPage = () => {
 
   // Support querying 'ALL' or specific accountId
   const [currentAccountView, setCurrentAccountView] = useState<string>('ALL');
+  // Recommendation whose detail popup is open
+  const [activeOpt, setActiveOpt] = useState<any | null>(null);
 
   const { data: analytics, isLoading, isError } = useCostAnalytics(currentAccountView);
 
@@ -53,9 +56,16 @@ export const CostPage = () => {
   const trends = analytics?.trends || [];
   const optimizations = analytics?.optimizations || [];
   const isBilled = analytics?.cost_source === 'billing_api';
-  const currencySymbol =
-    ({ USD: '$', INR: '₹', EUR: '€', GBP: '£' } as Record<string, string>)[analytics?.currency ?? 'USD']
-    ?? `${analytics?.currency ?? ''} `;
+  // No currency default: when the API reports no currency, render amounts without a
+  // symbol and disclose 'currency: NA' explicitly.
+  const symbolFor = (code: string | null | undefined): string =>
+    code
+      ? (({ USD: '$', INR: '₹', EUR: '€', GBP: '£' } as Record<string, string>)[code] ?? `${code} `)
+      : '';
+  const currencyCode: string | null = analytics?.currency ?? null;
+  const currencySymbol = symbolFor(currencyCode);
+  const trendCurrencyCode: string | null = analytics?.trend_currency ?? currencyCode;
+  const trendCurrencySymbol = symbolFor(trendCurrencyCode);
 
   return (
     <div className="p-6 space-y-6">
@@ -107,13 +117,20 @@ export const CostPage = () => {
                 </div>
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
-                    {isBilled ? 'Billed Spend (Last 30 Days)' : 'Projected Monthly Spend'}
+                    {isBilled ? 'Billed Spend (Last 30 Days)' : 'Monthly Spend'}
                   </p>
                   <p className="text-2xl font-bold text-gray-900 mt-0.5">
-                    {currencySymbol}{analytics.total_monthly_cost.toFixed(2)}
+                    {analytics.total_monthly_cost == null
+                      ? 'NA'
+                      : `${currencySymbol}${analytics.total_monthly_cost.toFixed(2)}`}
                   </p>
+                  {analytics.total_monthly_cost != null && !currencyCode && (
+                    <p className="text-[11px] text-gray-400 mt-0.5">currency: NA</p>
+                  )}
                   <p className="text-[11px] text-gray-400 mt-0.5">
-                    {isBilled ? 'Actual spend from the cloud billing API' : 'Estimated — billing API returned no cost data'}
+                    {isBilled
+                      ? 'Actual spend from the cloud billing API'
+                      : 'No billing data is available for this account'}
                   </p>
                 </div>
               </div>
@@ -128,7 +145,9 @@ export const CostPage = () => {
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Potential Savings</p>
                   <p className="text-2xl font-bold text-green-600 mt-0.5">
-                    -{currencySymbol}{analytics.potential_savings.toFixed(2)}
+                    {analytics.potential_savings == null
+                      ? 'NA'
+                      : `-${currencySymbol}${analytics.potential_savings.toFixed(2)}`}
                   </p>
                 </div>
               </div>
@@ -143,7 +162,9 @@ export const CostPage = () => {
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Optimized Net Spend</p>
                   <p className="text-2xl font-bold text-purple-600 mt-0.5">
-                    {currencySymbol}{analytics.net_projected_cost.toFixed(2)}
+                    {analytics.net_projected_cost == null
+                      ? 'NA'
+                      : `${currencySymbol}${analytics.net_projected_cost.toFixed(2)}`}
                   </p>
                 </div>
               </div>
@@ -151,75 +172,44 @@ export const CostPage = () => {
 
           </div>
 
-          {/* Historical Charts Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-            {/* Projected Spend Line */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
-                <TrendingUp size={16} className="text-blue-600" />
-                Monthly Spend Trend (Last 30 Days)
-              </h3>
-              <div className="h-[230px]">
-                {trends.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-sm text-gray-500 border border-dashed border-gray-200 rounded-lg">
-                    No trend data found
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#2563eb" stopOpacity={0.01}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                      <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} />
-                      <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} unit="$" />
-                      <Tooltip
-                        contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12 }}
-                      />
-                      <Area type="monotone" dataKey="estimated_cost" name="Projected Cost" stroke="#2563eb" strokeWidth={2} fillOpacity={1} fill="url(#colorCost)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
+          {/* Billed Spend Trend */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
+              <TrendingUp size={16} className="text-blue-600" />
+              Monthly Spend Trend (Last 30 Days)
+              {trendCurrencyCode && (
+                <span className="text-[11px] font-semibold text-gray-400 normal-case tracking-normal">({trendCurrencyCode})</span>
+              )}
+            </h3>
+            <div className="h-[230px]">
+              {trends.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-sm text-gray-500 border border-dashed border-gray-200 rounded-lg">
+                  No billing trend data available — NA
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="#2563eb" stopOpacity={0.01}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} />
+                    <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} unit={trendCurrencySymbol.trim() || undefined} />
+                    <Tooltip
+                      contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12 }}
+                      formatter={(value: any) => [
+                        `${trendCurrencySymbol}${Number(value).toFixed(2)}`,
+                        'Daily Billed Spend',
+                      ]}
+                    />
+                    <Area type="monotone" dataKey="cost" name="Daily Billed Spend" stroke="#2563eb" strokeWidth={2} fillOpacity={1} fill="url(#colorCost)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
             </div>
-
-            {/* Resource Sprawl Line */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
-                <TrendingUp size={16} className="text-teal-600" />
-                Resource Sprawl / Growth (Last 30 Days)
-              </h3>
-              <div className="h-[230px]">
-                {trends.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-sm text-gray-500 border border-dashed border-gray-200 rounded-lg">
-                    No sprawl data found
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trends} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#0d9488" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#0d9488" stopOpacity={0.01}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                      <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} />
-                      <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} />
-                      <Tooltip
-                        contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12 }}
-                      />
-                      <Area type="monotone" dataKey="resource_count" name="Total Resources" stroke="#0d9488" strokeWidth={2} fillOpacity={1} fill="url(#colorCount)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </div>
-
           </div>
 
           {/* Cost Optimization Recommendations */}
@@ -233,8 +223,17 @@ export const CostPage = () => {
               {optimizations.length === 0 ? (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-12 px-5">
                   <ShieldCheck size={40} className="text-green-500 mb-3" />
-                  <h4 className="text-base font-semibold text-gray-900 mb-1">Fully Optimized</h4>
-                  <p className="text-sm text-gray-500">Your cloud resources are fully optimized. No savings recommendations found!</p>
+                  <h4 className="text-base font-semibold text-gray-900 mb-1">No Recommendations Found</h4>
+                  <p className="text-sm text-gray-500 max-w-md">
+                    We checked the discovered resources in this view for common waste patterns
+                    — stopped compute &amp; databases, idle clusters, load balancers and gateways
+                    with no backends, legacy instance types, and missing storage policies —
+                    and found none.
+                  </p>
+                  <p className="text-xs text-gray-400 mt-2 max-w-md">
+                    This is a configuration-based check, not a guarantee of full optimization:
+                    usage-based rightsizing and rupee savings estimates are not yet wired up.
+                  </p>
                 </div>
               ) : (
                 optimizations.map((opt: any) => {
@@ -242,7 +241,11 @@ export const CostPage = () => {
                   return (
                     <div
                       key={opt.id}
-                      className={`bg-white rounded-xl border border-gray-200 shadow-sm border-l-4 ${style.accent} p-5`}
+                      onClick={() => setActiveOpt(opt)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={e => { if (e.key === 'Enter') setActiveOpt(opt); }}
+                      className={`bg-white rounded-xl border border-gray-200 shadow-sm border-l-4 ${style.accent} p-5 cursor-pointer transition-shadow hover:shadow-md hover:border-gray-300`}
                     >
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
@@ -253,7 +256,12 @@ export const CostPage = () => {
                               {opt.severity} Severity
                             </span>
                             <span className="text-[11px] text-green-600 font-bold">
-                              Savings: ${opt.potential_savings.toFixed(2)}/mo
+                              Savings: {opt.potential_savings == null
+                                ? 'NA'
+                                : `${symbolFor(opt.savings_currency)}${opt.potential_savings.toFixed(2)}/mo`}
+                            </span>
+                            <span className="text-[11px] text-blue-600 font-semibold inline-flex items-center gap-1 ml-auto">
+                              <Info size={12} /> Click for detailed steps &amp; savings
                             </span>
                           </div>
 
@@ -282,7 +290,9 @@ export const CostPage = () => {
                                 {opt.sub_resources.map((sr: any, idx: number) => (
                                   <div key={idx} className="flex items-center justify-between px-2 py-1.5 bg-white border border-gray-100 rounded-md">
                                     <span className="text-xs text-gray-500 font-mono">{sr.name}</span>
-                                    <span className="text-xs text-green-600 font-semibold">${sr.cost.toFixed(2)}/mo</span>
+                                    <span className="text-xs text-green-600 font-semibold">
+                                      {sr.cost == null ? 'NA' : `${currencySymbol}${sr.cost.toFixed(2)}/mo`}
+                                    </span>
                                   </div>
                                 ))}
                               </div>
@@ -294,7 +304,7 @@ export const CostPage = () => {
                         <div className="shrink-0 text-right">
                           <span className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Target Resource</span>
                           <button
-                            onClick={() => navigate(`/cloud/resources/${opt.resource_id}`)}
+                            onClick={e => { e.stopPropagation(); navigate(`/cloud/resources/${opt.resource_id}`); }}
                             className="inline-flex items-center gap-1 pt-1 text-sm font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
                           >
                             {opt.affected_resource}
@@ -309,6 +319,10 @@ export const CostPage = () => {
             </div>
           </div>
         </>
+      )}
+
+      {activeOpt && (
+        <RecommendationDetailModal opt={activeOpt} onClose={() => setActiveOpt(null)} />
       )}
     </div>
   );

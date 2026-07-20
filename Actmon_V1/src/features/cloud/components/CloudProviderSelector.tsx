@@ -246,7 +246,7 @@ export const CloudProviderSelector: React.FC<Props> = ({
                               {acc.account_name}
                             </div>
                             <div className="text-xs text-gray-500 mt-0.5">
-                              {acc.environment || 'production'} · {acc.tenant_or_region || 'multi-region'}
+                              {acc.environment || 'NA'} · {acc.tenant_or_region || 'NA'}
                             </div>
                           </div>
                           {isSelected && (

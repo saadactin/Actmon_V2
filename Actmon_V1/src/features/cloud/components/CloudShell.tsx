@@ -7,9 +7,11 @@ import {
 } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
+import { useTriggerAllDiscovery } from '../hooks/useDiscovery';
 import { useCloudStore } from '../state/cloudStore';
 import { DrawerPanel } from '../../../components/ui/DrawerPanel';
 import { AddCloudAccountForm } from './AddCloudAccountForm';
+import { DiscoveryWatcher } from './DiscoveryWatcher';
 import { usePermissions } from '../../../hooks/usePermissions';
 
 const TABS = [
@@ -29,15 +31,22 @@ export const CloudShell: React.FC = () => {
   const { data: resources } = useAllResources();
   const isDrawerOpen = useCloudStore((s) => s.isAddAccountDrawerOpen);
   const setDrawerOpen = useCloudStore((s) => s.setAddAccountDrawerOpen);
+  const activeJobCount = useCloudStore((s) => Object.keys(s.activeDiscoveryJobs).length);
+  const { mutate: scanAll, isPending: scanAllPending } = useTriggerAllDiscovery();
   const { canHere } = usePermissions();
   const canAdd = canHere('add');
+  const canScan = canHere('execute');
 
   const accountCount = accounts?.length ?? 0;
   const resourceCount = resources?.length ?? 0;
   const providers = Array.from(new Set((accounts || []).map((a: any) => a.provider)));
+  const scanning = scanAllPending || activeJobCount > 0;
 
   return (
     <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9] flex flex-col">
+      {/* Always-on watcher: live resource refresh + completion toasts on every page */}
+      <DiscoveryWatcher />
+
       {/* ─── TOP HEADER ─── */}
       <div className="text-white shadow-xl"
         style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e40af 52%,#0369a1 100%)' }}>
@@ -67,6 +76,13 @@ export const CloudShell: React.FC = () => {
               <button onClick={() => setDrawerOpen(true)}
                 className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold bg-white text-blue-700 hover:bg-sky-50 transition-all shadow-sm">
                 <Plus size={15} /> Add Account
+              </button>
+            )}
+            {canScan && accountCount > 0 && (
+              <button onClick={() => scanAll()} disabled={scanning}
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold bg-sky-400 text-slate-900 hover:bg-sky-300 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed">
+                <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
+                {scanning ? `Scanning${activeJobCount > 0 ? ` · ${activeJobCount}` : ''}…` : 'Scan All Accounts'}
               </button>
             )}
             <button onClick={() => qc.invalidateQueries()}

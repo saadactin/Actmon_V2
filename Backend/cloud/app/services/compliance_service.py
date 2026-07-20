@@ -1,4 +1,12 @@
-"""Compliance Framework Mapping Service."""
+"""Compliance framework mapping service.
+
+Maps ACTMON's real security findings onto compliance frameworks via an
+explicit category/keyword table. It does NOT run a certified framework
+assessment, so control totals and percentage scores are returned as None
+(the UI shows NA) — a real score requires provider compliance APIs
+(AWS Security Hub standards, Azure Defender regulatory compliance,
+OCI Cloud Guard). Only the mapped findings themselves are real data.
+"""
 from __future__ import annotations
 
 import logging
@@ -10,53 +18,52 @@ from app.services.security_service import run_security_scan
 
 logger = logging.getLogger("cloud_svc.compliance")
 
+# Explicit finding-category → framework mapping. A finding maps to a framework
+# only if its category is listed — no fuzzy text matching.
+_FRAMEWORK_CATEGORIES: Dict[str, set] = {
+    "SOC2": {"Networking", "Security", "Identity & Access", "Encryption", "Governance"},
+    "HIPAA": {"Encryption", "Security"},
+    "PCI-DSS": {"Networking", "Encryption", "Security"},
+}
+
+
 async def generate_compliance_report(account_id: uuid.UUID, db: AsyncSession) -> Dict[str, Any]:
-    """Generates a compliance matrix by analyzing security findings."""
+    """Group real security findings by compliance framework."""
     security_data = await run_security_scan(account_id, db)
     findings = security_data.get("findings", [])
-    
-    # Base control mapping dictionaries
-    frameworks = {
-        "SOC2": {"total_controls": 15, "failed_controls": 0, "score": 100, "issues": []},
-        "HIPAA": {"total_controls": 12, "failed_controls": 0, "score": 100, "issues": []},
-        "PCI-DSS": {"total_controls": 10, "failed_controls": 0, "score": 100, "issues": []}
+
+    frameworks: Dict[str, Dict[str, Any]] = {
+        name: {
+            # No certified control catalog is evaluated — totals/scores are NA
+            "total_controls": None,
+            "failed_controls": None,
+            "score": None,
+            "related_findings": 0,
+            "issues": [],
+        }
+        for name in _FRAMEWORK_CATEGORIES
     }
 
-    # Map findings to frameworks
     for finding in findings:
-        title = finding.get("title", "")
-        desc = finding.get("description", "")
-        text_to_check = f"{title} {desc}"
-        severity = finding.get("severity", "LOW")
-        
-        # Add affected_resource for the UI
-        finding["rule"] = title
-        finding["affected_resource"] = f"{finding.get('resource_type', 'Unknown')}: {finding.get('resource_name', 'Unnamed')}"
-        
-        # Determine framework overlap
-        text_lower = text_to_check.lower()
-        
-        is_soc2 = any(k.lower() in text_lower for k in ["Security Group", "IAM", "Encryption", "S3", "Public", "Access", "Storage", "Network", "NSG", "VPC", "VCN"])
-        is_hipaa = any(k.lower() in text_lower for k in ["Encryption", "Database", "S3", "KMS", "RDS", "Storage", "SQL", "TDE", "Data", "Cluster"])
-        is_pci = any(k.lower() in text_lower for k in ["Security Group", "Port", "Public", "Encryption", "HTTP", "Inbound", "IP", "Ingress", "Network", "NSG"])
-        
-        if is_soc2:
-            frameworks["SOC2"]["failed_controls"] += 1
-            frameworks["SOC2"]["issues"].append(finding)
-        if is_hipaa:
-            frameworks["HIPAA"]["failed_controls"] += 1
-            frameworks["HIPAA"]["issues"].append(finding)
-        if is_pci:
-            frameworks["PCI-DSS"]["failed_controls"] += 1
-            frameworks["PCI-DSS"]["issues"].append(finding)
+        finding["rule"] = finding.get("title", "")
+        finding["affected_resource"] = (
+            f"{finding.get('resource_type', 'Unknown')}: {finding.get('resource_name', 'Unnamed')}"
+        )
+        category = finding.get("category", "")
+        for fw_name, categories in _FRAMEWORK_CATEGORIES.items():
+            if category in categories:
+                frameworks[fw_name]["related_findings"] += 1
+                frameworks[fw_name]["issues"].append(finding)
 
-    # Calculate scores
-    for fw, data in frameworks.items():
-        penalty = sum(25 if f.get("severity") == "CRITICAL" else 15 if f.get("severity") == "HIGH" else 5 for f in data["issues"])
-        data["score"] = max(0, 100 - penalty)
-        
     return {
         "account_id": str(account_id),
-        "overall_compliance_score": int((frameworks["SOC2"]["score"] + frameworks["HIPAA"]["score"] + frameworks["PCI-DSS"]["score"]) / 3),
-        "frameworks": frameworks
+        # A real percentage requires a certified assessment — NA until one is wired up
+        "overall_compliance_score": None,
+        "frameworks": frameworks,
+        "note": (
+            "Findings are real results from the security scan, grouped by framework "
+            "relevance. Control totals and compliance scores require a certified "
+            "assessment (AWS Security Hub / Azure Defender / OCI Cloud Guard) and are "
+            "shown as NA until such an integration is connected."
+        ),
     }

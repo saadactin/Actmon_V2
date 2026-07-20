@@ -58,12 +58,19 @@ const TYPE_META: Record<string, { color: string; label: string }> = {
   APIManagement:        { color: '#ec4899', label: 'API Management' },
   VMScaleSet:           { color: '#0078D4', label: 'VM Scale Set' },
   RecoveryVault:        { color: '#0ea5e9', label: 'Recovery Vault' },
-  // ── OCI ──
-  Instance:             { color: '#f59e0b', label: 'Compute Instance' },
+  // ── OCI ── (types as emitted by the OCI scanner)
+  ComputeInstance:      { color: '#f59e0b', label: 'Compute Instance' },
   BlockVolume:          { color: '#3b82f6', label: 'Block Volume' },
-  Bucket:               { color: '#3b82f6', label: 'Object Storage' },
+  ObjectStorageBucket:  { color: '#3b82f6', label: 'Object Storage' },
   AutonomousDatabase:   { color: '#10b981', label: 'Autonomous DB' },
   VCN:                  { color: '#14b8a6', label: 'Virtual Cloud Network' },
+  Function:             { color: '#a855f7', label: 'OCI Function' },
+  OKECluster:           { color: '#6366f1', label: 'OKE Cluster' },
+  IAMGroup:             { color: '#64748b', label: 'IAM Group' },
+  IAMPolicy:            { color: '#64748b', label: 'IAM Policy' },
+  // Synthetic grouping hub — one per OCI compartment (and reused label style
+  // for Azure resource groups)
+  Compartment:          { color: '#0078D4', label: 'Compartment' },
 };
 
 const CARD_W = 200;
@@ -104,7 +111,7 @@ export const CloudTopologyPage = () => {
   const col1Types = [
     'VPC', 'SecurityGroup', 'IAMRole',
     'VirtualNetwork', 'NetworkSecurityGroup', 'PublicIP', 'NetworkInterface',
-    'VCN', 'ResourceGroup',
+    'VCN', 'ResourceGroup', 'Compartment', 'IAMGroup', 'IAMPolicy',
     'LoadBalancer', 'ApplicationGateway', 'PrivateEndpoint', 'ManagedIdentity',
     'NATGateway', 'DNSZone', 'Bastion', 'RouteTable',
   ];
@@ -112,7 +119,8 @@ export const CloudTopologyPage = () => {
   const col2Types = [
     'EC2Instance', 'LambdaFunction', 'EKSCluster', 'APIGateway',
     'VirtualMachine', 'AKSCluster', 'AppService', 'FunctionApp',
-    'Instance', 'VMScaleSet', 'AppServicePlan', 'LogicApp', 'APIManagement',
+    'Instance', 'ComputeInstance', 'Function', 'OKECluster',
+    'VMScaleSet', 'AppServicePlan', 'LogicApp', 'APIManagement',
     'ContainerRegistry',
   ];
   // Storage & Database — everything else (StorageAccount, SQLDatabase, buckets, tables…)
@@ -482,14 +490,14 @@ export const CloudTopologyPage = () => {
                       {node.region}
                     </text>
 
-                    {/* Cost badge */}
-                    {node.cost > 0 && (
+                    {/* Cost badge — only when a real billed cost exists (null = no billing data) */}
+                    {typeof node.cost === 'number' && node.cost > 0 && (
                       <g transform={`translate(${CARD_W - 50}, ${CARD_H - 24})`}>
                         <rect width="46" height="18" rx="6" fill="#dcfce7" stroke="#86efac" strokeWidth="1.5" />
                         <text x="23" y="13" textAnchor="middle"
                           fill="#166534"
                           style={{ fontSize: 10, fontWeight: 800, fontFamily: 'system-ui' }}>
-                          ${node.cost.toFixed(0)}/mo
+                          {node.cost.toFixed(0)}/mo
                         </text>
                       </g>
                     )}
@@ -530,11 +538,13 @@ export const CloudTopologyPage = () => {
             {/* Meta rows */}
             <dl className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden mb-5">
               {[
-                { label: 'Status', value: selectedNode.status?.toUpperCase() ?? 'N/A', accent: true },
-                { label: 'Region', value: selectedNode.region },
-                { label: 'Cloud Account', value: selectedNode.account_name },
-                { label: 'Est. Cost', value: selectedNode.cost > 0 ? `$${Number(selectedNode.cost).toFixed(2)}/mo` : 'N/A' },
-                { label: 'Resource ID', value: selectedNode.provider_id, mono: true },
+                // status is null for types with no real status (buckets, IAM roles, ResourceGroup hubs…) → neutral N/A
+                { label: 'Status', value: selectedNode.status?.toUpperCase() ?? 'N/A', accent: !!selectedNode.status },
+                { label: 'Region', value: selectedNode.region || 'N/A' },
+                { label: 'Cloud Account', value: selectedNode.account_name || 'N/A' },
+                // cost is real billed spend when present; no currency field on topology nodes, so no '$' assertion
+                { label: 'Monthly Cost', value: typeof selectedNode.cost === 'number' && selectedNode.cost > 0 ? `${Number(selectedNode.cost).toFixed(2)}/mo` : 'N/A' },
+                { label: 'Resource ID', value: selectedNode.provider_id || 'N/A', mono: true },
               ].map(row => (
                 <div key={row.label} className="flex items-start justify-between gap-3 px-3.5 py-2.5">
                   <dt className="text-xs text-gray-500 uppercase font-semibold shrink-0">{row.label}</dt>

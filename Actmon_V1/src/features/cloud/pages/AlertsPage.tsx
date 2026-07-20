@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Send, CheckCircle2, AlertTriangle, ShieldAlert, Loader2 } from 'lucide-react';
+import { Bell, CheckCircle2, AlertTriangle, ShieldAlert, Loader2 } from 'lucide-react';
 
 const SEVERITY_PILL_CLASSES: Record<string, string> = {
   CRITICAL: 'bg-red-50 text-red-700 border-red-200',
@@ -13,7 +13,6 @@ const SEVERITY_PILL_CLASSES: Record<string, string> = {
 export const AlertsPage = () => {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState<any[]>([]);
-  const [simulating, setSimulating] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const fetchAlerts = async () => {
@@ -35,28 +34,6 @@ export const AlertsPage = () => {
     const interval = setInterval(fetchAlerts, 10000); // Polling every 10s
     return () => clearInterval(interval);
   }, []);
-
-  const handleSimulate = async () => {
-    setSimulating(true);
-    try {
-      const res = await fetch(`/api/v1/cloud/alerts/simulate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          anomaly_type: "Unusual GPU Instance Sprawl",
-          details: "A massive p4d.24xlarge ($2,000/mo) instance was just spun up in us-east-1 outside of approved infrastructure provisioning windows.",
-          severity: "CRITICAL"
-        })
-      });
-      if (res.ok) {
-        fetchAlerts();
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSimulating(false);
-    }
-  };
 
   const handleMarkRead = async (id: string) => {
     try {
@@ -83,13 +60,6 @@ export const AlertsPage = () => {
               In-app anomaly detection and security incident alerts.
             </p>
           </div>
-          <button
-            onClick={handleSimulate}
-            disabled={simulating}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            <Send size={16} /> {simulating ? 'Simulating...' : 'Simulate Anomaly'}
-          </button>
         </div>
 
         {loading ? (
@@ -100,8 +70,8 @@ export const AlertsPage = () => {
         ) : alerts.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-12 px-6">
             <CheckCircle2 size={40} className="text-green-500 mb-3" />
-            <h3 className="text-base font-semibold text-gray-900">No alerts yet</h3>
-            <p className="text-sm text-gray-500 mt-1">You will see anomalies and critical issues here.</p>
+            <h3 className="text-base font-semibold text-gray-900">No alerts</h3>
+            <p className="text-sm text-gray-500 mt-1">Real-time anomaly detection alerts will appear here.</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -127,6 +97,11 @@ export const AlertsPage = () => {
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border ${SEVERITY_PILL_CLASSES[alert.severity] || SEVERITY_PILL_CLASSES.INFO}`}>
                       {alert.severity}
                     </span>
+                    {alert.simulated === true && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border bg-amber-50 text-amber-700 border-amber-300">
+                        Simulated
+                      </span>
+                    )}
                     {!alert.is_read && (
                       <button
                         onClick={() => handleMarkRead(alert.id)}

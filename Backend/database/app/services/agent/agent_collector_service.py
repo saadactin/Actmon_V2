@@ -127,6 +127,12 @@ def _collect_mysql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
             return True
     except Exception as exc:
         logger.error(f"[agent_collector] MySQL (agent) failed for {agent_name}: {exc}")
+        # A failed query on the backend session leaves the transaction aborted;
+        # roll back so the direct path and the heartbeat UPDATE can still run.
+        try:
+            db.rollback()
+        except Exception:
+            pass
         # fall through to direct
 
     enc_pass = quote_plus(conn_rec.password or "")
@@ -156,6 +162,10 @@ def _collect_mysql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
 
     except Exception as exc:
         logger.error(f"[agent_collector] MySQL failed for {agent_name}: {exc}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return False
 
 

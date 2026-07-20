@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resource import CloudResource
@@ -100,4 +100,27 @@ class ResourceRepository:
             delete(CloudResource).where(CloudResource.account_id == account_id)
         )
         await self.db.flush()
+
+    async def count_by_account(self, account_id: uuid.UUID) -> int:
+        result = await self.db.execute(
+            select(func.count()).select_from(CloudResource).where(
+                CloudResource.account_id == account_id
+            )
+        )
+        return result.scalar_one()
+
+    async def delete_stale(
+        self, account_id: uuid.UUID, keep_provider_ids: List[str]
+    ) -> int:
+        """Delete this account's resources whose provider_resource_id is NOT in
+        keep_provider_ids — i.e. rows from a previous scan that no longer exist.
+        Used after an incremental scan to prune what wasn't re-seen. Returns rows deleted."""
+        stmt = delete(CloudResource).where(CloudResource.account_id == account_id)
+        if keep_provider_ids:
+            stmt = stmt.where(
+                CloudResource.provider_resource_id.notin_(list(keep_provider_ids))
+            )
+        result = await self.db.execute(stmt)
+        await self.db.flush()
+        return result.rowcount or 0
 

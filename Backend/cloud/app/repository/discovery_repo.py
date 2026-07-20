@@ -29,6 +29,13 @@ class DiscoveryRepository:
             job.celery_task_id = task_id
             await self.db.flush()
 
+    async def set_progress(self, job_id: uuid.UUID, resources_found: int) -> None:
+        """Update the live resource count while a scan is still RUNNING."""
+        job = await self.db.get(DiscoveryJob, job_id)
+        if job:
+            job.resources_found = resources_found
+            await self.db.flush()
+
     async def complete_job(self, job_id: uuid.UUID, resources_found: int) -> None:
         job = await self.db.get(DiscoveryJob, job_id)
         if job:
@@ -52,6 +59,18 @@ class DiscoveryRepository:
         result = await self.db.execute(
             select(DiscoveryJob)
             .where(DiscoveryJob.account_id == account_id)
+            .order_by(DiscoveryJob.started_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_active_for_account(self, account_id: uuid.UUID) -> Optional[DiscoveryJob]:
+        """The account's currently PENDING/RUNNING job, if any. Used to avoid
+        launching a second concurrent scan that would race the stale-prune."""
+        result = await self.db.execute(
+            select(DiscoveryJob)
+            .where(DiscoveryJob.account_id == account_id)
+            .where(DiscoveryJob.status.in_(("PENDING", "RUNNING")))
             .order_by(DiscoveryJob.started_at.desc())
             .limit(1)
         )

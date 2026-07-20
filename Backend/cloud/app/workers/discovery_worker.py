@@ -68,24 +68,61 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             await provider.authenticate()
             logger.info("Provider auth OK for job=%s", job_id)
 
-            resources = await provider.scan_resources()
-            logger.info("Scan returned %d resources for job=%s", len(resources), job_id)
+            # Incremental persistence: each batch of resources is upserted and the
+            # job's live count is updated the moment it's discovered, so the UI can
+            # show progress every few seconds instead of waiting for the full scan.
+            # Rows are NOT deleted up front — we prune whatever wasn't re-seen at the
+            # end, so a partial/failed scan never leaves the account empty.
+            seen_ids: set[str] = set()
+            write_lock = asyncio.Lock()
 
-            # Wipe old stale data before upserting fresh results
-            await resource_repo.delete_by_account(account_id)
-            count = await resource_repo.upsert_resources(account_id, resources)
+            async def on_batch(batch: list[dict]) -> None:
+                if not batch:
+                    return
+                async with write_lock:  # serialize writes on the shared session
+                    await resource_repo.upsert_resources(account_id, batch)
+                    for r in batch:
+                        pid = r.get("provider_resource_id")
+                        if pid:
+                            seen_ids.add(pid)
+                    await disco_repo.set_progress(job_id, len(seen_ids))
+                    await db.commit()
+                    logger.info("Discovery job=%s progress: %d resources", job_id, len(seen_ids))
 
-            # Estimate and update monthly costs
-            try:
-                from app.services.cost_service import estimate_costs
-                estimates = await estimate_costs(account_id, db)
-                for est in estimates.get("breakdown", []):
-                    res_id = uuid.UUID(est["resource_id"])
-                    res = await resource_repo.get_by_id(res_id)
-                    if res:
-                        res.cost_monthly = est["monthly_cost"]
-            except Exception as cost_exc:
-                logger.error("Failed to calculate costs during discovery: %s", cost_exc)
+            resources = await provider.scan_resources(on_batch=on_batch)
+
+            if seen_ids:
+                # Streamed path: batches already persisted. Prune rows from prior
+                # scans that weren't seen this time.
+                async with write_lock:
+                    removed = await resource_repo.delete_stale(account_id, list(seen_ids))
+                    await db.commit()
+                count = len(seen_ids)
+                logger.info("Discovery job=%s pruned %d stale resources", job_id, removed)
+            elif resources:
+                # Nothing streamed (e.g. on_batch failed for every batch) but the
+                # provider did return resources — persist them without wiping first.
+                count = await resource_repo.upsert_resources(account_id, resources)
+                await db.commit()
+            else:
+                # Scan returned nothing at all. This can mean a genuinely empty
+                # account, or it can mean every region/compartment scan silently
+                # swallowed a transient error (throttling, expired session, etc.)
+                # without raising. We can't tell those apart here, so never wipe
+                # an account that already has resources on file — do that only
+                # for a brand-new account with nothing to lose.
+                existing_count = await resource_repo.count_by_account(account_id)
+                if existing_count > 0:
+                    raise RuntimeError(
+                        f"Scan returned 0 resources but account already has "
+                        f"{existing_count} on file; refusing to wipe existing "
+                        "inventory. Treating this as a failed scan."
+                    )
+                count = 0
+
+            # Per-resource cost_monthly stays as the provider reported it (usually
+            # None → NA in the UI). Account-level spend comes from the billing API
+            # via the cost service — no config-based estimates are fabricated here.
 
             await account_repo.update_last_discovery(account_id)
             await disco_repo.complete_job(job_id, count)

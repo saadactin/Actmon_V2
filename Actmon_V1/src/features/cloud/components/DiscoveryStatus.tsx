@@ -1,9 +1,7 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useDiscoveryStatus } from '../hooks/useDiscovery';
 import { useCloudStore } from '../state/cloudStore';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
-import { useToast } from '../../../components/ui/ToastProvider';
-import { useQueryClient } from '@tanstack/react-query';
 
 interface Props {
   accountId: string;
@@ -11,24 +9,13 @@ interface Props {
 
 const PILL_BASE = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border';
 
+// Display-only badge. All discovery side-effects (live resource refresh, toasts,
+// clearing finished jobs) are owned by the global <DiscoveryWatcher/> so they
+// fire on every page, not only where this badge is mounted.
 export const DiscoveryStatus: React.FC<Props> = ({ accountId }) => {
   const activeJobId = useCloudStore(state => state.activeDiscoveryJobs[accountId]);
-  const setActiveDiscoveryJob = useCloudStore(state => state.setActiveDiscoveryJob);
   const { data: job, isLoading } = useDiscoveryStatus(activeJobId);
-  const { addToast } = useToast();
-
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    if (job?.status === 'COMPLETED') {
-      addToast(`Discovery completed. Found ${job.resources_found} resources.`, 'success');
-      setActiveDiscoveryJob(accountId, null); // Clear active job
-      queryClient.invalidateQueries({ queryKey: ['resources', accountId] }); // Fetch new resources
-    } else if (job?.status === 'FAILED') {
-      addToast(`Discovery failed: ${job.error_message}`, 'error');
-      setActiveDiscoveryJob(accountId, null); // Clear active job
-    }
-  }, [job?.status, accountId, setActiveDiscoveryJob, addToast, queryClient]);
+  const runningCount = job?.resources_found ?? 0;
 
   if (!activeJobId) return null;
 
@@ -39,7 +26,7 @@ export const DiscoveryStatus: React.FC<Props> = ({ accountId }) => {
       {isRunning ? (
         <span className={`${PILL_BASE} bg-blue-50 text-blue-700 border-blue-200`}>
           <Loader2 size={12} className="animate-spin" />
-          Discovery running
+          Discovery running{runningCount > 0 ? ` · ${runningCount} resources found` : ' · starting…'}
         </span>
       ) : job?.status === 'COMPLETED' ? (
         <span className={`${PILL_BASE} bg-green-50 text-green-700 border-green-200`}>

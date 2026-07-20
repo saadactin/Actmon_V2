@@ -139,6 +139,15 @@ class AWSScanner:
                                   .get("SSEAlgorithm")) if enc_rules else None
                 except Exception:
                     encryption = None
+                try:
+                    lifecycle_rules = s3.get_bucket_lifecycle_configuration(
+                        Bucket=bucket["Name"]).get("Rules", [])
+                except Exception as lc_exc:
+                    # NoSuchLifecycleConfiguration = confirmed zero rules; anything else = unknown
+                    if "NoSuchLifecycleConfiguration" in str(lc_exc):
+                        lifecycle_rules = []
+                    else:
+                        lifecycle_rules = None
 
                 results.append(
                     {
@@ -146,9 +155,12 @@ class AWSScanner:
                         "resource_type": "S3Bucket",
                         "resource_name": bucket["Name"],
                         "region_or_zone": bucket_region,
-                        "status": "active",
+                        # S3 buckets have no status concept in the API — report none
+                        "status": None,
                         "ip_address": None,
-                        "config": {"versioning": versioning, "encryption": encryption, "public_access_block": public_access_block},
+                        "config": {"versioning": versioning, "encryption": encryption,
+                                   "public_access_block": public_access_block,
+                                   "lifecycle_rules": lifecycle_rules},
                         "metadata": {
                             "creation_date": str(bucket.get("CreationDate"))
                         },
@@ -182,7 +194,8 @@ class AWSScanner:
                             "resource_type": "LambdaFunction",
                             "resource_name": fn["FunctionName"],
                             "region_or_zone": region,
-                            "status": fn.get("State", "Active"),
+                            # list_functions does not return State — None means not fetched
+                            "status": fn.get("State"),
                             "ip_address": None,
                             "config": {
                                 "runtime": fn.get("Runtime"),
@@ -407,7 +420,8 @@ class AWSScanner:
                         "resource_type": "SecurityGroup",
                         "resource_name": sg["GroupName"],
                         "region_or_zone": region,
-                        "status": "active",
+                        # Security groups have no lifecycle state in the AWS API
+                        "status": None,
                         "ip_address": None,
                         "config": {
                             "description": sg.get("Description"),
@@ -449,7 +463,8 @@ class AWSScanner:
                         "resource_type": "IAMRole",
                         "resource_name": role["RoleName"],
                         "region_or_zone": "global",
-                        "status": "active",
+                        # IAM roles have no lifecycle state in the AWS API
+                        "status": None,
                         "ip_address": None,
                         "config": {
                             "path": role.get("Path"),
@@ -485,7 +500,8 @@ class AWSScanner:
                             "resource_type": "APIGateway",
                             "resource_name": api["name"],
                             "region_or_zone": region,
-                            "status": "active",
+                            # REST APIs have no status field in the API
+                            "status": None,
                             "ip_address": f"https://{api['id']}.execute-api.{region}.amazonaws.com",
                             "config": {
                                 "protocol": "REST",
@@ -513,7 +529,8 @@ class AWSScanner:
                             "resource_type": "APIGateway",
                             "resource_name": api["Name"],
                             "region_or_zone": region,
-                            "status": "active",
+                            # HTTP/WebSocket APIs have no status field in the API
+                            "status": None,
                             "ip_address": api.get("ApiEndpoint"),
                             "config": {
                                 "protocol": api.get("ProtocolType"),
@@ -551,7 +568,7 @@ class AWSScanner:
                             "resource_type": "BedrockModel",
                             "resource_name": m["modelName"],
                             "region_or_zone": region,
-                            "status": m.get("status", "Active"),
+                            "status": m.get("status"),
                             "ip_address": None,
                             "config": {
                                 "base_model_arn": m.get("baseModelArn"),
@@ -579,7 +596,7 @@ class AWSScanner:
                             "resource_type": "BedrockAgent",
                             "resource_name": a["agentName"],
                             "region_or_zone": region,
-                            "status": a.get("agentStatus", "Active"),
+                            "status": a.get("agentStatus"),
                             "ip_address": None,
                             "config": {
                                 "description": a.get("description"),
@@ -607,7 +624,7 @@ class AWSScanner:
                             "resource_type": "BedrockKnowledgeBase",
                             "resource_name": kb["name"],
                             "region_or_zone": region,
-                            "status": kb.get("status", "Active"),
+                            "status": kb.get("status"),
                             "ip_address": None,
                             "config": {
                                 "description": kb.get("description"),
@@ -641,19 +658,31 @@ class AWSScanner:
         except Exception:
             return [self.auth.region]
 
-    async def scan_all(self) -> List[Dict[str, Any]]:
-        """Scan all resource types across all enabled AWS regions in parallel."""
+    async def scan_all(self, on_batch=None) -> List[Dict[str, Any]]:
+        """Scan all resource types across all enabled AWS regions in parallel.
+
+        If on_batch is provided, it is awaited with each non-empty batch as it is
+        discovered, for incremental persistence / live progress.
+        """
         regions = await self._get_regions()
         logger.info("AWS scanning %d regions concurrently: %s", len(regions), regions)
 
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
 
+        async def _emit(batch):
+            if batch and on_batch:
+                try:
+                    await on_batch(batch)
+                except Exception as cb_exc:
+                    logger.warning("AWS on_batch callback failed: %s", cb_exc)
+
         # S3 is global
         try:
             s3_resources = await self._scan_s3()
             all_resources.extend(s3_resources)
             logger.info("AWS S3: found %d buckets", len(s3_resources))
+            await _emit(s3_resources)
         except Exception as exc:
             logger.warning("AWS S3 scan failed: %s", exc)
             if "AccessDenied" in str(exc) or "UnauthorizedOperation" in str(exc):
@@ -664,6 +693,7 @@ class AWSScanner:
             iam_resources = await self._scan_iam_role()
             all_resources.extend(iam_resources)
             logger.info("AWS IAM: found %d roles", len(iam_resources))
+            await _emit(iam_resources)
         except Exception as exc:
             logger.warning("AWS IAM scan failed: %s", exc)
             if "AccessDenied" in str(exc) or "UnauthorizedOperation" in str(exc):
@@ -676,6 +706,7 @@ class AWSScanner:
             try:
                 results = await scanner_fn(region)
                 logger.info("AWS %s [%s]: found %d resources", label, region, len(results))
+                await _emit(results)
                 return results
             except Exception as exc:
                 logger.warning("AWS %s scan [%s] failed: %s", label, region, exc)

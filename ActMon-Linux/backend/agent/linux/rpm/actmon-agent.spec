@@ -7,7 +7,16 @@ Release:        1%{?dist}
 Summary:        ActMon Host Monitoring Agent
 License:        Proprietary
 BuildArch:      noarch
-Requires:       python3 >= 3.5, python3-PyMySQL, python3-psycopg2, python3-cryptography
+# Only python3 itself is a HARD requirement — the agent's core job (host CPU/mem/
+# infra metrics) needs nothing else. PyMySQL/psycopg2/cryptography are only needed
+# if THIS host also happens to run a MySQL/Postgres the agent is asked to monitor,
+# and none of them ship in RHEL/Oracle Linux's default repos (they're EPEL), so
+# hard-`Requires`-ing them here blocked the ENTIRE install on hosts without EPEL
+# enabled — even hosts being monitored for OS metrics only. %post below prechecks
+# and best-effort-installs them instead: already present → left alone (never
+# forced to a different version); missing → installed if a repo provides it;
+# unavailable → a warning, not a failed install.
+Requires:       python3 >= 3.5
 %global debug_package %{nil}
 
 %description
@@ -35,6 +44,42 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 5) else 1)' 2
     echo "***** Contact ActMon support for the legacy shell agent.            *****" >&2
     exit 1
 fi
+
+# Precheck the optional DB-driver modules: already importable (any version) →
+# leave completely alone, never force an upgrade/downgrade. Missing → try to
+# install a system package for it (best effort — enables EPEL once if the direct
+# attempt fails, since that's where these live on RHEL/Oracle Linux). Still
+# unavailable after that → warn and move on; the agent itself is unaffected,
+# only monitoring of that specific DB engine on this host stays unavailable
+# until the dependency is installed (manually, or the host gets EPEL access).
+_epel_tried=0
+_ensure_epel_once() {
+    [ "$_epel_tried" = "1" ] && return
+    _epel_tried=1
+    rpm -q epel-release >/dev/null 2>&1 && return
+    dnf install -y epel-release >/dev/null 2>&1 || dnf install -y oracle-epel-release-el8 >/dev/null 2>&1 || true
+}
+_ensure_py_module() {
+    mod="$1"; shift
+    python3 -c "import $mod" >/dev/null 2>&1 && { echo "  [dep] python3 '$mod' already available — leaving as-is."; return 0; }
+    echo "  [dep] python3 '$mod' not found — attempting best-effort install..."
+    if command -v dnf >/dev/null 2>&1; then
+        for pkg in "$@"; do
+            dnf install -y "$pkg" >/dev/null 2>&1 && break
+            _ensure_epel_once
+            dnf install -y "$pkg" >/dev/null 2>&1 && break
+        done
+    elif command -v yum >/dev/null 2>&1; then
+        for pkg in "$@"; do yum install -y "$pkg" >/dev/null 2>&1 && break; done
+    fi
+    python3 -c "import $mod" >/dev/null 2>&1 \
+        && echo "  [dep] '$mod' now available." \
+        || echo "  [dep] WARNING: could not install '$mod' — monitoring DBs of that type on this host stays unavailable (agent core function is unaffected)."
+}
+_ensure_py_module pymysql python3-PyMySQL python3-pymysql
+_ensure_py_module psycopg2 python3-psycopg2
+_ensure_py_module cryptography python3-cryptography
+
 # Remove any stale hand-made unit in /etc that would shadow this package's unit.
 [ -f /etc/systemd/system/actmon-agent.service ] && rm -f /etc/systemd/system/actmon-agent.service || true
 pkill -f /usr/lib/actmon/actmon-agent.sh 2>/dev/null || true

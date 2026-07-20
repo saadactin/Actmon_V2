@@ -219,7 +219,7 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
                       <td className="px-4 py-3 text-sm whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${sc.pill}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${sc.dot}`} />
-                          {(item.status || 'UNKNOWN').toUpperCase()}
+                          {(item.status || 'NA').toUpperCase()}
                         </span>
                       </td>
                       {/* Arrow */}

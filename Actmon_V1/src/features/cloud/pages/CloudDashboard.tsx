@@ -6,9 +6,10 @@ import { useQueries } from '@tanstack/react-query';
 import { getSecurityPosture } from '../api/security.api';
 import { getCostEstimate } from '../api/cost.api';
 import { useCloudStore } from '../state/cloudStore';
-import { Cloud, Server, DollarSign, Activity, ShieldAlert, ShieldCheck, ArrowRight, ArrowLeft, Clock, Loader2, Layers, Globe, Sparkles, Plus } from 'lucide-react';
+import { Cloud, Server, DollarSign, Activity, Shield, ShieldAlert, ShieldCheck, ArrowRight, ArrowLeft, Clock, Loader2, Layers, Globe, Sparkles, Plus } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { PROVIDER_META } from '../components/CloudProviderSelector';
+import { formatCurrency } from '../utils/formatters';
 
 const PROVIDER_BADGE_CLASSES: Record<string, string> = {
   AWS: 'bg-orange-50 text-orange-700 border-orange-200',
@@ -87,30 +88,43 @@ export const CloudDashboard = () => {
       : allResources.filter(r => r.account_id === selectedView))
     : [];
 
-  // Filter security postures
-  const activePostures = postureQueries
-    ? postureQueries
-      .map(q => q.data)
-      .filter((p): p is NonNullable<typeof p> => !!p &&
-        (selectedView === 'ALL' ? visibleAccountIds.has(p.account_id) : p.account_id === selectedView))
-    : [];
+  // Zip per-account queries with their account by index (responses may not echo account_id)
+  const isAccountSelected = (accId: string) =>
+    selectedView === 'ALL' ? visibleAccountIds.has(accId) : accId === selectedView;
 
-  // Filter cost estimates
-  const activeCosts = costQueries
-    ? costQueries
-      .map(q => q.data)
-      .filter((c): c is NonNullable<typeof c> => !!c &&
-        (selectedView === 'ALL' ? visibleAccountIds.has(c.account_id) : c.account_id === selectedView))
-    : [];
+  const relevantPostureQueries = (accounts || [])
+    .map((acc, idx) => ({ acc, query: postureQueries[idx] }))
+    .filter(({ acc }) => isAccountSelected(acc.id));
+
+  const relevantCostQueries = (accounts || [])
+    .map((acc, idx) => ({ acc, query: costQueries[idx] }))
+    .filter(({ acc }) => isAccountSelected(acc.id));
+
+  const posturesLoading = relevantPostureQueries.some(({ query }) => query?.isLoading);
+  const costsLoading = relevantCostQueries.some(({ query }) => query?.isLoading);
+
+  const activePostures = relevantPostureQueries
+    .map(({ query }) => query?.data)
+    .filter((p): p is NonNullable<typeof p> => !!p);
 
   // Compute stats
   const totalResources = filteredResources.length;
-  const totalCost = activeCosts.reduce((sum, c) => sum + (c.total_monthly_cost || 0), 0);
 
-  // Security score (average of selected)
+  // Only accounts with real billing data (non-null total_monthly_cost) contribute to the sum
+  const billedCosts = relevantCostQueries
+    .map(({ query }) => query?.data)
+    .filter((c): c is { total_monthly_cost: number; currency: string | null } =>
+      !!c && typeof c.total_monthly_cost === 'number');
+  const totalCost = billedCosts.reduce((sum, c) => sum + c.total_monthly_cost, 0);
+  const hasCostData = billedCosts.length > 0;
+  const costCurrencySet = new Set(billedCosts.map(c => c.currency ?? null));
+  const singleCurrency = costCurrencySet.size === 1 ? [...costCurrencySet][0] : null;
+  const hasMixedCurrencies = costCurrencySet.size > 1;
+
+  // Security score (average of selected); null when no posture data — never fabricate 100
   const avgSecurityScore = activePostures.length > 0
     ? Math.round(activePostures.reduce((sum, p) => sum + p.score, 0) / activePostures.length)
-    : 100;
+    : null;
 
   const getSecurityGrade = (score: number) => {
     if (score >= 90) return 'A';
@@ -120,7 +134,7 @@ export const CloudDashboard = () => {
     return 'F';
   };
 
-  const securityGrade = getSecurityGrade(avgSecurityScore);
+  const securityGrade = avgSecurityScore != null ? getSecurityGrade(avgSecurityScore) : null;
 
   const getGradeColor = (grade: string) => {
     switch (grade) {
@@ -323,8 +337,21 @@ export const CloudDashboard = () => {
               <DollarSign size={20} />
             </div>
             <div>
-              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Est. Monthly Cost</p>
-              <p className="text-2xl font-bold text-gray-900">${totalCost.toFixed(2)}</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Monthly Cost (billed)</p>
+              {costsLoading ? (
+                <div className="h-7 w-24 mt-1 rounded bg-gray-100 animate-pulse" />
+              ) : !hasCostData ? (
+                <p className="text-2xl font-bold text-gray-400">NA</p>
+              ) : hasMixedCurrencies ? (
+                <>
+                  <p className="text-2xl font-bold text-gray-400">NA</p>
+                  <p className="text-[11px] text-gray-400">mixed currencies</p>
+                </>
+              ) : (
+                <p className="text-2xl font-bold text-gray-900">
+                  {singleCurrency ? formatCurrency(totalCost, singleCurrency) : totalCost.toFixed(2)}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -349,16 +376,26 @@ export const CloudDashboard = () => {
           <div className="flex items-center gap-3">
             <div
               className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-              style={{ background: `${getGradeColor(securityGrade)}14`, color: getGradeColor(securityGrade) }}
+              style={securityGrade != null
+                ? { background: `${getGradeColor(securityGrade)}14`, color: getGradeColor(securityGrade) }
+                : { background: '#f3f4f6', color: '#6b7280' }}
             >
-              {avgSecurityScore >= 80 ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
+              {avgSecurityScore == null
+                ? <Shield size={20} />
+                : avgSecurityScore >= 80 ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Security Health</p>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-bold text-gray-900">{avgSecurityScore}</span>
-                <span className="text-sm font-bold" style={{ color: getGradeColor(securityGrade) }}>Grade {securityGrade}</span>
-              </div>
+              {posturesLoading ? (
+                <div className="h-7 w-16 mt-1 rounded bg-gray-100 animate-pulse" />
+              ) : avgSecurityScore != null && securityGrade != null ? (
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold text-gray-900">{avgSecurityScore}</span>
+                  <span className="text-sm font-bold" style={{ color: getGradeColor(securityGrade) }}>Grade {securityGrade}</span>
+                </div>
+              ) : (
+                <p className="text-2xl font-bold text-gray-400">NA</p>
+              )}
             </div>
             <ArrowRight size={16} className="text-gray-400 shrink-0" />
           </div>
@@ -473,7 +510,7 @@ export const CloudDashboard = () => {
                         <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold border ${PROVIDER_BADGE_CLASSES[acc.provider] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
                           {acc.provider}
                         </span>
-                        <span className="text-xs text-gray-500">{acc.environment || 'production'}</span>
+                        <span className="text-xs text-gray-500">{acc.environment || 'NA'}</span>
                       </div>
                     </div>
                   </div>
@@ -519,10 +556,13 @@ export const CloudDashboard = () => {
                   <div className="text-xs text-gray-500 mt-0.5">{res.resource_type} · {res.region_or_zone}</div>
                 </div>
                 <div className="flex items-center gap-2.5 shrink-0">
-                  {res.cost_monthly != null && (
+                  {res.cost_monthly != null ? (
+                    // No currency on resource records — show the raw number, no asserted symbol
                     <span className="text-xs font-bold text-green-600">
-                      ${Number(res.cost_monthly).toFixed(2)}/mo
+                      {Number(res.cost_monthly).toFixed(2)}/mo
                     </span>
+                  ) : (
+                    <span className="text-xs font-semibold text-gray-400">NA</span>
                   )}
                   <ArrowRight size={14} className="text-gray-400" />
                 </div>

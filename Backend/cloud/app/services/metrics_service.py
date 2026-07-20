@@ -1,8 +1,9 @@
 """Metrics service — fetches real-time performance metrics from AWS CloudWatch & Azure Monitor.
 
-For each supported resource type we call the respective cloud provider's metrics API.
-If the call fails (permissions, no data) we return a flat zero-baseline so the UI
-always gets well-shaped data.
+Policy: only datapoints actually returned by the provider's metrics API are
+emitted. Hours with no datapoint are omitted (never zero-filled), unsupported
+resource types return an empty metrics dict, and `realtime` is true only when
+at least one real datapoint was retrieved — the UI shows NA otherwise.
 """
 from __future__ import annotations
 
@@ -24,10 +25,6 @@ logger = logging.getLogger("cloud_svc.metrics")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _zero_series(timestamps: List[str]) -> List[Dict[str, Any]]:
-    return [{"timestamp": ts, "value": 0} for ts in timestamps]
-
 
 def _make_timestamps(hours: int = 24) -> List[str]:
     """Return a list of ISO-8601 timestamps, one per hour, ascending."""
@@ -104,9 +101,15 @@ def _align_to_timestamps(
     ts_list: List[str],
     data: Dict[str, float],
 ) -> List[Dict[str, Any]]:
+    """Emit only real datapoints; hours without data are omitted, and an empty
+    query yields an empty series (UI shows 'no data'/NA — never a fake zero line)."""
     if not data:
-        return _zero_series(ts_list)
-    return [{"timestamp": ts, "value": data.get(ts, 0)} for ts in ts_list]
+        return []
+    return [
+        {"timestamp": ts, "value": data[ts]}
+        for ts in ts_list
+        if ts in data
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -244,10 +247,11 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
                 conn_data = await asyncio.to_thread(_get_az_stats, az_monitor_client, resource_uri, "connection_successful", start, now, "Total")
             else:
                 cpu_data = conn_data = {}
+            # Azure SQL has no direct freeable-memory equivalent — the metric is
+            # omitted entirely rather than charted as fake zeros.
             metrics = {
                 "CPU Utilization (%)":      _align_to_timestamps(timestamps, cpu_data),
                 "DB Connections":           _align_to_timestamps(timestamps, conn_data),
-                "Freeable Memory (MB)":     _zero_series(timestamps),
             }
         else:
             metrics = {}
@@ -264,11 +268,15 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
                 sz_mb = {k: round(v / (1024 * 1024), 2) for k, v in sz_data.items()}
             else:
                 sz_mb = obj_data = {}
-            size_val  = next(iter(sz_mb.values()),  0)
-            obj_val   = next(iter(obj_data.values()), 0)
+            # S3 storage metrics are daily datapoints — return them at their real
+            # timestamps instead of replicating one value across 24 fake hours.
             metrics = {
-                "Size (MB)":      [{"timestamp": ts, "value": size_val}  for ts in timestamps],
-                "Object Count":   [{"timestamp": ts, "value": obj_val}   for ts in timestamps],
+                "Size (MB)": [
+                    {"timestamp": ts, "value": val} for ts, val in sorted(sz_mb.items())
+                ],
+                "Object Count": [
+                    {"timestamp": ts, "value": val} for ts, val in sorted(obj_data.items())
+                ],
             }
         elif provider == "AZURE":
             resource_uri = resource.provider_resource_id
@@ -298,10 +306,9 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
                 "Node Memory (%)":  _align_to_timestamps(timestamps, mem_data),
             }
         else:
-            metrics = {
-                "Node CPU (%)":     _zero_series(timestamps),
-                "Node Memory (%)":  _zero_series(timestamps),
-            }
+            # EKS node metrics require CloudWatch Container Insights, which is
+            # not wired up — return nothing rather than fake zero series.
+            metrics = {}
 
     elif rtype == "LoadBalancer":
         lb_name = resource.provider_resource_id
@@ -329,14 +336,24 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
         }
 
     else:
-        metrics = {
-            "Activity":   _zero_series(timestamps),
-            "Latency (ms)": _zero_series(timestamps),
-        }
+        # Unsupported resource type — no invented metric names/values
+        metrics = {}
+
+    # realtime is true only when at least one REAL datapoint came back —
+    # a constructed client whose queries all failed does not count.
+    has_real_data = any(len(series) > 0 for series in metrics.values())
 
     return {
         "resource_id":   str(resource_id),
         "resource_type": rtype,
         "metrics":       metrics,
-        "realtime":      cw_client is not None or az_monitor_client is not None,
+        "realtime":      has_real_data,
+        "provider":      provider,
+        # Real metrics source, for honest UI labeling
+        "source": {
+            "AWS": "AWS CloudWatch",
+            "AZURE": "Azure Monitor",
+            "OCI": "OCI Monitoring",
+            "ORACLE": "OCI Monitoring",
+        }.get(provider),
     }

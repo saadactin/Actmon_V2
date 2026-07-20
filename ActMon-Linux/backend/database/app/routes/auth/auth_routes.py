@@ -9,6 +9,7 @@ Auth & Access Control routes — DB-driven with security tracking. Prefix /api/v
   GET  /permissions      → per-page permissions (+ catalog)
   POST /validate-access  → check a permission bit on a page url
 """
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -92,8 +93,14 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=403,
                             detail="Access denied — your role has no modules assigned. Please contact your administrator.")
-    # OTP is mandatory for EVERY user (including Super Admin) — a 6-digit code is
-    # emailed and must be verified before any JWT is issued.
+    # OTP is mandatory for EVERY user (including Super Admin) by default — a 6-digit
+    # code is emailed and must be verified before any JWT is issued. Set OTP_ENABLED=
+    # false in .env (e.g. no SMTP configured yet, or a trusted internal deployment)
+    # to skip straight to issuing the session — the frontend already treats a
+    # `/login` response containing access_token as "already logged in" (same shape
+    # /verify-otp returns), so this needs no UI change.
+    if os.getenv("OTP_ENABLED", "true").lower() in ("0", "false", "no"):
+        return _issue_session(db, user, request)
     otp = otp_service.generate_and_send(db, user)
     return {"otp_required": True, **otp}   # otp_token, email_masked, expires_in (+ dev_otp if OTP_DEBUG)
 

@@ -17,6 +17,35 @@ case "$1" in
       echo "**********************************************************" >&2
       exit 1
     fi
+
+    # Precheck the optional DB-driver modules: already importable (any version) →
+    # leave completely alone, never force an upgrade/downgrade. Missing → try a
+    # best-effort apt install; still unavailable → warn and move on. None of these
+    # are needed for the agent's core host-metrics function, only for monitoring
+    # a matching DB engine running on this specific host.
+    _ensure_py_module() {
+      mod="$1"; shift
+      if python3 -c "import $mod" >/dev/null 2>&1; then
+        echo "  [dep] python3 '$mod' already available — leaving as-is."
+        return 0
+      fi
+      echo "  [dep] python3 '$mod' not found — attempting best-effort install..."
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1 || true
+        for pkg in "$@"; do
+          apt-get install -y "$pkg" >/dev/null 2>&1 && break
+        done
+      fi
+      if python3 -c "import $mod" >/dev/null 2>&1; then
+        echo "  [dep] '$mod' now available."
+      else
+        echo "  [dep] WARNING: could not install '$mod' — monitoring DBs of that type on this host stays unavailable (agent core function is unaffected)."
+      fi
+    }
+    _ensure_py_module pymysql python3-pymysql
+    _ensure_py_module psycopg2 python3-psycopg2
+    _ensure_py_module cryptography python3-cryptography
+
     # Remove any stale hand-made unit in /etc that would SHADOW this package's unit
     # (older installs ran the bash agent from /etc; it must not win over the Python one).
     if [ -f /etc/systemd/system/actmon-agent.service ]; then
