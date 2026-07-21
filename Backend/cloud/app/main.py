@@ -27,7 +27,26 @@ from app.models.discovery_job import DiscoveryJob   # noqa: F401
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create DB tables on startup (idempotent — skips existing tables)."""
+    import asyncio
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
     from app.core.database import engine, Base
+
+    # Cloud SDK calls (boto3 / azure-sdk / oci) are blocking and are run via
+    # loop.run_in_executor(None, ...). Python's default executor caps at
+    # ~min(32, cpu+4) threads, which serializes the large
+    # region × compartment × service fan-out and makes a single scan slow.
+    # These calls are I/O-bound (they release the GIL while waiting on the
+    # network), so a high thread count is safe and lets the fan-out — and
+    # several accounts scanning at once — run truly concurrently.
+    try:
+        max_workers = int(os.getenv("CLOUD_SCAN_MAX_WORKERS", "64"))
+    except ValueError:
+        max_workers = 64
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="cloud-scan")
+    )
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

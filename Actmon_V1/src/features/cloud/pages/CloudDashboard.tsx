@@ -6,10 +6,28 @@ import { useQueries } from '@tanstack/react-query';
 import { getSecurityPosture } from '../api/security.api';
 import { getCostEstimate } from '../api/cost.api';
 import { useCloudStore } from '../state/cloudStore';
-import { Button, Spinner } from '@fluentui/react-components';
-import { Cloud, Server, DollarSign, Activity, Plus, ShieldAlert, ShieldCheck, ArrowRight, Clock } from 'lucide-react';
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
-import { ProviderSummaryBar, CloudProviderSelector, PROVIDER_META, getProviderColor } from '../components/CloudProviderSelector';
+import { Cloud, Server, DollarSign, Activity, Shield, ShieldAlert, ShieldCheck, ArrowRight, ArrowLeft, Clock, Loader2, Layers, Globe, Sparkles, Plus } from 'lucide-react';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PROVIDER_META } from '../components/CloudProviderSelector';
+import { formatCurrency } from '../utils/formatters';
+
+const PROVIDER_BADGE_CLASSES: Record<string, string> = {
+  AWS: 'bg-orange-50 text-orange-700 border-orange-200',
+  Azure: 'bg-sky-50 text-sky-700 border-sky-200',
+  OCI: 'bg-red-50 text-red-700 border-red-200',
+};
+
+const PROVIDER_ICON_CHIP_CLASSES: Record<string, string> = {
+  AWS: 'bg-orange-50 text-orange-600',
+  Azure: 'bg-sky-50 text-sky-600',
+  OCI: 'bg-red-50 text-red-600',
+};
+
+const CHART_TOOLTIP_STYLE: React.CSSProperties = {
+  background: '#ffffff',
+  border: '1px solid #e5e7eb',
+  borderRadius: 8,
+};
 
 export const CloudDashboard = () => {
   const navigate = useNavigate();
@@ -47,10 +65,10 @@ export const CloudDashboard = () => {
 
   if (isLoading) {
     return (
-      <div style={PAGE_STYLE}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', flexDirection: 'column', gap: 16 }}>
-          <Spinner size="large" />
-          <span style={{ color: '#94a3b8', fontSize: 14 }}>Aggregating cloud resources...</span>
+      <div className="p-6 space-y-6">
+        <div className="flex flex-col items-center justify-center gap-3 py-24">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <span className="text-sm text-gray-500">Aggregating cloud resources...</span>
         </div>
       </div>
     );
@@ -70,30 +88,43 @@ export const CloudDashboard = () => {
       : allResources.filter(r => r.account_id === selectedView))
     : [];
 
-  // Filter security postures
-  const activePostures = postureQueries
-    ? postureQueries
-      .map(q => q.data)
-      .filter((p): p is NonNullable<typeof p> => !!p &&
-        (selectedView === 'ALL' ? visibleAccountIds.has(p.account_id) : p.account_id === selectedView))
-    : [];
+  // Zip per-account queries with their account by index (responses may not echo account_id)
+  const isAccountSelected = (accId: string) =>
+    selectedView === 'ALL' ? visibleAccountIds.has(accId) : accId === selectedView;
 
-  // Filter cost estimates
-  const activeCosts = costQueries
-    ? costQueries
-      .map(q => q.data)
-      .filter((c): c is NonNullable<typeof c> => !!c &&
-        (selectedView === 'ALL' ? visibleAccountIds.has(c.account_id) : c.account_id === selectedView))
-    : [];
+  const relevantPostureQueries = (accounts || [])
+    .map((acc, idx) => ({ acc, query: postureQueries[idx] }))
+    .filter(({ acc }) => isAccountSelected(acc.id));
+
+  const relevantCostQueries = (accounts || [])
+    .map((acc, idx) => ({ acc, query: costQueries[idx] }))
+    .filter(({ acc }) => isAccountSelected(acc.id));
+
+  const posturesLoading = relevantPostureQueries.some(({ query }) => query?.isLoading);
+  const costsLoading = relevantCostQueries.some(({ query }) => query?.isLoading);
+
+  const activePostures = relevantPostureQueries
+    .map(({ query }) => query?.data)
+    .filter((p): p is NonNullable<typeof p> => !!p);
 
   // Compute stats
   const totalResources = filteredResources.length;
-  const totalCost = activeCosts.reduce((sum, c) => sum + (c.total_monthly_cost || 0), 0);
 
-  // Security score (average of selected)
+  // Only accounts with real billing data (non-null total_monthly_cost) contribute to the sum
+  const billedCosts = relevantCostQueries
+    .map(({ query }) => query?.data)
+    .filter((c): c is { total_monthly_cost: number; currency: string | null } =>
+      !!c && typeof c.total_monthly_cost === 'number');
+  const totalCost = billedCosts.reduce((sum, c) => sum + c.total_monthly_cost, 0);
+  const hasCostData = billedCosts.length > 0;
+  const costCurrencySet = new Set(billedCosts.map(c => c.currency ?? null));
+  const singleCurrency = costCurrencySet.size === 1 ? [...costCurrencySet][0] : null;
+  const hasMixedCurrencies = costCurrencySet.size > 1;
+
+  // Security score (average of selected); null when no posture data — never fabricate 100
   const avgSecurityScore = activePostures.length > 0
     ? Math.round(activePostures.reduce((sum, p) => sum + p.score, 0) / activePostures.length)
-    : 100;
+    : null;
 
   const getSecurityGrade = (score: number) => {
     if (score >= 90) return 'A';
@@ -103,16 +134,16 @@ export const CloudDashboard = () => {
     return 'F';
   };
 
-  const securityGrade = getSecurityGrade(avgSecurityScore);
+  const securityGrade = avgSecurityScore != null ? getSecurityGrade(avgSecurityScore) : null;
 
   const getGradeColor = (grade: string) => {
     switch (grade) {
-      case 'A': return '#22c55e';
-      case 'B': return '#10b981';
-      case 'C': return '#eab308';
-      case 'D': return '#f97316';
-      case 'F': return '#ef4444';
-      default: return '#94a3b8';
+      case 'A': return '#16a34a';
+      case 'B': return '#059669';
+      case 'C': return '#ca8a04';
+      case 'D': return '#ea580c';
+      case 'F': return '#dc2626';
+      default: return '#6b7280';
     }
   };
 
@@ -122,8 +153,15 @@ export const CloudDashboard = () => {
     return acc;
   }, {} as Record<string, number>);
 
-  const COLORS = ['#60a5fa', '#a855f7', '#10b981', '#f59e0b', '#ec4899', '#3b82f6', '#ef4444', '#06b6d4', '#6366f1'];
-  const pieData = Object.entries(typeCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const COLORS = ['#2563eb', '#0d9488', '#7c3aed', '#f59e0b', '#db2777', '#0891b2', '#dc2626', '#65a30d', '#6b7280'];
+  // Cap the donut at the top 8 types; everything else rolls into "Other"
+  // (some accounts have 50+ types — a full legend overflows the card).
+  const allTypes = Object.entries(typeCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const otherCount = allTypes.slice(8).reduce((sum, t) => sum + t.value, 0);
+  const otherTypes = allTypes.length - 8;
+  const pieData = otherCount > 0
+    ? [...allTypes.slice(0, 8), { name: `Other (${otherTypes} types)`, value: otherCount }]
+    : allTypes;
 
   // 2. Bar chart data: region breakdown
   const regionCounts = filteredResources.reduce((acc, r) => {
@@ -146,30 +184,99 @@ export const CloudDashboard = () => {
     setTimeout(() => setDrawerOpen(true), 100);
   };
 
-  return (
-    <div style={PAGE_STYLE}>
-      {/* ── Provider Summary Bar (AWS / Azure / OCI panels) ── */}
-      <ProviderSummaryBar
-        accounts={accounts || []}
-        selectedProvider={selectedProvider}
-        onSelectProvider={p => {
-          setSelectedProvider(p);
-          setSelectedView('ALL');
-        }}
-      />
+  // Per-provider rollups for the three provider cards ("Oracle" counts as OCI)
+  const providerKeyOf = (p: string) => (p === 'Oracle' ? 'OCI' : p);
+  const providerStats = ['AWS', 'Azure', 'OCI'].map(key => {
+    const provAccounts = (accounts || []).filter(a => providerKeyOf(a.provider) === key);
+    const provAccountIds = new Set(provAccounts.map(a => a.id));
+    const provResources = (allResources || []).filter(r => provAccountIds.has(r.account_id));
+    return { key, accounts: provAccounts, resourceCount: provResources.length };
+  });
 
-      {/* ── Per-provider account chips (only when a provider is selected) ── */}
+  return (
+    <div className="p-6 space-y-6">
+      {/* ── Provider cards: click a cloud to drill into it ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {providerStats.map(({ key, accounts: provAccounts, resourceCount }) => {
+          const meta = PROVIDER_META[key];
+          const isSelected = selectedProvider === key;
+          const isEmpty = provAccounts.length === 0;
+          return (
+            <button
+              key={key}
+              onClick={() => {
+                if (isEmpty) { handleAddAccount(); return; }
+                setSelectedProvider(isSelected ? null : key);
+                setSelectedView('ALL');
+              }}
+              className={`text-left w-full rounded-xl p-5 transition-all cursor-pointer ${
+                isEmpty
+                  ? 'bg-white border-2 border-dashed border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  : isSelected
+                    ? 'bg-white border-2 shadow-md'
+                    : 'bg-white border border-gray-200 shadow-sm hover:shadow-md hover:-translate-y-0.5'
+              }`}
+              style={isSelected ? { borderColor: meta?.color } : undefined}
+            >
+              <div className="flex items-center gap-4">
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: meta?.bg, color: meta?.color }}
+                >
+                  <Cloud size={24} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-gray-900">{key}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold border ${PROVIDER_BADGE_CLASSES[key] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                      {meta?.label || key}
+                    </span>
+                  </div>
+                  {isEmpty ? (
+                    <div className="flex items-center gap-1.5 text-sm text-gray-400 mt-1">
+                      <Plus size={14} /> Not connected — add an account
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 text-sm text-gray-500 mt-1">
+                      <span><span className="font-bold text-gray-900">{provAccounts.length}</span> account{provAccounts.length > 1 ? 's' : ''}</span>
+                      <span className="text-gray-300">·</span>
+                      <span><span className="font-bold text-gray-900">{resourceCount}</span> resources</span>
+                    </div>
+                  )}
+                </div>
+                {!isEmpty && (
+                  <ArrowRight
+                    size={18}
+                    className={`shrink-0 transition-transform ${isSelected ? '' : 'text-gray-300'}`}
+                    style={isSelected ? { color: meta?.color } : undefined}
+                  />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Inside a provider: back link + its account chips ── */}
       {selectedProvider && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => { setSelectedProvider(null); setSelectedView('ALL'); }}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            <ArrowLeft size={13} /> All clouds
+          </button>
+          <span className="h-4 w-px bg-gray-200" />
           <button
             onClick={() => setSelectedView('ALL')}
-            style={{
-              padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
-              fontFamily: 'inherit', cursor: 'pointer', transition: 'all 0.15s',
-              border: `1.5px solid ${selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.color : '#e2e8f0'}`,
-              background: selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.accent : '#eef2f6',
-              color: selectedView === 'ALL' ? PROVIDER_META[selectedProvider]?.color : '#64748b',
-            }}
+            className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+              selectedView === 'ALL' ? '' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+            }`}
+            style={selectedView === 'ALL' ? {
+              borderColor: PROVIDER_META[selectedProvider]?.color,
+              background: PROVIDER_META[selectedProvider]?.accent,
+              color: PROVIDER_META[selectedProvider]?.color,
+            } : undefined}
           >
             All {selectedProvider} accounts
           </button>
@@ -177,17 +284,18 @@ export const CloudDashboard = () => {
             <button
               key={acc.id}
               onClick={() => setSelectedView(acc.id)}
-              style={{
-                padding: '7px 14px', borderRadius: 10, fontSize: 12, fontWeight: 600,
-                fontFamily: 'inherit', cursor: 'pointer', transition: 'all 0.15s',
-                border: `1.5px solid ${selectedView === acc.id ? PROVIDER_META[selectedProvider]?.color : '#e2e8f0'}`,
-                background: selectedView === acc.id ? PROVIDER_META[selectedProvider]?.accent : '#eef2f6',
-                color: selectedView === acc.id ? PROVIDER_META[selectedProvider]?.color : '#64748b',
-              }}
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                selectedView === acc.id ? '' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+              }`}
+              style={selectedView === acc.id ? {
+                borderColor: PROVIDER_META[selectedProvider]?.color,
+                background: PROVIDER_META[selectedProvider]?.accent,
+                color: PROVIDER_META[selectedProvider]?.color,
+              } : undefined}
             >
               {acc.account_name}
               {acc.environment && (
-                <span style={{ marginLeft: 6, opacity: 0.6 }}>({acc.environment})</span>
+                <span className="ml-1.5 opacity-60">({acc.environment})</span>
               )}
             </button>
           ))}
@@ -195,55 +303,67 @@ export const CloudDashboard = () => {
       )}
 
       {/* Stat Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, marginBottom: 28 }}>
-        <div style={CARD_STYLE}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{ p: 3, padding: 12, background: 'rgba(59,130,246,0.12)', borderRadius: 12, color: '#3b82f6' }}>
-              <Cloud size={24} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-blue-50 text-blue-600 shrink-0">
+              <Cloud size={20} />
             </div>
             <div>
-              <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Cloud Accounts</p>
-              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{accounts?.length || 0}</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Cloud Accounts</p>
+              <p className="text-2xl font-bold text-gray-900">{accounts?.length || 0}</p>
             </div>
           </div>
         </div>
 
-        <div style={CARD_STYLE}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{ p: 3, padding: 12, background: 'rgba(168,85,247,0.12)', borderRadius: 12, color: '#a855f7' }}>
-              <Server size={24} />
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-purple-50 text-purple-600 shrink-0">
+              <Server size={20} />
             </div>
             <div>
-              <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Total Resources</p>
-              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{totalResources}</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Total Resources</p>
+              <p className="text-2xl font-bold text-gray-900">{totalResources}</p>
             </div>
           </div>
         </div>
 
         <div
           onClick={() => navigate('/cloud/cost')}
-          style={{ ...CARD_STYLE, cursor: 'pointer', transition: 'all 0.15s' }}
+          className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{ p: 3, padding: 12, background: 'rgba(16,185,129,0.12)', borderRadius: 12, color: '#10b981' }}>
-              <DollarSign size={24} />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-green-50 text-green-600 shrink-0">
+              <DollarSign size={20} />
             </div>
             <div>
-              <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Est. Monthly Cost</p>
-              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>${totalCost.toFixed(2)}</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Monthly Cost (billed)</p>
+              {costsLoading ? (
+                <div className="h-7 w-24 mt-1 rounded bg-gray-100 animate-pulse" />
+              ) : !hasCostData ? (
+                <p className="text-2xl font-bold text-gray-400">NA</p>
+              ) : hasMixedCurrencies ? (
+                <>
+                  <p className="text-2xl font-bold text-gray-400">NA</p>
+                  <p className="text-[11px] text-gray-400">mixed currencies</p>
+                </>
+              ) : (
+                <p className="text-2xl font-bold text-gray-900">
+                  {singleCurrency ? formatCurrency(totalCost, singleCurrency) : totalCost.toFixed(2)}
+                </p>
+              )}
             </div>
           </div>
         </div>
 
-
-        <div style={CARD_STYLE}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{ p: 3, padding: 12, background: 'rgba(234,179,8,0.12)', borderRadius: 12, color: '#eab308' }}>
-              <Activity size={24} />
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-amber-50 text-amber-600 shrink-0">
+              <Activity size={20} />
             </div>
             <div>
-              <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Active Scans</p>
-              <p style={{ color: '#1e293b', fontSize: 24, fontWeight: 800, margin: '4px 0 0' }}>{activeJobsCount}</p>
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Active Scans</p>
+              <p className="text-2xl font-bold text-gray-900">{activeJobsCount}</p>
             </div>
           </div>
         </div>
@@ -251,97 +371,112 @@ export const CloudDashboard = () => {
         {/* Security Health Score Card */}
         <div
           onClick={() => navigate('/cloud/security')}
-          style={{ ...CARD_STYLE, cursor: 'pointer', hover: { background: '#ffffff' }, transition: 'all 0.15s' }}
+          className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer"
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{
-              p: 3, padding: 12,
-              background: `${getGradeColor(securityGrade)}12`,
-              borderRadius: 12,
-              color: getGradeColor(securityGrade)
-            }}>
-              {avgSecurityScore >= 80 ? <ShieldCheck size={24} /> : <ShieldAlert size={24} />}
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+              style={securityGrade != null
+                ? { background: `${getGradeColor(securityGrade)}14`, color: getGradeColor(securityGrade) }
+                : { background: '#f3f4f6', color: '#6b7280' }}
+            >
+              {avgSecurityScore == null
+                ? <Shield size={20} />
+                : avgSecurityScore >= 80 ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
             </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ color: '#64748b', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, margin: 0 }}>Security Health</p>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, margin: '4px 0 0' }}>
-                <span style={{ color: '#1e293b', fontSize: 24, fontWeight: 800 }}>{avgSecurityScore}</span>
-                <span style={{ color: getGradeColor(securityGrade), fontSize: 14, fontWeight: 700 }}>Grade {securityGrade}</span>
-              </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Security Health</p>
+              {posturesLoading ? (
+                <div className="h-7 w-16 mt-1 rounded bg-gray-100 animate-pulse" />
+              ) : avgSecurityScore != null && securityGrade != null ? (
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold text-gray-900">{avgSecurityScore}</span>
+                  <span className="text-sm font-bold" style={{ color: getGradeColor(securityGrade) }}>Grade {securityGrade}</span>
+                </div>
+              ) : (
+                <p className="text-2xl font-bold text-gray-400">NA</p>
+              )}
             </div>
-            <ArrowRight size={16} color="#64748b" />
+            <ArrowRight size={16} className="text-gray-400 shrink-0" />
           </div>
         </div>
       </div>
 
       {/* Main Charts & Timeline Section */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: 24, marginBottom: 28 }}>
-        
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
         {/* Resource Breakdown Donut */}
-        <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
+            <Layers size={16} className="text-blue-600" />
             Resource Type Distribution
           </h3>
-          <div style={{ height: 260, position: 'relative' }}>
-            {pieData.length === 0 ? (
-              <div style={EMPTY_CHART_STYLE}>No resources found</div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={65}
-                    outerRadius={90}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
-                    itemStyle={{ color: '#475569', fontSize: 12 }}
-                  />
-                  <Legend
-                    verticalAlign="bottom"
-                    height={36}
-                    iconType="circle"
-                    iconSize={8}
-                    wrapperStyle={{ fontSize: 11, color: '#64748b' }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+          {pieData.length === 0 ? (
+            <div className="h-[260px] flex items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
+              No resources found
+            </div>
+          ) : (
+            <>
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={58}
+                      outerRadius={85}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={CHART_TOOLTIP_STYLE}
+                      itemStyle={{ color: '#374151', fontSize: 12 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              {/* Capped legend in normal flow — wraps inside the card instead of overflowing it */}
+              <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-3">
+                {pieData.map((entry, index) => (
+                  <span key={entry.name} className="inline-flex items-center gap-1.5 text-[11px] text-gray-600">
+                    <span className="h-2 w-2 rounded-full shrink-0" style={{ background: COLORS[index % COLORS.length] }} />
+                    {entry.name}
+                    <span className="text-gray-400 font-semibold">{entry.value}</span>
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Region Heatmap Bar */}
-        <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
+            <Globe size={16} className="text-blue-600" />
             Geographic / Region Breakdown
           </h3>
-          <div style={{ height: 260 }}>
+          <div className="h-[260px]">
             {barData.length === 0 ? (
-              <div style={EMPTY_CHART_STYLE}>No region data found</div>
+              <div className="h-full flex items-center justify-center rounded-lg border border-dashed border-gray-200 text-sm text-gray-500">
+                No region data found
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={barData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
-                  <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#64748b" fontSize={10} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: '#6b7280', fontSize: 12 }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} />
+                  <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} tickLine={false} axisLine={{ stroke: '#e5e7eb' }} />
                   <Tooltip
-                    contentStyle={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 8 }}
-                    itemStyle={{ color: '#475569', fontSize: 12 }}
-                    cursor={{ fill: '#eef2f6' }}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    itemStyle={{ color: '#374151', fontSize: 12 }}
+                    cursor={{ fill: '#f3f4f6' }}
                   />
-                  <Bar dataKey="value" fill="#60a5fa" radius={[4, 4, 0, 0]}>
-                    {barData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                    ))}
-                  </Bar>
+                  <Bar dataKey="value" fill="#2563eb" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -351,44 +486,41 @@ export const CloudDashboard = () => {
       </div>
 
       {/* Lower Section: Scan Timeline & Recently Discovered */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: 24 }}>
-        
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
         {/* Scan timeline and accounts */}
-        <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Clock size={16} /> Scan History & Account Health
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
+            <Clock size={16} className="text-blue-600" />
+            Scan History &amp; Account Health
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="flex flex-col gap-3">
             {(accounts || []).map((acc, idx) => {
               const posture = postureQueries?.[idx]?.data;
-              const meta = PROVIDER_META[acc.provider];
               return (
-                <div key={acc.id} style={ACCOUNT_ROW_STYLE}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {/* Provider badge */}
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      width: 32, height: 32, borderRadius: 9,
-                      background: meta?.bg, fontSize: 18, flexShrink: 0,
-                    }}>{meta?.logo || '⚪'}</span>
-                    <div>
-                      <div style={{ color: '#334155', fontSize: 13, fontWeight: 700 }}>{acc.account_name}</div>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>
-                        <span style={{
-                          fontSize: 10, fontWeight: 800, padding: '1px 6px', borderRadius: 6,
-                          background: meta?.accent, color: meta?.color,
-                        }}>{acc.provider}</span>
-                        <span style={{ color: '#475569', fontSize: 11 }}>{acc.environment || 'production'}</span>
+                <div key={acc.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Provider icon chip */}
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${PROVIDER_ICON_CHIP_CLASSES[acc.provider] || 'bg-gray-100 text-gray-500'}`}>
+                      <Cloud size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[15px] font-semibold text-gray-900 truncate">{acc.account_name}</div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold border ${PROVIDER_BADGE_CLASSES[acc.provider] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                          {acc.provider}
+                        </span>
+                        <span className="text-xs text-gray-500">{acc.environment || 'NA'}</span>
                       </div>
                     </div>
                   </div>
-                  
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ color: '#475569', fontSize: 11 }}>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-xs text-gray-500">
                       {acc.last_discovery ? new Date(acc.last_discovery).toLocaleDateString() : 'Never scanned'}
                     </div>
                     {posture && (
-                      <div style={{ fontSize: 12, fontWeight: 800, color: getGradeColor(posture.grade), marginTop: 4 }}>
+                      <div className="text-xs font-bold mt-1" style={{ color: getGradeColor(posture.grade) }}>
                         Grade {posture.grade} · {posture.score}/100
                       </div>
                     )}
@@ -397,42 +529,50 @@ export const CloudDashboard = () => {
               );
             })}
             {(!accounts || accounts.length === 0) && (
-              <div style={{ color: '#64748b', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>
-                No cloud accounts connected yet.
+              <div className="flex flex-col items-center gap-2 py-12 text-center">
+                <Cloud className="h-6 w-6 text-gray-300" />
+                <div className="text-base font-semibold text-gray-900">No cloud accounts</div>
+                <div className="text-sm text-gray-500">No cloud accounts connected yet.</div>
               </div>
             )}
           </div>
         </div>
 
         {/* Recently Discovered */}
-        <div style={CARD_STYLE}>
-          <h3 style={{ margin: '0 0 16px', color: '#475569', fontSize: 15, fontWeight: 700 }}>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+          <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2 mb-4">
+            <Sparkles size={16} className="text-blue-600" />
             Recently Discovered Resources
           </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="flex flex-col gap-2.5">
             {recentlyDiscovered.map(res => (
               <div
                 key={res.id}
                 onClick={() => navigate(`/cloud/resources/${res.id}`)}
-                style={{ ...RESOURCE_ROW_STYLE, cursor: 'pointer' }}
+                className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 hover:bg-white hover:border-blue-200 hover:shadow-sm transition-all cursor-pointer"
               >
-                <div>
-                  <div style={{ color: '#334155', fontSize: 13, fontWeight: 700 }}>{res.resource_name}</div>
-                  <div style={{ color: '#64748b', fontSize: 11, marginTop: 2 }}>{res.resource_type} • {res.region_or_zone}</div>
+                <div className="min-w-0">
+                  <div className="text-[15px] font-semibold text-gray-900 truncate">{res.resource_name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{res.resource_type} · {res.region_or_zone}</div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {res.cost_monthly != null && (
-                    <span style={{ color: '#10b981', fontSize: 12, fontWeight: 700 }}>
-                      ${Number(res.cost_monthly).toFixed(2)}/mo
+                <div className="flex items-center gap-2.5 shrink-0">
+                  {res.cost_monthly != null ? (
+                    // No currency on resource records — show the raw number, no asserted symbol
+                    <span className="text-xs font-bold text-green-600">
+                      {Number(res.cost_monthly).toFixed(2)}/mo
                     </span>
+                  ) : (
+                    <span className="text-xs font-semibold text-gray-400">NA</span>
                   )}
-                  <ArrowRight size={14} color="#64748b" />
+                  <ArrowRight size={14} className="text-gray-400" />
                 </div>
               </div>
             ))}
             {recentlyDiscovered.length === 0 && (
-              <div style={{ color: '#64748b', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>
-                No resources discovered yet. Run a discovery scan first.
+              <div className="flex flex-col items-center gap-2 py-12 text-center">
+                <Server className="h-6 w-6 text-gray-300" />
+                <div className="text-base font-semibold text-gray-900">No resources yet</div>
+                <div className="text-sm text-gray-500">No resources discovered yet. Run a discovery scan first.</div>
               </div>
             )}
           </div>
@@ -442,56 +582,4 @@ export const CloudDashboard = () => {
 
     </div>
   );
-};
-
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100%',
-  background: '#f1f5f9',
-  padding: '28px 32px',
-  fontFamily: "'Inter', -apple-system, sans-serif",
-};
-
-const CARD_STYLE: React.CSSProperties = {
-  background: '#f8fafc',
-  border: '1px solid #e2e8f0',
-  borderRadius: 16,
-  padding: '20px 24px',
-};
-
-const UI_BTN_STYLE: React.CSSProperties = {
-  background: '#ffffff',
-  border: '1px solid #e2e8f0',
-  color: '#475569',
-};
-
-
-const EMPTY_CHART_STYLE: React.CSSProperties = {
-  height: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  color: '#64748b',
-  fontSize: 13,
-  border: '1px dashed #e2e8f0',
-  borderRadius: 12,
-};
-
-const ACCOUNT_ROW_STYLE: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  padding: '12px 16px',
-  background: '#f8fafc',
-  border: '1px solid #e2e8f0',
-  borderRadius: 12,
-};
-
-const RESOURCE_ROW_STYLE: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  padding: '12px 16px',
-  background: '#f8fafc',
-  border: '1px solid #e2e8f0',
-  borderRadius: 12,
 };

@@ -3,10 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { useCloudAccounts, useDeleteCloudAccount } from '../hooks/useCloudAccounts';
 import { CloudAccount } from '../types/cloud';
 import { useCloudStore } from '../state/cloudStore';
-import { Cloud, Trash2 } from 'lucide-react';
-import { Button, Spinner, Card } from '@fluentui/react-components';
+import { Cloud, Trash2, Loader2 } from 'lucide-react';
 import { formatDate } from '../utils/formatters';
 import { usePermissions } from '../../../hooks/usePermissions';
+
+function providerBadgeClass(provider: string): string {
+  const p = (provider || '').toLowerCase();
+  if (p.includes('azure')) return 'bg-sky-50 text-sky-700 border-sky-200';
+  if (p.includes('aws')) return 'bg-orange-50 text-orange-700 border-orange-200';
+  if (p.includes('oci') || p.includes('oracle')) return 'bg-red-50 text-red-700 border-red-200';
+  return 'bg-gray-100 text-gray-600 border-gray-200';
+}
 
 export const CloudAccountList = () => {
   const { data: accounts, isLoading } = useCloudAccounts();
@@ -16,67 +23,63 @@ export const CloudAccountList = () => {
   const navigate = useNavigate();
 
   if (isLoading) {
-    return <div className="flex justify-center p-8"><Spinner size="medium" /></div>;
+    return (
+      <div className="flex flex-col items-center justify-center py-24 gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <span className="text-sm text-gray-500">Loading accounts…</span>
+      </div>
+    );
   }
 
   if (!accounts || accounts.length === 0) {
     return (
-      <div style={{ padding: 32, textAlign: 'center', border: '1px dashed #e2e8f0', borderRadius: 12 }}>
-        <Cloud className="h-12 w-12 text-gray-500 mx-auto mb-2" />
-        <h3 style={{ fontWeight: 600, color: '#1e293b' }}>No Cloud Accounts</h3>
-        <p style={{ fontSize: 14, color: '#94a3b8', marginTop: 4 }}>Connect a provider to get started.</p>
+      <div className="rounded-xl border border-dashed border-gray-300 py-12 text-center">
+        <Cloud className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+        <h3 className="text-base font-semibold text-gray-900">No Cloud Accounts</h3>
+        <p className="text-sm text-gray-500 mt-1">Connect a provider to get started.</p>
       </div>
     );
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex flex-col gap-3">
       {accounts.map((acc: CloudAccount) => {
         const isSelected = selectedAccountId === acc.id;
         return (
           <div
             key={acc.id}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '16px 20px',
-              background: isSelected ? 'rgba(59, 130, 246, 0.1)' : '#eef2f6',
-              border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid #e2e8f0',
-              borderRadius: 12,
-              cursor: 'pointer',
-              transition: 'background 0.2s',
-            }}
+            className={`flex items-center justify-between px-5 py-4 rounded-xl border cursor-pointer transition-colors ${
+              isSelected
+                ? 'ring-2 ring-blue-500 border-blue-300 bg-blue-50/40'
+                : 'bg-white border-gray-200 shadow-sm hover:bg-gray-50'
+            }`}
             onClick={() => {
               setSelectedAccountId(acc.id);
               navigate('/cloud/resources');
             }}
           >
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontWeight: 600, color: '#1e293b', fontSize: 16 }}>{acc.account_name}</span>
-                <span style={{ 
-                  fontSize: 11, 
-                  padding: '2px 6px', 
-                  borderRadius: 4, 
-                  background: '#e2e8f0', 
-                  color: '#334155', 
-                  fontWeight: 600, 
-                  textTransform: 'uppercase' 
-                }}>
+              <div className="flex items-center gap-2">
+                <span className="text-[15px] font-semibold text-gray-900">{acc.account_name}</span>
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border uppercase ${providerBadgeClass(acc.provider)}`}>
                   {acc.provider}
                 </span>
               </div>
-              <div style={{ fontSize: 13, color: '#94a3b8', marginTop: 4 }}>
-                Region: {acc.tenant_or_region} &bull; Last Scan: {formatDate(acc.last_discovery || '')}
+              <div className="mt-1 text-xs text-gray-500">
+                {acc.environment ? <>{acc.environment} &bull; </> : null}
+                Region: {acc.tenant_or_region || 'NA'}
+                <span className="text-gray-400"> &bull; Last Scan: {acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</span>
               </div>
             </div>
             {canHere('delete') && (
-              <Button
-                appearance="subtle"
-                icon={<Trash2 className="h-4 w-4 text-red-500" />}
+              <button
+                type="button"
+                aria-label="Delete account"
+                className="p-2 rounded-lg text-red-600 hover:bg-red-50 transition-colors"
                 onClick={(e) => { e.stopPropagation(); deleteAccount(acc.id); }}
-              />
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             )}
           </div>
         );

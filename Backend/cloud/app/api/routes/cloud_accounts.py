@@ -18,8 +18,15 @@ async def create_cloud_account(
     payload: CloudAccountCreate,
     svc: CloudAccountService = Depends(get_account_service),
 ):
-    """Register a new cloud provider account with encrypted credentials."""
-    return await svc.create_account(payload)
+    """Register a new cloud provider account with encrypted credentials.
+
+    Credentials are verified against the provider first; invalid keys are
+    rejected with 400 instead of being stored.
+    """
+    try:
+        return await svc.create_account(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("", response_model=List[CloudAccountResponse])

@@ -21,8 +21,8 @@ class OCIProvider(BaseCloudProvider):
     async def authenticate(self) -> bool:
         return await self.auth.validate()
 
-    async def scan_resources(self) -> List[Dict[str, Any]]:
-        return await self.scanner.scan_all()
+    async def scan_resources(self, on_batch=None) -> List[Dict[str, Any]]:
+        return await self.scanner.scan_all(on_batch=on_batch)
 
     async def get_resource_details(self, resource_id: str) -> Dict[str, Any]:
         """Attempt to resolve a resource OCID across Compute, DB, Network, Functions, OKE, LB."""
@@ -168,31 +168,43 @@ class OCIProvider(BaseCloudProvider):
             import oci
 
             usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
+            # Usage API requires midnight-aligned UTC timestamps; MONTHLY
+            # granularity additionally requires month-aligned starts, so use
+            # DAILY over a rolling 30-day window and aggregate per service.
             today = date.today()
-            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00.000Z")
-            end = today.strftime("%Y-%m-%dT23:59:59.000Z")
+            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT00:00:00Z")
             request = oci.usage_api.models.RequestSummarizedUsagesDetails(
                 tenant_id=self.auth.tenancy_ocid,
                 time_usage_started=start,
                 time_usage_ended=end,
-                granularity="MONTHLY",
+                granularity="DAILY",
                 query_type="COST",
-                group_by=["service"],
+                group_by=["service", "region"],
             )
             response = usage_client.request_summarized_usages(
                 request_summarized_usages_details=request
             )
-            results = []
+            by_key: Dict[tuple, Dict[str, Any]] = {}
             for item in response.data.items or []:
-                results.append(
+                service = item.service or "Unknown"
+                # Real region from the usage row; None = unknown (UI shows NA)
+                region = getattr(item, "region", None) or None
+                row = by_key.setdefault(
+                    (service, region),
                     {
-                        "resource_type": item.service or "Unknown",
-                        "resource_name": item.service or "Unknown",
-                        "region": self.auth.region,
-                        "monthly_cost": float(item.computed_amount or 0),
-                        "currency": item.currency or "USD",
-                    }
+                        "resource_type": service,
+                        "resource_name": service,
+                        "region": region,
+                        "monthly_cost": 0.0,
+                        "currency": item.currency or None,
+                    },
                 )
+                row["monthly_cost"] += float(item.computed_amount or 0)
+            results = list(by_key.values())
+            for row in results:
+                row["monthly_cost"] = round(row["monthly_cost"], 2)
+            results.sort(key=lambda r: -r["monthly_cost"])
             return results
 
         loop = asyncio.get_event_loop()
@@ -200,6 +212,51 @@ class OCIProvider(BaseCloudProvider):
             return await loop.run_in_executor(None, _fetch)
         except Exception as exc:
             logger.warning("OCI cost API failed: %s", exc)
+            return []
+
+    async def get_daily_costs(self) -> List[Dict[str, Any]]:
+        """Real per-day spend for the last 30 days from the OCI Usage API."""
+        import asyncio
+        from datetime import date, timedelta
+
+        def _fetch():
+            import oci
+
+            usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
+            today = date.today()
+            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT00:00:00Z")
+            request = oci.usage_api.models.RequestSummarizedUsagesDetails(
+                tenant_id=self.auth.tenancy_ocid,
+                time_usage_started=start,
+                time_usage_ended=end,
+                granularity="DAILY",
+                query_type="COST",
+            )
+            response = usage_client.request_summarized_usages(
+                request_summarized_usages_details=request
+            )
+            by_day: Dict[str, Dict[str, Any]] = {}
+            for item in response.data.items or []:
+                started = getattr(item, "time_usage_started", None)
+                if not started:
+                    continue
+                day = str(started)[:10]
+                row = by_day.setdefault(
+                    day,
+                    {"date": day, "cost": 0.0, "currency": item.currency or None},
+                )
+                row["cost"] += float(item.computed_amount or 0)
+            results = sorted(by_day.values(), key=lambda r: r["date"])
+            for row in results:
+                row["cost"] = round(row["cost"], 4)
+            return results
+
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, _fetch)
+        except Exception as exc:
+            logger.warning("OCI daily cost query failed: %s", exc)
             return []
 
     async def get_security_data(self) -> List[Dict[str, Any]]:

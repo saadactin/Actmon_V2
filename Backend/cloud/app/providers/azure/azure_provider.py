@@ -19,8 +19,8 @@ class AzureProvider(BaseCloudProvider):
     async def authenticate(self) -> bool:
         return await self.auth.validate()
 
-    async def scan_resources(self) -> List[Dict[str, Any]]:
-        return await self.scanner.scan_all()
+    async def scan_resources(self, on_batch=None) -> List[Dict[str, Any]]:
+        return await self.scanner.scan_all(on_batch=on_batch)
 
     async def get_resource_details(self, resource_id: str) -> Dict[str, Any]:
         import asyncio
@@ -56,7 +56,7 @@ class AzureProvider(BaseCloudProvider):
         def _fetch():
             from azure.mgmt.costmanagement import CostManagementClient
             from azure.mgmt.costmanagement.models import (
-                QueryDefinition, QueryTimePeriod, GranularityType,
+                QueryDefinition, QueryTimePeriod,
                 QueryDataset, QueryAggregation, QueryGrouping
             )
 
@@ -70,9 +70,14 @@ class AzureProvider(BaseCloudProvider):
                 timeframe="Custom",
                 time_period=QueryTimePeriod(from_property=start, to=end),
                 dataset=QueryDataset(
-                    granularity=GranularityType.MONTHLY,
+                    # granularity=None → one total per group over the whole period.
+                    # (SDK 4.x GranularityType only defines DAILY; MONTHLY was removed.)
+                    granularity=None,
                     aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
-                    grouping=[QueryGrouping(type="Dimension", name="ServiceName")],
+                    grouping=[
+                        QueryGrouping(type="Dimension", name="ServiceName"),
+                        QueryGrouping(type="Dimension", name="ResourceLocation"),
+                    ],
                 ),
             )
             result = cm.query.usage(scope=scope, parameters=query)
@@ -85,9 +90,10 @@ class AzureProvider(BaseCloudProvider):
                     {
                         "resource_type": row_dict.get("ServiceName", "Unknown"),
                         "resource_name": row_dict.get("ServiceName", "Unknown"),
-                        "region": "global",
+                        # Real location from the billing row; None = unknown (UI shows NA)
+                        "region": row_dict.get("ResourceLocation") or None,
                         "monthly_cost": float(row_dict.get("Cost", 0)),
-                        "currency": "USD",
+                        "currency": row_dict.get("Currency") or None,
                     }
                 )
             return costs
@@ -97,4 +103,59 @@ class AzureProvider(BaseCloudProvider):
             return await loop.run_in_executor(None, _fetch)
         except Exception as exc:
             logger.warning("Azure Cost Management query failed: %s", exc)
+            return []
+
+    async def get_daily_costs(self) -> List[Dict[str, Any]]:
+        """Real per-day spend for the last 30 days from Azure Cost Management."""
+        import asyncio
+        from datetime import date, timedelta
+
+        def _fetch():
+            from azure.mgmt.costmanagement import CostManagementClient
+            from azure.mgmt.costmanagement.models import (
+                QueryDefinition, QueryTimePeriod,
+                QueryDataset, QueryAggregation,
+            )
+
+            cm = CostManagementClient(self.auth.get_credential())
+            today = date.today()
+            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT23:59:59Z")
+            scope = f"/subscriptions/{self.auth.subscription_id}"
+            query = QueryDefinition(
+                type="ActualCost",
+                timeframe="Custom",
+                time_period=QueryTimePeriod(from_property=start, to=end),
+                dataset=QueryDataset(
+                    granularity="Daily",
+                    aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
+                ),
+            )
+            result = cm.query.usage(scope=scope, parameters=query)
+            rows = result.rows or []
+            cols = [c.name for c in (result.columns or [])]
+            daily = []
+            for row in rows:
+                row_dict = dict(zip(cols, row))
+                usage_date = row_dict.get("UsageDate")
+                # UsageDate arrives as int/str yyyymmdd → ISO date
+                iso = None
+                if usage_date is not None:
+                    s = str(int(usage_date))
+                    if len(s) == 8:
+                        iso = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+                daily.append(
+                    {
+                        "date": iso,
+                        "cost": round(float(row_dict.get("Cost", 0)), 4),
+                        "currency": row_dict.get("Currency") or None,
+                    }
+                )
+            return [d for d in daily if d["date"]]
+
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, _fetch)
+        except Exception as exc:
+            logger.warning("Azure daily cost query failed: %s", exc)
             return []

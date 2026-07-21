@@ -2,7 +2,7 @@ import React from 'react';
 import { useResourceDetail } from '../hooks/useResources';
 import { useCloudStore } from '../state/cloudStore';
 import { DrawerPanel } from '../../../components/ui/DrawerPanel';
-import { Spinner } from '@fluentui/react-components';
+import { Loader2 } from 'lucide-react';
 
 export const ResourceDetailDrawer = () => {
   const selectedResourceId = useCloudStore(state => state.selectedResourceForDetail);
@@ -16,37 +16,44 @@ export const ResourceDetailDrawer = () => {
       title="Resource Configuration Details"
     >
       {isLoading ? (
-        <div className="flex justify-center p-8"><Spinner /></div>
+        <div className="flex flex-col items-center justify-center py-24 gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <span className="text-sm text-gray-500">Loading details…</span>
+        </div>
       ) : detail ? (
         <div className="space-y-6">
           <div>
-            <h3 className="font-bold text-lg">{detail.resource_name}</h3>
-            <div className="flex gap-2 mt-2">
-              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">{detail.resource_type}</span>
-              <span className="text-xs bg-gray-100 text-gray-800 px-2 py-1 rounded">{detail.region_or_zone}</span>
+            <h3 className="text-lg font-bold text-gray-900">{detail.resource_name}</h3>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
+                {detail.resource_type}
+              </span>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-gray-100 text-gray-600 border-gray-200">
+                {detail.region_or_zone}
+              </span>
             </div>
           </div>
-          
+
           <div>
-            <h4 className="font-semibold text-sm mb-2 text-gray-600">Tags</h4>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Tags</h4>
             <div className="flex flex-wrap gap-2">
               {Object.entries(detail.tags || {}).map(([key, val]) => (
-                <span key={key} className="text-xs border px-2 py-1 rounded bg-gray-50">
-                  <span className="font-semibold">{key}:</span> {val as string}
+                <span key={key} className="text-xs border border-gray-200 bg-gray-50 text-gray-700 px-2 py-1 rounded-md">
+                  <span className="font-semibold text-gray-900">{key}:</span> {val as string}
                 </span>
               ))}
             </div>
           </div>
 
           <div>
-            <h4 className="font-semibold text-sm mb-2 text-gray-600">Raw Configuration</h4>
-            <pre className="bg-gray-900 text-green-400 p-4 rounded text-xs overflow-x-auto max-h-96">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Raw Configuration</h4>
+            <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono text-gray-700 overflow-x-auto max-h-96">
               {JSON.stringify(detail.config, null, 2)}
             </pre>
           </div>
         </div>
       ) : (
-        <div className="p-8 text-center text-gray-500">Resource not found.</div>
+        <div className="py-12 text-center text-sm text-gray-500">Resource not found.</div>
       )}
     </DrawerPanel>
   );

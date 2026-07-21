@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+# Called with each batch of resources as it is discovered, so callers can
+# persist incrementally and report live progress instead of waiting for the
+# entire scan to finish.
+OnBatch = Optional[Callable[[List[Dict[str, Any]]], Awaitable[None]]]
 
 
 class BaseCloudProvider(ABC):
@@ -16,8 +21,11 @@ class BaseCloudProvider(ABC):
         """
 
     @abstractmethod
-    async def scan_resources(self) -> List[Dict[str, Any]]:
+    async def scan_resources(self, on_batch: OnBatch = None) -> List[Dict[str, Any]]:
         """Enumerate all resources in the account/subscription/tenancy.
+
+        If on_batch is provided, it is awaited with each batch of resources as
+        they are discovered (for incremental persistence / live progress).
 
         Each dict must contain at minimum:
           - provider_resource_id  : str  (unique in provider)

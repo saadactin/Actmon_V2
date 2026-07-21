@@ -20,14 +20,41 @@ class OCIScanner:
     def __init__(self, auth: OCIAuth) -> None:
         self.auth = auth
         self.config = auth.get_config()
+        # compartment OCID -> readable name, populated during compartment discovery
+        self._compartment_names: Dict[str, str] = {}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    # (connect, read) seconds. Without this an unreachable service/region hangs
+    # the socket indefinitely and blocks the whole parallel scan from finishing.
+    _CLIENT_TIMEOUT = (10, 60)
+
+    @staticmethod
+    def _retry_strategy():
+        """Bounded retry so transient SSL/connection resets get one quick retry
+        without the default strategy's long exponential backoff (which was making
+        scans take 20+ minutes). Falls back to no-retry if the builder API differs."""
+        try:
+            return (
+                oci.retry.RetryStrategyBuilder()
+                .add_max_attempts(max_attempts=2)
+                .add_total_elapsed_time(total_elapsed_time_seconds=20)
+                .get_retry_strategy()
+            )
+        except Exception:
+            return oci.retry.NoneRetryStrategy()
 
     def _client_for_region(self, client_class, region: str):
         """Create an OCI client configured for a specific region."""
         cfg = dict(self.config)
         cfg["region"] = region
-        return client_class(cfg)
+        return client_class(cfg, timeout=self._CLIENT_TIMEOUT,
+                            retry_strategy=self._retry_strategy())
+
+    def _identity_client(self):
+        """Identity client on the home region, with a timeout + bounded retry."""
+        return oci.identity.IdentityClient(self.config, timeout=self._CLIENT_TIMEOUT,
+                                           retry_strategy=self._retry_strategy())
 
     # ── Region Discovery ──────────────────────────────────────────────────────
 
@@ -36,7 +63,7 @@ class OCIScanner:
         loop = asyncio.get_event_loop()
 
         def _fetch():
-            identity = oci.identity.IdentityClient(self.config)
+            identity = self._identity_client()
             subscriptions = identity.list_region_subscriptions(
                 self.auth.tenancy_ocid
             ).data
@@ -53,22 +80,35 @@ class OCIScanner:
     # ── Compartment Discovery ─────────────────────────────────────────────────
 
     async def _get_compartments(self) -> List[str]:
-        """Return tenancy root + all active sub-compartments."""
+        """Return tenancy root + all active sub-compartments, and cache their
+        readable names in self._compartment_names for topology labeling."""
         loop = asyncio.get_event_loop()
 
         def _fetch():
-            identity = oci.identity.IdentityClient(self.config)
+            identity = self._identity_client()
             compartments = oci.pagination.list_call_get_all_results(
                 identity.list_compartments,
                 self.auth.tenancy_ocid,
                 compartment_id_in_subtree=True,
             ).data
+            names: Dict[str, str] = {}
+            try:
+                names[self.auth.tenancy_ocid] = (
+                    identity.get_tenancy(self.auth.tenancy_ocid).data.name or "root"
+                )
+            except Exception:
+                names[self.auth.tenancy_ocid] = "root"
+            for c in compartments:
+                if c.lifecycle_state == "ACTIVE":
+                    names[c.id] = c.name
             ids = [self.auth.tenancy_ocid] + [
                 c.id for c in compartments if c.lifecycle_state == "ACTIVE"
             ]
-            return ids
+            return ids, names
 
-        return await loop.run_in_executor(None, _fetch)
+        ids, names = await loop.run_in_executor(None, _fetch)
+        self._compartment_names = names
+        return ids
 
     # ── Compute Instances ─────────────────────────────────────────────────────
 
@@ -83,10 +123,69 @@ class OCIScanner:
                 ).data
             except Exception:
                 return []
+            active = [i for i in instances if i.lifecycle_state not in ("TERMINATED",)]
+            if not active:
+                return []
+
+            # ── Attached-storage sizing ──────────────────────────────────────
+            # A stopped instance still pays for its boot + block volumes, so we
+            # need their real sizes to quantify the waste. Fetch them with a few
+            # compartment/AD-wide list calls (not one call per instance) and map
+            # them back to each instance. Any failure just leaves sizes as None,
+            # and the cost layer then reports NA rather than guessing.
+            block = self._client_for_region(oci.core.BlockstorageClient, region)
+
+            vol_size: Dict[str, float] = {}          # block volume id -> GB
+            try:
+                for v in oci.pagination.list_call_get_all_results(
+                    block.list_volumes, compartment_id
+                ).data:
+                    vol_size[v.id] = v.size_in_gbs
+            except Exception:
+                pass
+
+            inst_block: Dict[str, List[str]] = {}    # instance id -> [block volume id]
+            try:
+                for a in oci.pagination.list_call_get_all_results(
+                    compute.list_volume_attachments, compartment_id
+                ).data:
+                    if a.lifecycle_state == "DETACHED":
+                        continue
+                    inst_block.setdefault(a.instance_id, []).append(a.volume_id)
+            except Exception:
+                pass
+
+            boot_size: Dict[str, float] = {}         # boot volume id -> GB
+            inst_boot: Dict[str, str] = {}           # instance id -> boot volume id
+            for ad in {i.availability_domain for i in active if i.availability_domain}:
+                try:
+                    for a in oci.pagination.list_call_get_all_results(
+                        compute.list_boot_volume_attachments, ad, compartment_id
+                    ).data:
+                        if a.lifecycle_state == "DETACHED":
+                            continue
+                        inst_boot[a.instance_id] = a.boot_volume_id
+                except Exception:
+                    pass
+                try:
+                    for bv in oci.pagination.list_call_get_all_results(
+                        block.list_boot_volumes,
+                        availability_domain=ad,
+                        compartment_id=compartment_id,
+                    ).data:
+                        boot_size[bv.id] = bv.size_in_gbs
+                except Exception:
+                    pass
+
             results = []
-            for inst in instances:
-                if inst.lifecycle_state in ("TERMINATED",):
-                    continue
+            for inst in active:
+                boot_gb = boot_size.get(inst_boot.get(inst.id))
+                block_gbs = [
+                    vol_size[vid] for vid in inst_block.get(inst.id, []) if vid in vol_size
+                ]
+                block_gb = round(sum(block_gbs), 2) if block_gbs else None
+                attached = [g for g in (boot_gb, block_gb) if g is not None]
+                attached_gb = round(sum(attached), 2) if attached else None
                 results.append(
                     {
                         "provider_resource_id": inst.id,
@@ -101,6 +200,12 @@ class OCIScanner:
                             "memory_gb": inst.shape_config.memory_in_gbs if inst.shape_config else None,
                             "image_id": inst.image_id,
                             "fault_domain": inst.fault_domain,
+                            # Real provisioned storage (GB) that a stopped instance
+                            # keeps paying for; None when the volume APIs were unreadable.
+                            "boot_volume_gb": boot_gb,
+                            "block_volume_gb": block_gb,
+                            "block_volume_count": len(inst_block.get(inst.id, [])) or None,
+                            "attached_storage_gb": attached_gb,
                         },
                         "metadata": {
                             "compartment_id": compartment_id,
@@ -180,16 +285,33 @@ class OCIScanner:
                 return []
             results = []
             for b in buckets:
+                # list_buckets returns BucketSummary, which has no storage_tier /
+                # public_access_type / versioning — those live on the full Bucket,
+                # so fetch it. All three stay None if get_bucket is unavailable.
+                storage_tier = None
+                public_access_type = None
+                bucket_versioning = None
+                try:
+                    full = ns_client.get_bucket(namespace, b.name).data
+                    storage_tier = getattr(full, "storage_tier", None)
+                    public_access_type = getattr(full, "public_access_type", None)
+                    bucket_versioning = getattr(full, "versioning", None)
+                except Exception:
+                    pass
                 results.append(
                     {
                         "provider_resource_id": f"{namespace}/{b.name}",
                         "resource_type": "ObjectStorageBucket",
                         "resource_name": b.name,
                         "region_or_zone": region,
-                        "status": "active",
+                        # OCI buckets have no lifecycle state in the API
+                        "status": None,
                         "ip_address": None,
-                        "config": {"namespace": namespace, "storage_tier": b.storage_tier},
-                        "metadata": {"time_created": str(b.time_created), "region": region},
+                        "config": {"namespace": namespace, "storage_tier": storage_tier,
+                                   "public_access_type": public_access_type,
+                                   "versioning": bucket_versioning},
+                        "metadata": {"time_created": str(b.time_created), "region": region,
+                                     "compartment_id": compartment_id},
                         "cost_monthly": None,
                         "tags": b.freeform_tags or {},
                         "raw_data": {"name": b.name, "namespace": namespace},
@@ -225,6 +347,12 @@ class OCIScanner:
                             "config": {
                                 "db_name": adb.db_name,
                                 "cpu_core_count": adb.cpu_core_count,
+                                # Newer ADBs bill on the ECPU model, where the OCPU
+                                # cpu_core_count is 0 and the real capacity lives in
+                                # compute_model/compute_count. Capture both so the UI
+                                # never shows a misleading "cpu_core_count=0".
+                                "compute_model": getattr(adb, "compute_model", None),
+                                "compute_count": getattr(adb, "compute_count", None),
                                 "data_storage_size_tbs": adb.data_storage_size_in_tbs,
                                 "db_workload": adb.db_workload,
                                 "is_auto_scaling_enabled": adb.is_auto_scaling_enabled,
@@ -232,6 +360,7 @@ class OCIScanner:
                             "metadata": {
                                 "time_created": str(adb.time_created),
                                 "region": region,
+                                "compartment_id": compartment_id,
                             },
                             "cost_monthly": None,
                             "tags": adb.freeform_tags or {},
@@ -642,7 +771,7 @@ class OCIScanner:
         loop = asyncio.get_event_loop()
 
         def _fetch():
-            identity = oci.identity.IdentityClient(self.config)
+            identity = self._identity_client()
             results = []
 
             # Groups
@@ -725,8 +854,14 @@ class OCIScanner:
 
     # ── Main scan_all ─────────────────────────────────────────────────────────
 
-    async def scan_all(self) -> List[Dict[str, Any]]:
-        """Scan ALL resource types across ALL subscribed OCI regions in parallel."""
+    async def scan_all(self, on_batch=None) -> List[Dict[str, Any]]:
+        """Scan ALL resource types across ALL subscribed OCI regions in parallel.
+
+        If on_batch is provided, it is awaited with each non-empty batch of
+        resources as it is discovered, so the caller can persist incrementally
+        and report live progress. Concurrent batches are fine — the caller is
+        responsible for serializing its own writes.
+        """
         # Discover regions and compartments concurrently
         regions, compartments = await asyncio.gather(
             self._get_subscribed_regions(),
@@ -740,11 +875,33 @@ class OCIScanner:
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
 
+        def _stamp(batch):
+            # Add the readable compartment name alongside the OCID so the
+            # topology graph can label compartment hubs (mutates in place, so
+            # both the emitted batch and all_resources get it).
+            for r in batch:
+                meta = r.get("metadata") or {}
+                cid = meta.get("compartment_id")
+                if cid and not meta.get("compartment_name"):
+                    meta["compartment_name"] = self._compartment_names.get(cid)
+                    r["metadata"] = meta
+
+        async def _emit(batch):
+            if not batch:
+                return
+            _stamp(batch)
+            if on_batch:
+                try:
+                    await on_batch(batch)
+                except Exception as cb_exc:
+                    logger.warning("OCI on_batch callback failed: %s", cb_exc)
+
         # IAM is global (single region call)
         try:
             iam_resources = await self._scan_iam_groups()
             all_resources.extend(iam_resources)
             logger.info("OCI IAM: found %d resources", len(iam_resources))
+            await _emit(iam_resources)
         except Exception as exc:
             logger.warning("OCI IAM scan failed: %s", exc)
             if "NotAuthorizedOrNotFound" in str(exc) or "Authorization failed" in str(exc):
@@ -772,6 +929,7 @@ class OCIScanner:
                         "OCI %s [%s/%s]: %d resources",
                         label, region, compartment_id[:20], len(results),
                     )
+                    await _emit(results)
                 return results
             except Exception as exc:
                 logger.warning("OCI %s [%s/%s] failed: %s", label, region, compartment_id[:20], exc)

@@ -8,17 +8,12 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
 
-import os
-
-# Keep the cloud service's pool small — it shares PostgreSQL (max_connections=100)
-# with the main API's 2 workers. pool_size + max_overflow caps this process.
 engine = create_async_engine(
     settings.async_database_url,
     echo=settings.DEBUG,
     pool_pre_ping=True,
-    pool_size=int(os.getenv("DB_POOL_SIZE", "5")),
-    max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "10")),
-    pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "1800")),
+    pool_size=10,
+    max_overflow=20,
 )
 
 AsyncSessionLocal = async_sessionmaker(

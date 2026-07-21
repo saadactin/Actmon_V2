@@ -10,6 +10,74 @@ from app.providers.azure.azure_auth import AzureAuth
 logger = logging.getLogger("cloud_svc.azure.scanner")
 
 
+# Friendly display names for common Azure resource types (lowercased keys).
+# Anything not listed falls back to the last path segment, PascalCased.
+_TYPE_MAP = {
+    "microsoft.compute/virtualmachines": "VirtualMachine",
+    "microsoft.compute/disks": "ManagedDisk",
+    "microsoft.compute/virtualmachinescalesets": "VMScaleSet",
+    "microsoft.compute/availabilitysets": "AvailabilitySet",
+    "microsoft.compute/snapshots": "Snapshot",
+    "microsoft.compute/images": "VMImage",
+    "microsoft.storage/storageaccounts": "StorageAccount",
+    "microsoft.sql/servers": "SQLServer",
+    "microsoft.sql/servers/databases": "SQLDatabase",
+    "microsoft.dbformysql/servers": "MySQLServer",
+    "microsoft.dbformysql/flexibleservers": "MySQLServer",
+    "microsoft.dbforpostgresql/servers": "PostgreSQLServer",
+    "microsoft.dbforpostgresql/flexibleservers": "PostgreSQLServer",
+    "microsoft.documentdb/databaseaccounts": "CosmosDB",
+    "microsoft.cache/redis": "RedisCache",
+    "microsoft.containerservice/managedclusters": "AKSCluster",
+    "microsoft.containerregistry/registries": "ContainerRegistry",
+    "microsoft.web/sites": "AppService",
+    "microsoft.web/serverfarms": "AppServicePlan",
+    "microsoft.web/staticsites": "StaticWebApp",
+    "microsoft.keyvault/vaults": "KeyVault",
+    "microsoft.network/virtualnetworks": "VirtualNetwork",
+    "microsoft.network/networksecuritygroups": "NetworkSecurityGroup",
+    "microsoft.network/publicipaddresses": "PublicIP",
+    "microsoft.network/networkinterfaces": "NetworkInterface",
+    "microsoft.network/loadbalancers": "LoadBalancer",
+    "microsoft.network/applicationgateways": "ApplicationGateway",
+    "microsoft.network/privateendpoints": "PrivateEndpoint",
+    "microsoft.network/natgateways": "NATGateway",
+    "microsoft.network/dnszones": "DNSZone",
+    "microsoft.network/bastionhosts": "Bastion",
+    "microsoft.network/routetables": "RouteTable",
+    "microsoft.insights/components": "AppInsights",
+    "microsoft.insights/actiongroups": "ActionGroup",
+    "microsoft.operationalinsights/workspaces": "LogAnalytics",
+    "microsoft.logic/workflows": "LogicApp",
+    "microsoft.eventhub/namespaces": "EventHub",
+    "microsoft.servicebus/namespaces": "ServiceBus",
+    "microsoft.apimanagement/service": "APIManagement",
+    "microsoft.cdn/profiles": "CDNProfile",
+    "microsoft.managedidentity/userassignedidentities": "ManagedIdentity",
+    "microsoft.recoveryservices/vaults": "RecoveryVault",
+}
+
+
+def _friendly_type(azure_type: str) -> str:
+    """Map an Azure ARM type string to a short, UI-friendly resource type."""
+    if not azure_type:
+        return "Unknown"
+    key = azure_type.lower()
+    if key in _TYPE_MAP:
+        return _TYPE_MAP[key]
+    seg = azure_type.split("/")[-1]
+    return (seg[:1].upper() + seg[1:]) if seg else azure_type
+
+
+def _resource_group_of(resource_id: str | None) -> str | None:
+    if not resource_id or "/resourceGroups/" not in resource_id:
+        return None
+    try:
+        return resource_id.split("/resourceGroups/")[1].split("/")[0]
+    except (IndexError, AttributeError):
+        return None
+
+
 class AzureScanner:
     def __init__(self, auth: AzureAuth) -> None:
         self.auth = auth
@@ -20,8 +88,12 @@ class AzureScanner:
 
         def _fetch():
             from azure.mgmt.compute import ComputeManagementClient
+            from azure.mgmt.network import NetworkManagementClient
 
             compute = ComputeManagementClient(
+                self.auth.get_credential(), self.auth.subscription_id
+            )
+            net = NetworkManagementClient(
                 self.auth.get_credential(), self.auth.subscription_id
             )
             results = []
@@ -30,11 +102,6 @@ class AzureScanner:
                 # Try to get public IP if available
                 ip = None
                 try:
-                    from azure.mgmt.network import NetworkManagementClient
-
-                    net = NetworkManagementClient(
-                        self.auth.get_credential(), self.auth.subscription_id
-                    )
                     nic_ref = (
                         vm.network_profile.network_interfaces[0].id
                         if vm.network_profile
@@ -70,7 +137,7 @@ class AzureScanner:
                                 else None
                             ),
                             "os_type": (
-                                vm.storage_profile.os_disk.os_type.value
+                                getattr(vm.storage_profile.os_disk.os_type, "value", None)
                                 if vm.storage_profile
                                 and vm.storage_profile.os_disk
                                 else None
@@ -114,6 +181,8 @@ class AzureScanner:
                             "sku": acc.sku.name if acc.sku else None,
                             "kind": acc.kind,
                             "access_tier": acc.access_tier,
+                            # Real setting from the API; None = not reported
+                            "allow_blob_public_access": getattr(acc, "allow_blob_public_access", None),
                         },
                         "metadata": {},
                         "cost_monthly": None,
@@ -200,9 +269,52 @@ class AzureScanner:
 
         return await loop.run_in_executor(None, _fetch)
 
-    async def scan_all(self) -> List[Dict[str, Any]]:
+    # ── Generic catch-all (every resource type via ARM resources.list) ───────
+    async def _scan_generic(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            client = self.auth.get_resource_client()
+            results = []
+            # $expand=provisioningState returns the real ARM provisioning state
+            for res in client.resources.list(expand="provisioningState"):
+                results.append(
+                    {
+                        "provider_resource_id": res.id,
+                        "resource_type": _friendly_type(res.type or ""),
+                        "resource_name": res.name,
+                        "region_or_zone": res.location or "global",
+                        "status": getattr(res, "provisioning_state", None),
+                        "ip_address": None,
+                        "config": {
+                            "azure_type": res.type,
+                            "sku": res.sku.name if res.sku else None,
+                            "kind": res.kind,
+                        },
+                        "metadata": {"resource_group": _resource_group_of(res.id)},
+                        "cost_monthly": None,
+                        "tags": res.tags or {},
+                        "raw_data": {"id": res.id, "name": res.name, "type": res.type},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(None, _fetch)
+
+    async def scan_all(self, on_batch=None) -> List[Dict[str, Any]]:
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
+
+        async def _emit(batch):
+            if batch and on_batch:
+                try:
+                    await on_batch(batch)
+                except Exception as cb_exc:
+                    logger.warning("Azure on_batch callback failed: %s", cb_exc)
+
+        # Detailed scanners run first — they enrich specific types with data the
+        # generic ARM listing can't provide (VM public IPs, storage SKUs, SQL DBs
+        # which are sub-resources not returned by resources.list()).
         for scanner_fn, label in [
             (self._scan_vms, "VMs"),
             (self._scan_storage, "Storage"),
@@ -213,12 +325,34 @@ class AzureScanner:
                 results = await scanner_fn()
                 all_resources.extend(results)
                 logger.info("Azure %s: found %d resources", label, len(results))
+                await _emit(results)
             except Exception as exc:
                 logger.warning("Azure %s scan failed: %s", label, exc)
                 if "AuthorizationFailed" in str(exc) or "forbidden" in str(exc).lower():
                     permission_errors.append(str(exc))
-        
+
+        # Generic catch-all — captures every OTHER resource type in the
+        # subscription (App Services, Key Vaults, Cosmos DB, VNets, NSGs, disks…).
+        # Dedupe against the detailed results so enriched records win.
+        seen_ids = {r["provider_resource_id"] for r in all_resources}
+        try:
+            generic = await self._scan_generic()
+            added = 0
+            new_batch = []
+            for r in generic:
+                if r["provider_resource_id"] not in seen_ids:
+                    all_resources.append(r)
+                    seen_ids.add(r["provider_resource_id"])
+                    new_batch.append(r)
+                    added += 1
+            logger.info("Azure Generic: found %d resources (%d new)", len(generic), added)
+            await _emit(new_batch)
+        except Exception as exc:
+            logger.warning("Azure generic scan failed: %s", exc)
+            if "AuthorizationFailed" in str(exc) or "forbidden" in str(exc).lower():
+                permission_errors.append(str(exc))
+
         if len(all_resources) == 0 and len(permission_errors) > 0:
             raise PermissionError("Missing required Azure IAM permissions (Reader). Azure returned AuthorizationFailed during the scan.")
-            
+
         return all_resources

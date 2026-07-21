@@ -158,17 +158,20 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
 
         # ── DynamoDB encryption check ────────────────────────────────
         if rtype == "DynamoDBTable":
-            # All DynamoDB tables are encrypted by default in AWS — flag as info
-            findings.append({
-                "resource_id": rid,
-                "resource_name": name,
-                "resource_type": rtype,
-                "severity": SEVERITY_INFO,
-                "title": "DynamoDB Table Uses AWS-Managed Encryption",
-                "description": f"Table '{name}' uses AWS-managed encryption (SSE). Consider customer-managed KMS keys for stricter control.",
-                "recommendation": "Enable customer-managed KMS key for sensitive data tables.",
-                "category": "Encryption",
-            })
+            # Only when DescribeTable data was actually collected: an absent
+            # SSEDescription means the table uses the AWS-owned key (the default).
+            raw_table = r.raw_data if isinstance(r.raw_data, dict) else None
+            if raw_table is not None and "SSEDescription" not in raw_table:
+                findings.append({
+                    "resource_id": rid,
+                    "resource_name": name,
+                    "resource_type": rtype,
+                    "severity": SEVERITY_INFO,
+                    "title": "DynamoDB Table Uses Default AWS-Owned Key Encryption",
+                    "description": f"Table '{name}' has no SSEDescription in DescribeTable, meaning it is encrypted with the default AWS-owned key. Consider a customer-managed KMS key for stricter control.",
+                    "recommendation": "Enable a customer-managed KMS key for sensitive data tables.",
+                    "category": "Encryption",
+                })
 
         # ── Lambda function checks ───────────────────────────────────
         if rtype == "LambdaFunction":
@@ -228,29 +231,20 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
 
         # ── Azure Storage Account checks ──────────────────────────────
         if rtype == "StorageAccount":
-            findings.append({
-                "resource_id": rid,
-                "resource_name": name,
-                "resource_type": rtype,
-                "severity": SEVERITY_MEDIUM,
-                "title": "Storage Account Public Access Review",
-                "description": f"Storage Account '{name}' should be reviewed to ensure 'allowBlobPublicAccess' is disabled if not serving public web content.",
-                "recommendation": "Disable public blob access at the account level if not required.",
-                "category": "Security",
-            })
-
-        # ── Azure SQL checks ──────────────────────────────────────────
-        if rtype == "SQLDatabase":
-            findings.append({
-                "resource_id": rid,
-                "resource_name": name,
-                "resource_type": rtype,
-                "severity": SEVERITY_MEDIUM,
-                "title": "Azure SQL Transparent Data Encryption (TDE)",
-                "description": f"Ensure Transparent Data Encryption (TDE) is active for database '{name}'.",
-                "recommendation": "Verify TDE is enabled in Azure Portal or via Azure CLI to encrypt data at rest.",
-                "category": "Encryption",
-            })
+            # Only flag when the API explicitly reported public blob access enabled
+            if config.get("allow_blob_public_access") is True:
+                findings.append({
+                    "resource_id": rid,
+                    "resource_name": name,
+                    "resource_type": rtype,
+                    "severity": SEVERITY_MEDIUM,
+                    "title": "Storage Account Allows Public Blob Access",
+                    "description": f"Storage Account '{name}' has 'allowBlobPublicAccess' enabled (from the Azure API).",
+                    "recommendation": "Disable public blob access at the account level if not required.",
+                    "category": "Security",
+                })
+        # Azure SQL TDE state is not collected by the scanner — no finding is
+        # emitted rather than fabricating one from unknown data.
 
         # ── OCI Compute Instance checks ───────────────────────────────
         if rtype == "ComputeInstance":
@@ -299,8 +293,9 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
         # ── OCI OKE Cluster checks ─────────────────────────────────────
         if rtype == "OKECluster":
             version = config.get("kubernetes_version", "")
-            is_public = config.get("endpoint_config", {}).get("is_public_ip_enabled", True)
-            if is_public:
+            # Only flag when the OCI API explicitly reported a public endpoint
+            is_public = (config.get("endpoint_config") or {}).get("is_public_ip_enabled")
+            if is_public is True:
                 findings.append({
                     "resource_id": rid,
                     "resource_name": name,
@@ -330,17 +325,19 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
 
         # ── OCI Object Storage checks ──────────────────────────────────
         if rtype == "ObjectStorageBucket":
-            storage_tier = config.get("storage_tier", "Standard")
-            findings.append({
-                "resource_id": rid,
-                "resource_name": name,
-                "resource_type": rtype,
-                "severity": SEVERITY_MEDIUM,
-                "title": "OCI Bucket Public Access Review",
-                "description": f"Bucket '{name}' should be reviewed for public access settings and pre-authenticated requests.",
-                "recommendation": "Audit bucket visibility and remove any pre-authenticated requests that are no longer needed.",
-                "category": "Security",
-            })
+            # Only flag when the OCI API reported a public access type
+            public_access = config.get("public_access_type")
+            if public_access and public_access != "NoPublicAccess":
+                findings.append({
+                    "resource_id": rid,
+                    "resource_name": name,
+                    "resource_type": rtype,
+                    "severity": SEVERITY_HIGH,
+                    "title": "OCI Bucket Allows Public Access",
+                    "description": f"Bucket '{name}' has public access type '{public_access}' (from the OCI API).",
+                    "recommendation": "Set the bucket to NoPublicAccess unless it intentionally serves public content.",
+                    "category": "Security",
+                })
 
         # ── OCI Autonomous Database checks ────────────────────────────
         if rtype == "AutonomousDatabase":
@@ -402,6 +399,9 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
         "account_id": str(account_id),
         "score": score,
         "grade": grade,
+        # The score is an internal heuristic over real, condition-checked
+        # findings — not a certified benchmark. Declared so the UI can label it.
+        "score_methodology": "heuristic: 100 minus severity-weighted penalties (CRITICAL 25, HIGH 15, MEDIUM 8, LOW 3, INFO 1)",
         "total_resources_scanned": len(resources),
         "total_findings": len(findings),
         "by_severity": by_severity,

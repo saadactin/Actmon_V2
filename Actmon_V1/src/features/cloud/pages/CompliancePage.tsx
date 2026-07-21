@@ -3,13 +3,33 @@ import { useNavigate } from 'react-router-dom';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useCloudStore } from '../state/cloudStore';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
-import { ArrowLeft, CheckCircle, AlertTriangle, Download, ShieldCheck } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Download, ShieldCheck, ClipboardCheck, Loader2, Info, Clock } from 'lucide-react';
+import { cloudAxios } from '../api/axios';
 
-// We'll create a quick fetcher or use fetch directly since we don't have a hook yet.
 const fetchCompliance = async (accountId: string) => {
-  const res = await fetch(`http://localhost:8002/api/v1/cloud/compliance/${accountId}`);
-  if (!res.ok) throw new Error("Failed to fetch compliance");
-  return res.json();
+  const { data } = await cloudAxios.get(`/compliance/${accountId}`);
+  return data;
+};
+
+const getScoreColor = (score: number | null) => {
+  if (score == null) return '#9ca3af'; // Gray — NA
+  if (score >= 90) return '#10b981'; // Green
+  if (score >= 70) return '#f59e0b'; // Amber
+  return '#ef4444'; // Red
+};
+
+const getScoreBarClass = (score: number | null) => {
+  if (score == null) return 'bg-gray-300';
+  if (score >= 90) return 'bg-green-500';
+  if (score >= 70) return 'bg-amber-500';
+  return 'bg-red-500';
+};
+
+const getScoreBadgeClass = (score: number | null) => {
+  if (score == null) return 'bg-gray-50 text-gray-600 border-gray-200';
+  if (score >= 90) return 'bg-green-50 text-green-700 border-green-200';
+  if (score >= 70) return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-red-50 text-red-700 border-red-200';
 };
 
 export const CompliancePage = () => {
@@ -20,6 +40,7 @@ export const CompliancePage = () => {
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Track current page per framework for pagination
   const [pages, setPages] = useState<Record<string, number>>({
@@ -50,33 +71,56 @@ export const CompliancePage = () => {
   useEffect(() => {
     if (selectedAccountId) {
       setLoading(true);
+      setError(null);
       fetchCompliance(selectedAccountId)
         .then(res => setData(res))
-        .catch(err => console.error(err))
+        .catch(err => {
+          console.error(err);
+          setError(err?.response?.data?.detail || err?.message || 'Failed to fetch compliance data');
+        })
         .finally(() => setLoading(false));
     }
   }, [selectedAccountId]);
 
-  if (loading || !data) {
+  if (error) {
     return (
-      <div style={PAGE_STYLE}>
-        <div style={{ padding: 40, color: '#94a3b8', fontFamily: 'Inter, sans-serif' }}>
-          Loading Compliance Data...
+      <div className="p-6 space-y-6">
+        <div className="flex flex-col items-center justify-center gap-3 py-24">
+          <AlertTriangle className="h-8 w-8 text-red-500" />
+          <p className="text-sm font-semibold text-gray-900">Failed to load compliance data</p>
+          <p className="text-sm text-gray-500">{error}</p>
         </div>
       </div>
     );
   }
 
-  const { overall_compliance_score, frameworks } = data;
+  if (accounts && accounts.length === 0) {
+    return (
+      <div className="p-6 space-y-6">
+        <div className="flex flex-col items-center justify-center gap-3 py-24">
+          <ClipboardCheck className="h-8 w-8 text-gray-400" />
+          <p className="text-sm text-gray-500">No cloud accounts connected. Add an account to view compliance data.</p>
+        </div>
+      </div>
+    );
+  }
 
-  const getScoreColor = (score: number) => {
-    if (score >= 90) return '#10b981'; // Green
-    if (score >= 70) return '#f59e0b'; // Yellow
-    return '#ef4444'; // Red
-  };
+  if (loading || !data) {
+    return (
+      <div className="p-6 space-y-6">
+        <div className="flex flex-col items-center justify-center gap-3 py-24">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <p className="text-sm text-gray-500">Loading compliance data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const { overall_compliance_score, frameworks, note } = data;
+  const selectedAccount = accounts?.find(acc => acc.id === selectedAccountId);
 
   return (
-    <div style={PAGE_STYLE}>
+    <div className="p-6 space-y-6">
       <style>{`
         @media print {
           body * { visibility: hidden; }
@@ -87,181 +131,169 @@ export const CompliancePage = () => {
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         }
       `}</style>
-      <div id="compliance-report" style={{ maxWidth: 1400, margin: '0 auto' }}>
-      {/* Header */}
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28 }}>
-        <div>
-          <button 
-            onClick={() => navigate('/cloud')} 
-            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, padding: 0 }}
-          >
-            <ArrowLeft size={16} /> Cloud Control Center
-          </button>
-          <h1 style={{ margin: '8px 0 0', fontSize: 28, fontWeight: 800, color: '#1e293b', letterSpacing: -0.5, display: 'flex', alignItems: 'center', gap: 10 }}>
-            📜 Compliance & Audit Dashboard
-          </h1>
-          <p style={{ margin: '6px 0 0', color: '#64748b', fontSize: 14 }}>
-            Map your cloud security posture to SOC2, HIPAA, and PCI-DSS frameworks.
-          </p>
+      <div id="compliance-report" className="max-w-[1400px] mx-auto space-y-6">
+        {/* Header */}
+        <div className="no-print flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
+                <ClipboardCheck size={20} />
+              </div>
+              Compliance &amp; Audit Dashboard
+            </h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Map your cloud security posture to SOC2, HIPAA, and PCI-DSS frameworks.
+            </p>
+          </div>
+
+          {accounts && accounts.length > 0 && (
+            <div className="no-print flex items-center gap-3">
+              <CloudProviderSelector
+                accounts={accounts}
+                selected={selectedAccountId}
+                onSelect={setSelectedAccountId}
+              />
+              <button
+                onClick={handleDownloadPDF}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+              >
+                <Download size={16} /> Download PDF Report
+              </button>
+            </div>
+          )}
         </div>
 
-        {accounts && accounts.length > 0 && (
-          <div className="no-print" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <CloudProviderSelector
-              accounts={accounts}
-              selected={selectedAccountId}
-              onSelect={setSelectedAccountId}
-            />
-            <button 
-              onClick={handleDownloadPDF}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '9px 16px', background: '#3b82f6', color: '#1e293b',
-                border: 'none', borderRadius: 8, fontWeight: 600, cursor: 'pointer',
-                transition: 'background 0.2s', fontSize: 13
-              }}
-            >
-              <Download size={16} /> Download PDF Report
-            </button>
+        {/* Methodology / data-source note */}
+        {note && (
+          <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
+            <Info size={16} className="mt-0.5 shrink-0" />
+            <span>{note}</span>
           </div>
         )}
-      </div>
 
-      {/* Main Score Overview */}
-      <div style={{ 
-        background: 'linear-gradient(135deg, rgba(30,41,59,0.7) 0%, rgba(15,23,42,0.7) 100%)',
-        border: '1px solid #e2e8f0',
-        borderRadius: 16,
-        padding: 32,
-        marginBottom: 32,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 40
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ 
-            width: 140, height: 140, borderRadius: '50%', 
-            border: `8px solid ${getScoreColor(overall_compliance_score)}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexDirection: 'column',
-            boxShadow: `0 0 30px ${getScoreColor(overall_compliance_score)}40`
-          }}>
-            <span style={{ fontSize: 42, fontWeight: 800, color: '#1e293b', lineHeight: 1 }}>{overall_compliance_score}%</span>
-            <span style={{ fontSize: 12, color: '#94a3b8', marginTop: 4, fontWeight: 600, textTransform: 'uppercase' }}>Overall Score</span>
+        {/* Main Score Overview */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-wrap items-center gap-10">
+          <div className="shrink-0">
+            <div
+              className="w-36 h-36 rounded-full border-8 flex flex-col items-center justify-center"
+              style={{ borderColor: getScoreColor(overall_compliance_score) }}
+            >
+              <span className="text-4xl font-bold text-gray-900 leading-none">
+                {overall_compliance_score != null ? `${overall_compliance_score}%` : 'NA'}
+              </span>
+              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mt-1.5">Overall Score</span>
+            </div>
           </div>
-        </div>
-        <div>
-          <h2 style={{ color: '#334155', fontSize: 22, margin: '0 0 12px 0', fontWeight: 700 }}>Enterprise Compliance Posture</h2>
-          <p style={{ color: '#94a3b8', fontSize: 14, margin: '0 0 20px 0', maxWidth: 600, lineHeight: 1.5 }}>
-            Your cloud infrastructure is continuously mapped against critical industry frameworks. 
-            An overall score above 90% indicates readiness for an external compliance audit.
-          </p>
-          <div style={{ display: 'flex', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#10b981', fontSize: 13, fontWeight: 600, background: 'rgba(16,185,129,0.1)', padding: '6px 12px', borderRadius: 20 }}>
-              <ShieldCheck size={16} /> Continuous Monitoring Active
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-gray-900">Enterprise Compliance Posture</h2>
+            <p className="text-sm text-gray-600 mt-2 max-w-xl leading-relaxed">
+              Real security findings from your connected account are mapped against critical industry frameworks.
+              Scores are shown as NA when control-level evaluation data is not available.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${selectedAccount?.auto_discovery ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                <ShieldCheck size={14} /> Auto-Discovery: {selectedAccount ? (selectedAccount.auto_discovery ? 'On' : 'Off') : 'NA'}
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-50 text-gray-600 border border-gray-200">
+                <Clock size={14} /> Last Scan: {selectedAccount?.last_discovery ? new Date(selectedAccount.last_discovery).toLocaleString() : 'NA'}
+              </span>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Framework Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
-        {Object.entries(frameworks).map(([name, data]: [string, any]) => (
-          <div key={name} style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: 12,
-            padding: 24,
-            display: 'flex',
-            flexDirection: 'column'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <h3 style={{ margin: 0, color: '#1e293b', fontSize: 18, fontWeight: 700 }}>{name}</h3>
-                <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: 12 }}>{data.total_controls} Controls Evaluated</p>
-              </div>
-              <div style={{ 
-                background: getScoreColor(data.score) + '20', 
-                color: getScoreColor(data.score),
-                padding: '4px 10px',
-                borderRadius: 12,
-                fontSize: 14,
-                fontWeight: 700
-              }}>
-                {data.score}%
-              </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div style={{ height: 6, background: '#e2e8f0', borderRadius: 3, marginBottom: 20, overflow: 'hidden' }}>
-              <div style={{ width: `${data.score}%`, height: '100%', background: getScoreColor(data.score), borderRadius: 3 }} />
-            </div>
-
-            <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, color: data.failed_controls === 0 ? '#10b981' : '#f59e0b', fontSize: 13, fontWeight: 600 }}>
-              {data.failed_controls === 0 ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
-              {data.failed_controls === 0 ? 'All Controls Passing' : `${data.failed_controls} Controls Failing`}
-            </div>
-
-            {/* Failing Controls List */}
-            {data.issues.length > 0 && (() => {
-              const currentPage = pages[name] || 0;
-              const totalPages = Math.ceil(data.issues.length / PAGE_SIZE);
-              const paginatedIssues = data.issues.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
-
-              return (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 330 }}>
-                    {paginatedIssues.map((issue: any, idx: number) => (
-                      <div key={idx} style={{ background: '#f1f5f9', padding: '10px 12px', borderRadius: 8, borderLeft: `3px solid ${issue.severity === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }}>
-                        <div style={{ color: '#334155', fontSize: 12, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {issue.rule}
-                        </div>
-                        <div style={{ color: '#94a3b8', fontSize: 11 }}>
-                          {issue.affected_resource}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Pagination Controls */}
-                  {data.issues.length > PAGE_SIZE && (
-                    <div className="no-print" style={{ 
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
-                      marginTop: 16, paddingTop: 16, borderTop: '1px solid #e2e8f0' 
-                    }}>
-                      <button 
-                        onClick={() => handlePageChange(name, -1)}
-                        disabled={currentPage === 0}
-                        style={{ background: '#ffffff', border: 'none', color: currentPage === 0 ? '#475569' : '#94a3b8', padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: currentPage === 0 ? 'not-allowed' : 'pointer' }}
-                      >
-                        Prev
-                      </button>
-                      <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>
-                        Page {currentPage + 1} of {totalPages}
-                      </span>
-                      <button 
-                        onClick={() => handlePageChange(name, 1)}
-                        disabled={currentPage >= totalPages - 1}
-                        style={{ background: '#ffffff', border: 'none', color: currentPage >= totalPages - 1 ? '#475569' : '#94a3b8', padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer' }}
-                      >
-                        Next
-                      </button>
-                    </div>
-                  )}
+        {/* Framework Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {Object.entries(frameworks || {}).map(([name, data]: [string, any]) => (
+            <div key={name} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col">
+              <div className="flex items-start justify-between mb-5">
+                <div>
+                  <h3 className="text-[15px] font-semibold text-gray-900">{name}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {data.total_controls != null ? `${data.total_controls} Controls Evaluated` : 'Controls Evaluated: NA'}
+                  </p>
                 </div>
-              );
-            })()}
-          </div>
-        ))}
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border ${getScoreBadgeClass(data.score)}`}>
+                  {data.score != null ? `${data.score}%` : 'NA'}
+                </span>
+              </div>
+
+              {/* Progress Bar (only when a real score exists) */}
+              {data.score != null && (
+                <div className="bg-gray-100 rounded-full h-2 mb-5 overflow-hidden">
+                  <div
+                    className={`h-2 rounded-full ${getScoreBarClass(data.score)}`}
+                    style={{ width: `${data.score}%` }}
+                  />
+                </div>
+              )}
+
+              {data.failed_controls != null ? (
+                <div className={`mb-4 flex items-center gap-2 text-sm font-semibold ${data.failed_controls === 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                  {data.failed_controls === 0 ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+                  {data.failed_controls === 0 ? 'All Controls Passing' : `${data.failed_controls} Controls Failing`}
+                </div>
+              ) : (
+                <div className={`mb-4 flex items-center gap-2 text-sm font-semibold ${(data.related_findings ?? 0) === 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                  {(data.related_findings ?? 0) === 0 ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+                  {data.related_findings != null
+                    ? `${data.related_findings} Related Security Finding${data.related_findings === 1 ? '' : 's'}`
+                    : 'Related Findings: NA'}
+                </div>
+              )}
+
+              {/* Related Security Findings List */}
+              {(data.issues?.length ?? 0) > 0 && (() => {
+                const currentPage = pages[name] || 0;
+                const totalPages = Math.ceil(data.issues.length / PAGE_SIZE);
+                const paginatedIssues = data.issues.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+                return (
+                  <div className="flex-1 flex flex-col">
+                    <div className="flex-1 overflow-y-auto flex flex-col gap-2 min-h-[330px]">
+                      {paginatedIssues.map((issue: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className={`bg-gray-50 rounded-lg border border-gray-200 border-l-4 px-3 py-2.5 ${issue.severity === 'CRITICAL' ? 'border-l-red-500' : 'border-l-amber-500'}`}
+                        >
+                          <div className="text-xs font-semibold text-gray-900 truncate mb-1">
+                            {issue.rule}
+                          </div>
+                          <div className="text-[11px] text-gray-500">
+                            {issue.affected_resource}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Pagination Controls */}
+                    {data.issues.length > PAGE_SIZE && (
+                      <div className="no-print flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                        <button
+                          onClick={() => handlePageChange(name, -1)}
+                          disabled={currentPage === 0}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Prev
+                        </button>
+                        <span className="text-[11px] font-semibold text-gray-500">
+                          Page {currentPage + 1} of {totalPages}
+                        </span>
+                        <button
+                          onClick={() => handlePageChange(name, 1)}
+                          disabled={currentPage >= totalPages - 1}
+                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
     </div>
   );
-};
-
-const PAGE_STYLE: React.CSSProperties = {
-  minHeight: '100%',
-  background: '#f1f5f9',
-  padding: '28px 32px',
-  fontFamily: "'Inter', -apple-system, sans-serif",
 };

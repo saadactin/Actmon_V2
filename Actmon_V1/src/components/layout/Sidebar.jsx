@@ -22,6 +22,7 @@ const FALLBACK = [
   { name: 'Dashboard', route: '/dashboard', icon: 'dashboard' },
   { name: 'Agents', route: '/agents', icon: 'server' },
   { name: 'Databases', route: '/databases', icon: 'database' },
+  { name: 'Cloud', route: '/cloud', icon: 'cloud' },
   { name: 'Administration', route: '/administration', icon: 'shield' },
   { name: 'Settings', route: '/settings', icon: 'settings' },
 ];
