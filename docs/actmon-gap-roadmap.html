@@ -1,0 +1,516 @@
+<!doctype html><html data-theme="light">
+<title>ActMon — Competitive Gap Analysis &amp; Capability Roadmap v1.0</title>
+<style>
+  :root{
+    --paper:#ffffff; --wash:#eaf4fb; --wash2:#f4f9fd;
+    --ink:#0e2a47; --panel:#123a5c; --panel2:#0d2c49;
+    --text:#2c4257; --muted:#64798d; --line:#d7e4ee; --line2:#b9d2e4;
+    --accent:#1e9be0; --accent-ink:#0f6ea6;
+    --ok:#1e8e5a; --warn:#c77e1f; --bad:#c0392b;
+    --chip:#e3f2fc; --on-panel:#eaf4fb; --on-panel-muted:#9dbdd6;
+    --hi:#fdeeee; --hi-b:#e8b6b0; --md:#fdf4e5; --md-b:#e8cfa0; --lo:#eaf6ef; --lo-b:#b5dcc5;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#0b1622; --wash:#101f2e; --wash2:#0e1c2a;
+      --ink:#dce9f4; --panel:#132a3f; --panel2:#0f2233;
+      --text:#c3d5e4; --muted:#7e97ab; --line:#1f3549; --line2:#2a4560;
+      --accent:#4fb7ec; --accent-ink:#63c1f0;
+      --ok:#3cba82; --warn:#e0a34a; --bad:#e06552;
+      --chip:#14304a; --on-panel:#dce9f4; --on-panel-muted:#8fb0c9;
+      --hi:#3a1d1c; --hi-b:#6e3330; --md:#3a2d16; --md-b:#6e5527; --lo:#15301f; --lo-b:#2c5b3d;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0b1622; --wash:#101f2e; --wash2:#0e1c2a;
+    --ink:#dce9f4; --panel:#132a3f; --panel2:#0f2233;
+    --text:#c3d5e4; --muted:#7e97ab; --line:#1f3549; --line2:#2a4560;
+    --accent:#4fb7ec; --accent-ink:#63c1f0;
+    --ok:#3cba82; --warn:#e0a34a; --bad:#e06552;
+    --chip:#14304a; --on-panel:#dce9f4; --on-panel-muted:#8fb0c9;
+    --hi:#3a1d1c; --hi-b:#6e3330; --md:#3a2d16; --md-b:#6e5527; --lo:#15301f; --lo-b:#2c5b3d;
+  }
+  :root[data-theme="light"]{
+    --paper:#ffffff; --wash:#eaf4fb; --wash2:#f4f9fd;
+    --ink:#0e2a47; --panel:#123a5c; --panel2:#0d2c49;
+    --text:#2c4257; --muted:#64798d; --line:#d7e4ee; --line2:#b9d2e4;
+    --accent:#1e9be0; --accent-ink:#0f6ea6;
+    --ok:#1e8e5a; --warn:#c77e1f; --bad:#c0392b;
+    --chip:#e3f2fc; --on-panel:#eaf4fb; --on-panel-muted:#9dbdd6;
+    --hi:#fdeeee; --hi-b:#e8b6b0; --md:#fdf4e5; --md-b:#e8cfa0; --lo:#eaf6ef; --lo-b:#b5dcc5;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--wash2)}
+  body{
+    margin:0;color:var(--text);background:var(--wash2);
+    font:15px/1.65 "Segoe UI Variable Text","Segoe UI",-apple-system,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .doc{max-width:940px;margin:0 auto;padding:28px 16px 80px}
+  .page{background:var(--paper);border:1px solid var(--line);border-radius:6px;margin:0 0 26px;overflow:hidden}
+  .runhead{display:flex;justify-content:space-between;align-items:center;padding:12px 40px;border-bottom:2px solid var(--ink);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .runhead b{color:var(--ink);letter-spacing:.18em}
+  .runfoot{display:flex;justify-content:space-between;align-items:center;padding:11px 40px;border-top:1px solid var(--line);font-size:10.5px;color:var(--muted)}
+  .runfoot b{color:var(--ink)}
+  .body{padding:38px 44px 44px}
+  .eyebrow{display:inline-block;background:var(--chip);color:var(--accent-ink);font-size:11px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;padding:5px 12px;border-radius:3px;margin-bottom:14px}
+  h1{margin:0 0 10px;color:var(--ink);font-size:32px;line-height:1.15;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+  .rule{width:64px;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--panel));margin:14px 0 22px}
+  h2{margin:30px 0 10px;color:var(--ink);font-size:19px;font-weight:700;padding-left:12px;border-left:4px solid var(--accent);text-wrap:balance}
+  h3{margin:20px 0 6px;color:var(--ink);font-size:15px;font-weight:700}
+  p{margin:0 0 12px;max-width:76ch}
+  .lede{color:var(--muted);font-size:15.5px;max-width:80ch}
+  ul{margin:6px 0 14px;padding-left:20px}
+  li{margin:0 0 7px;max-width:76ch}
+  strong{color:var(--ink)}
+  .grid{display:grid;gap:14px;margin:16px 0}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:720px){.g3,.g2{grid-template-columns:1fr}.body{padding:26px 20px}.runhead,.runfoot{padding:10px 20px}}
+  .card{background:var(--wash2);border:1px solid var(--line);border-radius:6px;padding:16px 18px}
+  .card h4{margin:0 0 7px;color:var(--ink);font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+  .card p{font-size:13.5px;margin:0}
+  .card.dark{background:var(--panel);border-color:var(--panel)}
+  .card.dark h4{color:var(--accent)}
+  .card.dark p{color:var(--on-panel)}
+  .twrap{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:6px}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th{background:var(--panel);color:var(--on-panel);text-align:left;padding:10px 13px;font-size:11.5px;letter-spacing:.05em;font-weight:600;white-space:nowrap}
+  td{padding:10px 13px;border-top:1px solid var(--line);vertical-align:top}
+  tbody tr:nth-child(odd) td{background:var(--wash2)}
+  td b{color:var(--ink)}
+  .caption{font-size:12px;color:var(--muted);margin:8px 2px 0;border-top:1px dashed var(--line2);padding-top:8px}
+  .sev{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:3px;padding:2px 9px;border:1px solid;white-space:nowrap}
+  .sev.hi{background:var(--hi);border-color:var(--hi-b);color:var(--bad)}
+  .sev.md{background:var(--md);border-color:var(--md-b);color:var(--warn)}
+  .sev.lo{background:var(--lo);border-color:var(--lo-b);color:var(--ok)}
+  .eff{display:inline-block;font-size:10.5px;font-weight:700;border-radius:3px;padding:2px 8px;background:var(--chip);color:var(--accent-ink);white-space:nowrap}
+  .quote{border-left:4px solid var(--accent);background:var(--wash);padding:14px 18px;border-radius:0 6px 6px 0;font-style:italic;margin:16px 0;font-size:14px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}
+  @media(max-width:720px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:5px;text-align:center;padding:16px 8px}
+  .stat b{display:block;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .stat span{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+  .chip{border:1px solid var(--line2);background:var(--chip);color:var(--accent-ink);border-radius:999px;padding:5px 14px;font-size:12.5px;font-weight:600}
+  .phase{display:flex;gap:16px;margin:14px 0;align-items:flex-start}
+  .pnum{flex:0 0 44px;height:44px;border-radius:50%;background:var(--panel);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
+  .pcard{flex:1;background:var(--wash2);border:1px solid var(--line);border-radius:6px;padding:13px 17px}
+  .pcard b{color:var(--ink)}
+  .pcard p{margin:4px 0 0;font-size:13.5px}
+  .toc{list-style:none;margin:10px 0;padding:0}
+  .toc li{display:flex;gap:14px;align-items:baseline;border-bottom:1px dashed var(--line);padding:9px 2px;margin:0;max-width:none;font-size:14px}
+  .toc li b{color:var(--accent-ink);min-width:26px;font-variant-numeric:tabular-nums}
+  .foot-note{font-size:12px;color:var(--muted);border-top:1px dashed var(--line2);margin-top:14px;padding-top:10px}
+  .cover{background:linear-gradient(160deg,var(--panel2),var(--panel) 55%,#164a76);color:var(--on-panel)}
+  .cover .chead{display:flex;justify-content:space-between;align-items:center;padding:26px 44px}
+  .logo{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.2em;font-size:16px;color:#fff}
+  .logo i{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:9px;background:var(--accent);color:#062338;font-style:normal;font-weight:800;font-size:18px}
+  .conf{border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:6px 16px;font-size:10.5px;letter-spacing:.22em;color:#cfe6f6}
+  .cover .cmain{padding:56px 44px 40px}
+  .cover .ceyebrow{font-size:11px;letter-spacing:.3em;color:var(--accent);text-transform:uppercase;margin-bottom:18px}
+  .cover h1{color:#fff;font-size:44px;margin:0 0 12px}
+  .cover .tag{font-size:19px;color:#bfe0f5;margin:0 0 20px}
+  .cover .abstract{color:#9dbdd6;max-width:64ch;font-size:14.5px}
+  .cover .cfoot{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;background:rgba(6,24,38,.45);padding:22px 44px;border-top:1px solid rgba(255,255,255,.14)}
+  .cover .cfoot div span{display:block;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#7fa6c2;margin-bottom:4px}
+  .cover .cfoot div b{color:#fff;font-size:13.5px;font-weight:600}
+  @media(max-width:720px){.cover h1{font-size:32px}.cover .cfoot{grid-template-columns:1fr 1fr;padding:20px}.cover .cmain,.cover .chead{padding-left:20px;padding-right:20px}}
+  .sig{border-top:2px solid var(--ink);margin-top:34px;padding-top:12px;font-size:13px;color:var(--muted)}
+  .sig b{color:var(--ink)}
+  @media print{
+    body{background:#fff}.doc{max-width:none;padding:0}
+    .page{border:none;border-radius:0;margin:0;page-break-after:always}
+    .body{padding:24px 30px}
+  }
+</style>
+
+<div class="doc">
+
+<!-- COVER -->
+<section class="page cover">
+  <div class="chead">
+    <div class="logo"><i>A</i> ACTMON</div>
+    <div class="conf">CONFIDENTIAL &nbsp;•&nbsp; V1.0</div>
+  </div>
+  <div class="cmain">
+    <div class="ceyebrow">Internal Strategy Document &nbsp;·&nbsp; Companion to the Enterprise Product Proposal</div>
+    <h1>Competitive Gap Analysis<br>&amp; Capability Roadmap</h1>
+    <p class="tag">What SolarWinds, Percona, Datadog &amp; peers have that ActMon doesn't — yet — and the plan to close it.</p>
+    <p class="abstract">An honest, capability-by-capability comparison of ActMon against SolarWinds DPA, Percona PMM, Datadog, Dynatrace, Zabbix, Nagios, ManageEngine, Quest Foglight, Redgate, and Site24x7 — identifying every material feature gap, rating its severity, and sequencing closure into a prioritized, effort-sized delivery plan.</p>
+  </div>
+  <div class="cfoot">
+    <div><span>Prepared by</span><b>Suyash Gaikwad</b></div>
+    <div><span>Version</span><b>1.0 &nbsp;·&nbsp; July 2026</b></div>
+    <div><span>Classification</span><b>Confidential — Internal</b></div>
+    <div><span>Document type</span><b>Gap Analysis &amp; Planning</b></div>
+  </div>
+</section>
+
+<!-- CONTENTS + METHOD -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Contents &amp; Method</div>
+    <h1>How This Analysis Was Built</h1>
+    <div class="rule"></div>
+    <ol class="toc">
+      <li><b>01</b> Scope &amp; Comparison Set</li>
+      <li><b>02</b> Where ActMon Already Leads</li>
+      <li><b>03</b> Gap Analysis — Query Performance &amp; Wait Analytics</li>
+      <li><b>04</b> Gap Analysis — Coverage Breadth (Engines, K8s, Network, Virtualization)</li>
+      <li><b>05</b> Gap Analysis — Alerting &amp; Incident Operations</li>
+      <li><b>06</b> Gap Analysis — Observability Platform Features</li>
+      <li><b>07</b> Gap Analysis — Predictive &amp; Machine Learning</li>
+      <li><b>08</b> Gap Analysis — Reporting, SLA &amp; Compliance</li>
+      <li><b>09</b> Gap Analysis — Enterprise Platform &amp; Identity</li>
+      <li><b>10</b> Gap Analysis — Discovery, Backup Assurance &amp; DR</li>
+      <li><b>11</b> Prioritization Model &amp; Phased Delivery Plan</li>
+      <li><b>12</b> 90-Day Quick Wins</li>
+      <li><b>13</b> Conclusion</li>
+    </ol>
+    <h2>Comparison Set</h2>
+    <p>ActMon is compared against the tools customers most often evaluate alongside it: <strong>SolarWinds Database Performance Analyzer (DPA)</strong>, <strong>Percona Monitoring &amp; Management (PMM)</strong>, <strong>Datadog (incl. Database Monitoring)</strong>, <strong>Dynatrace</strong>, <strong>Zabbix</strong>, <strong>Nagios</strong>, <strong>ManageEngine Applications Manager / OpManager</strong>, <strong>Quest Foglight</strong>, <strong>Redgate SQL Monitor</strong>, and <strong>Site24x7</strong>.</p>
+    <h2>Rating Scales</h2>
+    <div class="grid g3">
+      <div class="card"><h4><span class="sev hi">High</span> Gap Severity</h4><p>Blocks deals or fails common RFP lines today. Competitors demo it; prospects ask for it by name.</p></div>
+      <div class="card"><h4><span class="sev md">Medium</span> Gap Severity</h4><p>Differentiates competitors in evaluations but has workarounds; rarely a sole deal-breaker.</p></div>
+      <div class="card"><h4><span class="sev lo">Low</span> Gap Severity</h4><p>Nice-to-have or niche; matters to specific segments only.</p></div>
+    </div>
+    <p>Effort sizing: <span class="eff">S</span> ≤ 2 engineer-weeks &nbsp;·&nbsp; <span class="eff">M</span> 2–6 engineer-weeks &nbsp;·&nbsp; <span class="eff">L</span> 6–16 engineer-weeks &nbsp;·&nbsp; <span class="eff">XL</span> a quarter or more.</p>
+    <p class="foot-note">Competitor capabilities reflect general market positioning as commonly evaluated, not a certified audit of any vendor's current release. Trademarks belong to their respective owners.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Sections 01</b></div>
+</section>
+
+<!-- 02 STRENGTHS -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 02</div>
+    <h1>Where ActMon Already Leads</h1>
+    <div class="rule"></div>
+    <p class="lede">Before the gaps: the analysis is anchored by what ActMon already ships that most of the comparison set does not — these strengths are the platform to build the missing capabilities on, not to trade away.</p>
+    <div class="grid g2">
+      <div class="card dark"><h4>Embedded AI Copilot, Live-Grounded</h4><p>A streaming AI assistant that answers health questions from real-time telemetry, generates per-dialect SQL, and produces downloadable reports. None of SolarWinds DPA, PMM, Zabbix, Nagios, Foglight, or Redgate ship an equivalent in-product copilot.</p></div>
+      <div class="card dark"><h4>AI Alert Triage Agent</h4><p>An agent that decides and runs the next diagnostic command on a live alert, plus one-click AI analysis with suggested fixes — beyond the static runbooks competitors attach to alerts.</p></div>
+      <div class="card dark"><h4>Self-Heal With Audit History</h4><p>Guided auto-remediation (MySQL today) with a persistent action log — most monitoring suites stop at detection.</p></div>
+      <div class="card dark"><h4>Six Engines + Infra + Cloud, Self-Hosted</h4><p>MySQL, PostgreSQL, MSSQL, Oracle, MongoDB, ClickHouse, Linux/Windows hosts, and AWS/Azure/OCI discovery in one installable product. Datadog matches breadth only as SaaS; DPA/Foglight/Redgate don't cover infra+cloud; PMM doesn't cover MSSQL/Oracle.</p></div>
+      <div class="card dark"><h4>True Multi-Tenancy</h4><p>Organizations with tenant-scoped data, per-org roles, and page-level permissions — MSP-grade isolation that most peers offer only via separate installations.</p></div>
+      <div class="card dark"><h4>Action Surface In-Console</h4><p>Web SSH terminal, file explorer, config finder, backup &amp; PITR management — remediation tools competitors leave to other products.</p></div>
+    </div>
+    <div class="chips">
+      <span class="chip">15s telemetry pipeline (PG → Redis → ClickHouse)</span>
+      <span class="chip">Agent MSI/DEB/RPM + agentless SSH parity</span>
+      <span class="chip">One-command installer, air-gap friendly</span>
+      <span class="chip">Audit / login / session / password history</span>
+      <span class="chip">Website &amp; SSL monitoring</span>
+      <span class="chip">Searchable logs hub</span>
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 02</b></div>
+</section>
+
+<!-- 03 QUERY PERF GAPS -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 03</div>
+    <h1>Gap Analysis — Query Performance &amp; Wait Analytics</h1>
+    <div class="rule"></div>
+    <p class="lede">This is SolarWinds DPA's home ground and Percona PMM's strongest module. ActMon has solid slow-query digests and EXPLAIN drill-downs; the gaps are in wait-time science, plan history, and workload comparison.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>Wait-time / wait-event analysis as the primary lens</b> — time spent by wait class, correlated to queries, sessions, and resources</td><td>SolarWinds DPA (defining feature), Foglight</td><td>Wait-event data collected for agents; not yet a first-class analysis view across engines</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Execution-plan history &amp; plan-change detection</b> — store plans per digest, flag regressions when the plan flips</td><td>DPA, Datadog DBM, Redgate</td><td>On-demand EXPLAIN per query; no plan storage or change tracking</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Visual plan diagrams &amp; plan diff</b></td><td>Datadog DBM, Redgate, Foglight</td><td>Textual plan output</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Workload comparison between time windows</b> — "this week vs. last week" digest deltas</td><td>DPA, PMM Query Analytics</td><td>History exists in ClickHouse; no comparison UI</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Blocking-chain history &amp; lock timeline</b> — replay who blocked whom during an incident</td><td>DPA, Redgate</td><td>Live locks/blocking views per engine; limited historical replay</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Per-query resource attribution</b> — I/O, CPU, temp usage attributed per digest over time</td><td>PMM, Datadog DBM</td><td>Partial via engine stats; not normalized cross-engine</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Query-level anomaly flags</b> — automatic "this digest got 8× slower" detection</td><td>DPA (ML anomaly), Datadog</td><td>Not yet; depends on ML baseline work (Section 07)</td><td><span class="sev hi">High</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Tuning advisors with impact estimates</b> — index recommendation with projected gain</td><td>DPA, Foglight</td><td>Index analysis lists candidates; no quantified impact estimate</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Closing the top three rows makes ActMon credible in any DPA/PMM bake-off; ActMon's AI copilot then explains wait profiles and plan regressions in plain language — something neither leader does natively.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 03</b></div>
+</section>
+
+<!-- 04 COVERAGE -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 04</div>
+    <h1>Gap Analysis — Coverage Breadth</h1>
+    <div class="rule"></div>
+    <p class="lede">Engines, container platforms, network devices, and virtualization layers the comparison set monitors that ActMon does not yet.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>Redis monitoring</b> (as a monitored engine, not just internal infra)</td><td>Datadog, PMM (external exporters), Site24x7</td><td>Redis used internally; no monitoring module</td><td><span class="sev hi">High</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Kubernetes &amp; container monitoring</b> — pods, nodes, DB operators, containerized engines</td><td>Datadog, Dynatrace, Zabbix; PMM ships a K8s operator</td><td>Host-level only; containers invisible</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Elasticsearch / OpenSearch</b></td><td>Datadog, Site24x7, ManageEngine</td><td>Not covered</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Cassandra / ScyllaDB</b></td><td>Datadog, Dynatrace</td><td>Not covered</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>IBM Db2, SAP HANA, Sybase/ASE</b> — legacy-enterprise engines</td><td>Foglight, ManageEngine, DPA (Db2/ASE)</td><td>Not covered</td><td><span class="sev md">Medium</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Managed-cloud DB flavors</b> — RDS/Aurora, Azure SQL, Cloud SQL with provider-metric enrichment (CloudWatch etc.)</td><td>Datadog, DPA, Foglight</td><td>Connectable as normal engines; no provider-metric enrichment</td><td><span class="sev hi">High</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>SNMP network monitoring</b> — switches, routers, firewalls, traps</td><td>Zabbix, Nagios, ManageEngine OpManager, SolarWinds NPM</td><td>Not covered (deliberate scope question — see Section 11)</td><td><span class="sev md">Medium</span></td><td><span class="eff">XL</span></td></tr>
+        <tr><td><b>VMware / Hyper-V virtualization layer</b> — host-to-VM-to-DB stack correlation</td><td>Foglight, ManageEngine, Dynatrace</td><td>Guest-OS view only</td><td><span class="sev md">Medium</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Windows agentless (WMI/WinRM)</b> collection</td><td>Zabbix, ManageEngine</td><td>Windows covered via MSI agent only; SSH path is Linux-first</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Multi-step synthetic transactions</b> — scripted login/checkout flows, not just URL pings</td><td>Site24x7, Datadog Synthetics, Dynatrace</td><td>URL uptime, response time, SSL only</td><td><span class="sev lo">Low</span></td><td><span class="eff">L</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Redis is the standout quick win: a native client is already in the stack, the pipeline already classifies technologies, and "seven engines" strengthens every sales conversation.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 04</b></div>
+</section>
+
+<!-- 05 ALERTING -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 05</div>
+    <h1>Gap Analysis — Alerting &amp; Incident Operations</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon's rules, live evaluation, drill context, and AI triage are strong — but delivery channels and incident-workflow plumbing are where every mature competitor currently out-checklists us.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>Slack / Microsoft Teams alert channels</b></td><td>Everyone in the set (Datadog, Zabbix, Site24x7, ManageEngine…)</td><td>Email (SMTP) only</td><td><span class="sev hi">High</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Generic webhooks &amp; PagerDuty / Opsgenie integration</b></td><td>Datadog, Dynatrace, Zabbix, Site24x7</td><td>Not yet</td><td><span class="sev hi">High</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Escalation policies &amp; on-call schedules</b> — unacked after N minutes → next tier</td><td>Site24x7, ManageEngine; others via PagerDuty</td><td>Acknowledge flow only</td><td><span class="sev hi">High</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Maintenance windows &amp; scheduled downtime suppression</b></td><td>Zabbix, Nagios, all commercial suites</td><td>Not yet — planned-work alerts still fire</td><td><span class="sev hi">High</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Alert deduplication, grouping &amp; flap suppression</b></td><td>Datadog, Dynatrace, Zabbix</td><td>Basic hysteresis on status transitions; no cross-alert grouping</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Anomaly-based (baseline-relative) alert conditions</b></td><td>Datadog, Dynatrace, DPA</td><td>Static thresholds only; depends on ML work (Section 07)</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Composite / dependency-aware alerts</b> — suppress child alerts when the parent host is down</td><td>Zabbix, Nagios, ManageEngine</td><td>Not yet</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>SLA clocks on incidents</b> — response/resolve timers per severity</td><td>Site24x7, ManageEngine</td><td>Not yet</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Four of the eight rows are S-effort. A single notification-channel abstraction (channel = email | slack | teams | webhook) plus maintenance windows closes the loudest RFP lines in one sprint cycle.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 05</b></div>
+</section>
+
+<!-- 06 PLATFORM FEATURES -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 06</div>
+    <h1>Gap Analysis — Observability Platform Features</h1>
+    <div class="rule"></div>
+    <p class="lede">Capabilities that make a monitoring product feel like a platform: custom dashboards, open APIs, tracing correlation, and log pipelines.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>Custom dashboard builder</b> — user-composed widgets, saved views, TV mode</td><td>Datadog, Zabbix (widgets), PMM (Grafana-native)</td><td>Rich but fixed per-engine dashboards</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Documented public API + API tokens</b> — for CI/CD, ChatOps, custom automation</td><td>Datadog, Zabbix, Dynatrace, PMM</td><td>Full internal REST API exists; no token issuance or public docs</td><td><span class="sev hi">High</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Grafana interoperability</b> — datasource or Prometheus-format exporter</td><td>PMM (is Grafana), Zabbix plugin</td><td>Not yet; ClickHouse history is directly queryable as a stopgap</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>APM / distributed-tracing correlation</b> — trace → query → host in one waterfall</td><td>Datadog, Dynatrace, New Relic</td><td>Out of scope today (deliberate — see Section 11)</td><td><span class="sev md">Medium</span></td><td><span class="eff">XL</span></td></tr>
+        <tr><td><b>Log ingestion pipeline</b> — parse arbitrary app/syslog streams, full-text search, retention policies</td><td>Datadog Logs, Dynatrace, Zabbix (partial)</td><td>Logs hub covers platform + DB error logs; no arbitrary log ingestion</td><td><span class="sev md">Medium</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Service dependency / topology maps for DB estates</b> — app→DB→host graph with health overlay</td><td>Dynatrace, Datadog, ManageEngine</td><td>Cloud topology exists; no estate-wide dependency map</td><td><span class="sev md">Medium</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Metric retention &amp; downsampling policies</b> — user-configurable rollups</td><td>Datadog, PMM, Zabbix</td><td>Fixed tiering (1h hot ring + ClickHouse history)</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Tag/label system across entities</b> — env:prod, team:payments filtering everywhere</td><td>Datadog (canonical), Dynatrace</td><td>Environment field on connections; no free-form tags</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">API tokens + docs is the highest leverage S-effort item in this section: the API already exists — productizing it unlocks integrations customers build themselves.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 06</b></div>
+</section>
+
+<!-- 07 ML -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 07</div>
+    <h1>Gap Analysis — Predictive &amp; Machine Learning</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon's ML module is scaffolded but not yet delivering; Datadog Watchdog, Dynatrace Davis, and DPA anomaly detection set the expectation that a modern platform learns what "normal" looks like.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>Adaptive metric baselines</b> — seasonal-aware "normal band" per metric per connection</td><td>Dynatrace Davis, Datadog, DPA</td><td>ClickHouse history exists (ideal training source); no baseline engine</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Automatic anomaly detection</b> — flag deviations without hand-set thresholds</td><td>Datadog Watchdog, Dynatrace, DPA</td><td>ML page scaffolded; not implemented</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Capacity forecasting</b> — disk-full / connection-exhaustion / growth ETA predictions</td><td>Foglight, Datadog, Site24x7</td><td>Not yet; storage trends visible but not projected</td><td><span class="sev hi">High</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Forecast-based alerts</b> — "disk will fill in 9 days" as an alert condition</td><td>Zabbix (trend functions), Datadog</td><td>Not yet</td><td><span class="sev md">Medium</span></td><td><span class="eff">S</span> after forecasting</td></tr>
+        <tr><td><b>Automated root-cause correlation</b> — cross-signal causal ranking on incidents</td><td>Dynatrace Davis (defining feature)</td><td>AI triage agent investigates interactively; no automatic cross-signal ranking</td><td><span class="sev md">Medium</span></td><td><span class="eff">XL</span></td></tr>
+      </tbody>
+    </table></div>
+    <h2>Strategic Note</h2>
+    <p>ActMon holds an unusual advantage here: the copilot and triage agent already provide the <em>explanation layer</em> competitors lack. Once baselines and forecasts exist, ActMon can pair every anomaly with a grounded natural-language explanation and a suggested diagnostic path — leapfrogging tools whose anomaly output is an unexplained purple band on a chart. The ClickHouse history tier means training data is already being accumulated at zero extra cost.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 07</b></div>
+</section>
+
+<!-- 08 REPORTING -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 08</div>
+    <h1>Gap Analysis — Reporting, SLA &amp; Compliance</h1>
+    <div class="rule"></div>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>SLA / uptime reports</b> — monthly availability per service with exclusion windows</td><td>Site24x7, ManageEngine, Zabbix</td><td>Uptime data collected; no SLA report artifact</td><td><span class="sev hi">High</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>PDF report export</b> — branded, board-ready documents</td><td>All commercial suites</td><td>Scheduled email reports + CSV downloads; no PDF rendering</td><td><span class="sev md">Medium</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Custom report builder</b> — user-selected sections, metrics, and periods</td><td>ManageEngine, Foglight, Site24x7</td><td>Fixed per-engine report templates</td><td><span class="sev md">Medium</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Compliance report templates</b> — PCI-DSS / SOX / HIPAA-oriented evidence packs</td><td>ManageEngine, SolarWinds (SEM side)</td><td>Raw evidence exists (audit, login, session, password history); no packaged templates</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Capacity &amp; inventory reports</b> — estate summary, versions, EOL flags, license counts</td><td>Foglight, ManageEngine</td><td>Stable-facts data collected; no report surface</td><td><span class="sev lo">Low</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Scheduled report distribution lists</b> — per-stakeholder subscriptions</td><td>All commercial suites</td><td>Per-engine schedule with recipients; no self-serve subscription management</td><td><span class="sev lo">Low</span></td><td><span class="eff">S</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Reporting gaps are disproportionately cheap to close because the underlying data is already collected and stored — these are presentation-layer investments with executive-visible payoff.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 08</b></div>
+</section>
+
+<!-- 09 ENTERPRISE PLATFORM -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 09</div>
+    <h1>Gap Analysis — Enterprise Platform &amp; Identity</h1>
+    <div class="rule"></div>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>SSO — SAML / OIDC / LDAP / Active Directory</b></td><td>All commercial suites; Zabbix (LDAP/SAML)</td><td>Local accounts with JWT + OTP</td><td><span class="sev hi">High</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>TOTP MFA (authenticator apps)</b> alongside email OTP</td><td>Datadog, Site24x7, Zabbix</td><td>Email OTP at login</td><td><span class="sev md">Medium</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>High availability of the platform itself</b> — clustered API, failover collectors</td><td>Zabbix (HA nodes), Dynatrace, ManageEngine</td><td>Single-node systemd deployment; DB tier can be externalized</td><td><span class="sev hi">High</span></td><td><span class="eff">XL</span></td></tr>
+        <tr><td><b>Horizontal collector scaling</b> — sharded/relayed collection for 1,000+ targets</td><td>Zabbix proxies, Datadog agent fabric</td><td>Single collector loop; agents already distribute load partially</td><td><span class="sev md">Medium</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Agent auto-update</b> — fleet-wide version rollout from the console</td><td>Datadog, Dynatrace OneAgent</td><td>Manual reinstall per host</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Local / air-gapped LLM option</b> — copilot without external API dependency</td><td>No competitor ships this either — open field</td><td>Copilot requires Groq cloud API</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Secrets-vault integration</b> — HashiCorp Vault / cloud KMS for DB credentials</td><td>Dynatrace, Datadog (partial)</td><td>Credentials encrypted at rest in platform DB</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Mobile app / responsive on-call view</b></td><td>Site24x7, Datadog, Zabbix (3rd-party)</td><td>Desktop web UI</td><td><span class="sev lo">Low</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Localization / i18n</b></td><td>Zabbix, ManageEngine</td><td>English only</td><td><span class="sev lo">Low</span></td><td><span class="eff">M</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">SSO is the single most common enterprise-procurement checkbox in this section; the air-gapped LLM is the most strategic — it converts ActMon's data-sovereignty story into a full-stack claim no major competitor can match.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 09</b></div>
+</section>
+
+<!-- 10 DISCOVERY/BACKUP -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 10</div>
+    <h1>Gap Analysis — Discovery, Backup Assurance &amp; DR</h1>
+    <div class="rule"></div>
+    <div class="twrap"><table>
+      <thead><tr><th>Capability</th><th>Who Leads Today</th><th>ActMon Today</th><th>Severity</th><th>Effort</th></tr></thead>
+      <tbody>
+        <tr><td><b>Network auto-discovery of database instances</b> — scan ranges, detect engines, propose connections</td><td>ManageEngine, SolarWinds, Zabbix discovery rules</td><td>Manual connection entry; agent sync-connections helps after the fact</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Bulk import / IaC onboarding</b> — CSV or API-driven mass registration</td><td>Zabbix (API), Datadog</td><td>One-at-a-time wizard</td><td><span class="sev md">Medium</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>Configuration-drift tracking</b> — diff engine configs over time, alert on change</td><td>Foglight, Redgate</td><td>Stable-facts dedup stores config snapshots; no diff/alert UI</td><td><span class="sev md">Medium</span></td><td><span class="eff">M</span></td></tr>
+        <tr><td><b>Backup verification / test-restore automation</b> — prove restorability, not just job success</td><td>Rubrik-class tools; partial in Foglight/Redgate</td><td>Backup execution, scheduling, PITR; no automated restore verification</td><td><span class="sev hi">High</span></td><td><span class="eff">L</span></td></tr>
+        <tr><td><b>Cross-engine backup policy &amp; compliance view</b> — one screen: every DB, last good backup, RPO status</td><td>No single leader — fragmented everywhere</td><td>Per-engine backup views exist; no estate-wide rollup</td><td><span class="sev md">Medium</span></td><td><span class="eff">S</span></td></tr>
+        <tr><td><b>DR-drill reporting</b> — scheduled failover tests with evidence artifacts</td><td>Niche/absent in the comparison set — open field</td><td>Not yet</td><td><span class="sev lo">Low</span></td><td><span class="eff">L</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">The estate-wide backup rollup is a cheap, differentiating win: competitors fragment this view too, and ActMon already owns both the backup jobs and the schedule data.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 10</b></div>
+</section>
+
+<!-- 11 PLAN -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 11</div>
+    <h1>Prioritization Model &amp; Phased Delivery Plan</h1>
+    <div class="rule"></div>
+    <p class="lede">Gaps are sequenced by (1) deal impact, (2) effort, and (3) leverage from what ActMon already ships. Quarters assume current engineering capacity and begin Q3 2026.</p>
+    <div class="stats">
+      <div class="stat"><b>44</b><span>Gaps identified</span></div>
+      <div class="stat"><b>13</b><span>High severity</span></div>
+      <div class="stat"><b>10</b><span>Quick wins (S effort)</span></div>
+      <div class="stat"><b>4</b><span>Delivery waves</span></div>
+    </div>
+
+    <div class="phase"><div class="pnum">W1</div><div class="pcard"><b>Wave 1 — Sales Unblockers (Q3 2026)</b>
+      <p>Slack/Teams/webhook/PagerDuty alert channels · maintenance windows · API tokens + public API docs · TOTP MFA · PDF report export · Redis monitoring module · bulk connection import · estate-wide backup rollup. <em>Rationale: nearly all S-effort, all answer loud RFP lines, all build on existing plumbing.</em></p></div></div>
+
+    <div class="phase"><div class="pnum">W2</div><div class="pcard"><b>Wave 2 — Enterprise Credibility (Q4 2026)</b>
+      <p>SSO (SAML/OIDC/LDAP) · escalation policies &amp; on-call schedules · SLA reports · capacity forecasting + forecast-based alerts · managed-cloud DB enrichment (RDS/Azure SQL provider metrics) · workload time-window comparison · alert dedup &amp; grouping · tag/label system. <em>Rationale: the procurement-checkbox layer plus the first predictive capability, unlocked by ClickHouse history.</em></p></div></div>
+
+    <div class="phase"><div class="pnum">W3</div><div class="pcard"><b>Wave 3 — Performance Science &amp; ML (Q1–Q2 2027)</b>
+      <p>Wait-time analysis as a first-class cross-engine view · execution-plan history + plan-change detection · visual plan diagrams · adaptive baselines + anomaly detection (paired with copilot explanations) · query-level anomaly flags · blocking-chain history · configuration-drift tracking · Grafana interoperability · agent auto-update. <em>Rationale: the DPA/PMM bake-off wave — deep, defensible, and amplified by the AI layer competitors lack.</em></p></div></div>
+
+    <div class="phase"><div class="pnum">W4</div><div class="pcard"><b>Wave 4 — Scale &amp; New Frontiers (H2 2027)</b>
+      <p>Kubernetes &amp; container monitoring · platform HA + horizontal collectors · custom dashboard builder · custom report builder + compliance templates · local/air-gapped LLM · backup restore-verification · additional engines (Elasticsearch, then Db2/HANA per demand) · VMware layer · self-heal playbooks across all engines. <em>Rationale: architecture-level investments once revenue and team scale support them.</em></p></div></div>
+
+    <h2>Deliberate Non-Goals (Revisit Annually)</h2>
+    <ul>
+      <li><strong>Full APM / distributed tracing</strong> — competing with Datadog/Dynatrace on tracing is a different product; integrate via API instead.</li>
+      <li><strong>SNMP network monitoring</strong> — OpManager/Zabbix territory; only reconsider if MSP customers demand single-vendor consolidation.</li>
+      <li><strong>Generic log-management platform</strong> — extend the logs hub for DB-adjacent logs, but don't chase Splunk-class ingestion.</li>
+    </ul>
+    <p class="foot-note">Sequencing assumes stable engineering capacity; each wave is re-scoped at the prior wave's exit review against pilot-customer feedback and win/loss data.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 11</b></div>
+</section>
+
+<!-- 12 QUICK WINS -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 12</div>
+    <h1>90-Day Quick Wins</h1>
+    <div class="rule"></div>
+    <p class="lede">Ten items deliverable within one quarter, ranked by sales impact per engineer-week. Each reuses infrastructure ActMon already runs.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>#</th><th>Quick Win</th><th>Why It's Cheap</th><th>What It Unlocks</th></tr></thead>
+      <tbody>
+        <tr><td><b>1</b></td><td><b>Slack / Teams / webhook alert channels</b></td><td>Alert engine and SMTP delivery path exist; add channel abstraction + 3 senders</td><td>The most-asked integration question in every evaluation</td></tr>
+        <tr><td><b>2</b></td><td><b>Alert maintenance windows</b></td><td>Rule evaluator already central; add window check before firing</td><td>Kills the "it alerted during patching" objection</td></tr>
+        <tr><td><b>3</b></td><td><b>API tokens + published API docs</b></td><td>FastAPI auto-generates OpenAPI; add token issuance UI</td><td>Customer-built integrations; "open platform" positioning</td></tr>
+        <tr><td><b>4</b></td><td><b>Redis monitoring module</b></td><td>Redis client already a platform dependency; pipeline classifies techs generically</td><td>"7 engines" claim; common stack coverage (app cache + DB)</td></tr>
+        <tr><td><b>5</b></td><td><b>PDF report export</b></td><td>Report content already generated for email; add HTML→PDF rendering</td><td>Board-ready artifacts; MSP client reporting</td></tr>
+        <tr><td><b>6</b></td><td><b>TOTP MFA</b></td><td>OTP flow exists; add authenticator-app enrollment</td><td>Security-questionnaire checkbox</td></tr>
+        <tr><td><b>7</b></td><td><b>Estate-wide backup rollup</b></td><td>Backup status per engine already stored; one aggregate view + RPO flag</td><td>A differentiator even mature competitors fragment</td></tr>
+        <tr><td><b>8</b></td><td><b>Bulk connection import (CSV/API)</b></td><td>Connection model + validation exist; add batch endpoint</td><td>Large-estate onboarding in minutes, not days</td></tr>
+        <tr><td><b>9</b></td><td><b>PagerDuty / Opsgenie integration</b></td><td>Rides the Wave-1 webhook channel</td><td>Slots ActMon into existing on-call practice</td></tr>
+        <tr><td><b>10</b></td><td><b>Inventory &amp; version report</b></td><td>Stable-facts data already deduplicated in PostgreSQL</td><td>Instant estate audit; EOL-risk conversations with leadership</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 12</b></div>
+</section>
+
+<!-- 13 CONCLUSION -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; Gap Analysis &amp; Capability Roadmap</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 13</div>
+    <h1>Conclusion</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon's gaps are real but concentrated — and its strengths are exactly the kind competitors cannot quickly copy.</p>
+    <p>The analysis identifies 44 material gaps across eight domains. Thirteen are high-severity, but ten of the forty-four are small-effort items that reuse plumbing ActMon already ships — meaning the loudest objections (alert channels, maintenance windows, API tokens, MFA, PDF reports) can be silenced within one quarter. The genuinely hard investments — wait-time science, plan history, ML baselines, platform HA, Kubernetes — are sequenced behind the revenue those quick wins protect.</p>
+    <p>Meanwhile, the capabilities that took ActMon years to build — a live-grounded AI copilot, an autonomous alert-triage agent, supervised self-healing, six-engine depth in a self-hosted multi-tenant package — are precisely the ones absent from SolarWinds, Percona, Zabbix, Foglight, and Redgate, and only partially present in Datadog and Dynatrace at SaaS-only price points. The strategy is therefore not to chase feature parity everywhere, but to close the checkbox gaps fast, invest deeply where the AI layer amplifies the result, and decline the categories (APM, SNMP, log management) that would dilute the product.</p>
+    <div class="quote">Close the cheap gaps in ninety days, win the performance-science bake-offs within a year, and let the AI layer — grounded, embedded, and self-hosted — remain the moat competitors have to rebuild their architecture to match.</div>
+    <div class="sig">
+      <b>ActMon — Competitive Gap Analysis &amp; Capability Roadmap</b><br>
+      Prepared by Suyash Gaikwad &nbsp;|&nbsp; Version 1.0 &nbsp;|&nbsp; Confidential — Internal Use
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Gap Analysis &amp; Roadmap &nbsp;•&nbsp; V1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>End of Document</b></div>
+</section>
+
+</div>
+<style>
+@page{size:A4;margin:8mm 0}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@media print{
+  .doc{max-width:none;padding:0}
+  table{font-size:11.5px}
+  th,td{padding:8px 10px}
+  .page{border:none;border-radius:0;margin:0;page-break-after:always}
+  .body{padding:24px 34px}
+  .card,.stat,.quote,.pcard,.phase,.fstep,.hstep,.band,.toc li,li,tr,.chips,.sig,.figcap,.caption,.foot-note{break-inside:avoid;page-break-inside:avoid}
+  h1,h2,h3,h4,h5,.eyebrow,.rule{break-after:avoid;page-break-after:avoid;break-inside:avoid}
+  .module header{break-inside:avoid;break-after:avoid}
+  thead{display:table-header-group}
+  p{orphans:3;widows:3}
+}
+</style></html>

@@ -1,0 +1,118 @@
+{
+  "run_id": "20260605120059-6d8af688",
+  "status": "success",
+  "host": "127.0.0.1",
+  "action_type": "remove_variable",
+  "logs": [
+    "[2026-06-05 12:00:59] [INFO] ACTMON self-healing engine started.",
+    "[2026-06-05 12:00:59] [INFO] Run ID: 20260605120059-6d8af688",
+    "[2026-06-05 12:00:59] [INFO] Target Host: 127.0.0.1",
+    "[2026-06-05 12:00:59] [INFO] Running AI error analysis...",
+    "[2026-06-05 12:00:59] [SUCCESS] AI analysis completed.",
+    "[2026-06-05 12:00:59] [INFO] Detected Action Type: remove_variable",
+    "[2026-06-05 12:00:59] [INFO] Target Variable: abcd=1",
+    "[2026-06-05 12:00:59] [INFO] Safe To Auto Heal: True",
+    "[2026-06-05 12:00:59] [INFO] Creating timestamped MySQL configuration backup...",
+    "[2026-06-05 12:01:00] [COMMAND] Backup MySQL configuration: powershell \"$ts=Get-Date -Format yyyyMMdd-HHmmss; Copy-Item -LiteralPath \\\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini\\\" -Destination \\\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini.$ts.bak\\\" -Force\"",
+    "[2026-06-05 12:01:00] [INFO] Removing exact invalid variable line...",
+    "[2026-06-05 12:01:01] [COMMAND] Remove invalid MySQL variable: powershell \"$path=\\\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini\\\"; $name=[regex]::Escape(\\\"abcd=1\\\".Split('=')[0].Trim()); $lines=Get-Content -LiteralPath $path; $filtered=$lines | Where-Object { $_ -notmatch \\\"^\\s*$name\\s*=\\\" }; Set-Content -LiteralPath $path -Value $filtered\"",
+    "[2026-06-05 12:01:01] [COMMAND] Check service status before start: sc query MySQL80",
+    "[2026-06-05 12:01:01] [OUTPUT] \r\nSERVICE_NAME: MySQL80 \r\n        TYPE               : 10  WIN32_OWN_PROCESS  \r\n        STATE              : 1  STOPPED \r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+    "[2026-06-05 12:01:03] [COMMAND] Start MySQL service: net start MySQL80",
+    "[2026-06-05 12:01:03] [OUTPUT] The MySQL80 service is starting.\r\nThe MySQL80 service was started successfully.\r\n\r\n",
+    "[2026-06-05 12:01:03] [INFO] Verifying MySQL service status...",
+    "[2026-06-05 12:01:04] [COMMAND] Final MySQL service status: sc query MySQL80",
+    "[2026-06-05 12:01:04] [OUTPUT] \r\nSERVICE_NAME: MySQL80 \r\n        TYPE               : 10  WIN32_OWN_PROCESS  \r\n        STATE              : 4  RUNNING \r\n                                (STOPPABLE, PAUSABLE, ACCEPTS_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+    "[2026-06-05 12:01:04] [SUCCESS] MySQL service is RUNNING."
+  ],
+  "commands": [
+    {
+      "label": "Backup MySQL configuration",
+      "status": "success",
+      "command": "powershell \"$ts=Get-Date -Format yyyyMMdd-HHmmss; Copy-Item -LiteralPath \\\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini\\\" -Destination \\\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini.$ts.bak\\\" -Force\"",
+      "started_at": "2026-06-05T12:00:59",
+      "ended_at": "2026-06-05T12:01:00",
+      "output": "",
+      "error": ""
+    },
+    {
+      "label": "Remove invalid MySQL variable",
+      "status": "success",
+      "command": "powershell \"$path=\\\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini\\\"; $name=[regex]::Escape(\\\"abcd=1\\\".Split('=')[0].Trim()); $lines=Get-Content -LiteralPath $path; $filtered=$lines | Where-Object { $_ -notmatch \\\"^\\s*$name\\s*=\\\" }; Set-Content -LiteralPath $path -Value $filtered\"",
+      "started_at": "2026-06-05T12:01:00",
+      "ended_at": "2026-06-05T12:01:01",
+      "output": "",
+      "error": ""
+    },
+    {
+      "label": "Check service status before start",
+      "status": "success",
+      "command": "sc query MySQL80",
+      "started_at": "2026-06-05T12:01:01",
+      "ended_at": "2026-06-05T12:01:01",
+      "output": "\r\nSERVICE_NAME: MySQL80 \r\n        TYPE               : 10  WIN32_OWN_PROCESS  \r\n        STATE              : 1  STOPPED \r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+      "error": ""
+    },
+    {
+      "label": "Start MySQL service",
+      "status": "success",
+      "command": "net start MySQL80",
+      "started_at": "2026-06-05T12:01:01",
+      "ended_at": "2026-06-05T12:01:03",
+      "output": "The MySQL80 service is starting.\r\nThe MySQL80 service was started successfully.\r\n\r\n",
+      "error": ""
+    },
+    {
+      "label": "Final MySQL service status",
+      "status": "success",
+      "command": "sc query MySQL80",
+      "started_at": "2026-06-05T12:01:03",
+      "ended_at": "2026-06-05T12:01:04",
+      "output": "\r\nSERVICE_NAME: MySQL80 \r\n        TYPE               : 10  WIN32_OWN_PROCESS  \r\n        STATE              : 4  RUNNING \r\n                                (STOPPABLE, PAUSABLE, ACCEPTS_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n        SERVICE_EXIT_CODE  : 0  (0x0)\r\n        CHECKPOINT         : 0x0\r\n        WAIT_HINT          : 0x0\r\n",
+      "error": ""
+    }
+  ],
+  "analysis": {
+    "severity": "ERROR",
+    "error_summary": "MySQL cannot start because it found an unknown configuration variable: abcd=1",
+    "root_cause": "The MySQL config file contains 'abcd=1', but this MySQL version does not recognize that startup option.",
+    "why_happening": "This usually happens after a manual config edit, a typo, copying settings from another MySQL version, or adding a deprecated option.",
+    "business_impact": "MySQL startup can fail, leaving the database unavailable until the invalid option is removed or corrected.",
+    "dba_recommendation": "Back up my.ini, remove or correct only the 'abcd=1' line, then start MySQL and verify connectivity.",
+    "prevention": "Validate config changes with mysqld --validate-config or apply them in a test environment before production.",
+    "sql_validation_queries": [
+      "SHOW VARIABLES LIKE 'version';",
+      "SHOW GLOBAL STATUS LIKE 'Uptime';",
+      "SHOW VARIABLES LIKE 'log_error';"
+    ],
+    "infrastructure_analysis": "This is a configuration parsing issue, not a CPU, memory, disk, partition, or workload spike issue.",
+    "immediate_action": [
+      "Create a backup of my.ini.",
+      "Remove or fix the line containing 'abcd=1'.",
+      "Start MySQL service.",
+      "Check the latest error log for new ERROR lines."
+    ],
+    "affected_file": "my.ini",
+    "exact_change_location": "[mysqld] startup configuration",
+    "values_before": "abcd=1",
+    "values_after": "[REMOVED]",
+    "safe_to_auto_heal": true,
+    "risk_notes": "Safe only if a backup is created first and the automation removes the exact offending variable line.",
+    "diagnostic_focus": [
+      "Configuration validation",
+      "Service startup status",
+      "Latest error log after remediation"
+    ],
+    "self_healing_steps": [
+      "Create timestamped my.ini backup",
+      "Remove only the exact invalid variable line: abcd=1",
+      "Start MySQL service only if it is stopped",
+      "Verify service status and latest error log"
+    ],
+    "self_healing_actions": {
+      "action_type": "remove_variable",
+      "target_variable": "abcd=1",
+      "target_value": ""
+    }
+  }
+}

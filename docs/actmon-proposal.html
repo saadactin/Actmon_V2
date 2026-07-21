@@ -1,0 +1,1131 @@
+<!doctype html><html data-theme="light">
+<title>ActMon — Enterprise Product Proposal v1.0</title>
+<style>
+  :root{
+    --paper:#ffffff; --wash:#eaf4fb; --wash2:#f4f9fd;
+    --ink:#0e2a47; --panel:#123a5c; --panel2:#0d2c49;
+    --text:#2c4257; --muted:#64798d; --line:#d7e4ee; --line2:#b9d2e4;
+    --accent:#1e9be0; --accent-ink:#0f6ea6;
+    --ok:#1e8e5a; --warn:#c77e1f; --bad:#c0392b;
+    --chip:#e3f2fc; --on-panel:#eaf4fb; --on-panel-muted:#9dbdd6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#0b1622; --wash:#101f2e; --wash2:#0e1c2a;
+      --ink:#dce9f4; --panel:#132a3f; --panel2:#0f2233;
+      --text:#c3d5e4; --muted:#7e97ab; --line:#1f3549; --line2:#2a4560;
+      --accent:#4fb7ec; --accent-ink:#63c1f0;
+      --ok:#3cba82; --warn:#e0a34a; --bad:#e06552;
+      --chip:#14304a; --on-panel:#dce9f4; --on-panel-muted:#8fb0c9;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0b1622; --wash:#101f2e; --wash2:#0e1c2a;
+    --ink:#dce9f4; --panel:#132a3f; --panel2:#0f2233;
+    --text:#c3d5e4; --muted:#7e97ab; --line:#1f3549; --line2:#2a4560;
+    --accent:#4fb7ec; --accent-ink:#63c1f0;
+    --ok:#3cba82; --warn:#e0a34a; --bad:#e06552;
+    --chip:#14304a; --on-panel:#dce9f4; --on-panel-muted:#8fb0c9;
+  }
+  :root[data-theme="light"]{
+    --paper:#ffffff; --wash:#eaf4fb; --wash2:#f4f9fd;
+    --ink:#0e2a47; --panel:#123a5c; --panel2:#0d2c49;
+    --text:#2c4257; --muted:#64798d; --line:#d7e4ee; --line2:#b9d2e4;
+    --accent:#1e9be0; --accent-ink:#0f6ea6;
+    --ok:#1e8e5a; --warn:#c77e1f; --bad:#c0392b;
+    --chip:#e3f2fc; --on-panel:#eaf4fb; --on-panel-muted:#9dbdd6;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--wash2)}
+  body{
+    margin:0; color:var(--text); background:var(--wash2);
+    font:15px/1.65 "Segoe UI Variable Text","Segoe UI",-apple-system,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .doc{max-width:900px;margin:0 auto;padding:28px 16px 80px}
+  .page{
+    background:var(--paper); border:1px solid var(--line); border-radius:6px;
+    margin:0 0 26px; padding:0; overflow:hidden;
+  }
+  .runhead{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:12px 40px;border-bottom:2px solid var(--ink);
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+  }
+  .runhead b{color:var(--ink);letter-spacing:.18em}
+  .runfoot{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:11px 40px;border-top:1px solid var(--line);
+    font-size:10.5px;color:var(--muted);
+  }
+  .runfoot b{color:var(--ink)}
+  .body{padding:38px 44px 44px}
+  .eyebrow{
+    display:inline-block;background:var(--chip);color:var(--accent-ink);
+    font-size:11px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;
+    padding:5px 12px;border-radius:3px;margin-bottom:14px;
+  }
+  h1{
+    margin:0 0 10px;color:var(--ink);font-size:33px;line-height:1.15;
+    font-weight:700;letter-spacing:-.01em;text-wrap:balance;
+  }
+  .rule{width:64px;height:4px;border-radius:2px;background:linear-gradient(90deg,var(--accent),var(--panel));margin:14px 0 22px}
+  h2{
+    margin:30px 0 10px;color:var(--ink);font-size:19px;font-weight:700;
+    padding-left:12px;border-left:4px solid var(--accent);text-wrap:balance;
+  }
+  h3{margin:20px 0 6px;color:var(--ink);font-size:15px;font-weight:700}
+  p{margin:0 0 12px;max-width:72ch}
+  .lede{color:var(--muted);font-size:15.5px;max-width:78ch}
+  ul{margin:6px 0 14px;padding-left:20px}
+  li{margin:0 0 7px;max-width:72ch}
+  strong{color:var(--ink)}
+  /* card grids */
+  .grid{display:grid;gap:14px;margin:16px 0}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:720px){.g3,.g2{grid-template-columns:1fr}.body{padding:26px 20px}.runhead,.runfoot{padding:10px 20px}}
+  .card{
+    background:var(--wash2);border:1px solid var(--line);border-radius:6px;padding:16px 18px;
+  }
+  .card h4{
+    margin:0 0 7px;color:var(--ink);font-size:12px;font-weight:700;
+    letter-spacing:.09em;text-transform:uppercase;
+  }
+  .card p{font-size:13.5px;margin:0;color:var(--text)}
+  .card.dark{background:var(--panel);border-color:var(--panel)}
+  .card.dark h4{color:var(--accent)}
+  .card.dark p{color:var(--on-panel)}
+  /* stat tiles */
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:16px 0}
+  @media(max-width:720px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{
+    background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--accent);
+    border-radius:5px;text-align:center;padding:16px 8px;
+  }
+  .stat b{display:block;font-size:26px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .stat span{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  /* tables */
+  .twrap{overflow-x:auto;margin:14px 0;border:1px solid var(--line);border-radius:6px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th{
+    background:var(--panel);color:var(--on-panel);text-align:left;
+    padding:11px 14px;font-size:12px;letter-spacing:.05em;font-weight:600;white-space:nowrap;
+  }
+  td{padding:11px 14px;border-top:1px solid var(--line);vertical-align:top}
+  tbody tr:nth-child(odd) td{background:var(--wash2)}
+  td b{color:var(--ink)}
+  .caption{font-size:12px;color:var(--muted);margin:8px 2px 0;border-top:1px dashed var(--line2);padding-top:8px}
+  .ok{color:var(--ok);font-weight:700}.pt{color:var(--warn);font-weight:700}.no{color:var(--bad);font-weight:700}
+  .center{text-align:center}
+  /* flow diagram */
+  .flow{display:flex;flex-direction:column;align-items:center;gap:0;margin:20px auto;max-width:560px}
+  .fstep{
+    width:100%;text-align:center;border:1.6px solid var(--ink);border-radius:8px;
+    padding:11px 16px;font-weight:600;color:var(--ink);font-size:13.5px;background:var(--paper);
+  }
+  .fstep small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+  .fstep.red{border-color:var(--bad)}
+  .fstep.hl{border-color:var(--accent);background:var(--chip)}
+  .farrow{color:var(--accent);font-size:15px;line-height:1;padding:6px 0}
+  .figcap{font-size:12px;color:var(--muted);text-align:center;margin:6px 0 0}
+  /* horizontal flow */
+  .hflow{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin:18px 0}
+  .hstep{border:1.6px solid var(--ink);border-radius:8px;padding:9px 14px;font-weight:600;color:var(--ink);font-size:12.5px;background:var(--paper);text-align:center}
+  .harrow{color:var(--accent);font-weight:700}
+  /* architecture bands */
+  .band{border-radius:6px;padding:14px 16px;margin:10px 0;text-align:center}
+  .band .blabel{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;font-weight:700;margin-bottom:9px;text-align:left}
+  .band.outline{border:1px solid var(--line);background:var(--wash2)}
+  .band.outline .blabel{color:var(--muted)}
+  .band.navy{background:var(--panel);color:var(--on-panel)}
+  .band.navy .blabel{color:var(--accent)}
+  .band.blue{background:var(--accent);color:#08283d}
+  .boxes{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+  .bx{border:1.4px solid var(--line2);background:var(--paper);color:var(--ink);border-radius:6px;padding:7px 12px;font-size:12px;font-weight:600}
+  .band.navy .bx{background:var(--panel2);border-color:var(--panel2);color:var(--on-panel)}
+  .bandarrow{text-align:center;color:var(--accent);font-weight:700;padding:2px 0}
+  /* module cards */
+  .module{border:1px solid var(--line);border-radius:8px;margin:18px 0;overflow:hidden}
+  .module header{
+    background:var(--panel);color:var(--on-panel);display:flex;justify-content:space-between;
+    align-items:center;padding:13px 20px;gap:12px;flex-wrap:wrap;
+  }
+  .module header b{font-size:16px}
+  .module header span{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
+  .module .mbody{padding:16px 20px}
+  .module h5{margin:12px 0 5px;font-size:12.5px;color:var(--accent-ink);letter-spacing:.06em;text-transform:uppercase}
+  .module p,.module li{font-size:13.5px}
+  /* chips */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+  .chip{border:1px solid var(--line2);background:var(--chip);color:var(--accent-ink);border-radius:999px;padding:5px 14px;font-size:12.5px;font-weight:600}
+  .quote{
+    border-left:4px solid var(--accent);background:var(--wash);padding:14px 18px;border-radius:0 6px 6px 0;
+    font-style:italic;color:var(--text);margin:16px 0;font-size:14px;
+  }
+  /* cover */
+  .cover{background:linear-gradient(160deg,var(--panel2),var(--panel) 55%,#164a76);color:var(--on-panel);padding:0}
+  .cover .chead{display:flex;justify-content:space-between;align-items:center;padding:26px 44px}
+  .logo{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.2em;font-size:16px;color:#fff}
+  .logo i{
+    display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:9px;
+    background:var(--accent);color:#062338;font-style:normal;font-weight:800;font-size:18px;
+  }
+  .conf{border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:6px 16px;font-size:10.5px;letter-spacing:.22em;color:#cfe6f6}
+  .cover .cmain{padding:56px 44px 26px}
+  .cover .ceyebrow{font-size:11px;letter-spacing:.3em;color:var(--accent);text-transform:uppercase;margin-bottom:18px}
+  .cover h1{color:#fff;font-size:64px;margin:0 0 12px;letter-spacing:-.015em}
+  .cover .tag{font-size:21px;color:#bfe0f5;margin:0 0 20px}
+  .cover .abstract{color:#9dbdd6;max-width:60ch;font-size:14.5px}
+  .pulse{display:flex;align-items:flex-end;gap:5px;height:74px;margin:44px 0 8px;opacity:.9}
+  .pulse i{width:16px;background:linear-gradient(180deg,var(--accent),rgba(79,183,236,.25));border-radius:3px 3px 0 0}
+  .cover .cfoot{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:16px;background:rgba(6,24,38,.45);
+    padding:22px 44px;border-top:1px solid rgba(255,255,255,.14);
+  }
+  .cover .cfoot div span{display:block;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#7fa6c2;margin-bottom:4px}
+  .cover .cfoot div b{color:#fff;font-size:13.5px;font-weight:600}
+  @media(max-width:720px){.cover h1{font-size:42px}.cover .cfoot{grid-template-columns:1fr 1fr;padding:20px}.cover .cmain,.cover .chead{padding-left:20px;padding-right:20px}}
+  /* toc */
+  .toc{list-style:none;margin:10px 0;padding:0}
+  .toc li{
+    display:flex;gap:14px;align-items:baseline;border-bottom:1px dashed var(--line);
+    padding:9px 2px;margin:0;max-width:none;font-size:14px;
+  }
+  .toc li b{color:var(--accent-ink);font-variant-numeric:tabular-nums;min-width:26px}
+  /* roadmap */
+  .phase{display:flex;gap:16px;margin:14px 0;align-items:flex-start}
+  .pnum{
+    flex:0 0 44px;height:44px;border-radius:50%;background:var(--panel);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;
+  }
+  .pcard{flex:1;background:var(--wash2);border:1px solid var(--line);border-radius:6px;padding:13px 17px}
+  .pcard b{color:var(--ink)}
+  .pcard p{margin:4px 0 0;font-size:13.5px}
+  .pcard .pstat{display:inline-block;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;border-radius:3px;padding:2px 8px;margin-left:8px;font-weight:700}
+  .pstat.done{background:var(--ok);color:#fff}
+  .pstat.now{background:var(--warn);color:#fff}
+  .pstat.next{background:var(--chip);color:var(--accent-ink)}
+  .foot-note{font-size:12px;color:var(--muted);border-top:1px dashed var(--line2);margin-top:14px;padding-top:10px}
+  .sig{border-top:2px solid var(--ink);margin-top:34px;padding-top:12px;font-size:13px;color:var(--muted)}
+  .sig b{color:var(--ink)}
+  a{color:var(--accent-ink)}
+  @media print{
+    body{background:#fff}
+    .doc{max-width:none;padding:0}
+    .page{border:none;border-radius:0;margin:0;page-break-after:always}
+    .runhead,.runfoot{padding:10px 24px}
+    .body{padding:24px 30px}
+  }
+</style>
+
+<div class="doc">
+
+<!-- ============ COVER ============ -->
+<section class="page cover">
+  <div class="chead">
+    <div class="logo"><i>A</i> ACTMON</div>
+    <div class="conf">CONFIDENTIAL &nbsp;•&nbsp; V1.0</div>
+  </div>
+  <div class="cmain">
+    <div class="ceyebrow">Enterprise Product Proposal &nbsp;·&nbsp; Unified Database, Infrastructure &amp; Cloud AI Monitoring Platform</div>
+    <h1>ActMon</h1>
+    <p class="tag">One Console. Every Database. Complete Operational Intelligence.</p>
+    <p class="abstract">A vendor-neutral AI monitoring and operations platform purpose-built for database-driven enterprises — unifying MySQL, PostgreSQL, SQL Server, Oracle, MongoDB, and ClickHouse monitoring with Linux/Windows infrastructure, AWS/Azure/OCI cloud discovery, and an embedded AI DBA copilot in a single, self-hosted layer of operational intelligence.</p>
+    <div class="pulse" aria-hidden="true">
+      <i style="height:34%"></i><i style="height:58%"></i><i style="height:42%"></i><i style="height:76%"></i><i style="height:51%"></i><i style="height:88%"></i><i style="height:64%"></i><i style="height:97%"></i><i style="height:70%"></i><i style="height:45%"></i><i style="height:81%"></i><i style="height:59%"></i>
+    </div>
+  </div>
+  <div class="cfoot">
+    <div><span>Prepared by</span><b>Suyash Gaikwad</b></div>
+    <div><span>Version</span><b>1.0</b></div>
+    <div><span>Classification</span><b>Confidential</b></div>
+    <div><span>Document type</span><b>Product &amp; Investment Proposal</b></div>
+  </div>
+</section>
+
+<!-- ============ LEGAL ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Legal Notice</div>
+    <h1>Confidentiality Statement</h1>
+    <div class="rule"></div>
+    <p>This document and the information contained herein ("Document") is the confidential and proprietary property of the ActMon product initiative and its author, Suyash Gaikwad ("the Author"). It has been prepared exclusively for the intended recipient for the purpose of evaluating the ActMon platform, its architecture, business rationale, and go-to-market approach.</p>
+    <p>By accepting or reviewing this Document, the recipient agrees that:</p>
+    <ul>
+      <li>The contents shall not be reproduced, distributed, disclosed, or communicated, in whole or in part, to any third party without the prior written consent of the Author.</li>
+      <li>This Document is provided for informational and evaluative purposes only and does not constitute a binding offer, commercial commitment, investment solicitation, or guarantee of any specific financial, operational, or technical outcome.</li>
+      <li>All figures, cost-saving illustrations, ROI ranges, and performance estimates referenced in this Document are indicative and provided as illustrative examples only. Actual results will vary by environment, database estate size, data quality, integration scope, and organizational readiness.</li>
+      <li>Product names, module names, architecture diagrams, and roadmap items describe a shipping and/or in-development product and may evolve as the platform matures through customer feedback, pilot deployments, and engineering iteration.</li>
+      <li>All trademarks, product names, and company names of third parties referenced herein (including but not limited to SolarWinds, Percona, Datadog, Dynatrace, Zabbix, Nagios, ManageEngine, Quest, Redgate, Site24x7, New Relic, Oracle, Microsoft, and MongoDB) are the property of their respective owners and are referenced solely for competitive-context and interoperability purposes.</li>
+    </ul>
+    <p>This Document is classified <strong>CONFIDENTIAL</strong>. Unauthorized use, copying, or distribution is strictly prohibited and may result in legal action.</p>
+    <div class="quote">"ActMon is presented as a strategic product and business proposal. All financial projections, market sizing estimates, and cost-benefit illustrations herein are directional and intended to support decision-making discussions — not to represent guaranteed outcomes."</div>
+    <div class="grid g2">
+      <div class="card"><h4>Document Owner</h4><p><strong>Suyash Gaikwad</strong><br>Author &amp; Product Architect, ActMon</p></div>
+      <div class="card"><h4>Classification</h4><p><strong>Confidential — Internal &amp; Investor Use</strong><br>Version 1.0 &nbsp;|&nbsp; Not for public distribution</p></div>
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Page 2</b></div>
+</section>
+
+<!-- ============ TOC ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Contents</div>
+    <h1>Table of Contents</h1>
+    <div class="rule"></div>
+    <ol class="toc">
+      <li><b>01</b> Executive Summary</li>
+      <li><b>02</b> Industry Challenges</li>
+      <li><b>03</b> Market Opportunity</li>
+      <li><b>04</b> Why Enterprises Should Invest in ActMon</li>
+      <li><b>05</b> Cost Saving Analysis</li>
+      <li><b>06</b> Current Industry Workflow</li>
+      <li><b>07</b> ActMon Workflow</li>
+      <li><b>08</b> Complete Product Architecture</li>
+      <li><b>09</b> Core Modules</li>
+      <li><b>10</b> Additional Modules</li>
+      <li><b>11</b> Application Working</li>
+      <li><b>12</b> Technology Stack</li>
+      <li><b>13</b> Database Architecture</li>
+      <li><b>14</b> AI Architecture</li>
+      <li><b>15</b> Security Architecture</li>
+      <li><b>16</b> Deployment Architecture</li>
+      <li><b>17</b> Business Benefits by Stakeholder</li>
+      <li><b>18</b> Competitive Analysis</li>
+      <li><b>19</b> Product Roadmap</li>
+      <li><b>20</b> Future Vision</li>
+      <li><b>21</b> Conclusion</li>
+    </ol>
+    <h2>List of Figures</h2>
+    <ol class="toc">
+      <li><b>1</b> Current vs. ActMon-Enabled Workflow</li>
+      <li><b>2</b> ActMon End-to-End Data Flow (15-Second Telemetry Pipeline)</li>
+      <li><b>3</b> Complete Product Architecture</li>
+      <li><b>4</b> AI Architecture &amp; Live-Grounding Layer</li>
+      <li><b>5</b> Security Architecture (Defense-in-Depth)</li>
+      <li><b>6</b> Deployment &amp; Installation Topology</li>
+      <li><b>7</b> Product Roadmap Timeline (Phase 1–5)</li>
+    </ol>
+    <h2>List of Tables</h2>
+    <ol class="toc">
+      <li><b>1</b> Target Industries &amp; Use-Case Fit</li>
+      <li><b>2</b> Illustrative Cost-Saving Opportunity Areas</li>
+      <li><b>3</b> Technology Stack Summary</li>
+      <li><b>4</b> Core Module Overview</li>
+      <li><b>5</b> Competitive Positioning Matrix</li>
+      <li><b>6</b> Stakeholder Benefit Map</li>
+    </ol>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Page 3</b></div>
+</section>
+
+<!-- ============ 01 EXEC SUMMARY ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 01</div>
+    <h1>Executive Summary</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon is a vendor-neutral, self-hosted AI monitoring platform that unifies deep database observability, infrastructure health, and multi-cloud discovery — giving database-driven enterprises a single pane of glass and an embedded AI DBA copilot across their entire data estate.</p>
+
+    <h2>What Is ActMon</h2>
+    <p>ActMon is an operations-intelligence layer that connects to the database engines, servers, and cloud accounts an organization already runs. Rather than deploying one tool per engine — one for SQL Server, another for PostgreSQL, a third for MongoDB — ActMon collects deep, engine-native telemetry from <strong>MySQL/MariaDB, PostgreSQL, Microsoft SQL Server, Oracle, MongoDB, and ClickHouse</strong>, correlates it with host-level metrics from Linux and Windows servers (via lightweight agents or agentless SSH), overlays AWS, Azure, and OCI cloud inventory and cost, and applies AI to turn all of it into grounded, actionable answers.</p>
+
+    <h2>Why It Was Created</h2>
+    <p>Database teams typically operate 4–8 disconnected monitoring tools — engine-specific consoles, OS utilities, cloud dashboards, and hand-rolled scripts. DBAs spend their day logging into individual servers, running ad-hoc health-check queries, and assembling status reports by hand, while commercial per-instance-licensed suites price out mid-market estates. ActMon was conceived to close this gap: one installable platform, every engine, agent or agentless, with AI assistance built in from day one — not bolted on.</p>
+
+    <div class="grid g2">
+      <div class="card dark"><h4>Vision</h4><p>To become the default operational-intelligence layer for database-driven organizations worldwide — a platform where every database, server, and cloud account, regardless of vendor, can be seen, understood, and acted on from one console in real time.</p></div>
+      <div class="card dark"><h4>Mission</h4><p>To eliminate monitoring silos and manual DBA toil by delivering vendor-neutral deep-dive monitoring, intelligent alerting, and AI-assisted diagnosis and remediation that database teams can trust and act on with confidence.</p></div>
+    </div>
+
+    <h2>Business Value</h2>
+    <div class="stats">
+      <div class="stat"><b>1</b><span>Unified Console</span></div>
+      <div class="stat"><b>6+</b><span>Database Engines</span></div>
+      <div class="stat"><b>3</b><span>Cloud Providers</span></div>
+      <div class="stat"><b>15s</b><span>Live Telemetry</span></div>
+      <div class="stat"><b>24/7</b><span>AI-Assisted Ops</span></div>
+    </div>
+    <p>ActMon targets four categories of business value: <strong>operational</strong> (15-second telemetry, correlated alerts, AI-run diagnostics that shorten time-to-root-cause), <strong>financial</strong> (illustrative consolidation of per-engine tool licenses and reduction of manual DBA reporting hours), <strong>strategic</strong> (a durable, self-hosted data layer that survives engine migrations and cloud moves, with full data sovereignty), and <strong>cultural</strong> (a shared, trusted source of truth across DBA, infrastructure, DevOps, security, and leadership teams).</p>
+
+    <h2>Long-Term Strategy</h2>
+    <p>ActMon's roadmap began with unified multi-engine monitoring and deep-dive dashboards, then layered in the AI copilot, AI alert triage, and self-healing automation. The platform now progresses toward machine-learning anomaly detection, capacity forecasting, broader engine and Kubernetes coverage, and enterprise integrations — evolving from a monitoring console into a proactive operations partner embedded in daily database administration, while remaining fully self-hosted and vendor-neutral.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 01</b></div>
+</section>
+
+<!-- ============ 02 CHALLENGES ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 02</div>
+    <h1>Industry Challenges</h1>
+    <div class="rule"></div>
+    <p class="lede">Database and IT operations teams face a consistent set of structural problems that stem from decades of engine-specific, point-solution tooling rather than unified platform design.</p>
+    <div class="grid g3">
+      <div class="card"><h4>Tool Sprawl</h4><p>Each engine ships its own console — SSMS, pgAdmin, OEM, Compass — plus separate OS, cloud, and alerting tools, each with its own login and data model.</p></div>
+      <div class="card"><h4>No Central Monitoring</h4><p>No single view shows database health, host resources, replication state, backups, and cloud posture together in real time.</p></div>
+      <div class="card"><h4>Manual Health Checks</h4><p>Daily DBA checklists, morning health reports, and management summaries are assembled by hand from scripts and screenshots.</p></div>
+      <div class="card"><h4>Alert Noise</h4><p>Threshold storms and duplicated alerts from multiple tools bury the one signal that matters, causing alert fatigue and missed incidents.</p></div>
+      <div class="card"><h4>Reactive Firefighting</h4><p>Slow queries, lock storms, and replication lag are discovered after users complain — not before impact.</p></div>
+      <div class="card"><h4>Slow Root-Cause Analysis</h4><p>Was it the query, the index, the disk, or the VM? Cross-domain evidence lives in different tools owned by different teams.</p></div>
+      <div class="card"><h4>Per-Instance License Cost</h4><p>Commercial database-monitoring suites price per monitored instance, making full-estate coverage unaffordable for growing organizations.</p></div>
+      <div class="card"><h4>DBA Skill Shortage</h4><p>Senior multi-engine DBAs are scarce; junior staff lack the tribal knowledge to diagnose engine-specific incidents quickly.</p></div>
+      <div class="card"><h4>Backup Uncertainty</h4><p>Backups run from cron jobs and maintenance plans with no central verification of success, schedule drift, or PITR readiness.</p></div>
+      <div class="card"><h4>Cloud Blind Spots</h4><p>Cloud resources, spend, and security posture live in provider consoles that database and infra teams rarely open.</p></div>
+      <div class="card"><h4>Compliance &amp; Audit Load</h4><p>Access reviews, login trails, and change evidence must be compiled from scattered logs for every audit cycle.</p></div>
+      <div class="card"><h4>Data-Sovereignty Constraints</h4><p>SaaS-only observability platforms require shipping telemetry off-premises — unacceptable for BFSI, government, and regulated industries.</p></div>
+    </div>
+    <h2>The Common Root Cause</h2>
+    <p>Each of the challenges above is a symptom of the same underlying condition: <strong>operational truth about the data estate is fragmented across more tools than any team can watch.</strong> Every additional engine, server, or cloud account adds another console rather than removing one. Without a vendor-neutral intelligence layer, this fragmentation compounds year over year — and the cost of "finding out what is happening" grows faster than the cost of running the databases themselves.</p>
+    <h2>Illustrative Current-State Data Flow</h2>
+    <div class="hflow">
+      <div class="hstep" style="border-color:var(--bad)">SSMS<br><small>Isolated</small></div><span class="harrow">·</span>
+      <div class="hstep" style="border-color:var(--bad)">pgAdmin<br><small>Isolated</small></div><span class="harrow">·</span>
+      <div class="hstep" style="border-color:var(--bad)">Oracle EM<br><small>Isolated</small></div><span class="harrow">·</span>
+      <div class="hstep" style="border-color:var(--bad)">Compass<br><small>Isolated</small></div><span class="harrow">·</span>
+      <div class="hstep" style="border-color:var(--bad)">top / scripts<br><small>Isolated</small></div><span class="harrow">·</span>
+      <div class="hstep" style="border-color:var(--bad)">Cloud consoles<br><small>Isolated</small></div>
+    </div>
+    <p class="figcap">Fig 1a — Six consoles, six logins, six data models, zero shared context.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 02</b></div>
+</section>
+
+<!-- ============ 03 MARKET ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 03</div>
+    <h1>Market Opportunity</h1>
+    <div class="rule"></div>
+    <p class="lede">Database observability is moving from a DBA convenience to a board-level reliability and cost concern, creating a structural window for a vendor-neutral, AI-native, self-hosted platform.</p>
+    <h2>Data-Estate Sprawl &amp; Polyglot Persistence</h2>
+    <p>Modern applications no longer run on one database. A typical mid-size enterprise operates relational engines for transactions, MongoDB for documents, ClickHouse for analytics, and managed cloud databases alongside on-premises estates. Every new engine multiplies the monitoring surface — and the pool of DBAs fluent in all of them is shrinking, not growing.</p>
+    <h2>AI-Assisted Operations &amp; Copilots</h2>
+    <p>Generative AI is transforming how operations teams interact with telemetry: natural-language questions over live metrics, AI-suggested diagnostics, and automated report generation are lowering the skill barrier for day-to-day database operations. Platforms with AI embedded in the core workflow — not offered as an add-on SKU — are positioned to capture this shift.</p>
+    <div class="grid g3">
+      <div class="card"><h4>Market Driver — Tool Consolidation</h4><p>Budget owners are actively cutting overlapping monitoring subscriptions; a single multi-engine platform is a direct consolidation play.</p></div>
+      <div class="card"><h4>Market Driver — DBA Shortage</h4><p>Experienced multi-engine DBAs are retiring or moving to cloud vendors; AI copilots help junior teams operate at senior level.</p></div>
+      <div class="card"><h4>Market Driver — Data Sovereignty</h4><p>Regulated industries and public sector increasingly require self-hosted observability with no telemetry leaving their network.</p></div>
+    </div>
+    <h2>Future Trends Shaping the Category</h2>
+    <ul>
+      <li><strong>Self-hosted, vendor-neutral platforms</strong> that consolidate per-engine tools without shipping data to a SaaS.</li>
+      <li><strong>AI copilots embedded in daily workflows</strong> — health questions, incident triage, SQL generation, report drafting.</li>
+      <li><strong>Autonomous remediation</strong> progressing from advisory suggestions to supervised self-healing actions.</li>
+      <li><strong>Unified database + infrastructure + cloud views</strong> replacing separate DBA, sysadmin, and FinOps consoles.</li>
+      <li><strong>Predictable licensing</strong> displacing per-instance pricing that penalizes estate growth.</li>
+    </ul>
+    <h2>Business Opportunity for ActMon</h2>
+    <p>ActMon sits at the intersection of these trends: a self-hosted, AI-native platform covering the six most-operated database engines plus infrastructure and cloud, installable in minutes on a single Ubuntu server, and multi-tenant by design — which additionally opens the managed-service-provider (MSP) market, where one ActMon deployment can serve many client organizations with isolated data and role-based access.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Target Industry</th><th>Primary Pain Point</th><th>ActMon Fit</th></tr></thead>
+      <tbody>
+        <tr><td><b>Banking &amp; Financial Services</b></td><td>Uptime SLAs, audit trails, data sovereignty</td><td>Self-hosted deployment, audit logs, RBAC, deep MSSQL/Oracle monitoring</td></tr>
+        <tr><td><b>SaaS &amp; Software Companies</b></td><td>Polyglot estates, slow-query firefighting</td><td>Multi-engine slow-query intelligence, AI copilot, index analysis</td></tr>
+        <tr><td><b>Managed Service Providers</b></td><td>Many customers, many estates, thin margins</td><td>Multi-tenant organizations, per-org RBAC, white-glove onboarding wizard</td></tr>
+        <tr><td><b>E-Commerce &amp; Retail</b></td><td>Peak-season database performance</td><td>15s telemetry, lock/blocking analysis, replication monitoring</td></tr>
+        <tr><td><b>Healthcare</b></td><td>Compliance documentation, access control</td><td>Login history, session tracking, password history, page-level permissions</td></tr>
+        <tr><td><b>Telecom &amp; ISPs</b></td><td>Large mixed estates, legacy engines</td><td>Agent or agentless SSH collection, unified infra + database views</td></tr>
+        <tr><td><b>Government &amp; PSUs</b></td><td>Air-gap requirements, on-prem mandates</td><td>Offline-friendly bundle install, no external telemetry dependency</td></tr>
+        <tr><td><b>Manufacturing &amp; Logistics</b></td><td>Small IT teams running many systems</td><td>One console, AI-assisted diagnosis, scheduled email reports</td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Table 1. Target industries and illustrative use-case fit. Actual applicability depends on site-specific systems and data availability.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 03</b></div>
+</section>
+
+<!-- ============ 04 WHY INVEST ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 04</div>
+    <h1>Why Enterprises Should Invest in ActMon</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon is designed to deliver value across four dimensions — business, operational, financial, and strategic — and to every stakeholder from the DBA on call to the boardroom.</p>
+    <div class="grid g2">
+      <div class="card"><h4>Business Value</h4><p>A single, trusted source of truth that ends cross-team blame between database, infrastructure, application, and cloud owners — everyone sees the same correlated evidence.</p></div>
+      <div class="card"><h4>Operational Value</h4><p>15-second telemetry, correlated smart alerts, AI-run diagnostics, and self-heal actions that shorten detection and response cycles from hours to minutes.</p></div>
+      <div class="card"><h4>Financial Value</h4><p>Illustrative consolidation of per-engine monitoring licenses, reduction of manual health-check and reporting hours, and cloud-cost visibility — detailed further in Section 05.</p></div>
+      <div class="card"><h4>Strategic Value</h4><p>A self-hosted, vendor-neutral data layer that remains stable across engine upgrades, cloud migrations, and vendor changes — with complete data sovereignty.</p></div>
+    </div>
+    <h2>Value by Stakeholder</h2>
+    <div class="twrap"><table>
+      <thead><tr><th>Stakeholder</th><th>How ActMon Helps</th></tr></thead>
+      <tbody>
+        <tr><td><b>CIO / IT Director</b></td><td>Estate-wide visibility into database health, infrastructure, and cloud spend without waiting on team-by-team reports.</td></tr>
+        <tr><td><b>DBA Team Lead</b></td><td>One console correlating every engine's status; scheduled health reports generated and emailed automatically.</td></tr>
+        <tr><td><b>DBAs / Operations Engineers</b></td><td>Deep-dive dashboards per engine, slow-query and index intelligence, web SSH terminal, and an AI copilot grounded in live data.</td></tr>
+        <tr><td><b>DevOps / SRE</b></td><td>Agent-or-agentless collection, alert rules with live evaluation, and drill-down from alert to diagnostics in one flow.</td></tr>
+        <tr><td><b>Application Teams</b></td><td>Slow-query digests with EXPLAIN plans and AI explanations that turn "the database is slow" into a specific, fixable query.</td></tr>
+        <tr><td><b>Security &amp; Compliance</b></td><td>Audit logs, login history, active session tracking, password history, and page-level access control out of the box.</td></tr>
+        <tr><td><b>Finance / FinOps</b></td><td>Cloud resource inventory with cost and estimate views across AWS, Azure, and OCI.</td></tr>
+        <tr><td><b>MSP Owners</b></td><td>Multi-tenant organizations on one deployment — isolated data, per-org roles, and a sales onboarding flow.</td></tr>
+        <tr><td><b>Management / Investors</b></td><td>A modern, scalable operations platform that compounds in value as more engines, servers, and AI capabilities are connected.</td></tr>
+      </tbody>
+    </table></div>
+    <h2>Core Benefit Themes</h2>
+    <div class="chips">
+      <span class="chip">Unified Visibility</span><span class="chip">AI-Assisted Operations</span><span class="chip">Faster Root Cause</span>
+      <span class="chip">Self-Healing</span><span class="chip">Data Sovereignty</span><span class="chip">Tool Consolidation</span>
+      <span class="chip">Multi-Tenant / MSP-Ready</span><span class="chip">Vendor Neutrality</span>
+    </div>
+    <p class="foot-note">All benefit statements describe shipped or in-development platform capabilities. Actual improvements depend on estate size, data quality, and organizational adoption at each site.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 04</b></div>
+</section>
+
+<!-- ============ 05 COST SAVING ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 05</div>
+    <h1>Cost Saving Analysis</h1>
+    <div class="rule"></div>
+    <p class="lede">The examples below describe potential areas where ActMon may help organizations reduce operating costs. They are illustrative only and not guaranteed outcomes — actual results depend on estate conditions, data quality, and implementation scope.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Opportunity Area</th><th>Current-State Cost Driver</th><th>How ActMon May Help</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><b>Monitoring Tool Consolidation</b></td><td>Multiple per-engine and per-domain tool licenses</td><td>One platform covers six engines, hosts, cloud, and websites</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Reduced Downtime</b></td><td>Unplanned database outages</td><td>15s telemetry and correlated alerts may shorten detection and diagnosis</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Faster Troubleshooting</b></td><td>Extended MTTR across teams</td><td>AI alert triage runs diagnostic steps and suggests fixes automatically</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Reduced Manual Reporting</b></td><td>DBA hours on daily health checks and summaries</td><td>Scheduled, auto-generated email reports per engine</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Query &amp; Index Optimization</b></td><td>Over-provisioned hardware masking bad queries</td><td>Slow-query digests, EXPLAIN plans, and index analysis surface fixable waste</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Cloud Cost Visibility</b></td><td>Unattributed and idle cloud resources</td><td>Cross-provider inventory with cost and estimate views</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Backup Assurance</b></td><td>Failed or drifted backups discovered at restore time</td><td>Centralized backup status, scheduling, and PITR management</td><td><span class="pt">Illustrative only</span></td></tr>
+        <tr><td><b>Lower Operational Overhead</b></td><td>Context-switching across consoles and scripts</td><td>A single console with role-based views reduces duplicate effort</td><td><span class="pt">Illustrative only</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Table 2. Illustrative cost-saving opportunity areas.</p>
+    <h2>Illustrative ROI Framing (Example Only)</h2>
+    <div class="grid g3">
+      <div class="stat"><b>Example</b><span>Tool licenses consolidated</span></div>
+      <div class="stat"><b>Example</b><span>DBA reporting hours saved</span></div>
+      <div class="stat"><b>Example</b><span>MTTR reduction</span></div>
+    </div>
+    <p class="foot-note">The framing above intentionally omits specific percentages or currency figures because actual savings are highly implementation-dependent. Any ROI model presented to a specific customer should be built jointly using that estate's baseline downtime, licensing, labor cost, and cloud spend data.</p>
+    <div class="quote">A defensible ROI narrative for ActMon should always be built bottom-up from a customer's own baseline metrics rather than top-down from industry benchmarks alone.</div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 05</b></div>
+</section>
+
+<!-- ============ 06 CURRENT WORKFLOW ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 06</div>
+    <h1>Current Industry Workflow</h1>
+    <div class="rule"></div>
+    <p class="lede">Today, database operations move through disconnected, largely manual hops — each one a potential point of delay, error, or lost context.</p>
+    <div class="flow">
+      <div class="fstep">Application slows down or fails — users complain first</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Ticket raised; DBA logs into each server one by one</div>
+      <div class="farrow">▼</div>
+      <div class="fstep red">Ad-hoc scripts and vendor consoles queried manually</div>
+      <div class="farrow">▼</div>
+      <div class="fstep red">Logs pulled by hand; evidence pasted into chats and spreadsheets</div>
+      <div class="farrow">▼</div>
+      <div class="fstep red">Cross-team escalation — database vs. infra vs. app vs. cloud</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Root cause found hours later; RCA written manually after the fact</div>
+    </div>
+    <p class="figcap">Fig 1 — Current-state incident workflow: manual, sequential, and blind between domains.</p>
+    <h2>Problems With This Model</h2>
+    <div class="grid g2">
+      <div class="card"><h4>Time Lag</h4><p>Detection depends on user complaints; diagnosis depends on someone logging in. Impact accumulates the whole time.</p></div>
+      <div class="card"><h4>Tribal Knowledge</h4><p>Diagnosis lives in the heads of senior DBAs and in unversioned scripts — unavailable at 3 a.m. or after attrition.</p></div>
+      <div class="card"><h4>No Correlation</h4><p>Query, lock, host, and cloud evidence are viewed in isolation, hiding cross-domain root causes and fueling blame cycles.</p></div>
+      <div class="card"><h4>Effort Overhead</h4><p>Skilled engineers spend a meaningful share of their time collecting and formatting data rather than fixing systems.</p></div>
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 06</b></div>
+</section>
+
+<!-- ============ 07 ACTMON WORKFLOW ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 07</div>
+    <h1>ActMon Workflow</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon replaces manual hops with a continuous, automated pipeline — from raw engine and host telemetry to an AI-assisted decision in the hands of the right person, on a 15-second cadence.</p>
+    <div class="flow">
+      <div class="fstep">Databases &amp; Hosts<small>MySQL · PostgreSQL · MSSQL · Oracle · MongoDB · ClickHouse · Linux · Windows</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Collectors<small>Host agents (MSI / DEB / RPM) or agentless SSH · cloud scanners</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Ingest &amp; Processing<small>FastAPI ingest · normalization · classification by technology and connection</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Metrics Pipeline<small>PostgreSQL durable store → Redis hot tier → ClickHouse history</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep hl">AI Engine<small>Live-grounded copilot · alert triage agent · error analysis · self-heal</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Dashboards<small>Per-engine deep-dive tabs · infra · cloud · logs hub</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Alerts<small>Rule evaluation · acknowledgement · drill context · AI diagnostics</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Reports<small>Scheduled per-engine reports delivered by email</small></div>
+      <div class="farrow">▼</div>
+      <div class="fstep">Actions<small>Web SSH terminal · self-heal remediation · backup &amp; PITR jobs</small></div>
+    </div>
+    <p class="figcap">Fig 2 — ActMon end-to-end data flow, from engine telemetry to AI-assisted action.</p>
+    <h2>Layer-by-Layer Explanation</h2>
+    <div class="grid g2">
+      <div class="card"><h4>Databases &amp; Hosts</h4><p>Engine-native views (performance_schema, pg_stat_statements, DMVs, V$ views, profiler, system tables) plus host CPU, memory, disk, network, processes, and services.</p></div>
+      <div class="card"><h4>Collectors</h4><p>A dependency-light host agent enrolled via one-time token (Windows MSI, Debian DEB, RHEL RPM, or shell script), or agentless SSH collection for hosts where agents aren't permitted. Both feed identical dashboards.</p></div>
+      <div class="card"><h4>Ingest &amp; Processing</h4><p>Agents push every ~15 seconds; server-side collectors pull on the same cadence. Each sample is classified by kind (infra or database), technology, and connection before storage.</p></div>
+      <div class="card"><h4>Metrics Pipeline</h4><p>A three-tier store: PostgreSQL for durable metadata, Redis for the hot last-hour ring buffer powering live dashboards, ClickHouse for long-range history and the searchable logs hub.</p></div>
+      <div class="card"><h4>AI Engine</h4><p>The copilot answers questions grounded in live metrics; the alert agent chooses and runs the next diagnostic command; error analysis explains engine errors; self-heal executes supervised fixes.</p></div>
+      <div class="card"><h4>Dashboards, Alerts, Reports, Actions</h4><p>Role-scoped dashboards refresh in near real time; alert rules evaluate continuously; scheduled reports email themselves; and remediation happens in-platform via terminal, backup, and self-heal modules.</p></div>
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 07</b></div>
+</section>
+
+<!-- ============ 08 ARCHITECTURE ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 08</div>
+    <h1>Complete Product Architecture</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon is architected as a layered platform: the existing data estate feeds vendor-neutral collectors, which power the ActMon core, AI modules, and finally role-scoped outputs.</p>
+    <div class="band outline"><div class="blabel">Source Systems (Existing Estate)</div>
+      <div class="boxes"><span class="bx">MySQL / MariaDB</span><span class="bx">PostgreSQL</span><span class="bx">SQL Server</span><span class="bx">Oracle</span><span class="bx">MongoDB</span><span class="bx">ClickHouse</span><span class="bx">Linux Hosts</span><span class="bx">Windows Hosts</span><span class="bx">AWS</span><span class="bx">Azure</span><span class="bx">OCI</span><span class="bx">Websites / URLs</span></div>
+    </div>
+    <div class="bandarrow">▼</div>
+    <div class="band navy"><div class="blabel">Vendor-Neutral Collection Layer</div>
+      <div class="boxes"><span class="bx">Host Agent (MSI / DEB / RPM / Shell)</span><span class="bx">Agentless SSH Collector</span><span class="bx">Cloud Discovery Scanners</span><span class="bx">Enrollment Tokens</span></div>
+    </div>
+    <div class="bandarrow">▼</div>
+    <div class="band navy"><div class="blabel">ActMon Platform Core</div>
+      <div class="boxes"><span class="bx">FastAPI Services (API :8000 · Cloud :8001)</span><span class="bx">Metrics Pipeline</span><span class="bx">PostgreSQL</span><span class="bx">Redis Hot Tier</span><span class="bx">ClickHouse History</span><span class="bx">Schedulers &amp; Reaper</span></div>
+    </div>
+    <div class="bandarrow">▼</div>
+    <div class="band blue"><b>AI MODULES</b> &nbsp;(Copilot · Alert Triage Agent · Error Analysis · Self-Heal · Report Generation)</div>
+    <div class="bandarrow">▼</div>
+    <div class="band outline"><div class="blabel">Outputs</div>
+      <div class="boxes"><span class="bx">Deep-Dive Dashboards</span><span class="bx">Smart Alerts</span><span class="bx">Scheduled Reports</span><span class="bx">Logs Hub</span><span class="bx">Web SSH Terminal</span><span class="bx">AI Chatbot</span></div>
+    </div>
+    <p class="figcap">Fig 3 — Complete product architecture: from source systems, through vendor-neutral collection and AI modules, to role-scoped outputs.</p>
+    <h2>Architectural Principles</h2>
+    <ul>
+      <li><strong>Agent or agentless by choice</strong> — every host can be monitored via the lightweight agent or via SSH; both paths share the same collector logic and produce identical dashboards.</li>
+      <li><strong>Read-oriented, non-invasive integration</strong> — engine telemetry is gathered from native statistics views; remediation actions are explicit, permissioned, and audited.</li>
+      <li><strong>Vendor neutrality</strong> — no engine or cloud is privileged; connectors use native drivers and provider APIs rather than proprietary middleware.</li>
+      <li><strong>Multi-tenant by design</strong> — every table carries an organization scope, enforced by a tenant context on every request.</li>
+      <li><strong>AI above a normalized layer</strong> — models consume the unified pipeline, so AI capabilities improve without re-architecting collection.</li>
+    </ul>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 08</b></div>
+</section>
+
+<!-- ============ 09 CORE MODULES ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 09</div>
+    <h1>Core Modules</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon's five core modules form the platform's primary value proposition, each addressing a distinct, high-frequency pain point identified across database-driven organizations.</p>
+
+    <div class="module">
+      <header><b>ActMon AI Copilot</b><span>Conversational AI</span></header>
+      <div class="mbody">
+        <p><strong>Purpose:</strong> Give every role a natural-language interface into the live data estate — ask a question, get a grounded answer with real numbers.</p>
+        <h5>Key Features</h5>
+        <ul>
+          <li>Streaming chat grounded in <strong>live dashboard data</strong> — health questions are answered from real-time metrics, not model memory</li>
+          <li>Per-dialect SQL generation, EXPLAIN and performance analysis, error diagnosis, index and schema advice</li>
+          <li>Organization-scoped context: the copilot knows which connections exist and their environments</li>
+          <li>One-click report downloads (connections, health summary, slow queries) generated from live statistics</li>
+          <li>In-app navigation commands — ask for a page and the copilot takes you there</li>
+        </ul>
+        <h5>Business Need</h5>
+        <p>Junior engineers don't know which of six engines' system views holds an answer, or how to query it. The copilot removes that lookup burden and encodes senior-DBA judgment.</p>
+        <h5>Business Benefit</h5>
+        <p>Reduces time spent searching for information and lowers the skill barrier for operating a polyglot estate.</p>
+        <h5>Workflow</h5>
+        <ul><li>User asks a question in plain language</li><li>The engine detects intent, resolves the target connection, and injects live metric data</li><li>The response streams back with actual figures and suggested next steps</li><li>User drills into the underlying dashboard or downloads a report</li></ul>
+        <h5>Future Enhancements</h5>
+        <p>Pluggable local LLM for air-gapped sites; proactive copilot suggestions triggered by detected anomalies.</p>
+      </div>
+    </div>
+
+    <div class="module">
+      <header><b>Unified Multi-Engine Monitoring</b><span>Deep Visibility</span></header>
+      <div class="mbody">
+        <p><strong>Purpose:</strong> Provide engine-native deep-dive dashboards for six database technologies from one console — not lowest-common-denominator graphs.</p>
+        <h5>Key Features</h5>
+        <ul>
+          <li><strong>MySQL/MariaDB:</strong> performance, queries, tables, locks, Galera/replication, users, storage, backup &amp; PITR, logs</li>
+          <li><strong>PostgreSQL:</strong> performance, pg_stat_statements queries, locks, replication, storage, backup &amp; PITR, config</li>
+          <li><strong>SQL Server:</strong> DMV-based performance, Always On, storage, backup, users, locks</li>
+          <li><strong>Oracle:</strong> sessions, SQL, tablespaces, Data Guard, redo logs, sys stats, parameters, live queries</li>
+          <li><strong>MongoDB:</strong> operations, profiler, collections, oplog, sharding, transactions, WiredTiger</li>
+          <li><strong>ClickHouse:</strong> query log, partitions, merges, replicas, clusters, system metrics</li>
+        </ul>
+        <h5>Business Need</h5>
+        <p>Multi-engine estates have no single screen showing overall status; this module is the foundation every other module builds on.</p>
+        <h5>Business Benefit</h5>
+        <p>Removes the need to switch between vendor consoles — and removes per-engine tool licenses along with them.</p>
+        <h5>Workflow</h5>
+        <ul><li>Connection or agent registers an engine</li><li>Collectors ingest engine-native statistics every ~15 seconds</li><li>The pipeline classifies and stores samples; dashboards render per-engine tabs</li></ul>
+        <h5>Future Enhancements</h5>
+        <p>Additional engines (Redis, Elasticsearch, Cassandra) and managed-cloud database flavors.</p>
+      </div>
+    </div>
+
+    <div class="module">
+      <header><b>Smart Alerts &amp; AI Triage</b><span>Incident Intelligence</span></header>
+      <div class="mbody">
+        <p><strong>Purpose:</strong> Turn raw thresholds into actionable incidents — and let AI run the first diagnostic steps before a human even opens a terminal.</p>
+        <h5>Key Features</h5>
+        <ul>
+          <li>Alert rules with live evaluation and an active-alerts board with acknowledgement</li>
+          <li><strong>Drill context</strong> — every alert resolves to its live database connection for immediate investigation</li>
+          <li><strong>AI diagnostics agent</strong> — the AI decides and runs the next diagnostic command, step by step</li>
+          <li><strong>AI analysis</strong> — one click produces an explanation and suggested fixes for the alert</li>
+          <li>SMTP integration for email notification and report delivery</li>
+        </ul>
+        <h5>Business Need</h5>
+        <p>Operators buried under threshold noise need the path from "alert fired" to "root cause identified" compressed to minutes.</p>
+        <h5>Business Benefit</h5>
+        <p>Shortens the path from alarm to root cause and reduces cognitive load during incidents.</p>
+        <h5>Workflow</h5>
+        <ul><li>Rule evaluates against live pipeline data and fires</li><li>DBA opens the alert; drill context connects to the affected database</li><li>The AI agent proposes and executes diagnostic steps; findings accumulate on the alert</li><li>DBA applies the suggested fix or escalates with full evidence attached</li></ul>
+        <h5>Future Enhancements</h5>
+        <p>Escalation policies, on-call schedules, and Slack/Teams/webhook channels (see companion roadmap document).</p>
+      </div>
+    </div>
+
+    <div class="module">
+      <header><b>Slow Query &amp; Index Intelligence</b><span>Performance Engineering</span></header>
+      <div class="mbody">
+        <p><strong>Purpose:</strong> Surface the specific queries and missing indexes costing the most, per engine, with drill-down detail and AI explanation.</p>
+        <h5>Key Features</h5>
+        <ul>
+          <li>Slow-query digests from engine-native sources (performance_schema, pg_stat_statements, DMVs, V$SQL, profiler, query_log)</li>
+          <li>Query detail drill-downs with EXPLAIN plans (MySQL/PostgreSQL/MSSQL) and Oracle live queries</li>
+          <li>Index analysis per engine — unused, missing, and duplicate index candidates</li>
+          <li>Error log collection with <strong>AI error analysis</strong> that explains and prioritizes engine errors</li>
+        </ul>
+        <h5>Business Need</h5>
+        <p>"The database is slow" is the most common, most expensive ticket in IT — and the evidence to fix it is scattered across engine internals most teams never query.</p>
+        <h5>Business Benefit</h5>
+        <p>Converts vague performance complaints into a ranked, fixable work list — often deferring hardware spend.</p>
+        <h5>Workflow</h5>
+        <ul><li>Collectors sample statement statistics continuously</li><li>Digests rank by total time, calls, and rows examined</li><li>DBA drills into a digest, views the plan, and requests AI explanation or index suggestions</li></ul>
+        <h5>Future Enhancements</h5>
+        <p>Plan-change tracking and visual plan diff; workload comparison between time windows.</p>
+      </div>
+    </div>
+
+    <div class="module">
+      <header><b>Self-Heal &amp; Automation</b><span>Autonomous Operations</span></header>
+      <div class="mbody">
+        <p><strong>Purpose:</strong> Move beyond observing problems to fixing them — with supervised, audited automation.</p>
+        <h5>Key Features</h5>
+        <ul>
+          <li><strong>MySQL Self-Heal terminal</strong> — guided auto-remediation with a persistent history log of every action taken</li>
+          <li>Scheduled backups with <strong>point-in-time recovery</strong> management for MySQL, PostgreSQL, and SQL Server</li>
+          <li>Scheduled email reports per engine, generated and delivered automatically</li>
+          <li>Background schedulers: agent collector, agent reaper, backup jobs, report jobs, resource collector</li>
+        </ul>
+        <h5>Business Need</h5>
+        <p>Routine remediation — restarting replication, clearing runaway sessions, verifying backups — consumes DBA hours and invites human error at 3 a.m.</p>
+        <h5>Business Benefit</h5>
+        <p>Shifts recurring toil from people to supervised automation, with every action logged for audit.</p>
+        <h5>Workflow</h5>
+        <ul><li>A known failure pattern is detected or selected</li><li>The self-heal flow proposes the remediation and executes on approval</li><li>The action and outcome are written to the self-heal history</li></ul>
+        <h5>Future Enhancements</h5>
+        <p>Self-heal playbooks extended to all six engines; anomaly-triggered supervised remediation.</p>
+      </div>
+    </div>
+
+    <div class="twrap"><table>
+      <thead><tr><th>Module</th><th>Category</th><th>Primary Beneficiary</th></tr></thead>
+      <tbody>
+        <tr><td>ActMon AI Copilot</td><td>Conversational AI</td><td>All roles</td></tr>
+        <tr><td>Unified Multi-Engine Monitoring</td><td>Deep Visibility</td><td>DBAs, IT Leadership</td></tr>
+        <tr><td>Smart Alerts &amp; AI Triage</td><td>Incident Intelligence</td><td>DBAs, SRE, On-Call</td></tr>
+        <tr><td>Slow Query &amp; Index Intelligence</td><td>Performance Engineering</td><td>DBAs, Application Teams</td></tr>
+        <tr><td>Self-Heal &amp; Automation</td><td>Autonomous Operations</td><td>DBAs, Operations</td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Table 4. Core module overview and primary beneficiary by role.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 09</b></div>
+</section>
+
+<!-- ============ 10 ADDITIONAL MODULES ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 10</div>
+    <h1>Additional Modules</h1>
+    <div class="rule"></div>
+    <p class="lede">Beyond the five core modules, ActMon ships fourteen additional modules that extend coverage across infrastructure, cloud, security, and administration.</p>
+    <div class="grid g3">
+      <div class="card"><h4>Infrastructure Monitoring</h4><p>Host CPU, memory, disk, network, processes, services, and uptime — identical detail whether collected by agent or SSH.</p></div>
+      <div class="card"><h4>Web SSH Terminal</h4><p>Browser-based SSH terminal over websocket for immediate, audited remediation without leaving the console.</p></div>
+      <div class="card"><h4>File Explorer &amp; Config Finder</h4><p>Browse host filesystems through the agent and locate nginx, Apache, database, and service configuration files across hosts.</p></div>
+      <div class="card"><h4>Cloud Discovery &amp; Inventory</h4><p>Background resource discovery across AWS, Azure, and OCI accounts into a unified, searchable inventory.</p></div>
+      <div class="card"><h4>Cloud Cost</h4><p>Cost and estimate views over discovered cloud resources for FinOps conversations grounded in inventory.</p></div>
+      <div class="card"><h4>Cloud Security &amp; Compliance</h4><p>Security posture findings and compliance views across connected cloud accounts, with cloud alerts.</p></div>
+      <div class="card"><h4>Cloud Topology</h4><p>Visual topology of discovered cloud resources and their relationships.</p></div>
+      <div class="card"><h4>Website / URL Monitoring</h4><p>Uptime, response time, and SSL certificate status for public endpoints, added via a guided wizard.</p></div>
+      <div class="card"><h4>Logs Hub</h4><p>Searchable, ClickHouse-backed log center: all telemetry, database, agent, infrastructure, cloud, chatbot, and administrator logs.</p></div>
+      <div class="card"><h4>Backup &amp; PITR Manager</h4><p>Centralized backup execution, scheduling, and point-in-time-recovery management for MySQL, PostgreSQL, and SQL Server; MongoDB backup module.</p></div>
+      <div class="card"><h4>Agent Fleet Management</h4><p>Enrollment tokens, generated installers (MSI/DEB/RPM/shell), deploy wizard, heartbeat, reaper, per-agent drill-down and CSV export.</p></div>
+      <div class="card"><h4>Administration &amp; RBAC Suite</h4><p>Organizations, departments, employees, users, roles, modules, pages, and a role × page permission matrix.</p></div>
+      <div class="card"><h4>Audit &amp; Access Trail</h4><p>Audit logs, login history, active user sessions, and password history for compliance evidence.</p></div>
+      <div class="card"><h4>ML Anomaly Detection</h4><p>Machine-learning module for metric baselines and anomaly detection over ClickHouse history — in development on the roadmap.</p></div>
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 10</b></div>
+</section>
+
+<!-- ============ 11 APPLICATION WORKING ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 11</div>
+    <h1>Application Working</h1>
+    <div class="rule"></div>
+    <p class="lede">An end-to-end walkthrough of how ActMon behaves in daily operation, from telemetry ingestion to AI-assisted resolution.</p>
+    <h2>End-to-End Scenario: A Slow-Query Storm on Production PostgreSQL</h2>
+    <div class="flow">
+      <div class="fstep">1. A deployment introduces an unindexed query; database CPU climbs</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">2. The host agent pushes the spike within 15 seconds; the pipeline stores and classifies it</div>
+      <div class="farrow">▼</div>
+      <div class="fstep hl">3. An alert rule fires; the active-alerts board shows the incident with drill context</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">4. The DBA triggers AI triage — the agent runs diagnostic steps and points at the top query digest</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">5. Slow Queries shows the new digest; Query Detail renders the EXPLAIN plan</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">6. Index Analysis suggests the missing index; the copilot generates the CREATE INDEX statement</div>
+      <div class="farrow">▼</div>
+      <div class="fstep">7. Fix applied via the web terminal; metrics recover; the event is preserved in logs and audit trail</div>
+    </div>
+    <h2>Roles Touched in This Scenario</h2>
+    <div class="twrap"><table>
+      <thead><tr><th>Role</th><th>Interaction</th></tr></thead>
+      <tbody>
+        <tr><td><b>DBA</b></td><td>Receives the alert, runs AI triage, reviews the plan, applies the index</td></tr>
+        <tr><td><b>Application Owner</b></td><td>Sees the specific offending query digest instead of a vague "database is slow" report</td></tr>
+        <tr><td><b>IT Manager</b></td><td>Watches the incident and recovery on the unified dashboard without requesting a report</td></tr>
+        <tr><td><b>Compliance</b></td><td>Finds the terminal session, alert acknowledgement, and remediation in the audit trail</td></tr>
+      </tbody>
+    </table></div>
+    <p>This scenario illustrates the platform's core design principle: <strong>the same live pipeline powers every touchpoint</strong> — the alert, the AI triage, the slow-query drill-down, the copilot's answer, and the executive's dashboard — so every role sees a consistent account of what happened.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 11</b></div>
+</section>
+
+<!-- ============ 12 TECH STACK ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 12</div>
+    <h1>Technology Stack</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon is built on a modern, self-hostable stack chosen for scalability, vendor neutrality, and compatibility with on-premises, air-gapped, and cloud deployment models.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Layer</th><th>Technology / Approach</th></tr></thead>
+      <tbody>
+        <tr><td><b>Frontend</b></td><td>React 18 + Vite, Fluent UI component system, Tailwind CSS, TanStack Query, Zustand state, lazy-loaded routes</td></tr>
+        <tr><td><b>Backend / API</b></td><td>FastAPI (Python) — main API service (:8000) and cloud discovery microservice (:8001), SQLAlchemy ORM</td></tr>
+        <tr><td><b>Engine Connectors</b></td><td>Native drivers: PyMySQL-class MySQL, psycopg/PostgreSQL, pyodbc + unixODBC (MSSQL), oracledb, pymongo, ClickHouse client</td></tr>
+        <tr><td><b>Host Collection</b></td><td>Dependency-light Python agent (Windows/Linux) or agentless SSH via paramiko; long-poll job channel for file operations</td></tr>
+        <tr><td><b>Metadata Store</b></td><td>PostgreSQL for connections, agents, RBAC, alert rules, and schedules</td></tr>
+        <tr><td><b>Hot Metrics Tier</b></td><td>Redis — latest samples plus one-hour ring buffer powering live dashboards (graceful no-op if absent)</td></tr>
+        <tr><td><b>History &amp; Logs</b></td><td>ClickHouse — long-range time-series history per technology and the searchable logs hub</td></tr>
+        <tr><td><b>AI / LLM Layer</b></td><td>Groq-served Llama 3.3 70B with server-sent-event streaming, grounded by a live health-data injection layer</td></tr>
+        <tr><td><b>Alerting &amp; Delivery</b></td><td>Rule engine with live evaluation; SMTP for notifications and scheduled report email delivery</td></tr>
+        <tr><td><b>Remote Access</b></td><td>Web SSH terminal over websocket proxy</td></tr>
+        <tr><td><b>Packaging</b></td><td>Windows MSI (WiX), Debian DEB, RHEL RPM, and shell installers generated on demand with enrollment token baked in</td></tr>
+        <tr><td><b>Serving &amp; Process</b></td><td>nginx static UI + API reverse proxy; systemd services; uvicorn ASGI workers</td></tr>
+        <tr><td><b>Authentication</b></td><td>JWT (PyJWT) with OTP login verification, bcrypt password hashing, role-based access control</td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Table 3. Technology stack summary. Specific technology choices may be adapted per customer environment and procurement constraints.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 12</b></div>
+</section>
+
+<!-- ============ 13 DATABASE ARCH ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 13</div>
+    <h1>Database Architecture</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon uses a polyglot persistence approach — matching each data workload to the storage engine best suited to its access pattern, in a hot/warm/cold tiering model.</p>
+    <div class="grid g2">
+      <div class="card"><h4>PostgreSQL — Durable Metadata</h4><p>Connections, agents, organizations, users, RBAC policy, alert rules, backup and report schedules, and snapshots — structured, transactional data where strong consistency matters.</p></div>
+      <div class="card"><h4>Redis — Hot Tier</h4><p>The latest sample and a one-hour ring buffer per metric stream, indexed for instant live-dashboard reads at 15-second resolution. Degrades gracefully to a no-op if unavailable.</p></div>
+      <div class="card"><h4>ClickHouse — History &amp; Logs</h4><p>Per-technology time-series tables for long-range history and aggregation, plus the platform's searchable logs store — optimized for fast scans over large date ranges.</p></div>
+      <div class="card"><h4>Stable-Facts Deduplication</h4><p>Slow-changing facts (versions, configurations, topology) are deduplicated in PostgreSQL rather than re-written every cycle, keeping storage lean while preserving change history.</p></div>
+    </div>
+    <h2>Why This Combination</h2>
+    <p>No single engine efficiently serves 15-second live reads, durable transactional metadata, and multi-month history scans at once. By separating these workloads — Redis for "now," PostgreSQL for "what is configured," ClickHouse for "what happened" — ActMon scales each tier independently while keeping every engine tuned to its strength. Status transitions additionally use hysteresis (error streaks and offline grace windows) so dashboards report state changes confidently rather than flapping.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 13</b></div>
+</section>
+
+<!-- ============ 14 AI ARCH ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 14</div>
+    <h1>AI Architecture</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon's AI layer is built around live-data grounding — the model answers from the platform's own real-time telemetry, not from generic public knowledge.</p>
+    <div class="band outline"><div class="blabel">Unified Live Data Layer</div>
+      <div class="boxes"><span class="bx">15s metrics pipeline</span><span class="bx">Connection registry</span><span class="bx">Slow-query digests</span><span class="bx">Error logs</span><span class="bx">Alert state</span></div>
+    </div>
+    <div class="bandarrow">▼</div>
+    <div class="band navy"><div class="blabel">Grounding &amp; Reasoning Layer</div>
+      <div class="boxes"><span class="bx">Intent detection</span><span class="bx">Connection resolution</span><span class="bx">Live health-data injection</span><span class="bx">LLM (Llama 3.3 70B, streaming)</span></div>
+    </div>
+    <div class="bandarrow">▼</div>
+    <div class="band navy"><div class="blabel">AI Agents &amp; Application Models</div>
+      <div class="boxes"><span class="bx">Alert Diagnostics Agent — decides &amp; runs next command</span><span class="bx">Error Analysis — explain &amp; prioritize</span><span class="bx">Self-Heal — supervised remediation</span><span class="bx">Report Actions — CSV generation</span></div>
+    </div>
+    <div class="bandarrow">▼</div>
+    <div class="band outline"><div class="blabel">Delivery Surfaces</div>
+      <div class="boxes"><span class="bx">Copilot Widget &amp; Page</span><span class="bx">Alert Analyze</span><span class="bx">Error Analysis Pages</span><span class="bx">Self-Heal Terminal</span></div>
+    </div>
+    <p class="figcap">Fig 4 — AI architecture: from live telemetry, through grounding and reasoning, to agent-level models and delivery surfaces.</p>
+    <h2>Component Explanation</h2>
+    <div class="grid g2">
+      <div class="card"><h4>LLM</h4><p>Generates natural-language answers, SQL, and report drafts — streamed token-by-token for a responsive experience.</p></div>
+      <div class="card"><h4>Live Grounding</h4><p>Health-intent questions trigger a real-time fetch of the target connection's dashboard data, injected into the prompt so answers cite actual numbers rather than fabricating them.</p></div>
+      <div class="card"><h4>AI Agents</h4><p>Task-specific flows that orchestrate diagnosis and action: the alert agent selects and executes the next diagnostic command; error analysis classifies and explains engine errors.</p></div>
+      <div class="card"><h4>Guardrails</h4><p>Organization scoping limits the copilot to the requester's connections; remediation requires explicit approval; every action lands in the audit trail and chatbot logs.</p></div>
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 14</b></div>
+</section>
+
+<!-- ============ 15 SECURITY ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 15</div>
+    <h1>Security Architecture</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon follows a defense-in-depth model appropriate for platforms that hold credentials to production databases — where integrity and least privilege matter as much as confidentiality.</p>
+    <div class="grid g3">
+      <div class="card"><h4>Authentication</h4><p>Centralized login with JWT session tokens and OTP verification at sign-in; bcrypt password hashing throughout.</p></div>
+      <div class="card"><h4>Authorization &amp; RBAC</h4><p>Role-based access mapped to a page-level permission matrix — each role sees exactly the modules and pages it is granted.</p></div>
+      <div class="card"><h4>Multi-Tenant Isolation</h4><p>Every record carries an organization scope enforced by tenant context on every request — tenants cannot see each other's estates.</p></div>
+      <div class="card"><h4>Secrets Handling</h4><p>Installer-generated database password and JWT secret written to a root-owned environment file with 600 permissions; nothing hard-coded.</p></div>
+      <div class="card"><h4>Audit Logs</h4><p>Audit trail, login history, active session tracking, and password history for traceability and compliance evidence.</p></div>
+      <div class="card"><h4>Agent Enrollment Security</h4><p>Agents enroll with one-time install tokens; database credentials for agent-side tests never leave the monitored host.</p></div>
+      <div class="card"><h4>Transport Security</h4><p>nginx front end ready for TLS termination; API and websocket traffic proxied on the private interface.</p></div>
+      <div class="card"><h4>Backup &amp; Recovery</h4><p>Scheduled, centrally tracked backups with PITR support protect both monitored databases and the platform's own stores.</p></div>
+      <div class="card"><h4>Least-Privilege Collection</h4><p>Engine telemetry reads from native statistics views; remediation is a separate, explicit, permissioned path.</p></div>
+    </div>
+    <h2>Defense-in-Depth Layering</h2>
+    <div class="hflow">
+      <div class="hstep">Perimeter &amp; nginx</div><span class="harrow">→</span>
+      <div class="hstep">Identity &amp; Access<br><small>(JWT · OTP · RBAC)</small></div><span class="harrow">→</span>
+      <div class="hstep">Tenant Isolation<br><small>(org scoping)</small></div><span class="harrow">→</span>
+      <div class="hstep">Application &amp; API</div><span class="harrow">→</span>
+      <div class="hstep">Audit &amp; Monitoring</div>
+    </div>
+    <p class="figcap">Fig 5 — Security architecture: layered controls from network perimeter to audit and monitoring.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 15</b></div>
+</section>
+
+<!-- ============ 16 DEPLOYMENT ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 16</div>
+    <h1>Deployment Architecture</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon is designed to install in minutes on customer-owned infrastructure — on-premises, in a private cloud, or air-gapped — with no external SaaS dependency for monitoring.</p>
+    <div class="hflow">
+      <div class="hstep">Release Bundle<br><small>(.tgz, UI + backend)</small></div><span class="harrow">→</span>
+      <div class="hstep">install.sh<br><small>(idempotent)</small></div><span class="harrow">→</span>
+      <div class="hstep">systemd Services<br><small>(api :8000 · cloud :8001)</small></div><span class="harrow">→</span>
+      <div class="hstep">nginx<br><small>(UI :80 + API proxy)</small></div><span class="harrow">→</span>
+      <div class="hstep">Agents Enroll<br><small>(MSI / DEB / RPM / shell)</small></div>
+    </div>
+    <p class="figcap">Fig 6 — Deployment and installation topology.</p>
+    <div class="grid g2">
+      <div class="card"><h4>One-Command Install</h4><p>A single idempotent installer provisions Python, PostgreSQL, nginx, the dedicated service user, the database schema, the Super Admin role, and generated secrets on Ubuntu 24.04.</p></div>
+      <div class="card"><h4>Self-Contained Bundle</h4><p>The release ships prebuilt UI and backend source in one archive — suitable for restricted networks; ClickHouse is optional and additive.</p></div>
+      <div class="card"><h4>Managed Services</h4><p>API and cloud-discovery services run under systemd with automatic restart; updates rsync new code and re-run schema setup safely.</p></div>
+      <div class="card"><h4>Fleet-Ready Agents</h4><p>Windows MSI, Debian DEB, RHEL RPM, and shell installers are generated on demand with the enrollment token and server URL baked in — agents self-register on first start.</p></div>
+    </div>
+    <p class="foot-note">Specific deployment topology (single node, separated database tier, or high-availability configuration) is tailored to each customer's IT policy and data-residency requirements.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 16</b></div>
+</section>
+
+<!-- ============ 17 STAKEHOLDER BENEFITS ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 17</div>
+    <h1>Business Benefits by Stakeholder</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon is designed so that every layer of the organization — from the on-call DBA to the executive suite — sees a direct, role-relevant benefit.</p>
+    <div class="grid g2">
+      <div class="card"><h4>Executive Management</h4><p>Estate-wide health, incidents, and cloud spend in one view without waiting for team roll-ups.</p><ul style="font-size:13px;margin-top:8px"><li>Faster, evidence-based decisions</li><li>Consolidated view across sites and tenants</li><li>Reduced dependency on manual reports</li></ul></div>
+      <div class="card"><h4>DBA Team</h4><p>Engine-native depth for six technologies plus AI assistance for diagnosis and SQL.</p><ul style="font-size:13px;margin-top:8px"><li>Slow-query and index work lists</li><li>AI triage on every alert</li><li>Backup &amp; PITR from one place</li></ul></div>
+      <div class="card"><h4>Infrastructure / IT Ops</h4><p>Host health, services, and files reachable through the same console as the databases they support.</p><ul style="font-size:13px;margin-top:8px"><li>Agent or agentless coverage</li><li>Web terminal for instant access</li><li>Config finder across hosts</li></ul></div>
+      <div class="card"><h4>DevOps / SRE</h4><p>A single API-driven platform correlating database and host signals with alerting built in.</p><ul style="font-size:13px;margin-top:8px"><li>Alert rules with live evaluation</li><li>Drill from alert to diagnostics</li><li>CSV export for postmortems</li></ul></div>
+      <div class="card"><h4>Security &amp; Compliance</h4><p>Access control and evidence collection designed in, not retrofitted.</p><ul style="font-size:13px;margin-top:8px"><li>Page-level RBAC matrix</li><li>Audit, login, session, password history</li><li>Self-hosted data sovereignty</li></ul></div>
+      <div class="card"><h4>MSPs &amp; Multi-Site Operators</h4><p>One deployment serving many isolated organizations with per-tenant roles and onboarding.</p><ul style="font-size:13px;margin-top:8px"><li>Tenant-scoped everything</li><li>Org registration wizard</li><li>Consistent per-client reporting</li></ul></div>
+    </div>
+    <div class="twrap"><table>
+      <thead><tr><th>Stakeholder Group</th><th>Primary Benefit Theme</th></tr></thead>
+      <tbody>
+        <tr><td>Executive Management</td><td>Estate-wide visibility &amp; faster decisions</td></tr>
+        <tr><td>DBA Team</td><td>Deep multi-engine monitoring &amp; AI-assisted diagnosis</td></tr>
+        <tr><td>Infrastructure / IT Ops</td><td>Unified host coverage, agent or agentless</td></tr>
+        <tr><td>DevOps / SRE</td><td>Correlated alerting &amp; faster incident response</td></tr>
+        <tr><td>Security &amp; Compliance</td><td>RBAC, audit evidence &amp; data sovereignty</td></tr>
+        <tr><td>MSPs</td><td>Multi-tenant operations at scale</td></tr>
+        <tr><td>Finance / FinOps</td><td>Cloud inventory &amp; cost visibility</td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Table 6. Stakeholder benefit map summarizing primary value themes by role.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 17</b></div>
+</section>
+
+<!-- ============ 18 COMPETITIVE ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 18</div>
+    <h1>Competitive Analysis</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon competes in the database-monitoring and observability category against established suites — and differentiates by combining multi-engine depth, infrastructure, cloud, and embedded AI in one self-hosted, multi-tenant platform.</p>
+    <div class="twrap"><table>
+      <thead><tr><th>Platform</th><th>Primary Focus</th><th class="center">Multi-Engine DB Depth</th><th class="center">DB + Infra + Cloud in One</th><th class="center">Embedded AI Copilot</th><th class="center">Self-Heal Actions</th><th class="center">Multi-Tenant / MSP</th><th class="center">Self-Hosted Option</th></tr></thead>
+      <tbody>
+        <tr><td><b>SolarWinds DPA</b></td><td>DB wait-time analytics</td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>Percona PMM</b></td><td>Open-source DB monitoring</td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>Datadog DBM</b></td><td>SaaS observability suite</td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td></tr>
+        <tr><td><b>Dynatrace</b></td><td>APM &amp; full-stack observability</td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="pt">≈</span></td></tr>
+        <tr><td><b>Zabbix</b></td><td>Open-source infra monitoring</td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>Nagios</b></td><td>Infra checks &amp; alerting</td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>ManageEngine App Mgr</b></td><td>IT application monitoring</td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>Quest Foglight</b></td><td>Cross-platform DB monitoring</td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="pt">≈</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>Redgate SQL Monitor</b></td><td>SQL Server estate monitoring</td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="no">✗</span></td><td class="center"><span class="ok">✓</span></td></tr>
+        <tr><td><b>ActMon</b></td><td>Unified DB + infra + cloud AI ops</td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td><td class="center"><span class="ok">✓</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="caption">Table 5. Competitive positioning matrix. ✓ = core strength, ≈ = partial / add-on / vendor-specific, ✗ = generally outside primary scope. Reflects general market positioning, not a certified feature audit of each vendor's current product.</p>
+    <h2>Positioning Statement</h2>
+    <div class="quote">ActMon does not chase SolarWinds, Datadog, or Dynatrace on their deepest home ground — wait-time science, SaaS-scale APM, or distributed tracing. Instead, ActMon delivers the combination none of them ship in one self-hosted product: engine-native depth across six databases, infrastructure and multi-cloud visibility, an AI copilot grounded in live telemetry, supervised self-healing, and true multi-tenancy — at a predictable cost model.</div>
+    <h2>Where ActMon Differentiates</h2>
+    <ul>
+      <li><strong>AI-native from day one</strong> — the copilot, alert triage agent, and error analysis are core product, not a priced add-on.</li>
+      <li><strong>Action, not just observation</strong> — web SSH terminal, backup &amp; PITR, and self-heal close the loop from detection to fix inside one console.</li>
+      <li><strong>Self-hosted and sovereignty-friendly</strong> — full functionality without shipping telemetry to a vendor cloud; installable in restricted networks.</li>
+      <li><strong>Multi-tenant by design</strong> — organizations, per-org RBAC, and onboarding make one deployment serve many business units or MSP clients.</li>
+    </ul>
+    <p class="foot-note">Capabilities where competitors currently lead ActMon — and the plan to close them — are covered honestly and in detail in the companion document: <strong>ActMon Competitive Gap Analysis &amp; Capability Roadmap</strong>.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 18</b></div>
+</section>
+
+<!-- ============ 19 ROADMAP ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 19</div>
+    <h1>Product Roadmap</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon's roadmap delivers standalone value at every stage — foundational visibility first, then AI intelligence, prediction, ecosystem integration, and scale.</p>
+    <div class="phase"><div class="pnum">P1</div><div class="pcard"><b>Phase 1: Foundation</b><span class="pstat done">Shipped</span><p>Six-engine deep-dive monitoring, agent (MSI/DEB/RPM/shell) and SSH collection, connections management, infrastructure module, RBAC and multi-tenant administration, one-command installer.</p></div></div>
+    <div class="phase"><div class="pnum">P2</div><div class="pcard"><b>Phase 2: Intelligence</b><span class="pstat done">Shipped</span><p>ActMon AI Copilot with live grounding, AI alert triage and analysis, error analysis, slow-query and index intelligence, MySQL self-heal, scheduled reports, logs hub, cloud discovery with cost/security/topology, website monitoring.</p></div></div>
+    <div class="phase"><div class="pnum">P3</div><div class="pcard"><b>Phase 3: Prediction</b><span class="pstat now">In Development</span><p>ML anomaly detection over ClickHouse history, adaptive metric baselines, capacity forecasting, forecast-based alerts, self-heal playbooks extended across engines.</p></div></div>
+    <div class="phase"><div class="pnum">P4</div><div class="pcard"><b>Phase 4: Ecosystem &amp; Coverage</b><span class="pstat next">Planned</span><p>Slack/Teams/webhook alert channels, escalation policies, additional engines (Redis, Elasticsearch, Cassandra), Kubernetes and container monitoring, SSO (SAML/OIDC/LDAP), public API tokens, Grafana interoperability.</p></div></div>
+    <div class="phase"><div class="pnum">P5</div><div class="pcard"><b>Phase 5: Scale &amp; Autonomy</b><span class="pstat next">Planned</span><p>High-availability deployment topology, horizontal collector scaling, mobile application, custom dashboard builder, SLA reporting, and supervised autonomous remediation across the estate.</p></div></div>
+    <p class="figcap">Fig 7 — Product roadmap timeline, Phase 1 through Phase 5.</p>
+    <p class="foot-note">Phase sequencing and scope are subject to refinement based on pilot customer feedback and engineering capacity. Detailed gap-closure planning with priorities and effort sizing is maintained in the companion roadmap document.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 19</b></div>
+</section>
+
+<!-- ============ 20 FUTURE VISION ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 20</div>
+    <h1>Future Vision</h1>
+    <div class="rule"></div>
+    <p class="lede">Beyond the current roadmap, ActMon is intended to evolve from a monitoring and diagnosis platform into a proactive, AI-driven operations partner for the entire data estate.</p>
+    <div class="grid g2">
+      <div class="card dark"><h4>Autonomous Database Operations</h4><p>Self-heal maturing from guided remediation into supervised, policy-bounded autonomous fixes for known failure patterns across every supported engine.</p></div>
+      <div class="card dark"><h4>Predictive Capacity &amp; Cost</h4><p>Forecasting storage, connections, and workload growth — and correlating on-prem capacity with cloud spend for unified capacity economics.</p></div>
+      <div class="card dark"><h4>Fleet Benchmarking</h4><p>Multi-site and MSP customers comparing performance, configuration, and reliability across estates on a consistent, vendor-neutral basis.</p></div>
+      <div class="card dark"><h4>Open Ecosystem</h4><p>Deeper interoperability — incident platforms, chat-ops, Grafana, and a public API — reinforcing ActMon's role as the estate's system of record.</p></div>
+    </div>
+    <p>The guiding principle throughout this evolution remains constant: <strong>ActMon augments and extends the value of the databases and infrastructure an organization already runs</strong> — it observes deeply, explains clearly, and acts only with authority its operators grant.</p>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>Section 20</b></div>
+</section>
+
+<!-- ============ 21 CONCLUSION ============ -->
+<section class="page">
+  <div class="runhead"><span><b>ACTMON</b> &nbsp;|&nbsp; One Console. Complete Operational Intelligence.</span><span>Confidential</span></div>
+  <div class="body">
+    <div class="eyebrow">Section 21</div>
+    <h1>Conclusion</h1>
+    <div class="rule"></div>
+    <p class="lede">ActMon offers database-driven organizations a way to see, understand, and act on their entire data estate as one unified whole — without surrendering data sovereignty or paying per-instance for the privilege.</p>
+    <p>Enterprises have accumulated years of engine-specific consoles, OS utilities, cloud dashboards, and hand-rolled scripts — each useful alone, collectively fragmented. ActMon's proposition is straightforward: connect to what already exists, collect deeply on a 15-second cadence, and apply grounded AI to turn that unified picture into faster diagnosis, automated reporting, and supervised remediation at every level of the organization.</p>
+    <p>For leadership, this means estate-wide visibility without waiting on manual reports. For DBA and operations teams, it means engine-native depth, AI-assisted troubleshooting, and an end to console-hopping. For security and compliance, it means RBAC, audit evidence, and a self-hosted footprint. And for the organization as a whole, it means a durable intelligence layer that compounds in value as more engines, servers, clouds, and AI capabilities are connected to it over time.</p>
+    <div class="quote">ActMon is proposed as a strategic, vendor-neutral investment in operational intelligence — self-hosted, AI-native, and multi-tenant — designed to compound in value as the data estate grows.</div>
+    <h2>Next Steps</h2>
+    <div class="grid g3">
+      <div class="card"><h4>01</h4><p>Validate integration scope against a pilot estate's engines, hosts, and cloud accounts.</p></div>
+      <div class="card"><h4>02</h4><p>Define a bottom-up ROI model using the pilot's own downtime, licensing, and labor baselines.</p></div>
+      <div class="card"><h4>03</h4><p>Execute a Phase-aligned rollout — monitoring first, AI triage second, automation third.</p></div>
+    </div>
+    <div class="sig">
+      <b>ActMon — One Console. Every Database. Complete Operational Intelligence.</b><br>
+      Prepared by Suyash Gaikwad &nbsp;|&nbsp; Version 1.0 &nbsp;|&nbsp; Confidential
+    </div>
+  </div>
+  <div class="runfoot"><span>ActMon Product Proposal &nbsp;•&nbsp; Version 1.0 &nbsp;•&nbsp; Prepared by Suyash Gaikwad</span><b>End of Document</b></div>
+</section>
+
+</div>
+<style>
+@page{size:A4;margin:8mm 0}
+*{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@media print{
+  .doc{max-width:none;padding:0}
+  table{font-size:11.5px}
+  th,td{padding:8px 10px}
+  .page{border:none;border-radius:0;margin:0;page-break-after:always}
+  .body{padding:24px 34px}
+  .card,.stat,.quote,.pcard,.phase,.fstep,.hstep,.band,.toc li,li,tr,.chips,.sig,.figcap,.caption,.foot-note{break-inside:avoid;page-break-inside:avoid}
+  h1,h2,h3,h4,h5,.eyebrow,.rule{break-after:avoid;page-break-after:avoid;break-inside:avoid}
+  .module header{break-inside:avoid;break-after:avoid}
+  thead{display:table-header-group}
+  p{orphans:3;widows:3}
+}
+</style></html>

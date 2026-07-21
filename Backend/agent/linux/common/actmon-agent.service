@@ -1,0 +1,16 @@
+[Unit]
+Description=ActMon Host Monitoring Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/actmon/agent.conf
+# Python agent: host metrics (runs the shell collector) + local database monitoring.
+ExecStart=/usr/bin/python3 /usr/lib/actmon/actmon_agent.py
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

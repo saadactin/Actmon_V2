@@ -1,0 +1,16 @@
+[Unit]
+Description=ActMon Cloud Discovery service (FastAPI / uvicorn)
+After=network.target
+PartOf=actmon-api.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APP_DIR__/backend/cloud
+EnvironmentFile=-__APP_DIR__/backend/database/.env
+ExecStart=__APP_DIR__/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port __PORT__
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

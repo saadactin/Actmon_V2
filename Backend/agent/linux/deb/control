@@ -1,0 +1,13 @@
+Package: actmon-agent
+Version: 1.1.0
+Section: admin
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.5), python3-pymysql, python3-psycopg2, python3-cryptography, procps, curl | wget
+Maintainer: ActMon <support@actmon.local>
+Description: ActMon Host Monitoring Agent
+ Lightweight agent that collects host CPU and memory metrics AND monitors
+ databases running on this host (connects to localhost — no network exposure),
+ pushing everything to the ActMon platform. Runs as a systemd service.
+ The installer accepts ACTMON_ACCESS_TOKEN / ACTMON_URL from the environment
+ to configure and start the service in one step.

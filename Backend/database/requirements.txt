@@ -1,0 +1,24 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pymysql
+pymssql
+pymongo
+# Oracle — thin-mode driver (direct connections; agent-hosted DBs route via agent)
+oracledb
+pydantic
+paramiko
+psycopg2-binary
+python-dotenv
+cryptography
+PyJWT
+passlib[bcrypt]
+pyodbc
+python-multipart
+groq
+# Redis — hot tier for the 15s metrics pipeline (optional; degrades to no-op)
+redis
+# ClickHouse — native driver (enables clickhouse+native:// SQLAlchemy dialect)
+clickhouse-driver>=0.2.9
+clickhouse-sqlalchemy>=0.3.2
+clickhouse-connect==1.4.1
