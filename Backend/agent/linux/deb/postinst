@@ -17,6 +17,17 @@ case "$1" in
       echo "**********************************************************" >&2
       exit 1
     fi
+    # oracledb and clickhouse-driver aren't packaged in Debian/Ubuntu's own repos (no
+    # python3-oracledb / python3-clickhouse-driver to Depend on) — best-effort pip
+    # install so Oracle/ClickHouse push works out of the box on hosts that actually
+    # run those engines. Never fatal: without them, those two engines' collectors
+    # just skip each cycle (identical to any other missing optional DB driver) — the
+    # rest of the agent (host infra, MySQL/Postgres/MSSQL/MongoDB) is unaffected.
+    # --break-system-packages is needed on PEP 668 (Debian 12+/Ubuntu 24.04+) systems.
+    pip3 install --quiet --break-system-packages oracledb clickhouse-driver 2>/dev/null \
+      || pip3 install --quiet oracledb clickhouse-driver 2>/dev/null \
+      || echo "Note: could not pip-install oracledb/clickhouse-driver — Oracle/ClickHouse push will stay idle on this host until installed manually." >&2
+
     # Remove any stale hand-made unit in /etc that would SHADOW this package's unit
     # (older installs ran the bash agent from /etc; it must not win over the Python one).
     if [ -f /etc/systemd/system/actmon-agent.service ]; then

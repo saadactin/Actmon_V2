@@ -267,11 +267,45 @@ def svc_ingest_agent_data(payload: AgentDataIngest, db: Session):
     return {"status": "success", "agent_name": payload.agent_name}
 
 
+def _parse_pct(v) -> float:
+    """os_servers.cpu_usage/ram_usage are strings like '76%' or 'N/A' — the actual
+    live host readings (refreshed every infra push), unlike AgentMetric's host_cpu/
+    host_memory which DB-engine collectors never populate (always 0.0) and which a
+    pure host-identity row would only carry if something wrote it long ago."""
+    try:
+        return float(str(v).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def svc_list_agents(db: Session):
-    from app.models.os_server_model import OsServer
+    from app.models.os_server_model import OsServer, DatabaseInstance
     agents = db.query(Agent).order_by(Agent.agent_name).all()
+    servers = db.query(OsServer).all()
     # Map agent_name → its host agent_token (so the Add-DB wizard can attach to it).
-    token_map = {s.server_name: s.agent_token for s in db.query(OsServer).filter(OsServer.agent_token.isnot(None)).all()}
+    token_map = {s.server_name: s.agent_token for s in servers if s.agent_token}
+
+    # Real, live host CPU/RAM comes from os_servers (refreshed by the agent's infra
+    # push every ~15-30s) — never from AgentMetric. A DB-connection row reaches its
+    # host via database_instances; a pure host-identity row (db_connection_id=NULL)
+    # is matched directly by hostname.
+    servers_by_id = {s.id: s for s in servers}
+    servers_by_hostname = {(s.hostname or "").lower(): s for s in servers if s.hostname}
+    server_id_by_conn_id = {
+        di.connection_id: di.server_id
+        for di in db.query(DatabaseInstance).filter(DatabaseInstance.connection_id.isnot(None)).all()
+    }
+
+    def _host_metrics_for(a):
+        server = None
+        if a.db_connection_id:
+            sid = server_id_by_conn_id.get(a.db_connection_id)
+            server = servers_by_id.get(sid) if sid else None
+        else:
+            server = servers_by_hostname.get((a.hostname or "").lower())
+        if not server:
+            return {"cpu": 0.0, "memory": 0.0}
+        return {"cpu": _parse_pct(server.cpu_usage), "memory": _parse_pct(server.ram_usage)}
 
     # LIVE values come from the Redis hot tier — one O(1) read per agent instead of
     # the old per-agent latest-row PostgreSQL query (N+1). PG stays as fallback for
@@ -298,6 +332,7 @@ def svc_list_agents(db: Session):
     result = []
     for a in agents:
         latest = _latest_for(a.agent_name)
+        host_metrics = _host_metrics_for(a)
         result.append({
             "name": a.agent_name,
             "agent_token": token_map.get(a.agent_name),
@@ -311,6 +346,8 @@ def svc_list_agents(db: Session):
             "cpu_usage": latest["host_cpu"],
             "memory_usage": latest["host_memory"],
             "db_cpu": latest["db_cpu"],
+            "agent_host_cpu": host_metrics["cpu"],
+            "agent_host_memory": host_metrics["memory"],
             "active_sessions": latest["active_sessions"],
             "last_heartbeat": (
                 a.last_heartbeat.isoformat() if a.last_heartbeat else None

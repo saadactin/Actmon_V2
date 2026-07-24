@@ -5,3 +5,8 @@ wix/wix311/
 wix/*.zip
 wix/*.wixobj
 wix/*.wixpdb
+
+# Isolated build environment (build_agent.sh creates/reuses this) — deliberately
+# NOT the machine's shared Python env, which may have unrelated heavy packages
+# (torch/numpy/scipy/...) that PyInstaller would otherwise sweep into the exe.
+.venv-build/

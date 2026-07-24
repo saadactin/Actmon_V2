@@ -14,6 +14,7 @@ import client from '../../api/client';
 /* ─── API ────────────────────────────────────────────────────────────────────── */
 const api = {
   summary:      id             => client.get(`/connections/mysql/${id}/backup/summary`).then(r => r.data),
+  storagePath:  id             => client.get(`/connections/mysql/${id}/backup/storage-path`).then(r => r.data),
   listBackups:  id             => client.get(`/connections/mysql/${id}/backups`).then(r => r.data),
   takeBackup:   (id, b)        => client.post(`/connections/mysql/${id}/backup/take`, b).then(r => r.data),
   deleteJob:    (id, jid)      => client.delete(`/connections/mysql/${id}/backup/${jid}`).then(r => r.data),
@@ -198,13 +199,19 @@ export default function MySQLBackupPage({ embedded = false }) {
   const { data: sumData, isLoading: sumLoading } = useQuery({
     queryKey: ['bkpSum', id], queryFn: () => api.summary(id), refetchInterval: 12000,
   });
+  // Separate from summary — pure local filesystem check, no DB/agent round-trip, so
+  // the Save Location preview shows instantly even when summary's binlog/master/replica
+  // status queries are slow (e.g. the connection's agent is slow to respond).
+  const { data: storagePathData } = useQuery({
+    queryKey: ['bkpStoragePath', id], queryFn: () => api.storagePath(id), staleTime: 60000,
+  });
   const { data: bkpData, refetch: refetchBkps } = useQuery({
     queryKey: ['bkpList', id], queryFn: () => api.listBackups(id), refetchInterval: 8000,
   });
 
   const backups    = bkpData?.data || [];
   const stats      = sumData?.backup_stats || {};
-  const storageDir = sumData?.storage_dir || '';
+  const storageDir = storagePathData?.storage_dir || sumData?.storage_dir || '';
   const binlogOn   = !!sumData?.binlog_enabled;
   const binlogBase = sumData?.binlog_basename || '';
   const masterSt   = sumData?.master_status || {};
@@ -461,8 +468,8 @@ function BackupsTab({ connId, backups, stats, storageDir, refetch, showToast, se
                         <td className="px-4 py-3 max-w-[180px]" onClick={e => e.stopPropagation()}>
                           {job.file_path ? (
                             <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-[11px] text-slate-700 truncate" title={job.file_path}>{fname(job.file_path)}</span>
-                              <CopyBtn text={job.file_path} />
+                              <span className="font-mono text-[11px] text-slate-700 truncate" title={job.file_path.startsWith('REMOTE:') ? `On DB host: ${job.file_path.slice(7)}` : job.file_path}>{fname(job.file_path)}</span>
+                              <CopyBtn text={job.file_path.startsWith('REMOTE:') ? job.file_path.slice(7) : job.file_path} />
                             </div>
                           ) : <span className="text-slate-300 text-[11px]">—</span>}
                         </td>
@@ -510,11 +517,15 @@ function BackupsTab({ connId, backups, stats, storageDir, refetch, showToast, se
                               </div>
                               <div className="bg-white rounded-xl border border-slate-200 p-4">
                                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3 flex items-center gap-1.5"><FolderOpen size={11} /> File Location</p>
-                                <p className="text-[10px] text-slate-400 mb-2">Full path on ACTMON server:</p>
+                                <p className="text-[10px] text-slate-400 mb-2">
+                                  {job.file_path?.startsWith('REMOTE:') ? 'Stored on the DB host (not copied to ACTMON):' : 'Full path on ACTMON server:'}
+                                </p>
                                 {job.file_path ? (
                                   <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
-                                    <code className="font-mono text-[10px] text-slate-700 break-all leading-relaxed flex-1">{job.file_path}</code>
-                                    <CopyBtn text={job.file_path} />
+                                    <code className="font-mono text-[10px] text-slate-700 break-all leading-relaxed flex-1">
+                                      {job.file_path.startsWith('REMOTE:') ? job.file_path.slice(7) : job.file_path}
+                                    </code>
+                                    <CopyBtn text={job.file_path.startsWith('REMOTE:') ? job.file_path.slice(7) : job.file_path} />
                                   </div>
                                 ) : <span className="text-slate-400 text-xs">No file saved yet</span>}
                                 <InfoRow label="Binlog File" value={job.binlog_file} mono />
@@ -599,32 +610,35 @@ function NewBackupTab({ connId, storageDir, refresh, showToast }) {
   };
 
   return (
-    <div className="max-w-3xl space-y-4">
+    <div className="space-y-4">
 
-      {/* Step 1 */}
+      {/* Step 1 — grid of the 3 backup types, not a stacked list */}
       <SectionCard title="Step 1 — Choose Backup Type" subtitle="Select the method that suits your database size and recovery needs" icon={Layers} iconColor="text-indigo-600">
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {Object.entries(BK_TYPES).map(([k, v]) => {
             const Icon = v.icon;
+            const selected = btype === k;
             return (
               <label key={k}
-                className={`flex gap-4 p-4 rounded-2xl border-2 cursor-pointer transition-all ${btype === k ? v.active + ' shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                <input type="radio" name="btype" value={k} checked={btype === k} onChange={() => setBtype(k)} className="sr-only" />
+                className={`relative flex flex-col gap-3 p-5 rounded-2xl border-2 cursor-pointer transition-all ${selected ? v.active + ' shadow-md' : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm'}`}>
+                <input type="radio" name="btype" value={k} checked={selected} onChange={() => setBtype(k)} className="sr-only" />
+                {selected && (
+                  <span className="absolute top-4 right-4 text-[10px] font-black text-white px-2 py-0.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600">✓ Selected</span>
+                )}
                 <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 bg-gradient-to-br ${v.g} shadow-sm`}>
                   <Icon size={19} className="text-white" />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap pr-14">
                     <span className="font-black text-slate-900 text-[14px]">{v.label}</span>
-                    <span className="text-[11px] text-slate-400">{v.sub}</span>
-                    {v.pitr && <span className="text-[10px] font-black bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full border border-teal-200">✓ Supports PITR</span>}
-                    {btype === k && <span className="ml-auto text-[10px] font-black text-white px-2 py-0.5 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600">✓ Selected</span>}
+                    {v.pitr && <span className="text-[10px] font-black bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full border border-teal-200">✓ PITR</span>}
                   </div>
-                  <p className="text-[12px] text-slate-500 mt-1">{v.desc}</p>
-                  <div className="mt-2 bg-slate-900 rounded-lg px-3 py-1.5 inline-flex items-center gap-2">
-                    <Terminal size={10} className="text-slate-400 flex-shrink-0" />
-                    <code className="text-[10px] text-green-400 font-mono">{v.cmd}</code>
-                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{v.sub}</p>
+                  <p className="text-[12px] text-slate-500 mt-2 leading-relaxed">{v.desc}</p>
+                </div>
+                <div className="mt-auto bg-slate-900 rounded-lg px-3 py-1.5 flex items-center gap-2 overflow-hidden">
+                  <Terminal size={10} className="text-slate-400 flex-shrink-0" />
+                  <code className="text-[10px] text-green-400 font-mono truncate">{v.cmd}</code>
                 </div>
               </label>
             );
@@ -632,40 +646,41 @@ function NewBackupTab({ connId, storageDir, refresh, showToast }) {
         </div>
       </SectionCard>
 
-      {/* Step 2 */}
-      <SectionCard title="Step 2 — Target Database" subtitle="Leave empty to back up ALL databases on the server" icon={Database} iconColor="text-blue-600">
-        <input value={dbName} onChange={e => setDbName(e.target.value)}
-          placeholder="e.g.  myapp_production    (leave empty = ALL databases)"
-          className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all bg-white" />
-        <p className="mt-2 text-[11px] text-slate-400">
-          {dbName.trim() ? `Will back up: "${dbName.trim()}"` : 'Will back up ALL databases (--all-databases)'}
-        </p>
-      </SectionCard>
+      {/* Steps 2 & 3 — simple fields, side by side to use the full width */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SectionCard title="Step 2 — Target Database" subtitle="Leave empty to back up ALL databases on the server" icon={Database} iconColor="text-blue-600">
+          <input value={dbName} onChange={e => setDbName(e.target.value)}
+            placeholder="e.g.  myapp_production    (leave empty = ALL databases)"
+            className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all bg-white" />
+          <p className="mt-2 text-[11px] text-slate-400">
+            {dbName.trim() ? `Will back up: "${dbName.trim()}"` : 'Will back up ALL databases (--all-databases)'}
+          </p>
+        </SectionCard>
 
-      {/* Step 3 — Save Location (custom path) */}
-      <SectionCard title="Step 3 — Save Location" subtitle="Backup file saved on this ACTMON server. Enter any custom path or leave blank for default." icon={FolderOpen} iconColor="text-orange-600">
-        <div className="relative mb-3">
-          <FolderOpen size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input value={customPath} onChange={e => setCustom(e.target.value)}
-            placeholder="Leave blank = default, or enter any path like  /mnt/backups/mysql  or  D:\Backups\MySQL"
-            className="w-full h-11 pl-10 pr-4 rounded-xl border-2 border-slate-200 text-[12px] font-mono outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all bg-white" />
-        </div>
-        <div className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-          <FolderOpen size={14} className="text-slate-400 flex-shrink-0 mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
-              {customPath.trim() ? '📂 Custom — backup will be saved to:' : '📂 Default — backup will be saved to:'}
-            </p>
-            <div className="flex items-center gap-2 mt-1">
-              <code className="text-[12px] text-slate-800 font-mono truncate">{effectivePath || '(loading…)'}</code>
-              {effectivePath && <CopyBtn text={effectivePath} />}
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">
-              Filename: <code className="font-mono">[uuid]_{btype}_{'{timestamp}'}{bt.ext}</code>
-            </p>
+        <SectionCard title="Step 3 — Save Location" subtitle="Backup file saved on this ACTMON server. Enter any custom path or leave blank for default." icon={FolderOpen} iconColor="text-orange-600">
+          <div className="relative mb-3">
+            <FolderOpen size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={customPath} onChange={e => setCustom(e.target.value)}
+              placeholder="Leave blank = default, or enter any path like  /mnt/backups/mysql  or  D:\Backups\MySQL"
+              className="w-full h-11 pl-10 pr-4 rounded-xl border-2 border-slate-200 text-[12px] font-mono outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all bg-white" />
           </div>
-        </div>
-      </SectionCard>
+          <div className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+            <FolderOpen size={14} className="text-slate-400 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                {customPath.trim() ? '📂 Custom — backup will be saved to:' : '📂 Default — backup will be saved to:'}
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <code className="text-[12px] text-slate-800 font-mono truncate">{effectivePath || '(loading…)'}</code>
+                {effectivePath && <CopyBtn text={effectivePath} />}
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Filename: <code className="font-mono">[uuid]_{btype}_{'{timestamp}'}{bt.ext}</code>
+              </p>
+            </div>
+          </div>
+        </SectionCard>
+      </div>
 
       {/* Step 4 */}
       <SectionCard title="Step 4 — Notes (Optional)" subtitle="Tag this backup for easy identification later" icon={BookOpen} iconColor="text-slate-400">
@@ -712,59 +727,65 @@ function RestoreTab({ connId, backups, refresh, showToast }) {
   };
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="space-y-4">
       <DangerBox title="⚠ Destructive — Read Before Proceeding"
         msg="This will OVERWRITE your target database with the selected backup. All changes after the backup timestamp will be permanently erased. Use PITR instead if you need minimal data loss." />
 
-      <SectionCard title="Select Backup to Restore" subtitle="Only completed logical backups can be directly restored" icon={FileArchive} iconColor="text-orange-600">
-        {logicalOk.length === 0 ? (
-          <div className="py-10 text-center">
-            <FileArchive size={32} className="mx-auto mb-3 text-slate-200" />
-            <p className="text-slate-500 font-semibold">No completed logical backups</p>
-            <p className="text-slate-400 text-sm mt-1">Take a logical backup first.</p>
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-            {logicalOk.map(b => (
-              <label key={b.id}
-                className={`flex gap-4 p-3.5 rounded-xl border-2 cursor-pointer transition-all ${Number(jobId) === b.id ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                <input type="radio" name="rjob" value={b.id} checked={Number(jobId) === b.id} onChange={e => setJobId(e.target.value)} className="mt-0.5 flex-shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-black text-slate-900">#{b.id}</span>
-                    {b.db_name && <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-lg">{b.db_name}</span>}
-                    <span className="text-[11px] text-slate-400">{b.size_human}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{fmt(b.backup_start)}</p>
-                  {b.binlog_file && <p className="text-[11px] font-mono text-violet-700 mt-1">📍 {b.binlog_file} @ pos {b.binlog_pos}</p>}
-                  <p className="text-[10px] font-mono text-slate-400 mt-0.5 truncate">{b.file_path}</p>
-                </div>
-              </label>
-            ))}
-          </div>
-        )}
-      </SectionCard>
-
-      <SectionCard title="Target Database (Optional)" subtitle="Specify to restore into a single database only" icon={Database} iconColor="text-blue-600">
-        <input value={target} onChange={e => setTarget(e.target.value)} placeholder="Leave empty = restore as originally dumped"
-          className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all bg-white" />
-      </SectionCard>
-
-      <label className="flex items-start gap-3 p-4 bg-red-50 border-2 border-red-200 rounded-2xl cursor-pointer hover:bg-red-100/60 transition-all">
-        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all ${confirm ? 'bg-red-600 border-red-600' : 'border-slate-400 bg-white'}`}>
-          {confirm && <CheckCheck size={11} className="text-white" />}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <div className="lg:col-span-2">
+          <SectionCard title="Select Backup to Restore" subtitle="Only completed logical backups can be directly restored" icon={FileArchive} iconColor="text-orange-600">
+            {logicalOk.length === 0 ? (
+              <div className="py-10 text-center">
+                <FileArchive size={32} className="mx-auto mb-3 text-slate-200" />
+                <p className="text-slate-500 font-semibold">No completed logical backups</p>
+                <p className="text-slate-400 text-sm mt-1">Take a logical backup first.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[420px] overflow-y-auto pr-1">
+                {logicalOk.map(b => (
+                  <label key={b.id}
+                    className={`flex gap-4 p-3.5 rounded-xl border-2 cursor-pointer transition-all ${Number(jobId) === b.id ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
+                    <input type="radio" name="rjob" value={b.id} checked={Number(jobId) === b.id} onChange={e => setJobId(e.target.value)} className="mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-slate-900">#{b.id}</span>
+                        {b.db_name && <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-lg">{b.db_name}</span>}
+                        <span className="text-[11px] text-slate-400">{b.size_human}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{fmt(b.backup_start)}</p>
+                      {b.binlog_file && <p className="text-[11px] font-mono text-violet-700 mt-1">📍 {b.binlog_file} @ pos {b.binlog_pos}</p>}
+                      <p className="text-[10px] font-mono text-slate-400 mt-0.5 truncate">{b.file_path}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+          </SectionCard>
         </div>
-        <input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} className="sr-only" />
-        <span className="text-[13px] text-red-700">I understand this will <strong>permanently overwrite existing data</strong> and cannot be undone.</span>
-      </label>
 
-      <ResultAlert r={result} />
+        <div className="space-y-4">
+          <SectionCard title="Target Database (Optional)" subtitle="Specify to restore into a single database only" icon={Database} iconColor="text-blue-600">
+            <input value={target} onChange={e => setTarget(e.target.value)} placeholder="Leave empty = restore as originally dumped"
+              className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 transition-all bg-white" />
+          </SectionCard>
 
-      <button onClick={go} disabled={loading || !confirm || !jobId}
-        className="flex items-center gap-2 h-12 px-8 rounded-xl font-black text-[14px] text-white shadow-lg disabled:opacity-50 transition-all bg-gradient-to-r from-orange-600 to-red-600 hover:shadow-xl hover:-translate-y-0.5 disabled:hover:translate-y-0">
-        {loading ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
-        {loading ? 'Restoring…' : 'Start Restore'}
-      </button>
+          <label className="flex items-start gap-3 p-4 bg-red-50 border-2 border-red-200 rounded-2xl cursor-pointer hover:bg-red-100/60 transition-all">
+            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all ${confirm ? 'bg-red-600 border-red-600' : 'border-slate-400 bg-white'}`}>
+              {confirm && <CheckCheck size={11} className="text-white" />}
+            </div>
+            <input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} className="sr-only" />
+            <span className="text-[13px] text-red-700">I understand this will <strong>permanently overwrite existing data</strong> and cannot be undone.</span>
+          </label>
+
+          <ResultAlert r={result} />
+
+          <button onClick={go} disabled={loading || !confirm || !jobId}
+            className="w-full flex items-center justify-center gap-2 h-12 px-8 rounded-xl font-black text-[14px] text-white shadow-lg disabled:opacity-50 transition-all bg-gradient-to-r from-orange-600 to-red-600 hover:shadow-xl hover:-translate-y-0.5 disabled:hover:translate-y-0">
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+            {loading ? 'Restoring…' : 'Start Restore'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -806,7 +827,7 @@ function PITRTab({ connId, backups, refresh, showToast }) {
   };
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="space-y-4">
 
       {/* explainer */}
       <div className="bg-white rounded-2xl border border-teal-200 shadow-sm overflow-hidden">
@@ -821,7 +842,7 @@ function PITRTab({ connId, backups, refresh, showToast }) {
               <p className="text-[11px] text-slate-400">Recover your database to any exact second in history</p>
             </div>
           </div>
-          <div className="space-y-3 pl-2">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             {[
               { n: 1, t: 'Choose a logical backup', d: 'Select any backup taken before the incident (e.g. 11:00 AM snapshot)' },
               { n: 2, t: 'Set target recovery time', d: 'Enter 1 second before the crash — e.g. crash at 11:15:00, set 11:14:59' },
@@ -851,7 +872,7 @@ function PITRTab({ connId, backups, refresh, showToast }) {
             <p className="text-slate-400 text-sm mt-1">Take a logical backup first — it captures the binlog position via <code className="font-mono text-xs">--master-data=2</code>.</p>
           </div>
         ) : (
-          <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
             {pitrBkps.map(b => (
               <label key={b.id}
                 className={`flex gap-4 p-3.5 rounded-xl border-2 cursor-pointer transition-all ${Number(baseId) === b.id ? 'border-teal-400 bg-teal-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
@@ -874,26 +895,28 @@ function PITRTab({ connId, backups, refresh, showToast }) {
         )}
       </SectionCard>
 
-      <SectionCard title="Step 2 — Target Recovery Time" subtitle="Set to 1 second BEFORE the incident to exclude the crash event" icon={Clock} iconColor="text-teal-600">
-        <input type="datetime-local" step="1" value={dt.replace(' ', 'T')}
-          onChange={e => { setDt(e.target.value.replace('T', ' ')); setPreview(null); }}
-          className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100 transition-all bg-white" />
-        {dt ? (
-          <div className="mt-3 flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-xl px-4 py-2.5">
-            <CheckCircle2 size={14} className="text-teal-600 flex-shrink-0" />
-            <p className="text-[12px] font-bold text-teal-700">Will recover to: <code className="font-mono text-[13px]">{dtFmt}</code></p>
-          </div>
-        ) : (
-          <p className="mt-2 text-[12px] text-slate-400">
-            Example: crash at <code className="font-mono text-xs bg-slate-100 px-1 rounded">11:15:00</code> → enter <code className="font-mono text-xs bg-teal-100 text-teal-700 px-1 rounded">11:14:59</code>
-          </p>
-        )}
-      </SectionCard>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SectionCard title="Step 2 — Target Recovery Time" subtitle="Set to 1 second BEFORE the incident to exclude the crash event" icon={Clock} iconColor="text-teal-600">
+          <input type="datetime-local" step="1" value={dt.replace(' ', 'T')}
+            onChange={e => { setDt(e.target.value.replace('T', ' ')); setPreview(null); }}
+            className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-teal-400 focus:ring-2 focus:ring-teal-100 transition-all bg-white" />
+          {dt ? (
+            <div className="mt-3 flex items-center gap-2 bg-teal-50 border border-teal-200 rounded-xl px-4 py-2.5">
+              <CheckCircle2 size={14} className="text-teal-600 flex-shrink-0" />
+              <p className="text-[12px] font-bold text-teal-700">Will recover to: <code className="font-mono text-[13px]">{dtFmt}</code></p>
+            </div>
+          ) : (
+            <p className="mt-2 text-[12px] text-slate-400">
+              Example: crash at <code className="font-mono text-xs bg-slate-100 px-1 rounded">11:15:00</code> → enter <code className="font-mono text-xs bg-teal-100 text-teal-700 px-1 rounded">11:14:59</code>
+            </p>
+          )}
+        </SectionCard>
 
-      <SectionCard title="Step 3 — Target Database (Optional)" subtitle="Leave empty to recover all databases" icon={Database} iconColor="text-blue-600">
-        <input value={targetDb} onChange={e => setTDb(e.target.value)} placeholder="Leave empty = recover all databases"
-          className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-teal-400 transition-all bg-white" />
-      </SectionCard>
+        <SectionCard title="Step 3 — Target Database (Optional)" subtitle="Leave empty to recover all databases" icon={Database} iconColor="text-blue-600">
+          <input value={targetDb} onChange={e => setTDb(e.target.value)} placeholder="Leave empty = recover all databases"
+            className="w-full h-11 rounded-xl border-2 border-slate-200 px-4 text-[13px] outline-none focus:border-teal-400 transition-all bg-white" />
+        </SectionCard>
+      </div>
 
       <button onClick={doPreview} disabled={!baseId || !dt || prevLoad}
         className="flex items-center gap-2 h-10 px-5 rounded-xl border-2 border-teal-300 text-teal-700 text-[13px] font-bold bg-white hover:bg-teal-50 disabled:opacity-40 transition-all">
@@ -970,7 +993,7 @@ function BinlogsTab({ connId, binlogOn, binlogBase, masterSt, masterErr }) {
     queryKey: ['binlogSt', connId], queryFn: () => api.binlogStatus(connId), refetchInterval: 15000,
   });
 
-  const logs    = logsData?.data || [];
+  const logs    = [...(logsData?.data || [])].reverse(); // newest binlog first
   const logErr  = (logsData?.status === 'error' || logsData?.status === 'disabled') ? logsData.error : null;
   const logBase = logsData?.binlog_basename || binlogBase || '';
   const vars    = stData?.variables || {};

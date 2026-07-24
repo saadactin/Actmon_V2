@@ -17,7 +17,9 @@ import {
   AreaChart, Area,
 } from 'recharts';
 import client from '../../api/client';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 import HostResources from './PgHostResources';
+import Gauge from '../../components/gauges/Gauge';
 
 // Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
 const PostgreSQLBackupPageEmbedded = React.lazy(() => import('./PostgreSQLBackupPage'));
@@ -201,6 +203,7 @@ export default function PostgreSQLDashboard() {
   const DB_COLORS = [C.pg, C.indigo, C.green, C.orange, C.purple, C.cyan, C.yellow, C.red];
 
   return (
+    <DashboardScopeProvider tech="postgresql">
     <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9] flex flex-col">
 
       {/* ════════ HEADER ════════ */}
@@ -355,25 +358,23 @@ export default function PostgreSQLDashboard() {
 
             {/* gauges */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-              <GaugeCard title="Connection Pool"  pct={connPct}
+              <Gauge label="Connection Pool"  pct={connPct}
                 sub={`${totalConns} / ${maxConns} max`}
-                drillHint="Sessions & users" onClick={()=>setActiveTab('users')}
+                onClick={()=>setActiveTab('users')}
                 colorFn={v => v>80 ? C.red : v>60 ? C.orange : C.pg} />
-              <GaugeCard title="Buffer Cache Hit" pct={cachePct}
+              <Gauge label="Buffer Cache Hit" pct={cachePct}
                 sub="Shared buffers efficiency"
-                drillHint="Tables & cache" onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }}
+                onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }}
                 colorFn={v => v<70 ? C.red : v<85 ? C.orange : C.green} />
-              <GaugeCard title="Active Sessions"
+              <Gauge label="Active Sessions"
                 pct={Math.min(100,Math.round((activeSess/Math.max(maxConns,1))*100))}
-                centerLabel={activeSess} centerUnit=" active"
-                sub={`${totalConns} total · ${maxConns} max`}
-                drillHint="Live sessions" onClick={()=>setActiveTab('locks')}
+                sub={`${activeSess} active · ${totalConns} total · ${maxConns} max`}
+                onClick={()=>setActiveTab('locks')}
                 colorFn={v => v>50 ? C.orange : C.indigo} />
-              <GaugeCard title="Rollback Rate"
+              <Gauge label="Rollback Rate"
                 pct={Math.min(100,rollbackPct*10)}
-                centerLabel={`${rollbackPct}`} centerUnit="%"
-                sub={`${fmtNum(rollbacks)} rollbacks / ${fmtNum(commits+rollbacks)} total`}
-                drillHint="Query activity" onClick={()=>setActiveTab('queries')}
+                sub={`${rollbackPct}% · ${fmtNum(rollbacks)} rollbacks / ${fmtNum(commits+rollbacks)} total`}
+                onClick={()=>setActiveTab('queries')}
                 colorFn={v => v>30 ? C.red : v>5 ? C.orange : C.green} />
             </div>
 
@@ -815,6 +816,7 @@ export default function PostgreSQLDashboard() {
 
       </div>
     </div>
+    </DashboardScopeProvider>
   );
 }
 
@@ -897,41 +899,6 @@ function SBadge({ ok, label, onClick }) {
       {label}
       {clickable && <ChevronRight size={11} className="opacity-60" />}
     </span>
-  );
-}
-
-/* SVG semi-circle gauge */
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit='%', colorFn, onClick, drillHint }) {
-  const safePct = Math.max(0, Math.min(100, pct || 0));
-  const fill    = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.pg);
-  const display = centerLabel !== undefined ? centerLabel : safePct;
-  const unit    = centerLabel !== undefined ? centerUnit : '%';
-  const R = 52, cx = 75, cy = 80;
-  const angle = (safePct / 100) * Math.PI;
-  const ex    = cx - R * Math.cos(angle);
-  const ey    = cy - R * Math.sin(angle);
-  const large = safePct > 50 ? 1 : 0;
-  const trackD = `M ${cx-R} ${cy} A ${R} ${R} 0 0 1 ${cx+R} ${cy}`;
-  const fillD  = safePct < 1 ? '' : `M ${cx-R} ${cy} A ${R} ${R} 0 ${large} 1 ${ex} ${ey}`;
-  const clickable = typeof onClick === 'function';
-  return (
-    <div onClick={onClick} role={clickable ? 'button' : undefined}
-      className={`group bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center transition-all ${clickable ? 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5' : ''}`}
-      title={clickable ? `Open ${drillHint || title}` : undefined}>
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <svg width="150" height="88" viewBox="0 0 150 88">
-        <path d={trackD} fill="none" stroke="#e2e8f0" strokeWidth="13" strokeLinecap="round"/>
-        {fillD && <path d={fillD} fill="none" stroke={fill} strokeWidth="13" strokeLinecap="round"/>}
-        <text x="75" y="74" textAnchor="middle" style={{ fontWeight:900, fontSize:20, fill:'#1e293b' }}>{display}</text>
-        <text x="75" y="85" textAnchor="middle" style={{ fontSize:10, fill:'#94a3b8' }}>{unit}</text>
-      </svg>
-      <p className="text-[10px] text-slate-400 mt-1 text-center leading-tight">{sub}</p>
-      {clickable && (
-        <p className="text-[9px] text-slate-300 group-hover:text-indigo-500 font-bold uppercase tracking-wide mt-1.5 flex items-center gap-0.5 transition-colors">
-          {drillHint || 'Details'} <ChevronRight size={10} />
-        </p>
-      )}
-    </div>
   );
 }
 

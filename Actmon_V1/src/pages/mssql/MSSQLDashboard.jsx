@@ -20,6 +20,8 @@ import {
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
 import { mssqlTableDetail } from '../../api/drilldown';
+import Gauge from '../../components/gauges/Gauge';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 // Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
 const MSSQLBackupPageEmbedded = React.lazy(() => import('./MSSQLBackupPage'));
@@ -181,6 +183,7 @@ export default function MSSQLDashboard() {
   };
 
   return (
+    <DashboardScopeProvider tech="mssql">
     <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── TOP HEADER ─── */}
@@ -295,32 +298,32 @@ export default function MSSQLDashboard() {
 
               {/* ── Row 3: Gauges ── */}
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                <GaugeCard
-                  title="Connection Pool"
+                <Gauge
+                  label="Connection Pool"
                   pct={connPct}
                   sub={`${sessions.active || 0} active / ${fmtNum(health_summary.max_connections || sessions.max || 32767)} max${health_summary.max_connections_unlimited ? ' (unlimited)' : ''}`}
                   onClick={()=>setActiveTab('users')}
                   colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.msBlue}
                 />
-                <GaugeCard
-                  title="Buffer Cache Hit%"
+                <Gauge
+                  label="Buffer Cache Hit%"
                   pct={cachePct}
                   sub="Pages served from buffer pool"
-                  drillHint="Cache & performance" onClick={()=>setActiveTab('performance')}
+                  onClick={()=>setActiveTab('performance')}
                   colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green}
                 />
-                <GaugeCard
-                  title="CPU Usage"
+                <Gauge
+                  label="CPU Usage"
                   pct={Number(cpu.host_cpu_pct) || 0}
                   sub={`of 100% · SQL Server ${Number(cpu.sql_server_cpu_pct) || 0}% · Other ${Number(cpu.other_cpu_pct) || 0}%`}
-                  drillHint="CPU & performance" onClick={()=>setActiveTab('performance')}
+                  onClick={()=>setActiveTab('performance')}
                   colorFn={v => v > 85 ? C.red : v > 65 ? C.orange : C.teal}
                 />
-                <GaugeCard
-                  title="Memory Usage (Host RAM)"
+                <Gauge
+                  label="Memory Usage (Host RAM)"
                   pct={memPct}
                   sub={`${fmtNum(memory.host_used_mb ?? memory.used_mb ?? 0)} MB used of ${fmtNum(memory.host_total_mb ?? memory.total_mb ?? 0)} MB`}
-                  drillHint="Memory & performance" onClick={()=>setActiveTab('performance')}
+                  onClick={()=>setActiveTab('performance')}
                   colorFn={v => v > 90 ? C.red : v > 75 ? C.orange : C.indigo}
                 />
               </div>
@@ -1251,6 +1254,7 @@ export default function MSSQLDashboard() {
 
       {tableDetail && <TableDetailModal td={tableDetail} onClose={() => setTableDetail(null)} />}
     </div>
+    </DashboardScopeProvider>
   );
 }
 
@@ -1492,39 +1496,6 @@ function HeartbeatCard({ label, value, warn }) {
     <div className={`rounded-xl border p-4 ${warn ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'}`}>
       <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">{label}</p>
       <p className={`font-black text-lg ${warn ? 'text-red-700' : 'text-blue-700'}`}>{String(value)}</p>
-    </div>
-  );
-}
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn, onClick, drillHint }) {
-  const safePct       = Math.max(0, Math.min(100, pct || 0));
-  const fill          = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.msBlue);
-  const displayCenter = centerLabel !== undefined ? centerLabel : safePct;
-  const displayUnit   = centerLabel !== undefined ? centerUnit : '%';
-  const clickable     = typeof onClick === 'function';
-  return (
-    <div onClick={onClick} role={clickable ? 'button' : undefined}
-      className={`group bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center transition-all ${clickable ? 'cursor-pointer hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5' : ''}`}
-      title={clickable ? `Open ${drillHint || title}` : undefined}>
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <div className="relative flex flex-col items-center">
-        <PieChart width={150} height={90}>
-          <Pie
-            data={[{ v: safePct }, { v: 100 - safePct }]}
-            cx={75} cy={86}
-            startAngle={180} endAngle={0}
-            innerRadius={50} outerRadius={68}
-            dataKey="v" stroke="none"
-          >
-            <Cell fill={fill} />
-            <Cell fill="#e2e8f0" />
-          </Pie>
-        </PieChart>
-        <div style={{ marginTop: '-38px' }} className="text-center pointer-events-none">
-          <p className="text-xl font-black text-slate-900 leading-none">{displayCenter}</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">{displayUnit}</p>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-400 mt-2 text-center leading-tight">{sub}</p>
     </div>
   );
 }

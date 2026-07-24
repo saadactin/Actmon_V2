@@ -18,6 +18,10 @@ import {
 } from 'recharts';
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
+import OracleLiveQueriesPanel from './OracleLiveQueriesPanel';
+import Gauge from '../../components/gauges/Gauge';
+import TrendChart from '../../components/gauges/TrendChart';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 /* ─── palette ─── */
 const C = {
@@ -50,7 +54,6 @@ const fetchDataGuard   = (id) => client.get(`/connections/oracle/${id}/oracle-da
 const fetchProcesses   = (id) => client.get(`/connections/oracle/${id}/oracle-processes`).then(r => r.data);
 const fetchSysStats    = (id) => client.get(`/connections/oracle/${id}/oracle-system-stats`).then(r => r.data);
 const fetchSlowQueries  = (id) => client.get(`/connections/oracle/${id}/oracle-slow-queries`).then(r => r.data);
-const fetchLiveQueries  = (id) => client.get(`/connections/oracle/${id}/oracle-live-queries`).then(r => r.data);
 const fetchLocks        = (id) => client.get(`/connections/oracle/${id}/oracle-locks`).then(r => r.data);
 const fetchParameters   = (id) => client.get(`/connections/oracle/${id}/oracle-parameters`).then(r => r.data);
 const fetchSchemaTables = (id, owner) => client.get(`/connections/oracle/${id}/oracle-schema-tables${owner ? `?owner=${owner}` : ''}`).then(r => r.data);
@@ -84,13 +87,12 @@ export default function OracleDashboard() {
   const setActiveTab = (t) =>
     navigate(`/oracle-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
   const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
-  const [sparklines, setSparklines]   = useState({ sessions: [], bufHit: [], pga: [] });
+  const [sparklines, setSparklines]   = useState({ sessions: [], bufHit: [], pga: [], libHit: [] });
   const [sqlSearch, setSqlSearch]           = useState('');
   const [userSearch, setUserSearch]         = useState('');
   const [statSearch, setStatSearch]         = useState('');
   const [paramSearch, setParamSearch]       = useState('');
   const [expandedSql, setExpandedSql]       = useState(null);
-  const [expandedLive, setExpandedLive]     = useState(null);
   const [expandedSess, setExpandedSess]     = useState(null);
   const [expandedTs, setExpandedTs]         = useState(null);
   const [expandedUser, setExpandedUser]     = useState(null);
@@ -123,7 +125,6 @@ export default function OracleDashboard() {
   const { data: procData,   isLoading: procLoading }   = useQuery({ queryKey: ['oracleProcs', id],  queryFn: () => fetchProcesses(id),   retry: false, refetchInterval: 15000, enabled: activeTab === 'processes' });
   const { data: sysStatData, isLoading: sysStatLoading } = useQuery({ queryKey: ['oracleSysStat', id], queryFn: () => fetchSysStats(id), retry: false, refetchInterval: 30000, enabled: activeTab === 'systemstats' });
   const { data: slowData,   isLoading: slowLoading }   = useQuery({ queryKey: ['oracleSlowSql', id],  queryFn: () => fetchSlowQueries(id),  retry: false, refetchInterval: 30000, enabled: activeTab === 'slowqueries' });
-  const { data: liveData,   isLoading: liveLoading }   = useQuery({ queryKey: ['oracleLive', id],     queryFn: () => fetchLiveQueries(id),  retry: false, refetchInterval: 5000,  enabled: activeTab === 'liveQueries' });
   const { data: lockData,   isLoading: lockLoading }   = useQuery({ queryKey: ['oracleLocks', id],    queryFn: () => fetchLocks(id),        retry: false, refetchInterval: 10000, enabled: activeTab === 'locks' });
   const { data: paramData,  isLoading: paramLoading }  = useQuery({ queryKey: ['oracleParams', id],   queryFn: () => fetchParameters(id),   retry: false, staleTime: 120000,      enabled: activeTab === 'parameters' });
   const { data: schemaData, isLoading: schemaLoading } = useQuery({ queryKey: ['oracleSchemaTables', id, schemaOwner], queryFn: () => fetchSchemaTables(id, schemaOwner), retry: false, staleTime: 60000, enabled: activeTab === 'schemabrowser' });
@@ -145,10 +146,13 @@ export default function OracleDashboard() {
     const sessCount = Number(hs.active_sessions) || 0;
     const bufHit    = Number(hs.buffer_cache_hit_pct) || 0;
     const pgaUsed   = Number(hs.pga_used_pct) || 0;
+    const libHit    = Number(hs.library_cache_hit_pct) || 0;
+    const now = new Date().toLocaleTimeString();
     setSparklines(prev => ({
-      sessions: [...prev.sessions.slice(-20), { t: new Date().toLocaleTimeString(), v: sessCount }],
-      bufHit:   [...prev.bufHit.slice(-20),   { t: new Date().toLocaleTimeString(), v: bufHit }],
-      pga:      [...prev.pga.slice(-20),       { t: new Date().toLocaleTimeString(), v: pgaUsed }],
+      sessions: [...prev.sessions.slice(-20), { t: now, v: sessCount }],
+      bufHit:   [...prev.bufHit.slice(-20),   { t: now, v: bufHit }],
+      pga:      [...prev.pga.slice(-20),       { t: now, v: pgaUsed }],
+      libHit:   [...prev.libHit.slice(-20),   { t: now, v: libHit }],
     }));
   }, [data]);
 
@@ -177,7 +181,6 @@ export default function OracleDashboard() {
     health_summary = {},
     tablespaces   = [],
     wait_events   = [],
-    top_sql       = [],
     redo_logs     = [],
   } = data || {};
 
@@ -206,6 +209,7 @@ export default function OracleDashboard() {
   const POOL_COLORS = [C.red, C.orange, C.amber, C.blue, C.purple, C.teal, C.green, C.cyan];
 
   return (
+    <DashboardScopeProvider tech="oracle">
     <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9] flex flex-col">
 
       {/* ─── DRILL MODAL ─── */}
@@ -249,7 +253,6 @@ export default function OracleDashboard() {
               { to: `/oracle-dashboard/${id}/error-logs`,     label: 'Error Logs' },
               { to: `/oracle-dashboard/${id}/index-analysis`, label: 'Index Analysis' },
               { to: `/oracle-dashboard/${id}/reports`,        label: '📊 Reports' },
-              { to: `/oracle-dashboard/${id}/live-queries`,   label: '⚡ Live Queries' },
             ].map(({ to, label }) => (
               <Link key={to} to={to}
                 className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all"
@@ -278,7 +281,7 @@ export default function OracleDashboard() {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (
-              <button key={tab.id} onClick={() => tab.id === 'liveQueries' ? navigate(`/oracle-dashboard/${id}/live-queries`) : setActiveTab(tab.id)}
+              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                 className="relative flex items-center gap-2 px-4 py-3 text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0"
                 style={active ? {
                   background: '#f1f5f9',
@@ -358,40 +361,35 @@ export default function OracleDashboard() {
             {/* Host Resources drill-down */}
             <HostResources connId={id} tech="oracle" />
 
-            {/* Status health bar */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest">System Health</h3>
-                <span className={`text-[10px] font-black px-2.5 py-1 rounded-full ${healthScore >= 80 ? 'bg-green-100 text-green-700' : healthScore >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                  Score {healthScore}/100
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <StatusBadge ok={hs.status === 'OPEN'}      label={`DB: ${hs.status || '—'}`} />
-                <StatusBadge ok={hostCpuPct < 85}           label={`CPU ${hostCpuPct}%`} />
-                <StatusBadge ok={sessionPct < 80}           label={`Sessions ${sessionPct}%`} />
-                <StatusBadge ok={bufHitPct >= 90}           label={`Buffer Hit ${bufHitPct}%`} />
-                <StatusBadge ok={libHitPct >= 95}           label={`Library Cache ${libHitPct}%`} />
-                <StatusBadge ok={maxTsPct < 85}             label={`Max Tablespace ${maxTsPct}%`} />
-                {hs.log_mode && <StatusBadge ok={hs.log_mode === 'ARCHIVELOG'} label={`Log: ${hs.log_mode}`} />}
-              </div>
-            </div>
+            {/* System Health — Grafana-style score tile + cache-hit trend + status tiles */}
+            <SystemHealthPanel
+              healthScore={healthScore}
+              hs={hs}
+              hostCpuPct={hostCpuPct}
+              sessionPct={sessionPct}
+              totalSess={totalSess}
+              maxSess={maxSess}
+              bufHitPct={bufHitPct}
+              libHitPct={libHitPct}
+              maxTsPct={maxTsPct}
+              sparklines={sparklines}
+            />
 
             {/* Gauges */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-              <GaugeCard title="CPU Usage" pct={hostCpuPct}
+              <Gauge label="CPU Usage" pct={hostCpuPct}
                 sub={`of 100% · ${cpuCount || cpuCores || '?'} CPU${(cpuCount||cpuCores)===1?'':'s'}${physMemMb ? ` · ${fmtNum(physMemMb)} MB RAM` : ''}`}
                 colorFn={v => v > 85 ? C.red : v > 65 ? C.orange : C.green} />
-              <GaugeCard title="Sessions %" pct={sessionPct}
+              <Gauge label="Sessions %" pct={sessionPct}
                 sub={`${totalSess} total / ${maxSess} max`}
                 colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.green} />
-              <GaugeCard title="SGA Used %" pct={sgaUsedPct}
+              <Gauge label="SGA Used %" pct={sgaUsedPct}
                 sub={`${fmtNum(sgaMb)} MB of ${fmtNum(sgaTargetMb)} MB target`}
                 colorFn={v => v > 90 ? C.red : v > 75 ? C.orange : C.teal} />
-              <GaugeCard title="Buffer Cache Hit" pct={bufHitPct}
+              <Gauge label="Buffer Cache Hit" pct={bufHitPct}
                 sub="Logical read efficiency"
                 colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green} />
-              <GaugeCard title="PGA Used %" pct={pgaUsedPct}
+              <Gauge label="PGA Used %" pct={pgaUsedPct}
                 sub={`${fmtNum(pgaMb)} MB of ${fmtNum(pgaTargetMb)} MB target`}
                 colorFn={v => v > 90 ? C.red : v > 75 ? C.orange : C.purple} />
             </div>
@@ -461,54 +459,6 @@ export default function OracleDashboard() {
                 <Row label="Library Cache Hit%" value={`${libHitPct}%`} />
               </Panel>
             </div>
-
-            {/* Top SQL table */}
-            <Panel title={`Top SQL by Elapsed Time (${top_sql.length}) — click row for full SQL`} accent="orange">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50 sticky top-0">
-                    <tr>
-                      {['SQL ID','Executions','Elapsed (ms)','CPU (ms)','Buf Gets','Disk Reads','Rows','Avg ms','SQL Text'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {top_sql.slice(0, 10).map((s, i) => (
-                      <tr key={i} onClick={() => setDrillModal({ title: `SQL: ${s.sql_id}`, subtitle: `Executions: ${fmtNum(s.executions)} · Avg: ${fmtNum(s.avg_elapsed_ms)} ms`, content: (
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-2 gap-2">
-                            {[['SQL ID',s.sql_id],['Executions',fmtNum(s.executions)],['Elapsed (ms)',fmtNum(s.elapsed_ms)],['CPU (ms)',fmtNum(s.cpu_ms)],['Buf Gets',fmtNum(s.buffer_gets)],['Disk Reads',fmtNum(s.disk_reads)],['Rows Processed',fmtNum(s.rows_processed)],['Avg Elapsed (ms)',fmtNum(s.avg_elapsed_ms)]].map(([l,v])=>(
-                              <div key={l} className="bg-slate-50 rounded-lg p-2 border border-slate-100"><p className="text-[10px] text-slate-400 uppercase font-bold">{l}</p><p className="font-black text-slate-800 text-sm mt-0.5">{v}</p></div>
-                            ))}
-                          </div>
-                          <div>
-                            <div className="flex items-center justify-between mb-2"><p className="text-xs font-bold text-slate-500 uppercase">Full SQL</p>
-                              <button onClick={()=>navigator.clipboard.writeText(s.sql_fulltext||s.sql_text||'')} className="flex items-center gap-1 px-2 py-1 bg-slate-800 text-white rounded text-[10px] hover:bg-slate-700"><Copy size={9}/> Copy</button>
-                            </div>
-                            <pre className="bg-slate-900 rounded-xl p-4 font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all max-h-64 overflow-y-auto">{s.sql_fulltext||s.sql_text||'—'}</pre>
-                          </div>
-                        </div>
-                      )})}
-                        className={`border-t border-slate-100 hover:bg-red-50/30 cursor-pointer ${s.avg_elapsed_ms > 1000 ? 'bg-red-50/40' : ''}`}>
-                        <td className="px-3 py-2.5 font-mono text-[10px] text-red-700">{s.sql_id || '—'}</td>
-                        <td className="px-3 py-2.5 font-bold text-slate-800">{fmtNum(s.executions)}</td>
-                        <td className={`px-3 py-2.5 font-bold text-sm ${s.elapsed_ms > 5000 ? 'text-red-600' : s.elapsed_ms > 1000 ? 'text-orange-600' : 'text-slate-700'}`}>{fmtNum(s.elapsed_ms)}</td>
-                        <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(s.cpu_ms)}</td>
-                        <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(s.buffer_gets)}</td>
-                        <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(s.disk_reads)}</td>
-                        <td className="px-3 py-2.5 font-mono text-xs">{fmtNum(s.rows_processed)}</td>
-                        <td className={`px-3 py-2.5 font-bold text-xs ${s.avg_elapsed_ms > 1000 ? 'text-red-600' : s.avg_elapsed_ms > 200 ? 'text-orange-600' : 'text-green-600'}`}>{fmtNum(s.avg_elapsed_ms)}</td>
-                        <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[200px] truncate flex items-center gap-1">{(s.sql_text || '').slice(0, 80) || '—'}<ChevronRight size={10} className="text-slate-300 flex-shrink-0"/></td>
-                      </tr>
-                    ))}
-                    {top_sql.length === 0 && (
-                      <tr><td colSpan={9} className="text-center py-8 text-slate-400">No SQL data</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </Panel>
 
           </div>
         )}
@@ -1584,97 +1534,7 @@ export default function OracleDashboard() {
         )}
 
         {/* ══ LIVE QUERIES ══════════════════════════════════════════ */}
-        {activeTab === 'liveQueries' && (
-          liveLoading && !liveData ? <TabLoader /> : (() => {
-            const queries = liveData?.queries || [];
-            const activeCount = queries.filter(q => q.status === 'ACTIVE').length;
-            return (
-              <div className="space-y-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="relative flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
-                      </span>
-                      <span className="text-sm font-bold text-red-700">LIVE — auto-refresh 5s</span>
-                    </div>
-                    <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-black">{activeCount} ACTIVE</span>
-                  </div>
-                  {liveLoading && <Loader2 size={14} className="animate-spin text-slate-400" />}
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <MetricKpi title="Total Sessions"  value={queries.length}                                    accent="blue" />
-                  <MetricKpi title="Active"          value={activeCount}                                       accent={activeCount > 0 ? 'red' : 'green'} />
-                  <MetricKpi title="Waiting"         value={queries.filter(q => q.wait_event).length}         accent={queries.filter(q => q.wait_event).length > 5 ? 'orange' : 'slate'} />
-                  <MetricKpi title="Max Wait (s)"    value={Math.max(0, ...queries.map(q => Number(q.seconds_in_wait) || 0))} accent="orange" />
-                </div>
-
-                <Panel title={`Active Sessions with SQL (${queries.length})`}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 sticky top-0">
-                        <tr>
-                          {['','SID','Username','Status','SQL ID','Wait Event','Wait (s)','Machine','SQL Text'].map(h => (
-                            <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {queries.map((q, i) => (
-                          <React.Fragment key={i}>
-                            <tr className={`border-t border-slate-100 hover:bg-red-50/30 cursor-pointer ${i % 2 === 1 ? 'bg-slate-50/30' : ''} ${q.status === 'ACTIVE' ? 'border-l-2 border-l-red-400' : ''}`}
-                              onClick={() => setExpandedLive(expandedLive === i ? null : i)}>
-                              <td className="px-2 py-2.5 text-slate-300">
-                                {expandedLive === i ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                              </td>
-                              <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{q.sid}</td>
-                              <td className="px-3 py-2.5 font-bold text-red-700 text-xs">{q.username || '—'}</td>
-                              <td className="px-3 py-2.5">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${q.status === 'ACTIVE' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>{q.status || '—'}</span>
-                              </td>
-                              <td className="px-3 py-2.5 font-mono text-[10px] text-red-600">{q.sql_id || '—'}</td>
-                              <td className="px-3 py-2.5 text-[10px] text-orange-600 max-w-[120px] truncate">{q.wait_event || '—'}</td>
-                              <td className={`px-3 py-2.5 font-bold text-xs ${Number(q.seconds_in_wait) > 60 ? 'text-red-600' : Number(q.seconds_in_wait) > 10 ? 'text-orange-600' : 'text-slate-600'}`}>{q.seconds_in_wait || 0}</td>
-                              <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{q.machine || '—'}</td>
-                              <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[200px] truncate">{(q.sql_text || '').slice(0, 80) || '—'}</td>
-                            </tr>
-                            {expandedLive === i && (
-                              <tr className="border-t border-red-100 bg-slate-900">
-                                <td colSpan={9} className="px-4 py-3">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="text-[10px] font-bold text-slate-400 uppercase">Full SQL — SID {q.sid} · {q.username}</span>
-                                    <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(q.sql_fulltext || q.sql_text || ''); }}
-                                      className="flex items-center gap-1 h-6 px-2 rounded bg-slate-700 text-[10px] text-slate-300 hover:bg-slate-600">
-                                      <Copy size={9} /> Copy
-                                    </button>
-                                  </div>
-                                  <pre className="font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-                                    {q.sql_fulltext || q.sql_text || '—'}
-                                  </pre>
-                                  <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-slate-400">
-                                    {q.serial_number && <span>Serial# {q.serial_number}</span>}
-                                    {q.program && <span>Program: {q.program}</span>}
-                                    {q.module && <span>Module: {q.module}</span>}
-                                    {q.logon_time && <span>Logon: {q.logon_time}</span>}
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        ))}
-                        {queries.length === 0 && (
-                          <tr><td colSpan={9} className="text-center py-12 text-slate-400">No active sessions with SQL</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </Panel>
-              </div>
-            );
-          })()
-        )}
+        {activeTab === 'liveQueries' && <OracleLiveQueriesPanel connId={id} />}
 
         {/* ══ SCHEMA / TABLE BROWSER ════════════════════════════════ */}
         {activeTab === 'schemabrowser' && (
@@ -2005,6 +1865,7 @@ export default function OracleDashboard() {
 
       </div>
     </div>
+    </DashboardScopeProvider>
   );
 }
 
@@ -2138,13 +1999,90 @@ function SessionDetailTable({ sessions = [] }) {
   );
 }
 
-function StatusBadge({ ok, label }) {
+/* System Health — a Grafana-style health-score stat tile + a cache-hit-ratio
+   time-series panel + a row of status stat tiles. Only 5 vitals are surfaced
+   here (DB Status, Sessions, Buffer Hit, Library Cache, Archive Log) — CPU
+   already has its own ring gauge in Host Resources above, and Tablespace has
+   its own KPI card + drill-down, so neither is duplicated here. */
+function SystemHealthPanel({ healthScore, hs, sessionPct, totalSess, maxSess, bufHitPct, libHitPct, sparklines }) {
+  const scoreColor = healthScore >= 80 ? C.green : healthScore >= 60 ? C.amber : C.red;
+  const scoreLabel = healthScore >= 80 ? 'Healthy' : healthScore >= 60 ? 'Degraded' : 'Critical';
+
+  const trend = sparklines.bufHit.map((p, i) => ({
+    t: p.t,
+    bufHit: p.v,
+    libHit: sparklines.libHit[i]?.v ?? null,
+  }));
+
+  const tiles = [
+    { label: 'DB Status',      value: hs.status || '—',    status: hs.status === 'OPEN' ? 'good' : 'crit',
+      sub: hs.status === 'OPEN' ? 'read-write' : 'not open' },
+    { label: 'Sessions',       value: totalSess,           status: sessionPct < 80 ? 'good' : sessionPct < 95 ? 'warn' : 'crit',
+      sub: `of ${maxSess} max` },
+    { label: 'Buffer Hit',     value: `${bufHitPct}%`,     status: bufHitPct >= 90 ? 'good' : bufHitPct >= 80 ? 'warn' : 'crit',
+      sub: 'logical read eff.' },
+    { label: 'Library Cache',  value: `${libHitPct}%`,     status: libHitPct >= 95 ? 'good' : libHitPct >= 90 ? 'warn' : 'crit',
+      sub: libHitPct >= 95 ? 'on target' : 'below 95% target' },
+    { label: 'Archive Log',    value: hs.log_mode || '—',  status: hs.log_mode === 'ARCHIVELOG' ? 'good' : 'crit',
+      sub: hs.log_mode === 'ARCHIVELOG' ? 'point-in-time recovery on' : 'no PITR' },
+  ];
+  const colorOf = (s) => (s === 'good' ? C.green : s === 'warn' ? C.amber : C.red);
+
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
-      ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-      {ok ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
-      {label}
-    </span>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest">System Health</h3>
+        <span className="text-[10px] text-slate-400 font-semibold">5 vitals · live</span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-3 mb-3">
+        {/* Health score tile */}
+        <div className="rounded-xl border border-slate-200 p-4 flex flex-col justify-between"
+          style={{ background: `linear-gradient(160deg, ${scoreColor}1a, transparent 65%)`, borderLeft: `3px solid ${scoreColor}` }}>
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Health Score</span>
+          <div className="flex items-baseline gap-1">
+            <span className="text-4xl font-black font-mono" style={{ color: scoreColor }}>{healthScore}</span>
+            <span className="text-xs text-slate-400">/100</span>
+          </div>
+          <span className="text-xs font-bold" style={{ color: scoreColor }}>{scoreLabel}</span>
+        </div>
+
+        {/* Cache hit ratio time series */}
+        <div className="rounded-xl border border-slate-200 p-3 bg-slate-50/60">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Cache Hit Ratios</span>
+            <span className="text-[10px] text-slate-400 font-mono">last {trend.length} samples</span>
+          </div>
+          {trend.length > 2 ? (
+            <TrendChart data={trend} xKey="t" height={100} showLegend={false} yDomain={[0, 100]}
+              series={[
+                { key: 'bufHit', label: 'Buffer Cache Hit', color: C.green },
+                { key: 'libHit', label: 'Library Cache Hit', color: C.amber },
+              ]} />
+          ) : (
+            <div className="h-[100px] flex items-center justify-center text-[11px] text-slate-400">Trend appears after the next couple of refreshes</div>
+          )}
+          <div className="flex gap-4 mt-1 text-[10.5px]">
+            <span className="flex items-center gap-1.5 text-slate-500"><span className="w-2 h-2 rounded-full" style={{ background: C.green }} />Buffer Hit <b className="font-mono text-slate-700">{bufHitPct}%</b></span>
+            <span className="flex items-center gap-1.5 text-slate-500"><span className="w-2 h-2 rounded-full" style={{ background: C.amber }} />Library Cache <b className="font-mono text-slate-700">{libHitPct}%</b></span>
+          </div>
+        </div>
+      </div>
+
+      {/* Status stat tiles */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+        {tiles.map(t => {
+          const c = colorOf(t.status);
+          return (
+            <div key={t.label} className="rounded-lg border border-slate-200 px-3 py-2.5" style={{ borderLeftWidth: 3, borderLeftColor: c }}>
+              <p className="text-[9.5px] font-black text-slate-400 uppercase tracking-wider truncate">{t.label}</p>
+              <p className="text-base font-black font-mono mt-0.5 truncate" style={{ color: c }}>{t.value}</p>
+              <p className="text-[10px] text-slate-400 truncate">{t.sub}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -2309,32 +2247,6 @@ function SchemaTableModal({ table: t, owner, onClose }) {
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn }) {
-  const safePct = Math.max(0, Math.min(100, pct || 0));
-  const fill    = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.green);
-  const display = centerLabel !== undefined ? centerLabel : safePct;
-  const unit    = centerLabel !== undefined ? centerUnit : '%';
-  const R = 52, cx = 75, cy = 80;
-  const angle  = (safePct / 100) * Math.PI;
-  const ex     = cx - R * Math.cos(angle);
-  const ey     = cy - R * Math.sin(angle);
-  const large  = safePct > 50 ? 1 : 0;
-  const trackD = `M ${cx - R} ${cy} A ${R} ${R} 0 0 1 ${cx + R} ${cy}`;
-  const fillD  = safePct < 1 ? '' : `M ${cx - R} ${cy} A ${R} ${R} 0 ${large} 1 ${ex} ${ey}`;
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <svg width="150" height="88" viewBox="0 0 150 88">
-        <path d={trackD} fill="none" stroke="#e2e8f0" strokeWidth="13" strokeLinecap="round" />
-        {fillD && <path d={fillD} fill="none" stroke={fill} strokeWidth="13" strokeLinecap="round" />}
-        <text x="75" y="74" textAnchor="middle" style={{ fontWeight: 900, fontSize: 20, fill: '#1e293b' }}>{display}</text>
-        <text x="75" y="85" textAnchor="middle" style={{ fontSize: 10, fill: '#94a3b8' }}>{unit}</text>
-      </svg>
-      <p className="text-[10px] text-slate-400 mt-1 text-center leading-tight">{sub}</p>
     </div>
   );
 }

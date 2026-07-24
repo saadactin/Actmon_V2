@@ -7,7 +7,8 @@ Release:        1%{?dist}
 Summary:        ActMon Host Monitoring Agent
 License:        Proprietary
 BuildArch:      noarch
-Requires:       python3 >= 3.5, python3-PyMySQL, python3-psycopg2, python3-cryptography
+Requires:       python3 >= 3.5, python3-PyMySQL, python3-psycopg2, python3-cryptography, python3-pip
+Recommends:     python3-pymssql, python3-pymongo, python3-oracledb, python3-clickhouse-driver
 %global debug_package %{nil}
 
 %description
@@ -35,6 +36,16 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 5) else 1)' 2
     echo "***** Contact ActMon support for the legacy shell agent.            *****" >&2
     exit 1
 fi
+# pymssql/pymongo/oracledb/clickhouse-driver aren't reliably packaged across RHEL/
+# CentOS/Oracle Linux repos — best-effort pip install so those engines' push works
+# out of the box where the Recommends above didn't resolve. Never fatal: without a
+# driver, that one engine's collector just skips each cycle (identical to any other
+# missing optional DB driver) — the rest of the agent is unaffected.
+python3 -c 'import pymssql' 2>/dev/null || pip3 install --quiet pymssql 2>/dev/null || true
+python3 -c 'import pymongo' 2>/dev/null || pip3 install --quiet pymongo 2>/dev/null || true
+python3 -c 'import oracledb' 2>/dev/null || pip3 install --quiet oracledb 2>/dev/null || true
+python3 -c 'import clickhouse_driver' 2>/dev/null || pip3 install --quiet clickhouse-driver 2>/dev/null || true
+
 # Remove any stale hand-made unit in /etc that would shadow this package's unit.
 [ -f /etc/systemd/system/actmon-agent.service ] && rm -f /etc/systemd/system/actmon-agent.service || true
 pkill -f /usr/lib/actmon/actmon-agent.sh 2>/dev/null || true

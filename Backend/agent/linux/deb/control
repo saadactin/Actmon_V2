@@ -3,7 +3,8 @@ Version: 1.1.0
 Section: admin
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.5), python3-pymysql, python3-psycopg2, python3-cryptography, procps, curl | wget
+Depends: python3 (>= 3.5), python3-pymysql, python3-psycopg2, python3-pymssql, python3-pymongo, python3-cryptography, python3-pip, procps, curl | wget
+Recommends: python3-oracledb, python3-clickhouse-driver
 Maintainer: ActMon <support@actmon.local>
 Description: ActMon Host Monitoring Agent
  Lightweight agent that collects host CPU and memory metrics AND monitors

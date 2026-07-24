@@ -4,8 +4,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, HardDrive, Folder, FileText, ChevronRight, Link2, Lock,
   KeyRound, Eye, EyeOff, Loader2, AlertTriangle, Server, Search, Pencil, Save, X, Check,
+  RefreshCw, Download, Power,
 } from 'lucide-react';
-import { getOsServer, fsList, fsRead, fsWrite, updateOsServer } from '../../api/servers';
+import { getHostInfraDetail, fsList, fsRead, fsWrite, updateOsServer, updateAgent } from '../../api/servers';
+import { PasswordPrompt, RestartModal } from './InfraHostDetail';
+
+// Same tab set as the host detail page — clicking one here navigates back to
+// /infra/:id and asks it to open that tab (see InfraHostDetail's location.state.tab).
+const TABS = ['Overview', 'Ports', 'Processes', 'Storage', 'Network', 'Services', 'Diagnostics', 'IP Configuration', 'Config Files'];
 
 const fmtBytes = (b) => {
   if (b == null) return '—';
@@ -30,14 +36,21 @@ export function InfraFileExplorer() {
   const [showPass, setShowPass] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const [showRestart, setShowRestart] = useState(false);
+  const [showUpdate, setShowUpdate] = useState(false);
   // File editor state
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [savingFile, setSavingFile] = useState(false);
   const [saveMsg, setSaveMsg] = useState(null);
 
-  const { data: host } = useQuery({ queryKey: ['osServer', id], queryFn: () => getOsServer(id) });
-  const hostRow = host?.data || host || {};
+  // Same query/shape as the host detail page, so the header (name, status, OS) matches exactly.
+  const { data: hostData, isFetching: hostFetching } = useQuery({
+    queryKey: ['hostInfraDetail', id], queryFn: () => getHostInfraDetail(id), retry: false, refetchInterval: 30000,
+  });
+  const hostRow = hostData?.host || {};
+  const hostFailed = hostData?.status === 'error';
+  const isWin = (hostRow.os_type || '').toLowerCase().startsWith('win');
 
   const { data: dir, isFetching, error } = useQuery({
     queryKey: ['fsList', id, path],
@@ -92,36 +105,75 @@ export function InfraFileExplorer() {
   const crumbs = active === '/' ? [] : active.replace(/^\/+/, '').split('/');
   const crumbPath = (i) => '/' + crumbs.slice(0, i + 1).join('/');
 
+  const goTab = (t) => navigate(`/infra/${id}`, { state: { tab: t } });
+
   return (
-    <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f4f9]">
-      {/* Hero header — same flavor as the host detail page */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 pt-3 pb-4 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
-        <div className="relative flex items-center gap-2 text-[13px] text-slate-300/70 mb-2.5">
-          <button onClick={() => navigate('/infra')} className="hover:text-white">Infrastructure</button>
-          <span>›</span>
-          <button onClick={() => navigate(`/infra/${id}`)} className="hover:text-white">{hostRow.server_name || `Host #${id}`}</button>
-          <span>›</span><span className="text-white font-semibold">File Explorer</span>
+    <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
+      {/* ─── TOP HEADER (identical to the host detail page) ─── */}
+      <div className="bg-gradient-to-r from-slate-900 via-cyan-900 to-teal-800 text-white shadow-xl">
+        <div className="px-6 py-4 flex flex-wrap justify-between items-center gap-3">
+          <div className="flex items-center gap-4">
+            <button onClick={() => navigate(`/infra/${id}`)} className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center text-white flex-shrink-0">
+              <ArrowLeft size={17} />
+            </button>
+            <div className="w-12 h-12 bg-cyan-400/20 border border-cyan-400/40 rounded-2xl flex items-center justify-center text-2xl">
+              {isWin ? '🪟' : '🐧'}
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight">
+                {hostRow.server_name || `Host #${id}`}
+                <span className="ml-2 align-middle px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/40 text-amber-200 text-[11px] font-bold">File Explorer</span>
+              </h1>
+              <p className="text-cyan-300 text-sm mt-0.5 font-mono">
+                {hostRow.hostname || hostRow.ip_address || ''}{hostRow.os_type ? ` · ${hostRow.os_type}` : ''}
+                {hostRow.collector ? ` · via ${hostRow.collector}` : ''}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`px-3 py-1.5 rounded-lg text-xs font-black border ${
+              hostFailed ? 'bg-red-500/20 border-red-400/40 text-red-200' : 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200'}`}>
+              {hostFailed ? '● Offline' : '● Online'}
+            </span>
+            <button onClick={() => setParams({ path: '/' })}
+              className="px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-xs font-semibold text-white/80 hover:text-white">
+              File Explorer
+            </button>
+            <button onClick={() => goTab('IP Configuration')}
+              className="px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 text-xs font-semibold text-white/80 hover:text-white">
+              Firewall
+            </button>
+            {hostRow.collector === 'agent' && isWin && (
+              <button onClick={() => setShowUpdate(true)} title="Download the latest agent and upgrade in place"
+                className="px-3 py-1.5 rounded-lg border border-sky-300/40 bg-sky-500/15 hover:bg-sky-500/25 text-xs font-semibold text-sky-100 flex items-center gap-1.5">
+                <Download size={13} /> Update Agent
+              </button>
+            )}
+            <button onClick={() => setShowRestart(true)}
+              className="px-3 py-1.5 rounded-lg border border-amber-300/40 bg-amber-500/15 hover:bg-amber-500/25 text-xs font-semibold text-amber-100 flex items-center gap-1.5">
+              <Power size={13} /> Restart
+            </button>
+            <button onClick={() => { qc.invalidateQueries({ queryKey: ['hostInfraDetail', id] }); qc.invalidateQueries({ queryKey: ['fsList', id] }); qc.invalidateQueries({ queryKey: ['fsRead', id] }); }}
+              className="flex items-center gap-2 px-4 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-sm font-semibold">
+              <RefreshCw size={13} className={hostFetching || isFetching || reading ? 'animate-spin' : ''} /> Refresh
+            </button>
+          </div>
         </div>
-        <div className="relative flex items-center gap-3">
-          <button onClick={() => navigate(`/infra/${id}`)} className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 flex items-center justify-center text-white flex-shrink-0">
-            <ArrowLeft size={16} />
-          </button>
-          <div className="w-10 h-10 rounded-lg bg-amber-400/20 border border-amber-300/40 flex items-center justify-center flex-shrink-0">
-            <Folder size={19} className="text-amber-200" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-white tracking-tight leading-none">File Explorer</h1>
-            <p className="text-sky-200/70 text-[13px] mt-1 font-mono flex items-center gap-1.5">
-              <Server size={12} /> {hostRow.server_name || `Host #${id}`} · {hostRow.hostname || hostRow.ip_address || ''}
-              {hostRow.collector === 'agent' && <span className="px-1.5 py-0.5 rounded bg-sky-400/20 border border-sky-300/30 text-sky-100 text-[11px] font-bold not-italic">via Agent</span>}
-            </p>
-          </div>
+
+        {/* ─── TAB BAR ─── */}
+        <div className="px-4 pt-2 flex gap-0.5 overflow-x-auto border-t border-white/10">
+          {TABS.map((t) => (
+            <button key={t} onClick={() => goTab(t)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-t-lg whitespace-nowrap transition-all ${
+                t === 'Storage' ? 'bg-slate-50 text-cyan-700' : 'text-white/60 hover:text-white hover:bg-white/10'}`}>
+              {t}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="max-w-[1400px] mx-auto px-6 py-6">
+      <div className="flex-1 p-5">
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           {/* Toolbar: back + breadcrumb path + search */}
           <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
@@ -286,6 +338,14 @@ export function InfraFileExplorer() {
           )}
         </div>
       </div>
+
+      {showUpdate && (
+        <PasswordPrompt title="Update ActMon Agent" confirmLabel="Update Agent"
+          onConfirm={(pw) => updateAgent(id, pw)} onClose={() => setShowUpdate(false)} />
+      )}
+      {showRestart && (
+        <RestartModal id={id} hostName={hostRow.server_name || `Host #${id}`} onClose={() => setShowRestart(false)} />
+      )}
     </div>
   );
 }

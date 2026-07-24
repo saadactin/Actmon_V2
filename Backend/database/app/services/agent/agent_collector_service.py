@@ -9,8 +9,10 @@ All other consumers (frontend, application servers) read pre-collected data
 via the /api/v1/agents/* REST API — they never connect to the monitored DB.
 """
 
+import os as _os
 import threading
 import time
+import time as _time
 import logging
 import datetime
 from hashlib import md5
@@ -25,6 +27,8 @@ from app.models.agent_model import (
     AgentNotification, AgentOracleSnapshot,
 )
 from app.models.connection_model import ConnectionMaster
+from app.services.agent import monitoring_settings_service
+from app.services.common import service_state_service
 
 logger = logging.getLogger("agent_collector")
 
@@ -88,6 +92,20 @@ def _check_thresholds(agent_name: str, connections_used: int, connections_max: i
         ))
 
 
+def _check_thresholds_from_latest_metric(agent_name: str, db):
+    """Phase 2, step 2: push-covered engines (mysql/postgres/mssql) get their
+    AgentMetric rows from the agent's own push loop now, not a pull-side query —
+    read the row push already stored instead of re-deriving connections/cache-hit
+    with another round-trip to the monitored DB."""
+    row = (db.query(AgentMetric)
+           .filter(AgentMetric.agent_name == agent_name)
+           .order_by(AgentMetric.timestamp.desc())
+           .first())
+    if row:
+        _check_thresholds(agent_name, row.connections_used, row.connections_max,
+                           row.cache_hit_pct, db)
+
+
 # ─────────────────────────────────────────────────────────────
 # MySQL collector
 # ─────────────────────────────────────────────────────────────
@@ -133,7 +151,14 @@ def _collect_mysql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
     except Exception as exc:
         _record_error(agent_name, str(exc))
         logger.error(f"[agent_collector] MySQL (agent) failed for {agent_name}: {exc}")
-        # fall through to direct
+        # The agent ran the query itself and got back a definitive DB-level error
+        # (agent-side prefix "query failed: ...", from actmon_agent.py) — the DB is
+        # confirmed unreachable, not just the agent. A direct attempt would almost
+        # certainly hit the exact same wall ~10s slower (connect_timeout); skip it.
+        if str(exc).startswith("query failed:"):
+            return False
+        # Otherwise the agent itself didn't answer (transport/timeout) — we don't
+        # actually know if the DB is up, so a direct attempt is still worth trying.
 
     enc_pass = quote_plus(conn_rec.password or "")
     url = (
@@ -364,6 +389,29 @@ def _collect_postgres_wait_events(agent_name: str, conn, db):
         logger.debug(f"[agent_collector] PG wait events skipped: {exc}")
 
 
+def _collect_postgres_wait_events_only(agent_name: str, conn_rec: ConnectionMaster, db):
+    """Phase 2, step 2: the agent's push loop already covers Postgres metrics/
+    top-SQL/sessions — wait-events has no push equivalent, so this lightweight
+    round-trip is the only pull-side query still worth running once the probe
+    has already confirmed the DB is up. Best-effort only, never affects status."""
+    enc_pass = quote_plus(conn_rec.password or "")
+    ssl = conn_rec.ssl_mode or "prefer"
+    db_name = conn_rec.database_name or "postgres"
+    url = (
+        f"postgresql://{conn_rec.username}:{enc_pass}"
+        f"@{conn_rec.host}:{conn_rec.port}/{db_name}?sslmode={ssl}"
+    )
+    try:
+        from app.services.common import db_proxy_service
+        eng = db_proxy_service.engine_for(
+            conn_rec, lambda: create_engine(url, connect_args={"connect_timeout": 10}, poolclass=NullPool))
+        with eng.connect() as conn:
+            _collect_postgres_wait_events(agent_name, conn, db)
+        eng.dispose()
+    except Exception as exc:
+        logger.debug(f"[agent_collector] PG wait-events-only skipped for {agent_name}: {exc}")
+
+
 # ─────────────────────────────────────────────────────────────
 # Oracle collector
 # ─────────────────────────────────────────────────────────────
@@ -509,6 +557,84 @@ def _collect_oracle(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
         _record_error(agent_name, str(exc))
         logger.error(f"[agent_collector] Oracle failed for {agent_name}: {exc}")
         return False
+
+
+def _collect_oracle_extras_only(agent_name: str, conn_rec: ConnectionMaster, db):
+    """Phase 3, step 2: push already covers Oracle metrics/top-SQL — the instance
+    snapshot (version/SGA/PGA/log mode/...) and wait-events have no push
+    equivalent, so this is the only pull-side round-trip still worth running once
+    the probe has already confirmed the DB is up. Best-effort only, never affects
+    status."""
+    try:
+        from app.services.common import db_proxy_service
+        _closer = lambda: None  # noqa: E731
+        if db_proxy_service.agent_host_for_conn(conn_rec.id, db) is not None:
+            q = db_proxy_service.make_runner(conn_rec, db)
+        else:
+            import oracledb  # type: ignore
+            dsn = conn_rec.oracle_connect_string or conn_rec.tns_descriptor
+            if not dsn and conn_rec.host:
+                svc = conn_rec.service_name or conn_rec.sid or ""
+                dsn = f"{conn_rec.host}:{conn_rec.port or 1521}/{svc}"
+            oracle_conn = oracledb.connect(user=conn_rec.username, password=conn_rec.password, dsn=dsn)
+            cursor = oracle_conn.cursor()
+
+            def q(sql):
+                cursor.execute(sql)
+                return cursor.fetchall()
+
+            def _closer():
+                cursor.close()
+                oracle_conn.close()
+
+        rows = q("""
+            SELECT i.version, i.instance_name, i.host_name,
+                   TO_CHAR(i.startup_time, 'YYYY-MM-DD HH24:MI:SS'),
+                   d.log_mode, d.open_mode, i.database_status,
+                   i.instance_role, i.status, i.archiver
+            FROM v$instance i, v$database d
+            WHERE rownum = 1
+        """)
+        row = rows[0] if rows else None
+        if row:
+            sga_rows = q("SELECT SUM(value) FROM v$sga")
+            sga_bytes = _ti(sga_rows[0][0]) if sga_rows else 0
+            pga_rows = q("SELECT SUM(pga_alloc_mem) FROM v$process")
+            pga_bytes = _ti(pga_rows[0][0]) if pga_rows else 0
+            db.add(AgentOracleSnapshot(
+                agent_name=agent_name,
+                version=str(row[0] or ""),
+                instance_name=str(row[1] or ""),
+                startup_time=str(row[3] or ""),
+                sga_size_bytes=sga_bytes,
+                pga_size_bytes=pga_bytes,
+                log_mode=str(row[4] or ""),
+                open_mode=str(row[5] or ""),
+                database_status=str(row[6] or ""),
+                instance_role=str(row[7] or ""),
+                status=str(row[8] or ""),
+                archiver=str(row[9] or ""),
+            ))
+
+        for r in q("""
+            SELECT event, wait_class, time_waited / 100.0,
+                   time_waited / 100.0 / NULLIF(total_waits, 0), total_waits
+            FROM v$system_event
+            WHERE wait_class != 'Idle'
+            ORDER BY time_waited DESC FETCH FIRST 20 ROWS ONLY
+        """):
+            db.add(AgentWaitEvent(
+                agent_name=agent_name,
+                event_name=str(r[0] or ""),
+                wait_class=str(r[1] or ""),
+                time_waited_ms=_tf(r[2]),
+                avg_ms=_tf(r[3]),
+                count=_ti(r[4]),
+            ))
+
+        _closer()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[agent_collector] Oracle extras-only skipped for {agent_name}: {exc}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -798,16 +924,29 @@ def _is_agent_routed(conn_id, db) -> bool:
 
 _snap_rotation = {}       # agent_name -> next sub-snapshot index (round-robin)
 
+# Agent-routed connections: how many sub-snapshots to build per cycle, in round-robin,
+# alongside the main dashboard. Was 1 — with engines carrying up to 9 sub-snapshot
+# types, that meant up to 9 SNAPSHOT_INTERVAL_SEC cycles (~9 min at the 60s default)
+# before every dashboard tab had EVER been cache-warm, so a tab's first visit could
+# fall through to a slow live query over the agent channel for minutes after startup.
+# Building 3 per cycle cuts that to ~1/3 the time while staying far short of
+# "build everything every cycle" — the original flooding problem this was designed
+# to avoid in the first place.
+_SUBS_PER_CYCLE = 3
+
 
 def _run_snaps(agent_name, conn_id, db, snaps):
     """Build snapshots. Agent-routed connections get the main dashboard EVERY slot
-    plus ONE sub-snapshot in round-robin — so within a few minutes every dashboard
-    tab is cache-warm (instant page loads) without ever flooding the single-threaded
-    agent channel the way building all ~10 at once did."""
+    plus _SUBS_PER_CYCLE sub-snapshots in round-robin — so within a few minutes every
+    dashboard tab is cache-warm (instant page loads) without ever flooding the
+    single-threaded agent channel the way building all ~10 at once did."""
     if _is_agent_routed(conn_id, db) and len(snaps) > 1:
-        idx = _snap_rotation.get(agent_name, 0) % (len(snaps) - 1)
-        _snap_rotation[agent_name] = idx + 1
-        snaps = [snaps[0], snaps[1 + idx]]
+        n_subs = len(snaps) - 1
+        take = min(_SUBS_PER_CYCLE, n_subs)
+        idx = _snap_rotation.get(agent_name, 0) % n_subs
+        _snap_rotation[agent_name] = idx + take
+        picked = [snaps[1 + ((idx + i) % n_subs)] for i in range(take)]
+        snaps = [snaps[0]] + picked
     for snap_type, fn in snaps:
         _try_snapshot(agent_name, conn_id, snap_type, fn, db)
 
@@ -859,15 +998,18 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
     from app.services.oracle.oracle_monitoring_service import (
         oracle_dashboard, oracle_sga_detail, oracle_pga_detail,
         oracle_sessions, oracle_top_sql, oracle_wait_events,
+        oracle_schema_tables, oracle_data_guard,
     )
 
     _run_snaps(agent_name, conn_id, db, [
-        ("oracle_dashboard",   lambda: oracle_dashboard(conn_id, db)),
-        ("oracle_sga_detail",  lambda: oracle_sga_detail(conn_id, db)),
-        ("oracle_pga_detail",  lambda: oracle_pga_detail(conn_id, db)),
-        ("oracle_sessions",    lambda: oracle_sessions(conn_id, db)),
-        ("oracle_top_sql",     lambda: oracle_top_sql(conn_id, db)),
-        ("oracle_wait_events", lambda: oracle_wait_events(conn_id, db)),
+        ("oracle_dashboard",     lambda: oracle_dashboard(conn_id, db)),
+        ("oracle_sga_detail",    lambda: oracle_sga_detail(conn_id, db)),
+        ("oracle_pga_detail",    lambda: oracle_pga_detail(conn_id, db)),
+        ("oracle_sessions",      lambda: oracle_sessions(conn_id, db)),
+        ("oracle_top_sql",       lambda: oracle_top_sql(conn_id, db)),
+        ("oracle_wait_events",   lambda: oracle_wait_events(conn_id, db)),
+        ("oracle_schema_tables", lambda: oracle_schema_tables(conn_id, db)),
+        ("oracle_data_guard",    lambda: oracle_data_guard(conn_id, db)),
     ])
 
 
@@ -937,6 +1079,39 @@ _DB_TYPE_COLLECTORS = {
     "clickhouse": _collect_clickhouse,
 }
 
+# Engines whose full metrics/top-SQL are already collected by the agent's own
+# push loop (actmon_agent.py: collect_mysql/collect_postgres/collect_mssql/
+# collect_oracle/collect_mongodb/collect_clickhouse, every ~15s via /agents/data)
+# — the pull side no longer needs to re-run that same query just to prove the DB
+# is up; the cheap probe below does that instead.
+_PUSH_COVERED_ENGINES = {
+    "mysql", "mariadb", "postgresql", "postgres", "mssql",
+    "oracle", "oracle db", "mongodb", "mongo", "clickhouse",
+}
+
+# Oracle requires a FROM clause ("SELECT 1" alone raises ORA-00923) — everything
+# else (including MongoDB, whose agent-side dbquery handler maps a bare "SELECT 1"
+# to a ping command) is happy with the plain default.
+_PROBE_QUERY_BY_ENGINE = {"oracle": "SELECT 1 FROM DUAL", "oracle db": "SELECT 1 FROM DUAL"}
+
+
+def _probe_connectivity(agent_name: str, conn_rec, db, db_type: str = "") -> bool:
+    """Cheapest possible 'is this DB actually up and answering right now' check —
+    nothing but a trivial round-trip. For _PUSH_COVERED_ENGINES this replaces the
+    full metrics query (SHOW GLOBAL STATUS / DMV counters / v$session scans) as
+    the connectivity proof, since that data now arrives via the agent's own push
+    instead — running the full query here too would just be the redundant
+    double-collection Phase 2/3 are removing."""
+    try:
+        from app.services.common.db_proxy_service import make_runner
+        runner = make_runner(conn_rec, db)
+        query = _PROBE_QUERY_BY_ENGINE.get((db_type or "").lower(), "SELECT 1")
+        rows = runner(query)
+        return bool(rows)
+    except Exception as exc:  # noqa: BLE001
+        _record_error(agent_name, str(exc))
+        return False
+
 # Last failure reason per agent — surfaced in the UI (hover the DB Error badge) so the
 # user sees *why* a collection failed, not just that it did.
 _last_error = {}
@@ -946,6 +1121,41 @@ _last_error_guard = threading.Lock()
 def _record_error(agent_name, msg):
     with _last_error_guard:
         _last_error[agent_name] = (str(msg) or "").strip()[:500]
+
+
+# Transport-level failure markers — the AGENT didn't respond at all, so this says
+# nothing about whether the DB itself is up or down (as opposed to e.g. "query
+# failed: ..." from actmon_agent.py, which means the agent DID run the query and
+# the DB itself rejected it — a real verdict).
+_AGENT_UNREACHABLE_MARKERS = ("did not answer in time",)
+
+
+def _agent_unreachable(msg):
+    m = (msg or "").lower()
+    return any(marker in m for marker in _AGENT_UNREACHABLE_MARKERS)
+
+
+# Agents currently in an "agent didn't answer" streak we've already alerted on —
+# so the notification fires once per streak, not every 15s while it persists.
+_ambiguous_notified = set()
+_ambiguous_guard = threading.Lock()
+
+
+def _note_ambiguous(agent_name):
+    """Returns True the FIRST time this agent goes ambiguous (caller should raise
+    an alert), False on every repeat cycle of the same streak."""
+    with _ambiguous_guard:
+        if agent_name in _ambiguous_notified:
+            return False
+        _ambiguous_notified.add(agent_name)
+        return True
+
+
+def _clear_ambiguous_notice(agent_name):
+    """Call whenever a cycle produces a real verdict (success, definitive failure,
+    or OS-confirmed down) — the next ambiguous streak should alert again."""
+    with _ambiguous_guard:
+        _ambiguous_notified.discard(agent_name)
 
 
 # ── Parallel collection ────────────────────────────────────────────────────────
@@ -1003,39 +1213,118 @@ def _collect_one_agent(agent_id):
 
         host_lock = _lock_for_host(_host_key_for(agent, db))
         with host_lock:                      # serialize per HOST, parallel across hosts
-            if collector:
-                success = collector(agent.agent_name, conn_rec, db)
-            else:
-                msg = f"No server-side collector for db_type '{db_type}'"
-                logger.warning(f"[agent_collector] {msg} on agent '{agent.agent_name}'")
-                _record_error(agent.agent_name, msg)
+            # ── OS service-state gate: ask systemctl BEFORE touching the DB ──
+            # If the OS already says the service isn't running, a connection
+            # attempt can only time out for a foregone conclusion — skip it and
+            # reflect the OS-reported state immediately, with no error_streak wait.
+            svc_state = service_state_service.get_service_state(agent.db_connection_id, db)
+            service_down = svc_state.get("checked") and not svc_state.get("active")
+
+            ambiguous_this_cycle = False   # True only for "agent didn't answer" — see below
+
+            if service_down:
                 success = False
-
-            # ── Status hysteresis: degrade SLOWLY, recover INSTANTLY ────────
-            if success:
-                _fail_streak.pop(agent.agent_name, None)
+                new_status = "error"
+                err_text = svc_state.get("detail") or f"service is {svc_state.get('state')}"
+                _fail_streak.pop(agent.agent_name, None)   # this isn't a query-retry situation
                 with _last_error_guard:
-                    _last_error.pop(agent.agent_name, None)
-                new_status = "online"
-                err_text = None
+                    _last_error[agent.agent_name] = err_text
+                _clear_ambiguous_notice(agent.agent_name)   # a real OS verdict, no longer "unknown"
+                logger.info(f"[agent_collector] '{agent.agent_name}' service "
+                            f"'{svc_state.get('service_name')}' reports "
+                            f"'{svc_state.get('state')}' (via {svc_state.get('source')}) — "
+                            f"skipping DB connectivity check, status forced to error.")
             else:
-                n = _fail_streak.get(agent.agent_name, 0) + 1
-                _fail_streak[agent.agent_name] = n
-                err_text = _last_error.get(agent.agent_name)
-                if n >= ERROR_STREAK:
-                    new_status = "error"
+                if db_type in _PUSH_COVERED_ENGINES:
+                    # Phase 2/3: the agent's own push loop (actmon_agent.py) already
+                    # collects full metrics/top-SQL/sessions for every engine it
+                    # supports, every ~15s — stop re-running that here entirely.
+                    # Only fetch what push does NOT send: Postgres wait-events and
+                    # Oracle's instance snapshot + wait-events have no push
+                    # equivalent, so those alone are still worth a pull-side
+                    # round-trip. Threshold alerts read the metric row push already
+                    # stored — but only for engines whose pull collector actually
+                    # computed a real cache-hit number before (Oracle/MongoDB never
+                    # did; introducing it now would just spam a false "cache hit
+                    # low at 0%" alert every cycle).
+                    success = _probe_connectivity(agent.agent_name, conn_rec, db, db_type)
+                    if success:
+                        if db_type in ("postgresql", "postgres"):
+                            _collect_postgres_wait_events_only(agent.agent_name, conn_rec, db)
+                            _check_thresholds_from_latest_metric(agent.agent_name, db)
+                        elif db_type in ("oracle", "oracle db"):
+                            _collect_oracle_extras_only(agent.agent_name, conn_rec, db)
+                        elif db_type in ("mysql", "mariadb", "mssql", "clickhouse"):
+                            _check_thresholds_from_latest_metric(agent.agent_name, db)
+                        # mongodb/mongo: push already covers everything pull ever did
+                        # here, and pull never threshold-checked it either — nothing
+                        # further to run once the probe confirms it's up.
+                elif collector:
+                    success = collector(agent.agent_name, conn_rec, db)
                 else:
-                    new_status = agent.status or "online"   # keep showing last state
-                    logger.info(f"[agent_collector] '{agent.agent_name}' failed cycle "
-                                f"{n}/{ERROR_STREAK} — status unchanged ({new_status})")
+                    msg = f"No server-side collector for db_type '{db_type}'"
+                    logger.warning(f"[agent_collector] {msg} on agent '{agent.agent_name}'")
+                    _record_error(agent.agent_name, msg)
+                    success = False
 
-            db.query(Agent).filter(Agent.agent_name == agent.agent_name).update({
-                "status": new_status,
-                "last_heartbeat": func.now(),   # DB clock — matches the reaper's now()
-                # Only surface the reason once we actually flip to error; clear it while
-                # the agent is (still) considered online so the tooltip never lies.
-                "last_error": (err_text if new_status == "error" else None),
-            })
+                # ── Status hysteresis: degrade SLOWLY, recover INSTANTLY ────────
+                if success:
+                    _fail_streak.pop(agent.agent_name, None)
+                    with _last_error_guard:
+                        _last_error.pop(agent.agent_name, None)
+                    _clear_ambiguous_notice(agent.agent_name)
+                    new_status = "online"
+                    err_text = None
+                else:
+                    err_text = _last_error.get(agent.agent_name)
+                    if _agent_unreachable(err_text):
+                        # The AGENT itself didn't answer — that's transport-level
+                        # uncertainty, not a DB verdict (the service-state gate above
+                        # already tried and couldn't reach it either). We genuinely
+                        # don't know if the DB is up or down, so never flip status on
+                        # this alone: hold the last known state and keep retrying every
+                        # cycle. A truly dead/silent agent is the reaper's job (heartbeat
+                        # silence), not this fast collector's error_streak. Surface it as
+                        # an ALERT instead of a status change, once per unreachable streak.
+                        ambiguous_this_cycle = True
+                        new_status = agent.status or "online"
+                        if _note_ambiguous(agent.agent_name):
+                            db.add(AgentNotification(
+                                agent_name=agent.agent_name,
+                                message=(f"'{agent.agent_name}': the agent on the DB host did "
+                                         f"not answer this cycle — database status could not "
+                                         f"be confirmed, retrying automatically."),
+                                severity="warning",
+                            ))
+                        logger.info(f"[agent_collector] '{agent.agent_name}' agent "
+                                    f"unreachable this cycle — retrying, status "
+                                    f"unchanged ({new_status}).")
+                    else:
+                        _clear_ambiguous_notice(agent.agent_name)
+                        n = _fail_streak.get(agent.agent_name, 0) + 1
+                        _fail_streak[agent.agent_name] = n
+                        error_streak = monitoring_settings_service.get_settings().error_streak
+                        if n >= error_streak:
+                            new_status = "error"
+                        else:
+                            new_status = agent.status or "online"   # keep showing last state
+                            logger.info(f"[agent_collector] '{agent.agent_name}' failed cycle "
+                                        f"{n}/{error_streak} — status unchanged ({new_status})")
+
+            update_fields = {"status": new_status}
+            if not ambiguous_this_cycle:
+                # last_heartbeat means "the agent actually answered" — only bump it when
+                # it did. Refreshing it unconditionally (as this used to do) kept a fully
+                # unreachable agent's DB row artificially "fresh" forever, since this
+                # collector cycle runs on our own timer regardless of whether the remote
+                # agent responds — masking real silence from the reaper's staleness check
+                # and leaving the DB row stuck "Online" while the host's own heartbeat
+                # (a genuinely different signal) correctly went stale and flipped Offline.
+                # Only surface the error reason once we actually flip to error; clear it
+                # while the agent is (still) considered online so the tooltip never lies.
+                update_fields["last_heartbeat"] = func.now()   # DB clock — matches the reaper's now()
+                update_fields["last_error"] = (err_text if new_status == "error" else None)
+            db.query(Agent).filter(Agent.agent_name == agent.agent_name).update(update_fields)
             # Keep the Databases/Servers page in lock-step with reality: the linked
             # database_instance is Running only when the collector actually connected.
             # 'error' => the DB is unreachable => Stopped (no more "DB Running" on a
@@ -1072,33 +1361,69 @@ def _collect_one_agent(agent_id):
         db.close()
 
 
-def _run_collection_cycle():
-    from concurrent.futures import ThreadPoolExecutor
+# ── Per-agent independent collection loops ──────────────────────────────────
+# Each agent runs its OWN "check; wait interval_sec; repeat" loop on its OWN thread —
+# there is no shared "cycle" or batch at all, so one agent's hung/slow connection can
+# NEVER change when any OTHER agent gets checked or how fresh its status is. A small
+# manager thread just keeps the set of per-agent threads in sync with the DB (start a
+# thread when an agent/connection is added, stop it when removed).
+_agent_threads = {}             # agent_name -> {"id": agent_id, "thread": Thread, "stop": Event}
+_agent_threads_lock = threading.Lock()
+
+
+def _agent_loop(agent_id, agent_name, interval_sec, stop_event):
+    while not stop_event.is_set():
+        try:
+            _collect_one_agent(agent_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[agent_collector] '{agent_name}' loop error: {exc}")
+        # Read live each iteration (Super Admin configurable) rather than using the
+        # value captured at thread-start — a saved settings change takes effect on
+        # this agent's very next wait, no thread restart needed. `interval_sec` (the
+        # startup default from main.py) is only the fallback if settings are unreadable.
+        wait_sec = monitoring_settings_service.get_settings().collector_interval_sec or interval_sec
+        if stop_event.wait(wait_sec):
+            break
+    logger.info(f"[agent_collector] '{agent_name}' loop stopped.")
+
+
+def _sync_agent_threads(interval_sec):
+    """Start a loop thread for every currently db_connection_id-linked agent that
+    doesn't have one yet; stop threads for agents that were removed or re-pointed
+    to a different connection. Safe to call repeatedly — idempotent."""
     db = SessionLocal()
     try:
-        agent_ids = [a.id for a in db.query(Agent).all() if a.db_connection_id]
+        current = {a.agent_name: a.id for a in db.query(Agent).all() if a.db_connection_id}
     except Exception as exc:  # noqa: BLE001
-        logger.error(f"[agent_collector] Fatal cycle error: {exc}")
+        logger.error(f"[agent_collector] Fatal sync error: {exc}")
         return
     finally:
         db.close()
-    if not agent_ids:
-        return
-    workers = min(int(_os.getenv("COLLECTOR_WORKERS", "6") or 6), max(1, len(agent_ids)))
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="collector") as pool:
-        list(pool.map(_collect_one_agent, agent_ids))
+
+    with _agent_threads_lock:
+        for name in list(_agent_threads):
+            info = _agent_threads[name]
+            if current.get(name) != info["id"]:
+                info["stop"].set()
+                del _agent_threads[name]
+        for name, agent_id in current.items():
+            if name in _agent_threads:
+                continue
+            stop_ev = threading.Event()
+            t = threading.Thread(target=_agent_loop, args=(agent_id, name, interval_sec, stop_ev),
+                                  daemon=True, name=f"collector-{name}")
+            _agent_threads[name] = {"id": agent_id, "thread": t, "stop": stop_ev}
+            t.start()
 
 
 # Snapshot throttle: metrics run every collector cycle (fast), dashboard snapshot
 # builds at most once per SNAPSHOT_INTERVAL_SEC per agent (they're 20-50 queries).
-import os as _os
-import time as _time
-
 SNAPSHOT_INTERVAL_SEC = int(_os.getenv("SNAPSHOT_INTERVAL_SEC", "60") or 60)
 _last_snapshot_at = {}          # agent_name -> monotonic time of last snapshot build
 
-# Status hysteresis: consecutive failed cycles before an agent shows "error".
-ERROR_STREAK = int(_os.getenv("COLLECTOR_ERROR_STREAK", "3") or 3)
+# Status hysteresis: consecutive failed cycles before an agent shows "error". The
+# actual threshold is read live from monitoring_settings_service (Super Admin
+# configurable) at the point of use, not fixed here.
 _fail_streak = {}               # agent_name -> consecutive failure count
 
 
@@ -1111,35 +1436,46 @@ def _snapshot_due(agent_name):
 
 
 # ─────────────────────────────────────────────────────────────
-# Background thread
+# Background thread — a small manager that keeps each agent's OWN independent
+# loop thread alive; it does no DB polling itself beyond that bookkeeping.
 # ─────────────────────────────────────────────────────────────
 
-def _collector_loop(interval_sec: int):
-    logger.info(f"[agent_collector] Started — polling every {interval_sec}s "
-                f"(snapshots every {SNAPSHOT_INTERVAL_SEC}s)")
+def _manager_loop(interval_sec: int, resync_sec: int):
+    logger.info(f"[agent_collector] Started — each agent polls independently every "
+                f"{interval_sec}s (fleet resync every {resync_sec}s, "
+                f"snapshots every {SNAPSHOT_INTERVAL_SEC}s)")
     while not _stop_event.is_set():
         try:
-            _run_collection_cycle()
-        except Exception as exc:
-            logger.error(f"[agent_collector] Unhandled error: {exc}")
-        _stop_event.wait(timeout=interval_sec)
-    logger.info("[agent_collector] Stopped.")
+            _sync_agent_threads(interval_sec)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[agent_collector] Unhandled sync error: {exc}")
+        if _stop_event.wait(resync_sec):
+            break
+    logger.info("[agent_collector] Manager stopped.")
 
 
 def start_agent_collector(interval_sec: int = 60):
     global _thread
     _stop_event.clear()
+    resync_sec = max(15, int(_os.getenv("COLLECTOR_RESYNC_SEC", "20") or 20))
     _thread = threading.Thread(
-        target=_collector_loop,
-        args=(interval_sec,),
+        target=_manager_loop,
+        args=(interval_sec, resync_sec),
         daemon=True,
-        name="agent_collector",
+        name="agent_collector_manager",
     )
     _thread.start()
-    logger.info("[agent_collector] Background thread launched.")
+    logger.info("[agent_collector] Background manager thread launched.")
 
 
 def stop_agent_collector():
     _stop_event.set()
+    with _agent_threads_lock:
+        agent_infos = list(_agent_threads.values())
+        for info in agent_infos:
+            info["stop"].set()
+        _agent_threads.clear()
     if _thread and _thread.is_alive():
         _thread.join(timeout=10)
+    for info in agent_infos:
+        info["thread"].join(timeout=5)

@@ -6,11 +6,15 @@ import {
   Eye, EyeOff, TestTube2, Edit2, Star, StarOff, Wifi,
   AlertTriangle, Server, Clock, ChevronRight, ChevronLeft,
   Palette, PanelLeft, LayoutDashboard, Monitor, Moon, Sun, Laptop,
-  RotateCcw, Search, Check,
+  RotateCcw, Search, Check, Cpu, MemoryStick, HardDrive, Activity, Zap,
 } from 'lucide-react';
 import client from '../../api/client';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useUIStore } from '../../store/uiStore';
+import { useAuthStore } from '../../store/authStore';
+import { useDashboardAppearance, PRESETS, SCOPES } from '../../context/DashboardAppearanceContext';
+import Gauge from '../../components/gauges/Gauge';
+import TrendChart from '../../components/gauges/TrendChart';
 
 /* ─── API ─── */
 const smtpApi = {
@@ -21,6 +25,11 @@ const smtpApi = {
   delete:  (id)     => client.delete(`/settings/smtp/${id}`).then(r => r.data),
   test:    (id)     => client.post(`/settings/smtp/${id}/test`).then(r => r.data),
   testInline: (d)   => client.post('/settings/smtp/test-inline', d).then(r => r.data),
+};
+
+const monitoringApi = {
+  get:    ()     => client.get('/settings/monitoring').then(r => r.data),
+  update: (data) => client.put('/settings/monitoring', data).then(r => r.data),
 };
 
 const EMPTY_FORM = {
@@ -479,6 +488,348 @@ function ColorField({ value, presets, clearable, onChange }) {
   );
 }
 
+/* ─── Monitoring Detection Speed (Super Admin only) ─── */
+function MonitoringSettingsSection() {
+  const qc = useQueryClient();
+  const [form, setForm] = useState(null);   // null until loaded, then a local editable copy
+  const [saveMsg, setSaveMsg] = useState(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['monitoring-settings'],
+    queryFn: monitoringApi.get,
+  });
+
+  useEffect(() => {
+    if (data && !form) setForm(data);
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveMut = useMutation({
+    mutationFn: monitoringApi.update,
+    onSuccess: (saved) => {
+      qc.setQueryData(['monitoring-settings'], saved);
+      setForm(saved);
+      setSaveMsg({ ok: true, text: 'Saved — takes effect within a few seconds, no restart needed.' });
+      setTimeout(() => setSaveMsg(null), 4000);
+    },
+    onError: (e) => {
+      setSaveMsg({ ok: false, text: e?.response?.data?.detail?.[0]?.msg || e?.response?.data?.detail || e.message });
+    },
+  });
+
+  const FIELDS = [
+    { key: 'error_streak', label: 'Failures before "DB Error"', suffix: 'checks', min: 1, max: 10,
+      desc: 'How many consecutive failed checks before a database flips to DB Error. Lower = faster detection, higher risk of flapping on a single blip.' },
+    { key: 'collector_interval_sec', label: 'Check interval', suffix: 'seconds', min: 5, max: 300,
+      desc: 'How often each monitored database is checked. Lower = faster detection, more load on this server and the monitored hosts.' },
+    { key: 'offline_after_sec', label: 'Silence before "Offline"', suffix: 'seconds', min: 30, max: 3600,
+      desc: 'How long a host/agent can go silent (no heartbeat at all) before it shows Offline. Kept deliberately conservative — a prior lower value caused hosts to flap online/offline while just busy.' },
+  ];
+
+  if (isLoading || !form) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex items-center justify-center">
+        <RefreshCw size={20} className="animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100" style={{ borderLeft: '4px solid #7c3aed' }}>
+        <div className="flex items-center gap-3">
+          <Sliders size={18} className="text-violet-600" />
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Monitoring Detection Speed</h3>
+            <p className="text-xs text-slate-400 mt-0.5">How fast ActMon notices a database going down or coming back up</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6 space-y-5">
+        {FIELDS.map((f) => (
+          <div key={f.key} className="flex items-start justify-between gap-6 pb-5 border-b border-slate-100 last:border-0 last:pb-0">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-slate-800">{f.label}</p>
+              <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{f.desc}</p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <input type="number" min={f.min} max={f.max} value={form[f.key]}
+                onChange={(e) => setForm((p) => ({ ...p, [f.key]: Number(e.target.value) }))}
+                className="w-20 h-10 px-3 rounded-lg border border-slate-300 text-sm font-bold text-center outline-none focus:border-violet-400" />
+              <span className="text-xs text-slate-400 w-14">{f.suffix}</span>
+            </div>
+          </div>
+        ))}
+
+        {saveMsg && (
+          <p className={`text-xs font-semibold ${saveMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{saveMsg.text}</p>
+        )}
+
+        <div className="flex items-center gap-3 pt-2">
+          <button onClick={() => saveMut.mutate({
+              error_streak: form.error_streak,
+              collector_interval_sec: form.collector_interval_sec,
+              offline_after_sec: form.offline_after_sec,
+            })}
+            disabled={saveMut.isPending}
+            className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white rounded-lg disabled:opacity-60"
+            style={{ background: 'linear-gradient(135deg,#7c3aed,#4c1d95)' }}>
+            {saveMut.isPending ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+            Save Changes
+          </button>
+          {data?.updated_at && (
+            <span className="text-[11px] text-slate-400">Last updated {new Date(data.updated_at).toLocaleString()}</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Dashboard Appearance (gauge/chart templates, applies to every dashboard) ─── */
+const INDICATOR_OPTIONS = [
+  { key: 'ring',    name: 'Banded Ring',     desc: '270° arc with visible green/amber/red zones. SolarWinds-style.' },
+  { key: 'stat',    name: 'Stat Tile',       desc: 'Big number, colored edge, inline sparkline + delta. Grafana-style.' },
+  { key: 'donut',   name: 'Radial Donut',    desc: 'Full circular progress ring, single accent fill. Clean, classic.' },
+  { key: 'minimal', name: 'Minimal Numeric', desc: 'No chrome — just the number, a status dot and a label.' },
+];
+const CHART_OPTIONS = [
+  { key: 'area',  name: 'Filled Area',        desc: 'Gradient-filled area under the line. Good for volume/magnitude.' },
+  { key: 'line',  name: 'Line',               desc: 'Clean stroked line, no fill. Best when comparing several series.' },
+  { key: 'bar',   name: 'Bar',                desc: 'Discrete bars per sample. Reads well for interval/count data.' },
+  { key: 'spark', name: 'Compact Sparkline',  desc: 'Axis-free micro trend line. Pairs with Minimal Numeric cards.' },
+];
+const SAMPLE_GAUGES = [
+  { icon: Cpu,         label: 'CPU Usage',    pct: 32, sub: 'of 100% · 12 CPUs' },
+  { icon: MemoryStick, label: 'RAM Usage',    pct: 64, sub: '10.2 GB of 16 GB' },
+  { icon: HardDrive,   label: 'Disk Usage',   pct: 48, sub: '120 GB of 250 GB' },
+  { icon: Activity,    label: 'Sessions %',   pct: 8,  sub: '12 / 150 max' },
+  { icon: Zap,         label: 'Cache Hit %',  pct: 97, sub: 'Logical read efficiency' },
+];
+const DISPLAY_MODE_OPTIONS = [
+  { key: 'gauge', name: 'Gauge', desc: 'Instant snapshot reading — ring / stat / donut / minimal, whichever indicator style is chosen below.' },
+  { key: 'graph', name: 'Graph', desc: 'Every KPI tile becomes its own live trend chart of recent history instead of a snapshot value.' },
+];
+const SAMPLE_TREND = Array.from({ length: 14 }, (_, i) => ({
+  t: i,
+  a: Math.round(60 + 8 * Math.sin(i / 2) + (i > 9 ? 4 : 0)),
+  b: Math.round(55 + 7 * Math.cos(i / 2.3) + (i > 9 ? 3 : 0)),
+}));
+const SAMPLE_HISTORY = Array.from({ length: 14 }, (_, i) => ({
+  t: i, v: Math.round(55 + 10 * Math.sin(i / 2.2) + (i > 9 ? 6 : 0)),
+}));
+
+function DashboardAppearanceSection() {
+  const [selectedScope, setSelectedScope] = useState('all');
+  const {
+    indicatorStyle, chartStyle, displayMode, isOverridden, loading, saving, map, saveScope, resetScope,
+  } = useDashboardAppearance(selectedScope);
+
+  const [draftIndicator, setDraftIndicator] = useState(indicatorStyle);
+  const [draftChart, setDraftChart] = useState(chartStyle);
+  const [draftMode, setDraftMode] = useState(displayMode);
+  const [saveMsg, setSaveMsg] = useState(null);
+
+  useEffect(() => {
+    setDraftIndicator(indicatorStyle);
+    setDraftChart(chartStyle);
+    setDraftMode(displayMode);
+  }, [indicatorStyle, chartStyle, displayMode, selectedScope]);
+
+  const applyPresetDraft = (key) => {
+    const p = PRESETS.find((x) => x.key === key);
+    if (!p) return;
+    setDraftIndicator(p.indicator);
+    setDraftChart(p.chart);
+  };
+
+  const handleSave = () => {
+    saveScope(selectedScope, { indicatorStyle: draftIndicator, chartStyle: draftChart, displayMode: draftMode })
+      .then(() => {
+        const scopeLabel = SCOPES.find((s) => s.key === selectedScope)?.label || selectedScope;
+        setSaveMsg({ ok: true, text: `Saved — applied to ${scopeLabel}.` });
+        setTimeout(() => setSaveMsg(null), 4000);
+      })
+      .catch((e) => setSaveMsg({ ok: false, text: e?.response?.data?.detail || e.message }));
+  };
+
+  const handleReset = () => {
+    resetScope(selectedScope)
+      .then(() => setSaveMsg({ ok: true, text: `Reverted — now following the global "All technologies" default.` }))
+      .catch((e) => setSaveMsg({ ok: false, text: e?.response?.data?.detail || e.message }));
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex items-center justify-center">
+        <RefreshCw size={20} className="animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100" style={{ borderLeft: '4px solid #3f6fd6' }}>
+        <div className="flex items-center gap-3">
+          <LayoutDashboard size={18} className="text-blue-600" />
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Dashboard Appearance</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Gauges, graphs and trend charts — set one default for everything, or override per database technology.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6 space-y-8">
+        {/* Scope selector */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Apply to</p>
+            {selectedScope !== 'all' && (
+              <button onClick={handleReset} disabled={saving || !map[selectedScope]}
+                className="text-[11px] font-bold text-slate-400 hover:text-red-500 disabled:opacity-40 disabled:hover:text-slate-400 flex items-center gap-1">
+                <RotateCcw size={11} /> Reset to global default
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {SCOPES.map((s) => {
+              const active = selectedScope === s.key;
+              const customized = s.key !== 'all' && Boolean(map[s.key]);
+              return (
+                <button key={s.key} onClick={() => setSelectedScope(s.key)}
+                  className={`relative h-8 px-3.5 rounded-lg text-xs font-bold transition-colors ${active ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                  {s.label}
+                  {customized && <span className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${active ? 'bg-white' : 'bg-blue-500'}`} />}
+                </button>
+              );
+            })}
+          </div>
+          {selectedScope !== 'all' && !map[selectedScope] && (
+            <p className="text-[11px] text-slate-400 mt-2">Currently following the global "All technologies" default — change anything below and save to give {SCOPES.find((s) => s.key === selectedScope)?.label} its own style.</p>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Quick presets</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {PRESETS.map((p) => {
+              const active = draftIndicator === p.indicator && draftChart === p.chart;
+              return (
+                <button key={p.key} onClick={() => applyPresetDraft(p.key)}
+                  className={`text-left rounded-xl border-2 p-3.5 transition-colors ${active ? 'border-blue-500 bg-blue-50/60' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <p className="text-xs font-black text-slate-800 mb-1">{p.name}</p>
+                  <p className="text-[11px] text-slate-400 leading-snug">{p.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Display mode</p>
+            <p className="text-[11px] text-slate-400">Gauge (snapshot) vs. Graph (live trend)</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            {DISPLAY_MODE_OPTIONS.map((opt) => {
+              const active = draftMode === opt.key;
+              return (
+                <button key={opt.key} onClick={() => setDraftMode(opt.key)}
+                  className={`rounded-xl border-2 p-3 transition-colors ${active ? 'border-blue-500 bg-blue-50/60' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <div className="h-24 mb-2 flex items-center pointer-events-none">
+                    <Gauge styleOverride={draftIndicator} displayModeOverride={opt.key} historyOverride={opt.key === 'graph' ? SAMPLE_HISTORY : undefined}
+                      icon={Cpu} label="CPU Usage" pct={72} sub="of 100% · 12 CPUs" />
+                  </div>
+                  <p className="text-[11.5px] font-bold text-slate-800">{opt.name}</p>
+                  <p className="text-[10.5px] text-slate-400 leading-snug mt-0.5">{opt.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Indicator style</p>
+            <p className="text-[11px] text-slate-400">Used when Display mode = Gauge</p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {INDICATOR_OPTIONS.map((opt) => {
+              const active = draftIndicator === opt.key;
+              return (
+                <button key={opt.key} onClick={() => setDraftIndicator(opt.key)}
+                  className={`rounded-xl border-2 p-3 transition-colors ${active ? 'border-blue-500 bg-blue-50/60' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <div className="flex items-center justify-center h-20 mb-2 pointer-events-none">
+                    <Gauge styleOverride={opt.key} displayModeOverride="gauge" label="" pct={72} sub="" />
+                  </div>
+                  <p className="text-[11.5px] font-bold text-slate-800">{opt.name}</p>
+                  <p className="text-[10.5px] text-slate-400 leading-snug mt-0.5">{opt.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="bg-slate-50 rounded-xl border border-slate-100 p-5">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-3">Live preview — Host Resources</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+              {SAMPLE_GAUGES.map((g) => (
+                <Gauge key={g.label} styleOverride={draftIndicator} displayModeOverride={draftMode}
+                  historyOverride={draftMode === 'graph' ? SAMPLE_HISTORY : undefined}
+                  icon={g.icon} label={g.label} pct={g.pct} sub={g.sub} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chart style</p>
+            <p className="text-[11px] text-slate-400">Every trend panel, and Gauge tiles in Graph mode</p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {CHART_OPTIONS.map((opt) => {
+              const active = draftChart === opt.key;
+              return (
+                <button key={opt.key} onClick={() => setDraftChart(opt.key)}
+                  className={`rounded-xl border-2 p-3 transition-colors ${active ? 'border-blue-500 bg-blue-50/60' : 'border-slate-200 hover:border-slate-300'}`}>
+                  <div className="h-16 mb-2 flex items-center pointer-events-none">
+                    <TrendChart styleOverride={opt.key} data={SAMPLE_TREND}
+                      series={[{ key: 'a', label: 'A', color: '#22c55e' }, { key: 'b', label: 'B', color: '#3f6fd6' }]}
+                      height={64} showLegend={false} />
+                  </div>
+                  <p className="text-[11.5px] font-bold text-slate-800">{opt.name}</p>
+                  <p className="text-[10.5px] text-slate-400 leading-snug mt-0.5">{opt.desc}</p>
+                </button>
+              );
+            })}
+          </div>
+          <div className="bg-slate-50 rounded-xl border border-slate-100 p-5">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-3">Live preview — System Health trend</p>
+            <TrendChart styleOverride={draftChart} data={SAMPLE_TREND}
+              series={[{ key: 'a', label: 'CPU Usage', color: '#22c55e' }, { key: 'b', label: 'Session Load', color: '#3f6fd6' }]}
+              height={180} />
+          </div>
+        </div>
+
+        {saveMsg && (
+          <p className={`text-xs font-semibold ${saveMsg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{saveMsg.text}</p>
+        )}
+
+        <div className="flex items-center gap-3 pt-1">
+          <button onClick={handleSave} disabled={saving}
+            className="flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-white rounded-lg disabled:opacity-60"
+            style={{ background: 'linear-gradient(135deg,#3f6fd6,#1e3a8a)' }}>
+            {saving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+            Save Changes
+          </button>
+          <span className="text-[11px] text-slate-400">
+            {selectedScope === 'all' ? 'Applies to every technology that has no override of its own.' : `Applies only to ${SCOPES.find((s) => s.key === selectedScope)?.label}.`}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AboutCards() {
   const info = [
     ['Product Version', 'ActMon Enterprise v2026.1', 'text-brand-text-primary'],
@@ -502,6 +853,8 @@ function AboutCards() {
 export const SettingsPage = () => {
   const s = useSettingsStore();
   const { sidebarOpen, setSidebarOpen } = useUIStore();
+  const { user } = useAuthStore();
+  const isSuperAdmin = user?.role === 'Super Admin';
   const [active, setActive] = useState('appearance');
   const [q, setQ] = useState('');
   const [openSection, setOpenSection] = useState('brightness');
@@ -510,6 +863,7 @@ export const SettingsPage = () => {
     { id: 'appearance', title: 'Appearance', icon: Palette },
     { id: 'dashboard',  title: 'Dashboard',  icon: LayoutDashboard },
     { id: 'smtp',       title: 'SMTP Email',  icon: Mail },
+    ...(isSuperAdmin ? [{ id: 'monitoring', title: 'Detection Speed', icon: Sliders }] : []),
     { id: 'data',       title: 'Data & Telemetry', icon: Database },
     { id: 'about',      title: 'About',       icon: ShieldAlert },
   ];
@@ -690,8 +1044,15 @@ export const SettingsPage = () => {
                   <h2 className="text-lg font-black text-brand-text-primary">{activeGroup?.title}</h2>
                 </div>
                 {active === 'smtp' ? <SmtpConfigSection />
+                  : active === 'monitoring' && isSuperAdmin ? <MonitoringSettingsSection />
                   : active === 'about' ? <AboutCards />
                   : active === 'appearance' ? APPEARANCE.map(AccordionSection)
+                  : active === 'dashboard' ? (
+                    <>
+                      {card(ROWS.filter((r) => r.group === active).map(Row))}
+                      <div className="mt-6"><DashboardAppearanceSection /></div>
+                    </>
+                  )
                   : card(ROWS.filter((r) => r.group === active).map(Row))}
               </>
             )}

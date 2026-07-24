@@ -15,6 +15,8 @@ import {
 } from 'recharts';
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
+import Gauge from '../../components/gauges/Gauge';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 /* ─── palette ─── */
 const C = {
@@ -176,6 +178,7 @@ export default function ClickHouseDashboard() {
   };
 
   return (
+    <DashboardScopeProvider tech="clickhouse">
     <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── HEADER ─── */}
@@ -265,18 +268,16 @@ export default function ClickHouseDashboard() {
 
               {/* Gauges */}
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                <Gauge title="Memory Usage" pct={memPct}
+                <Gauge label="Memory Usage" pct={memPct}
                   sub={hs.memory_usage_human?`${hs.memory_usage_human} / ${hs.total_memory_human||'?'}`:`${memPct}%`}
                   colorFn={v=>v>85?C.red:v>70?C.orange:C.yellow} />
-                <Gauge title="Disk Usage" pct={diskPct}
+                <Gauge label="Disk Usage" pct={diskPct}
                   sub={disk_usage?.used_human?`${disk_usage.used_human} / ${disk_usage.total_human}`:`${diskPct}%`}
                   colorFn={v=>v>90?C.red:v>75?C.orange:C.teal} />
-                <Gauge title="Query Rate" pct={Math.min(100,Math.round(qRate))}
-                  center={qRate.toFixed(1)} unit=" q/s"
+                <Gauge label="Query Rate" pct={Math.min(100,Math.round(qRate))}
                   sub={`Active: ${hs.active_queries||0}`}
                   colorFn={v=>v>90?C.red:v>70?C.orange:C.green} />
-                <Gauge title="Parts Health" pct={partPct}
-                  center={fmtNum(hs.total_parts)} unit=" parts"
+                <Gauge label="Parts Health" pct={partPct}
                   sub={`Threshold: ${fmtNum(hs.max_parts_threshold||3000)}`}
                   colorFn={v=>v>80?C.red:v>60?C.orange:C.green} />
               </div>
@@ -1435,6 +1436,7 @@ export default function ClickHouseDashboard() {
 
       </div>
     </div>
+    </DashboardScopeProvider>
   );
 }
 
@@ -1514,29 +1516,6 @@ function ActionCard({icon,title,desc,onClick}) {
       <p className="text-xs text-slate-400 mt-1">{desc}</p>
       <ChevronRight size={14} className="text-slate-200 group-hover:text-amber-400 mt-3 transition-colors"/>
     </button>
-  );
-}
-function Gauge({title,pct,sub,center,unit='%',colorFn}) {
-  const safe=Math.max(0,Math.min(100,pct||0));
-  const fill=colorFn?colorFn(safe):(safe>80?C.red:safe>60?C.orange:C.yellow);
-  const disp=center!==undefined?center:safe;
-  const u=center!==undefined?unit:'%';
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <div className="relative flex flex-col items-center">
-        <PieChart width={150} height={90}>
-          <Pie data={[{v:safe},{v:100-safe}]} cx={75} cy={86} startAngle={180} endAngle={0} innerRadius={50} outerRadius={68} dataKey="v" stroke="none">
-            <Cell fill={fill}/><Cell fill="#e2e8f0"/>
-          </Pie>
-        </PieChart>
-        <div style={{marginTop:'-38px'}} className="text-center pointer-events-none">
-          <p className="text-xl font-black text-slate-900 leading-none">{disp}</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">{u}</p>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-400 mt-2 text-center leading-tight">{sub}</p>
-    </div>
   );
 }
 function Trend({title,data,color,unit='',fmtVal}) {

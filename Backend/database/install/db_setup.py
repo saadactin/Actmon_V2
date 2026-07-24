@@ -197,6 +197,23 @@ BEGIN
        (p_json->>'joining_date')::DATE, (p_json->>'reporting_manager_id')::INTEGER,
        COALESCE((p_json->>'employment_status_id')::INTEGER, 1), TRUE, v_by, CURRENT_TIMESTAMP);
 END; $_$""",
+    # Dashboard Appearance: widened from one row per user to one row per
+    # (user, scope) — scope='all' is the global default, a specific tech name
+    # (mysql/mssql/oracle/postgresql/mongodb/clickhouse/infra) is a per-tech
+    # override. Installs that already ran create_all() with the old single-scope
+    # table need these columns + the new composite unique constraint added.
+    """ALTER TABLE dashboard_appearance_settings
+         ADD COLUMN IF NOT EXISTS scope VARCHAR(20) NOT NULL DEFAULT 'all',
+         ADD COLUMN IF NOT EXISTS display_mode VARCHAR(10) NOT NULL DEFAULT 'gauge'""",
+    """DO $$
+       BEGIN
+           ALTER TABLE dashboard_appearance_settings DROP CONSTRAINT IF EXISTS uq_dashboard_appearance_user;
+           BEGIN
+               ALTER TABLE dashboard_appearance_settings
+                   ADD CONSTRAINT uq_dashboard_appearance_user_scope UNIQUE (user_id, scope);
+           EXCEPTION WHEN duplicate_object THEN NULL;
+           END;
+       END $$""",
 ]
 
 

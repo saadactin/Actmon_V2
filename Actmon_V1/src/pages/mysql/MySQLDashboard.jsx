@@ -18,6 +18,8 @@ import {
 } from 'recharts';
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
+import Gauge from '../../components/gauges/Gauge';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 // Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
 const MySQLBackupPageEmbedded = React.lazy(() => import('./MySQLBackupPage'));
@@ -596,6 +598,7 @@ export default function MySQLDashboard() {
   };
 
   return (
+    <DashboardScopeProvider tech="mysql">
     <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── Drill-down Modal ─── */}
@@ -740,29 +743,23 @@ export default function MySQLDashboard() {
 
             {/* ── Row 3: Semi-circle gauges — click to navigate ── */}
             <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-              <button onClick={() => setActiveTab('performance')} className="text-left hover:ring-2 hover:ring-cyan-300 rounded-2xl transition-all">
-                <GaugeCard title="Connection Pool" pct={connPct}
-                  sub={`${health_summary.current_connections} / ${health_summary.max_connections} max · click to detail`}
-                  colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal} />
-              </button>
-              <button onClick={() => setActiveTab('performance')} className="text-left hover:ring-2 hover:ring-green-300 rounded-2xl transition-all">
-                <GaugeCard title="InnoDB Cache Hit" pct={cachePct}
-                  sub="Buffer pool read efficiency · click to detail"
-                  colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green} />
-              </button>
-              <button onClick={() => setActiveTab('queries')} className="text-left hover:ring-2 hover:ring-blue-300 rounded-2xl transition-all">
-                <GaugeCard title="Active Threads" pct={threadRunPct}
-                  centerLabel={threads.running ?? '?'} centerUnit=" active"
-                  sub={`${threads.cached || 0} cached · click to see queries`}
-                  colorFn={v => v > 50 ? C.orange : C.blue} />
-              </button>
-              <button onClick={() => setActiveTab('queries')} className="text-left hover:ring-2 hover:ring-red-300 rounded-2xl transition-all">
-                <GaugeCard title="Slow Query Ratio"
-                  pct={Math.min(100, slowPct * 10)}
-                  centerLabel={fmtNum(query_stats.Slow_queries)} centerUnit=" slow"
-                  sub={`${slowPct}% of ${fmtNum(query_stats.Questions)} total · click to see`}
-                  colorFn={v => v > 30 ? C.red : v > 5 ? C.orange : C.green} />
-              </button>
+              <Gauge label="Connection Pool" pct={connPct}
+                sub={`${health_summary.current_connections} / ${health_summary.max_connections} max · click to detail`}
+                onClick={() => setActiveTab('performance')}
+                colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal} />
+              <Gauge label="InnoDB Cache Hit" pct={cachePct}
+                sub="Buffer pool read efficiency · click to detail"
+                onClick={() => setActiveTab('performance')}
+                colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green} />
+              <Gauge label="Active Threads" pct={threadRunPct}
+                sub={`${threads.cached || 0} cached · click to see queries`}
+                onClick={() => setActiveTab('queries')}
+                colorFn={v => v > 50 ? C.orange : C.blue} />
+              <Gauge label="Slow Query Ratio"
+                pct={Math.min(100, slowPct * 10)}
+                sub={`${slowPct}% of ${fmtNum(query_stats.Questions)} total · click to see`}
+                onClick={() => setActiveTab('queries')}
+                colorFn={v => v > 30 ? C.red : v > 5 ? C.orange : C.green} />
             </div>
 
             {/* ── Row 4: Live sparklines ── */}
@@ -2996,6 +2993,7 @@ export default function MySQLDashboard() {
 
       </div>
     </div>
+    </DashboardScopeProvider>
   );
 }
 
@@ -3271,36 +3269,6 @@ function TabLoader() {
   return (
     <div className="flex items-center justify-center py-20">
       <div className="w-8 h-8 border-4 border-cyan-200 border-t-cyan-600 rounded-full animate-spin" />
-    </div>
-  );
-}
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn }) {
-  const safePct = Math.max(0, Math.min(100, pct || 0));
-  const fill = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.green);
-  const displayCenter = centerLabel !== undefined ? centerLabel : safePct;
-  const displayUnit   = centerLabel !== undefined ? centerUnit : '%';
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <div className="relative flex flex-col items-center">
-        <PieChart width={150} height={90}>
-          <Pie
-            data={[{ v: safePct }, { v: 100 - safePct }]}
-            cx={75} cy={86}
-            startAngle={180} endAngle={0}
-            innerRadius={50} outerRadius={68}
-            dataKey="v" stroke="none"
-          >
-            <Cell fill={fill} />
-            <Cell fill="#e2e8f0" />
-          </Pie>
-        </PieChart>
-        <div style={{ marginTop: '-38px' }} className="text-center pointer-events-none">
-          <p className="text-xl font-black text-slate-900 leading-none">{displayCenter}</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">{displayUnit}</p>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-400 mt-2 text-center leading-tight">{sub}</p>
     </div>
   );
 }

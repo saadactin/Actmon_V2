@@ -19,6 +19,8 @@ from app.models.postgres_report_schedule_model import PostgresReportSchedule  # 
 from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
 from app.models.smtp_config_model import SmtpConfig                       # noqa: F401
 from app.models.alert_rule_model import AlertRule                         # noqa: F401
+from app.models.monitoring_settings_model import MonitoringSettings       # noqa: F401
+from app.models.dashboard_appearance_model import DashboardAppearanceSettings  # noqa: F401
 # Access-Control / Administration (RBAC) schema — organization, employee, role,
 # module, page, permission, user, sessions, audit, etc.
 from app.models.admin_models import (                                # noqa: F401
@@ -62,6 +64,8 @@ from app.routes.mysql.mysql_report_email_routes import router as mysql_report_em
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
 from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
 from app.routes.smtp.smtp_config_routes import router as smtp_config_router
+from app.routes.settings.monitoring_settings_routes import router as monitoring_settings_router
+from app.routes.settings.dashboard_appearance_routes import router as dashboard_appearance_router
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
 from app.routes.postgres.postgres_backup_routes import router as postgres_backup_router
@@ -116,7 +120,7 @@ async def lifespan(app_instance):
         import warnings; warnings.warn(f"[metrics_pipeline] not started: {_mp_err}")
     # Start agent reaper (marks uninstalled/offline agents, removes dead hosts)
     from app.services.agent.agent_reaper_service import start_agent_reaper
-    start_agent_reaper(interval_sec=60)
+    start_agent_reaper(interval_sec=15)
     # Start ActMon metric logger → ClickHouse (per-metric time-series)
     try:
         from app.services.logs.actmon_logs_service import start_metric_logger
@@ -204,6 +208,8 @@ app.include_router(mysql_report_email_router)
 app.include_router(postgres_report_email_router)
 app.include_router(mssql_report_email_router)
 app.include_router(smtp_config_router)
+app.include_router(monitoring_settings_router)
+app.include_router(dashboard_appearance_router)
 app.include_router(mongo_monitoring_router)
 
 # New OS server + terminal routes

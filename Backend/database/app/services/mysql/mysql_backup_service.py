@@ -1,3 +1,4 @@
+import base64
 import gzip
 import os
 import shutil
@@ -91,6 +92,183 @@ def _ssh_run(ssh: paramiko.SSHClient, cmd: str, timeout: int = 600):
     return out.read(), err.read().decode("utf-8", errors="replace"), exit_code
 
 
+class _Runner:
+    """Unified command / file executor for the DB host.
+
+    Chooses the transport automatically:
+      • AGENT  — when the connection is agent-linked (the agent runs the command on
+                 the DB host and streams files back over the job channel). This is
+                 what makes backups work for localhost connections the server cannot
+                 reach over the network.
+      • SSH    — when SSH credentials are registered for the host (legacy path).
+    `shell()` runs a control command (text output), `getfile()`/`putfile()` move the
+    dump. `via` is None when neither transport is available (caller reports cleanly)."""
+
+    def __init__(self, rec: ConnectionMaster, db: Session):
+        self.rec = rec
+        self.token = None
+        self.ssh = None
+        os_type = None
+        try:
+            from app.services.common.db_proxy_service import agent_host_for_conn
+            row = agent_host_for_conn(rec.id, db)
+            self.token = row.token if row else None
+            os_type = row.os_type if row else None
+        except Exception:
+            self.token = None
+        if not self.token:
+            self.ssh = _get_ssh(rec)
+            if self.ssh:
+                try:
+                    srv = db.query(OsServer).filter(OsServer.ip_address == rec.host).first()
+                    os_type = srv.os_type if srv else None
+                except Exception:
+                    os_type = None
+        self.via = "agent" if self.token else ("ssh" if self.ssh else None)
+        self.is_windows = bool(os_type) and "win" in os_type.lower()
+
+    def shell(self, cmd: str, timeout: int = 900):
+        """Return (exit_code, combined_text)."""
+        if self.token:
+            from app.services.agent import agent_fs_service
+            raw = agent_fs_service.request(self.token, "shell", cmd, timeout=timeout)
+            if raw is None:
+                raise RuntimeError("The agent did not respond in time (shell).")
+            txt = raw.decode("utf-8", "replace")
+            code = 0
+            if txt.startswith("EXIT:"):
+                head, _, rest = txt.partition("\n")
+                try:
+                    code = int(head[5:].strip())
+                except Exception:
+                    code = 0
+                txt = rest
+            return code, txt
+        if self.ssh:
+            out, err, code = _ssh_run(self.ssh, cmd, timeout)
+            body = (out.decode("utf-8", "replace") if isinstance(out, bytes) else str(out))
+            if err:
+                body += "\n" + err
+            return code, body
+        raise RuntimeError("No execution path: connection is not agent-linked and has no SSH credentials.")
+
+    def getfile(self, remote_path: str, timeout: int = 900) -> bytes:
+        if self.token:
+            from app.services.agent import agent_fs_service
+            raw = agent_fs_service.request(self.token, "getfile", remote_path, timeout=timeout)
+            if raw is None:
+                raise RuntimeError("The agent did not respond in time (getfile).")
+            return raw
+        if self.ssh:
+            sftp = self.ssh.open_sftp()
+            try:
+                with sftp.open(remote_path, "rb") as f:
+                    return f.read()
+            finally:
+                sftp.close()
+        raise RuntimeError("No execution path for getfile.")
+
+    def putfile(self, remote_path: str, data: bytes, timeout: int = 900):
+        if self.token:
+            from app.services.agent import agent_fs_service
+            b64 = base64.b64encode(data).decode()
+            raw = agent_fs_service.request(self.token, "putfile", remote_path, data=b64, timeout=timeout)
+            if raw is None:
+                raise RuntimeError("The agent did not respond in time (putfile).")
+            return
+        if self.ssh:
+            sftp = self.ssh.open_sftp()
+            try:
+                with sftp.open(remote_path, "wb") as f:
+                    f.write(data)
+            finally:
+                sftp.close()
+            return
+        raise RuntimeError("No execution path for putfile.")
+
+    def close(self):
+        try:
+            if self.ssh:
+                self.ssh.close()
+        except Exception:
+            pass
+
+    # ── Cross-platform command helpers (cmd.exe on Windows, bash elsewhere) ──────
+
+    def q(self, s: str) -> str:
+        """Quote a value for embedding in a shell command on this host's platform."""
+        s = str(s)
+        if self.is_windows:
+            return '"' + s.replace('"', '""') + '"'
+        return "'" + s.replace("'", "'\\''") + "'"
+
+    def temp_path(self, name: str) -> str:
+        """A host-writable scratch path — C:\\Windows\\Temp on Windows, /tmp elsewhere."""
+        return f"C:\\Windows\\Temp\\{name}" if self.is_windows else f"/tmp/{name}"
+
+    def read_text_file(self, path: str, timeout: int = 60) -> str:
+        """Best-effort text dump of a small file on the host (e.g. captured stderr)."""
+        if self.is_windows:
+            _, txt = self.shell(f'type "{path}" 2>nul', timeout=timeout)
+        else:
+            _, txt = self.shell(f"cat '{path}' 2>/dev/null || true", timeout=timeout)
+        return txt
+
+    def rm(self, *paths: str, timeout: int = 60):
+        """Best-effort delete of one or more temp files on the host."""
+        if not paths:
+            return
+        if self.is_windows:
+            joined = " ".join(f'"{p}"' for p in paths)
+            self.shell(f"del /q {joined} 2>nul", timeout=timeout)
+        else:
+            joined = " ".join(f"'{p}'" for p in paths)
+            self.shell(f"rm -f {joined}", timeout=timeout)
+
+    def mysql_defaults_file(self, rec: ConnectionMaster, name: str) -> str:
+        """Write a temp MySQL option file on the host and return its path. Every
+        mysql/mysqldump/mysqlbinlog invocation reads creds from this via
+        --defaults-extra-file instead of -u/-p on the command line — sidesteps the
+        cmd.exe quoting minefield entirely (passwords with quotes/backslashes used to
+        break Windows command lines) and keeps the password off the process list too."""
+        content = (
+            "[client]\n"
+            f"user={rec.username or ''}\n"
+            f"password={rec.password or ''}\n"
+            "host=127.0.0.1\n"
+            f"port={rec.port or 3306}\n"
+        )
+        path = self.temp_path(name)
+        self.putfile(path, content.encode("utf-8"))
+        return path
+
+    def win_file_size(self, path: str, timeout: int = 60) -> int:
+        """Size in bytes of a file already sitting on a Windows host — no transfer."""
+        _, out = self.shell(f'for %A in ("{path}") do @echo %~zA', timeout=timeout)
+        for line in out.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
+        return 0
+
+    def win_dir_size(self, path: str, timeout: int = 120) -> int:
+        """Total size in bytes of a folder tree already sitting on a Windows host."""
+        ps = f"(Get-ChildItem -Recurse -File '{path}' | Measure-Object -Property Length -Sum).Sum"
+        b64 = base64.b64encode(ps.encode("utf-16-le")).decode()
+        _, out = self.shell(f"powershell -NoProfile -EncodedCommand {b64}", timeout=timeout)
+        for line in out.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
+        return 0
+
+
+# Marker prefix for a file_path that stays on the DB host itself (never pulled onto
+# the ActMon server) — used for Windows-agent hosts. Everything else in file_path is
+# a plain local path under BACKUPS_ROOT, same as always.
+REMOTE_PREFIX = "REMOTE:"
+
+
 # ── Misc helpers ──────────────────────────────────────────────────────────────
 
 def _backup_dir(conn_id: int) -> Path:
@@ -149,62 +327,138 @@ def _do_logical_backup(job_id: int, rec_id: int, custom_path: str = None):
         job.backup_start = datetime.utcnow()
         db.commit()
 
-        ssh = _get_ssh(rec)
-        if not ssh:
+        runner = _Runner(rec, db)
+        if not runner.via:
             job.status    = "failed"
-            job.error_msg = "SSH connection unavailable — check OS Server SSH credentials"
+            job.error_msg = ("No execution path — this connection is not agent-linked and has no "
+                              "SSH credentials. Install the agent on the DB host, or add SSH creds.")
             job.backup_end = datetime.utcnow()
             db.commit()
             return
-
-        db_flag = "--all-databases" if job.db_name == "ALL" else f"--databases {job.db_name}"
-        port    = rec.port or 3306
-        pw_esc  = (rec.password or "").replace("'", "'\\''")
-
-        cmd = (
-            f"mysqldump -h 127.0.0.1 -P {port} -u '{rec.username}' -p'{pw_esc}' "
-            f"--single-transaction --flush-logs --master-data=2 "
-            f"--routines --triggers --events "
-            f"{db_flag} 2>/tmp/actmon_dump_err.txt | gzip"
-        )
-
-        out_bytes, err_str, exit_code = _ssh_run(ssh, cmd, timeout=3600)
-
-        if exit_code != 0 or len(out_bytes) < 100:
-            _, err_out, _ = _ssh_run(ssh, "cat /tmp/actmon_dump_err.txt 2>/dev/null")
-            job.status    = "failed"
-            job.error_msg = err_out.decode("utf-8", errors="replace") or err_str or "mysqldump failed"
-            job.backup_end = datetime.utcnow()
-            db.commit()
-            ssh.close()
-            return
-
-        bdir  = Path(custom_path) if custom_path else _backup_dir(rec_id)
-        bdir.mkdir(parents=True, exist_ok=True)
-        fname = f"{job.uuid}_logical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.sql.gz"
-        fpath = bdir / fname
-        fpath.write_bytes(out_bytes)
 
         try:
-            first_chunk = gzip.decompress(out_bytes[:65536]).decode("utf-8", errors="replace")
-            for line in first_chunk.splitlines():
-                if "MASTER_LOG_FILE=" in line:
-                    parts = line.strip().rstrip(";").split(",")
-                    for p in parts:
-                        if "MASTER_LOG_FILE=" in p:
-                            job.binlog_file = p.split("=")[1].strip().strip("'")
-                        if "MASTER_LOG_POS=" in p:
-                            job.binlog_pos = int(p.split("=")[1].strip())
-                    break
-        except Exception:
-            pass
+            db_flag = "--all-databases" if job.db_name == "ALL" else f"--databases {job.db_name}"
+            # Creds go in a defaults file, never on the command line — sidesteps
+            # cmd.exe's quoting entirely (a password with a stray quote/backslash used
+            # to break the whole command line) and keeps the password out of `ps`.
+            optfile = runner.mysql_defaults_file(rec, f"actmon_my_{job.uuid}.cnf")
+            # Write the dump to a temp file ON THE DB HOST. Windows has no gzip/zcat by
+            # default, so it saves the raw .sql there and — per policy — the file STAYS
+            # on the Windows host rather than being pulled onto the ActMon server.
+            compressed = not runner.is_windows
+            ext    = "sql.gz" if compressed else "sql"
+            remote = runner.temp_path(f"actmon_dump_{job.uuid}.{ext}")
+            errf   = runner.temp_path(f"actmon_dump_{job.uuid}.err")
 
-        job.status     = "completed"
-        job.file_path  = str(fpath)
-        job.size_bytes = fpath.stat().st_size
-        job.backup_end = datetime.utcnow()
-        db.commit()
-        ssh.close()
+            dump_args = (
+                f'--defaults-extra-file="{optfile}" '
+                f"--single-transaction --flush-logs --master-data=2 "
+                f"--routines --triggers --events {db_flag}"
+            )
+            if runner.is_windows:
+                cmd = f'mysqldump {dump_args} > "{remote}" 2> "{errf}"'
+            else:
+                cmd = f"mysqldump {dump_args} 2>'{errf}' | gzip > '{remote}'"
+
+            exit_code, out_text = runner.shell(cmd, timeout=3600)
+
+            if runner.is_windows:
+                if exit_code != 0:
+                    err_out = runner.read_text_file(errf)
+                    job.status    = "failed"
+                    job.error_msg = err_out.strip() or out_text.strip() or "mysqldump failed"
+                    job.backup_end = datetime.utcnow()
+                    db.commit()
+                    runner.rm(remote, errf, optfile)
+                    return
+
+                size_bytes = runner.win_file_size(remote)
+                if size_bytes < 100:
+                    job.status     = "failed"
+                    job.error_msg  = "mysqldump produced an empty file"
+                    job.backup_end = datetime.utcnow()
+                    db.commit()
+                    runner.rm(remote, errf, optfile)
+                    return
+
+                # Best-effort: read just the dump's head to pull MASTER_LOG_FILE/POS,
+                # without ever transferring the (potentially huge) full dump.
+                try:
+                    ps = f"Get-Content -Path '{remote}' -TotalCount 30"
+                    b64 = base64.b64encode(ps.encode("utf-16-le")).decode()
+                    _, head_txt = runner.shell(f"powershell -NoProfile -EncodedCommand {b64}")
+                    for line in head_txt.splitlines():
+                        if "MASTER_LOG_FILE=" in line:
+                            parts = line.strip().rstrip(";").split(",")
+                            for p in parts:
+                                if "MASTER_LOG_FILE=" in p:
+                                    job.binlog_file = p.split("=")[1].strip().strip("'")
+                                if "MASTER_LOG_POS=" in p:
+                                    job.binlog_pos = int(p.split("=")[1].strip())
+                            break
+                except Exception:
+                    pass
+
+                final_dir  = f"C:\\ActMon\\Backups\\conn_{rec_id}"
+                fname      = f"{job.uuid}_logical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}"
+                final_path = f"{final_dir}\\{fname}"
+                runner.shell(f'mkdir "{final_dir}" 2>nul')
+                runner.shell(f'move /Y "{remote}" "{final_path}"')
+                runner.rm(errf, optfile)
+
+                job.status     = "completed"
+                job.file_path  = f"{REMOTE_PREFIX}{final_path}"
+                job.size_bytes = size_bytes
+                job.backup_end = datetime.utcnow()
+                db.commit()
+                return
+
+            # Linux (agent or SSH): pull the file back onto this ActMon server, as before.
+            data = b""
+            if exit_code == 0:
+                try:
+                    data = runner.getfile(remote, timeout=1800)
+                except Exception:
+                    data = b""
+
+            if exit_code != 0 or len(data) < 100:
+                err_out = runner.read_text_file(errf)
+                job.status    = "failed"
+                job.error_msg = err_out.strip() or out_text.strip() or "mysqldump failed"
+                job.backup_end = datetime.utcnow()
+                db.commit()
+                runner.rm(remote, errf, optfile)
+                return
+
+            bdir  = Path(custom_path) if custom_path else _backup_dir(rec_id)
+            bdir.mkdir(parents=True, exist_ok=True)
+            fname = f"{job.uuid}_logical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}"
+            fpath = bdir / fname
+            fpath.write_bytes(data)
+            runner.rm(remote, errf, optfile)
+
+            try:
+                first_chunk = (gzip.decompress(data[:65536]) if compressed else data[:65536]) \
+                    .decode("utf-8", errors="replace")
+                for line in first_chunk.splitlines():
+                    if "MASTER_LOG_FILE=" in line:
+                        parts = line.strip().rstrip(";").split(",")
+                        for p in parts:
+                            if "MASTER_LOG_FILE=" in p:
+                                job.binlog_file = p.split("=")[1].strip().strip("'")
+                            if "MASTER_LOG_POS=" in p:
+                                job.binlog_pos = int(p.split("=")[1].strip())
+                        break
+            except Exception:
+                pass
+
+            job.status     = "completed"
+            job.file_path  = str(fpath)
+            job.size_bytes = fpath.stat().st_size
+            job.backup_end = datetime.utcnow()
+            db.commit()
+        finally:
+            runner.close()
 
     except Exception as exc:
         try:
@@ -232,73 +486,149 @@ def _do_physical_backup(job_id: int, rec_id: int, custom_path: str = None):
         job.backup_start = datetime.utcnow()
         db.commit()
 
-        ssh = _get_ssh(rec)
-        if not ssh:
+        runner = _Runner(rec, db)
+        if not runner.via:
             job.status     = "failed"
-            job.error_msg  = "SSH connection unavailable"
+            job.error_msg  = ("No execution path — this connection is not agent-linked and has no "
+                               "SSH credentials. Install the agent on the DB host, or add SSH creds.")
             job.backup_end = datetime.utcnow()
             db.commit()
             return
 
-        port   = rec.port or 3306
-        pw_esc = (rec.password or "").replace("'", "'\\''")
+        try:
+            port   = rec.port or 3306
+            user_q = runner.q(rec.username or "")
+            pw_q   = runner.q(rec.password or "")
 
-        check_cmd = "mariabackup --version 2>/dev/null && echo mariabackup || (xtrabackup --version 2>/dev/null && echo xtrabackup || echo none)"
-        _, tool_out, _ = _ssh_run(ssh, check_cmd)
-        tool_name = "mariabackup" if "mariabackup" in tool_out else ("xtrabackup" if "xtrabackup" in tool_out else None)
+            if runner.is_windows:
+                check_cmd = "mariabackup --version 2>nul && echo mariabackup || (xtrabackup --version 2>nul && echo xtrabackup || echo none)"
+            else:
+                check_cmd = "mariabackup --version 2>/dev/null && echo mariabackup || (xtrabackup --version 2>/dev/null && echo xtrabackup || echo none)"
+            _, tool_out = runner.shell(check_cmd)
+            tool_name = "mariabackup" if "mariabackup" in tool_out else ("xtrabackup" if "xtrabackup" in tool_out else None)
 
-        if not tool_name:
-            job.status     = "failed"
-            job.error_msg  = "Neither mariabackup nor xtrabackup found on the server. Install with: apt install mariadb-backup"
-            job.backup_end = datetime.utcnow()
-            db.commit()
-            ssh.close()
-            return
+            if not tool_name:
+                job.status     = "failed"
+                job.error_msg  = "Neither mariabackup nor xtrabackup found on the server. Install with: apt install mariadb-backup"
+                job.backup_end = datetime.utcnow()
+                db.commit()
+                return
 
-        tmp_dir    = f"/tmp/actmon_phys_{job.uuid}"
-        backup_cmd = (
-            f"{tool_name} --backup --target-dir={tmp_dir} "
-            f"--host=127.0.0.1 --port={port} "
-            f"--user='{rec.username}' --password='{pw_esc}' "
-            f"--stream=xbstream 2>/tmp/actmon_phys_err.txt | gzip"
-        )
+            # Windows has no gzip/tar, so the stream is saved raw there.
+            compressed = not runner.is_windows
+            ext      = "xbstream.gz" if compressed else "xbstream"
+            tmp_dir  = runner.temp_path(f"actmon_phys_{job.uuid}")
+            remote   = runner.temp_path(f"actmon_phys_{job.uuid}.{ext}")
+            errf     = runner.temp_path(f"actmon_phys_{job.uuid}.err")
+            backup_args = (
+                f"--backup --target-dir={tmp_dir} "
+                f"--host=127.0.0.1 --port={port} "
+                f"--user={user_q} --password={pw_q} "
+                f"--stream=xbstream"
+            )
+            if runner.is_windows:
+                backup_cmd = f'{tool_name} {backup_args} > "{remote}" 2> "{errf}"'
+            else:
+                backup_cmd = f"{tool_name} {backup_args} 2>'{errf}' | gzip > '{remote}'"
 
-        out_bytes, err_str, exit_code = _ssh_run(ssh, backup_cmd, timeout=3600)
+            exit_code, out_text = runner.shell(backup_cmd, timeout=3600)
 
-        if exit_code != 0 or len(out_bytes) < 512:
-            _, err_out, _ = _ssh_run(ssh, "tail -50 /tmp/actmon_phys_err.txt 2>/dev/null")
-            job.status     = "failed"
-            job.error_msg  = err_out.decode("utf-8", errors="replace") or err_str or f"{tool_name} backup failed"
-            job.backup_end = datetime.utcnow()
-            db.commit()
-            ssh.close()
-            return
+            def _cleanup_tmp_dir():
+                if runner.is_windows:
+                    runner.shell(f'rmdir /s /q "{tmp_dir}" 2>nul')
+                else:
+                    runner.shell(f"rm -rf '{tmp_dir}'")
 
-        bdir  = Path(custom_path) if custom_path else _backup_dir(rec_id)
-        bdir.mkdir(parents=True, exist_ok=True)
-        fname = f"{job.uuid}_physical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xbstream.gz"
-        fpath = bdir / fname
-        fpath.write_bytes(out_bytes)
+            if runner.is_windows:
+                if exit_code != 0:
+                    err_out = runner.read_text_file(errf)
+                    job.status     = "failed"
+                    job.error_msg  = err_out.strip() or out_text.strip() or f"{tool_name} backup failed"
+                    job.backup_end = datetime.utcnow()
+                    db.commit()
+                    runner.rm(remote, errf)
+                    _cleanup_tmp_dir()
+                    return
 
-        _, bl_out, _ = _ssh_run(ssh, f"cat {tmp_dir}/xtrabackup_binlog_info 2>/dev/null || echo ''")
-        bl_text = bl_out.decode("utf-8", errors="replace").strip()
-        if bl_text:
-            parts = bl_text.split()
-            if len(parts) >= 2:
-                job.binlog_file = parts[0]
+                size_bytes = runner.win_file_size(remote)
+                if size_bytes < 512:
+                    job.status     = "failed"
+                    job.error_msg  = f"{tool_name} produced an empty file"
+                    job.backup_end = datetime.utcnow()
+                    db.commit()
+                    runner.rm(remote, errf)
+                    _cleanup_tmp_dir()
+                    return
+
+                bl_text = runner.read_text_file(f"{tmp_dir}\\xtrabackup_binlog_info").strip()
+                if bl_text:
+                    parts = bl_text.split()
+                    if len(parts) >= 2:
+                        job.binlog_file = parts[0]
+                        try:
+                            job.binlog_pos = int(parts[1])
+                        except Exception:
+                            pass
+
+                final_dir  = f"C:\\ActMon\\Backups\\conn_{rec_id}"
+                fname      = f"{job.uuid}_physical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}"
+                final_path = f"{final_dir}\\{fname}"
+                runner.shell(f'mkdir "{final_dir}" 2>nul')
+                runner.shell(f'move /Y "{remote}" "{final_path}"')
+                runner.rm(errf)
+                _cleanup_tmp_dir()
+
+                job.status     = "completed"
+                job.file_path  = f"{REMOTE_PREFIX}{final_path}"
+                job.size_bytes = size_bytes
+                job.backup_end = datetime.utcnow()
+                db.commit()
+                return
+
+            # Linux (agent or SSH): pull the file back onto this ActMon server, as before.
+            data = b""
+            if exit_code == 0:
                 try:
-                    job.binlog_pos = int(parts[1])
+                    data = runner.getfile(remote, timeout=1800)
                 except Exception:
-                    pass
+                    data = b""
 
-        _ssh_run(ssh, f"rm -rf {tmp_dir} 2>/dev/null")
+            if exit_code != 0 or len(data) < 512:
+                err_out = runner.read_text_file(errf)
+                job.status     = "failed"
+                job.error_msg  = err_out.strip() or out_text.strip() or f"{tool_name} backup failed"
+                job.backup_end = datetime.utcnow()
+                db.commit()
+                runner.rm(remote, errf)
+                _cleanup_tmp_dir()
+                return
 
-        job.status     = "completed"
-        job.file_path  = str(fpath)
-        job.size_bytes = fpath.stat().st_size
-        job.backup_end = datetime.utcnow()
-        db.commit()
-        ssh.close()
+            bdir  = Path(custom_path) if custom_path else _backup_dir(rec_id)
+            bdir.mkdir(parents=True, exist_ok=True)
+            fname = f"{job.uuid}_physical_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{ext}"
+            fpath = bdir / fname
+            fpath.write_bytes(data)
+
+            bl_text = runner.read_text_file(f"{tmp_dir}/xtrabackup_binlog_info").strip()
+            if bl_text:
+                parts = bl_text.split()
+                if len(parts) >= 2:
+                    job.binlog_file = parts[0]
+                    try:
+                        job.binlog_pos = int(parts[1])
+                    except Exception:
+                        pass
+
+            runner.rm(remote, errf)
+            _cleanup_tmp_dir()
+
+            job.status     = "completed"
+            job.file_path  = str(fpath)
+            job.size_bytes = fpath.stat().st_size
+            job.backup_end = datetime.utcnow()
+            db.commit()
+        finally:
+            runner.close()
 
     except Exception as exc:
         try:
@@ -345,45 +675,70 @@ def _do_binlog_backup(job_id: int, rec_id: int, custom_path: str = None):
         except Exception:
             pass
 
-        ssh = _get_ssh(rec)
-        if not ssh or not datadir:
+        runner = _Runner(rec, db)
+        if not runner.via or not datadir:
             job.status     = "failed"
-            job.error_msg  = "SSH unavailable or could not get datadir — cannot download binlog files"
+            job.error_msg  = ("No execution path or could not get datadir — cannot download binlog files. "
+                               "Install the agent on the DB host, or add SSH creds.")
             job.backup_end = datetime.utcnow()
             db.commit()
             return
 
-        bdir   = Path(custom_path) if custom_path else _backup_dir(rec_id)
-        bdir.mkdir(parents=True, exist_ok=True)
-        outdir = bdir / f"{job.uuid}_binlogs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
-        outdir.mkdir(exist_ok=True)
+        ts  = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        try:
+            if runner.is_windows:
+                # Source and destination are the same machine — copy in place, no
+                # transfer through the agent channel, and the files stay on that host.
+                final_dir = f"C:\\ActMon\\Backups\\conn_{rec_id}\\{job.uuid}_binlogs_{ts}"
+                runner.shell(f'mkdir "{final_dir}" 2>nul')
+                datadir_clean = datadir.rstrip("/\\")
+                for bl in binlogs:
+                    log_name = bl.get("Log_name") or bl.get("log_name", "")
+                    src  = f"{datadir_clean}\\{log_name}"
+                    dst  = f"{final_dir}\\{log_name}"
+                    runner.shell(f'copy /Y "{src}" "{dst}" >nul 2>nul')
 
-        sftp        = ssh.open_sftp()
-        total_bytes = 0
-        for bl in binlogs:
-            log_name    = bl.get("Log_name") or bl.get("log_name", "")
-            remote_path = datadir.rstrip("/") + "/" + log_name
-            local_path  = outdir / log_name
-            try:
-                sftp.get(remote_path, str(local_path))
-                total_bytes += local_path.stat().st_size
-            except Exception:
-                pass
-        sftp.close()
+                size_bytes = runner.win_dir_size(final_dir)
+                last = binlogs[-1]
+                job.binlog_file = last.get("Log_name") or last.get("log_name", "")
+                job.status      = "completed"
+                job.file_path   = f"{REMOTE_PREFIX}{final_dir}"
+                job.size_bytes  = size_bytes
+                job.backup_end  = datetime.utcnow()
+                db.commit()
+                return
 
-        archive = bdir / f"{job.uuid}_binlogs_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.tar.gz"
-        with tarfile.open(str(archive), "w:gz") as tar:
-            tar.add(str(outdir), arcname="binlogs")
-        shutil.rmtree(str(outdir), ignore_errors=True)
+            bdir   = Path(custom_path) if custom_path else _backup_dir(rec_id)
+            bdir.mkdir(parents=True, exist_ok=True)
+            outdir = bdir / f"{job.uuid}_binlogs_{ts}"
+            outdir.mkdir(exist_ok=True)
 
-        last = binlogs[-1]
-        job.binlog_file = last.get("Log_name") or last.get("log_name", "")
-        job.status      = "completed"
-        job.file_path   = str(archive)
-        job.size_bytes  = archive.stat().st_size
-        job.backup_end  = datetime.utcnow()
-        db.commit()
-        ssh.close()
+            total_bytes = 0
+            for bl in binlogs:
+                log_name    = bl.get("Log_name") or bl.get("log_name", "")
+                remote_path = datadir.rstrip("/\\") + "/" + log_name
+                local_path  = outdir / log_name
+                try:
+                    data = runner.getfile(remote_path, timeout=600)
+                    local_path.write_bytes(data)
+                    total_bytes += len(data)
+                except Exception:
+                    pass
+
+            archive = bdir / f"{job.uuid}_binlogs_{ts}.tar.gz"
+            with tarfile.open(str(archive), "w:gz") as tar:
+                tar.add(str(outdir), arcname="binlogs")
+            shutil.rmtree(str(outdir), ignore_errors=True)
+
+            last = binlogs[-1]
+            job.binlog_file = last.get("Log_name") or last.get("log_name", "")
+            job.status      = "completed"
+            job.file_path   = str(archive)
+            job.size_bytes  = archive.stat().st_size
+            job.backup_end  = datetime.utcnow()
+            db.commit()
+        finally:
+            runner.close()
 
     except Exception as exc:
         try:
@@ -412,49 +767,83 @@ def _do_restore_logical(job_id: int, restore_job_id: int, rec_id: int, target_db
         db.commit()
 
         src_job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
-        if not src_job or not src_job.file_path or not Path(src_job.file_path).exists():
+        if not src_job or not src_job.file_path:
+            restore_marker.status     = "failed"
+            restore_marker.error_msg  = "Source backup file not found"
+            restore_marker.backup_end = datetime.utcnow()
+            db.commit()
+            return
+        is_remote_src = src_job.file_path.startswith(REMOTE_PREFIX)
+        if not is_remote_src and not Path(src_job.file_path).exists():
             restore_marker.status     = "failed"
             restore_marker.error_msg  = "Source backup file not found"
             restore_marker.backup_end = datetime.utcnow()
             db.commit()
             return
 
-        ssh = _get_ssh(rec)
-        if not ssh:
+        runner = _Runner(rec, db)
+        if not runner.via:
             restore_marker.status     = "failed"
-            restore_marker.error_msg  = "SSH unavailable"
+            restore_marker.error_msg  = ("No execution path — this connection is not agent-linked and has no "
+                                          "SSH credentials. Install the agent on the DB host, or add SSH creds.")
             restore_marker.backup_end = datetime.utcnow()
             db.commit()
             return
 
-        src_path   = Path(src_job.file_path)
-        tmp_remote = f"/tmp/actmon_restore_{restore_marker.uuid}.sql.gz"
-        sftp = ssh.open_sftp()
-        sftp.put(str(src_path), tmp_remote)
-        sftp.close()
+        try:
+            optfile = runner.mysql_defaults_file(rec, f"actmon_my_{restore_marker.uuid}.cnf")
 
-        port    = rec.port or 3306
-        pw_esc  = (rec.password or "").replace("'", "'\\''")
-        db_arg  = target_db or ""
+            # A REMOTE:-prefixed path already lives on this same host (backed up there
+            # in the first place) — restore it in place, no upload needed. Otherwise
+            # it's a plain file on the ActMon server that needs pushing to the host.
+            if is_remote_src:
+                remote_path = src_job.file_path[len(REMOTE_PREFIX):]
+                is_gz       = remote_path.lower().endswith(".gz")
+                tmp_remote  = remote_path
+                created_tmp = False
+            else:
+                src_path    = Path(src_job.file_path)
+                is_gz       = src_path.suffix == ".gz"
+                tmp_remote  = runner.temp_path(f"actmon_restore_{restore_marker.uuid}{src_path.suffix or '.sql'}")
+                created_tmp = True
 
-        restore_cmd = (
-            f"zcat {tmp_remote} | mysql -h 127.0.0.1 -P {port} "
-            f"-u '{rec.username}' -p'{pw_esc}' {db_arg} 2>&1"
-        )
+            if is_gz and runner.is_windows:
+                restore_marker.status     = "failed"
+                restore_marker.error_msg  = ("This backup is gzip-compressed and this host is Windows "
+                                              "(no gzip/zcat available there). Take a new backup of this "
+                                              "connection first, then restore that one.")
+                restore_marker.backup_end = datetime.utcnow()
+                db.commit()
+                runner.rm(optfile)
+                return
 
-        _, out, exit_code = _ssh_run(ssh, restore_cmd, timeout=7200)
-        out_text = out.decode("utf-8", errors="replace").strip() if isinstance(out, bytes) else str(out)
+            if created_tmp:
+                runner.putfile(tmp_remote, src_path.read_bytes(), timeout=1800)
 
-        _ssh_run(ssh, f"rm -f {tmp_remote}")
-        ssh.close()
+            db_arg = target_db or ""
+            defaults_arg = f'--defaults-extra-file="{optfile}"'
 
-        if exit_code != 0:
-            restore_marker.status    = "failed"
-            restore_marker.error_msg = out_text[:2000]
-        else:
-            restore_marker.status = "completed"
-        restore_marker.backup_end = datetime.utcnow()
-        db.commit()
+            if runner.is_windows:
+                restore_cmd = f'mysql {defaults_arg} {db_arg} < "{tmp_remote}" 2>&1'
+            elif is_gz:
+                restore_cmd = f"zcat {tmp_remote} | mysql {defaults_arg} {db_arg} 2>&1"
+            else:
+                restore_cmd = f"mysql {defaults_arg} {db_arg} < {tmp_remote} 2>&1"
+
+            exit_code, out_text = runner.shell(restore_cmd, timeout=7200)
+            if created_tmp:
+                runner.rm(tmp_remote)
+            runner.rm(optfile)
+
+            if exit_code != 0:
+                restore_marker.status    = "failed"
+                restore_marker.error_msg = out_text.strip()[:2000]
+            else:
+                restore_marker.status = "completed"
+            restore_marker.backup_end = datetime.utcnow()
+            db.commit()
+        finally:
+            runner.close()
 
     except Exception as exc:
         try:
@@ -485,110 +874,139 @@ def _do_pitr(pitr_job_id: int, base_job_id: int, rec_id: int,
         pitr_job.notes        = f"PITR to {target_dt}"
         db.commit()
 
-        if not base_job.file_path or not Path(base_job.file_path).exists():
+        is_remote_base = bool(base_job.file_path) and base_job.file_path.startswith(REMOTE_PREFIX)
+        if not base_job.file_path or (not is_remote_base and not Path(base_job.file_path).exists()):
             pitr_job.status     = "failed"
             pitr_job.error_msg  = "Base backup file not found on disk"
             pitr_job.backup_end = datetime.utcnow()
             db.commit()
             return
 
-        ssh = _get_ssh(rec)
-        if not ssh:
+        runner = _Runner(rec, db)
+        if not runner.via:
             pitr_job.status     = "failed"
-            pitr_job.error_msg  = "SSH unavailable — cannot perform PITR"
+            pitr_job.error_msg  = ("No execution path — cannot perform PITR. Install the agent on the DB "
+                                    "host, or add SSH creds.")
             pitr_job.backup_end = datetime.utcnow()
             db.commit()
             return
 
-        port     = rec.port or 3306
-        pw_esc   = (rec.password or "").replace("'", "'\\''")
-        db_arg   = target_db or ""
-        tmp_dump = f"/tmp/actmon_pitr_base_{pitr_job.uuid}.sql.gz"
+        try:
+            db_arg  = target_db or ""
+            optfile = runner.mysql_defaults_file(rec, f"actmon_my_{pitr_job.uuid}.cnf")
 
-        # Step 1: restore base dump
-        pitr_job.notes = "Step 1/3: Restoring base logical backup…"
-        db.commit()
+            # A REMOTE:-prefixed base backup already lives on this same host — restore
+            # it in place, no upload needed.
+            if is_remote_base:
+                remote_base = base_job.file_path[len(REMOTE_PREFIX):]
+                is_gz       = remote_base.lower().endswith(".gz")
+                tmp_dump    = remote_base
+                created_tmp = False
+            else:
+                base_path   = Path(base_job.file_path)
+                is_gz       = base_path.suffix == ".gz"
+                tmp_dump    = runner.temp_path(f"actmon_pitr_base_{pitr_job.uuid}{base_path.suffix or '.sql'}")
+                created_tmp = True
 
-        sftp = ssh.open_sftp()
-        sftp.put(str(base_job.file_path), tmp_dump)
-        sftp.close()
+            if is_gz and runner.is_windows:
+                pitr_job.status     = "failed"
+                pitr_job.error_msg  = ("Base backup is gzip-compressed and this host is Windows "
+                                        "(no gzip/zcat available there). Take a new backup of this "
+                                        "connection first, then run PITR from that one.")
+                pitr_job.backup_end = datetime.utcnow()
+                db.commit()
+                runner.rm(optfile)
+                return
 
-        restore_cmd = (
-            f"zcat {tmp_dump} | mysql -h 127.0.0.1 -P {port} "
-            f"-u '{rec.username}' -p'{pw_esc}' {db_arg} 2>&1"
-        )
-        _, out, exit_code = _ssh_run(ssh, restore_cmd, timeout=7200)
-        if exit_code != 0:
-            out_text = out.decode("utf-8", errors="replace") if isinstance(out, bytes) else str(out)
-            pitr_job.status     = "failed"
-            pitr_job.error_msg  = f"Base restore failed: {out_text[:1000]}"
-            pitr_job.backup_end = datetime.utcnow()
+            # Step 1: restore base dump
+            pitr_job.notes = "Step 1/3: Restoring base logical backup…"
             db.commit()
-            _ssh_run(ssh, f"rm -f {tmp_dump}")
-            ssh.close()
-            return
 
-        _ssh_run(ssh, f"rm -f {tmp_dump}")
+            if created_tmp:
+                runner.putfile(tmp_dump, base_path.read_bytes(), timeout=1800)
 
-        # Step 2: find binlogs to apply
-        pitr_job.notes = "Step 2/3: Identifying binary logs to apply…"
-        db.commit()
+            defaults_arg = f'--defaults-extra-file="{optfile}"'
+            if runner.is_windows:
+                restore_cmd = f'mysql {defaults_arg} {db_arg} < "{tmp_dump}" 2>&1'
+            elif is_gz:
+                restore_cmd = f"zcat {tmp_dump} | mysql {defaults_arg} {db_arg} 2>&1"
+            else:
+                restore_cmd = f"mysql {defaults_arg} {db_arg} < {tmp_dump} 2>&1"
 
-        engine  = _make_mysql_engine(rec)
-        binlogs = _rows(engine, "SHOW BINARY LOGS")
-        datadir = _scalar(engine, "SELECT @@datadir") or ""
+            exit_code, out_text = runner.shell(restore_cmd, timeout=7200)
+            if exit_code != 0:
+                pitr_job.status     = "failed"
+                pitr_job.error_msg  = f"Base restore failed: {out_text[:1000]}"
+                pitr_job.backup_end = datetime.utcnow()
+                db.commit()
+                if created_tmp:
+                    runner.rm(tmp_dump)
+                runner.rm(optfile)
+                return
 
-        base_bl     = base_job.binlog_file or ""
-        apply_logs  = []
-        reached     = not bool(base_bl)
-        for bl in binlogs:
-            log_name = bl.get("Log_name") or bl.get("log_name", "")
-            if not reached and log_name == base_bl:
-                reached = True
-            if reached:
-                apply_logs.append(log_name)
+            if created_tmp:
+                runner.rm(tmp_dump)
 
-        if not apply_logs:
-            pitr_job.status     = "completed"
-            pitr_job.notes      = f"PITR completed — no binlogs to apply after base backup (binlog: {base_bl})"
-            pitr_job.backup_end = datetime.utcnow()
+            # Step 2: find binlogs to apply
+            pitr_job.notes = "Step 2/3: Identifying binary logs to apply…"
             db.commit()
-            ssh.close()
-            return
 
-        # Step 3: apply binlogs up to target_dt
-        pitr_job.notes = f"Step 3/3: Applying {len(apply_logs)} binlog(s) up to {target_dt}…"
-        db.commit()
+            engine  = _make_mysql_engine(rec)
+            binlogs = _rows(engine, "SHOW BINARY LOGS")
+            datadir = (_scalar(engine, "SELECT @@datadir") or "").rstrip("/\\")
 
-        log_paths      = " ".join(f"'{datadir.rstrip('/')}/{l}'" for l in apply_logs)
-        start_pos_arg  = ""
-        if base_job.binlog_pos and apply_logs[0] == base_bl:
-            start_pos_arg = f"--start-position={base_job.binlog_pos}"
+            base_bl     = base_job.binlog_file or ""
+            apply_logs  = []
+            reached     = not bool(base_bl)
+            for bl in binlogs:
+                log_name = bl.get("Log_name") or bl.get("log_name", "")
+                if not reached and log_name == base_bl:
+                    reached = True
+                if reached:
+                    apply_logs.append(log_name)
 
-        db_filter   = f"--database={target_db} " if target_db else ""
-        binlog_cmd  = (
-            f"mysqlbinlog {start_pos_arg} "
-            f"--stop-datetime='{target_dt}' "
-            f"{db_filter}"
-            f"{log_paths} | "
-            f"mysql -h 127.0.0.1 -P {port} -u '{rec.username}' -p'{pw_esc}' 2>&1"
-        )
-        _, bl_out, bl_exit = _ssh_run(ssh, binlog_cmd, timeout=3600)
-        bl_text = bl_out.decode("utf-8", errors="replace") if isinstance(bl_out, bytes) else str(bl_out)
+            if not apply_logs:
+                pitr_job.status     = "completed"
+                pitr_job.notes      = f"PITR completed — no binlogs to apply after base backup (binlog: {base_bl})"
+                pitr_job.backup_end = datetime.utcnow()
+                db.commit()
+                runner.rm(optfile)
+                return
 
-        if bl_exit != 0 and "ERROR" in bl_text.upper():
-            pitr_job.status    = "failed"
-            pitr_job.error_msg = f"Binlog apply failed: {bl_text[:1000]}"
-        else:
-            pitr_job.status = "completed"
-            pitr_job.notes  = (
-                f"PITR completed to {target_dt}. "
-                f"Applied {len(apply_logs)} binlog file(s) from {apply_logs[0]}."
+            # Step 3: apply binlogs up to target_dt
+            pitr_job.notes = f"Step 3/3: Applying {len(apply_logs)} binlog(s) up to {target_dt}…"
+            db.commit()
+
+            log_paths      = " ".join(runner.q(f"{datadir}/{l}") for l in apply_logs)
+            start_pos_arg  = ""
+            if base_job.binlog_pos and apply_logs[0] == base_bl:
+                start_pos_arg = f"--start-position={base_job.binlog_pos}"
+
+            db_filter   = f"--database={target_db} " if target_db else ""
+            binlog_cmd  = (
+                f"mysqlbinlog {start_pos_arg} "
+                f"--stop-datetime={runner.q(target_dt)} "
+                f"{db_filter}"
+                f"{log_paths} | "
+                f"mysql {defaults_arg} 2>&1"
             )
+            bl_exit, bl_text = runner.shell(binlog_cmd, timeout=3600)
+            runner.rm(optfile)
 
-        pitr_job.backup_end = datetime.utcnow()
-        db.commit()
-        ssh.close()
+            if bl_exit != 0 and "ERROR" in bl_text.upper():
+                pitr_job.status    = "failed"
+                pitr_job.error_msg = f"Binlog apply failed: {bl_text[:1000]}"
+            else:
+                pitr_job.status = "completed"
+                pitr_job.notes  = (
+                    f"PITR completed to {target_dt}. "
+                    f"Applied {len(apply_logs)} binlog file(s) from {apply_logs[0]}."
+                )
+
+            pitr_job.backup_end = datetime.utcnow()
+            db.commit()
+        finally:
+            runner.close()
 
     except Exception as exc:
         try:
@@ -607,6 +1025,16 @@ def _do_pitr(pitr_job_id: int, base_job_id: int, rec_id: int,
 # ═════════════════════════════════════════════════════════════════════════════
 #  Service functions
 # ═════════════════════════════════════════════════════════════════════════════
+
+def get_storage_path(conn_id: int, db: Session) -> dict:
+    """Just the default storage folder — a pure local filesystem check on the ACTMON
+    server, no DB/agent round-trip. The New Backup screen calls this separately from
+    get_backup_summary() so the Save Location preview shows instantly even when the
+    connection's agent/DB is slow or unreachable (summary's binlog/master/replica
+    status queries can each take a while to time out)."""
+    _get_conn(conn_id, db)  # 404s cleanly if the connection doesn't exist
+    return {"status": "success", "storage_dir": str(_backup_dir(conn_id))}
+
 
 def get_backup_summary(conn_id: int, db: Session) -> dict:
     rec    = _get_conn(conn_id, db)

@@ -119,7 +119,21 @@ def telemetry_table(minutes: int = Query(60, ge=1, le=10080),
             "SELECT DISTINCT metric FROM actmon.metric_logs "
             "WHERE ts > now() - INTERVAL 1 DAY ORDER BY metric LIMIT 200")
         metrics_list = [r[0] for r in cat.result_rows] + list(mh.FIELDS)
-        return {"available": True, "rows": rows, "count": len(rows),
+        # Row count over the SAME window/filters (not the whole unbounded history) —
+        # a cheap headline stat for the Logs hub card, not a pagination total.
+        total = len(rows)
+        try:
+            total_sql = f"""
+                SELECT count() FROM (
+                    SELECT toDateTime(ts) AS ts FROM actmon.metric_logs WHERE {' AND '.join(where1)}
+                    UNION ALL
+                    SELECT ts FROM ({unpivot}) WHERE {' AND '.join(where2)}
+                )
+            """
+            total = int(cli.query(total_sql, parameters=params).result_rows[0][0])
+        except Exception:  # noqa: BLE001 — headline count is best-effort, never blocks the table
+            pass
+        return {"available": True, "rows": rows, "count": len(rows), "total": total,
                 "metrics": sorted(set(metrics_list)), "limit": limit, "offset": offset}
     except Exception as e:  # noqa: BLE001
         return {"available": False, "rows": [], "total": 0, "error": str(e)[:300]}

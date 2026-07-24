@@ -19,34 +19,12 @@ import {
   ddHistory, ddHistoryDetail, ddHistoryRca, pgGrantMonitor,
   mssqlOsProcesses, mssqlEnableOsVisibility,
 } from '../../api/drilldown';
+import Gauge, { colorFor } from '../../components/gauges/Gauge';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
-const colorFor = (pct) => (pct == null ? '#94a3b8' : pct >= 85 ? '#ef4444' : pct >= 65 ? '#f59e0b' : '#22c55e');
 const fmtPct = (v) => (v == null ? '—' : `${v}%`);
 const TECH_LABEL = { postgresql: 'PostgreSQL', mysql: 'MySQL', oracle: 'Oracle', mssql: 'SQL Server', mongodb: 'MongoDB', clickhouse: 'ClickHouse' };
 const techName = (t) => TECH_LABEL[t] || 'Database';
-
-function Gauge({ icon: Icon, label, pct, sub, onClick }) {
-  const c = colorFor(pct);
-  return (
-    <button onClick={onClick}
-      className="group relative bg-white rounded-2xl border border-slate-200 p-5 text-left shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${c}1a`, color: c }}><Icon size={20} /></div>
-          <div>
-            <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider">{label}</p>
-            <p className="text-2xl font-black text-slate-800 leading-none mt-0.5">{fmtPct(pct)}</p>
-          </div>
-        </div>
-        <span className="text-[11px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">drill in <ChevronRight size={13} /></span>
-      </div>
-      <div className="mt-3 h-2 rounded-full bg-slate-100 overflow-hidden">
-        <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(pct || 0, 100)}%`, background: c }} />
-      </div>
-      {sub && <p className="text-[11px] text-slate-400 mt-2">{sub}</p>}
-    </button>
-  );
-}
 
 const stateColor = (s) => {
   const k = (s || '').toLowerCase();
@@ -88,7 +66,7 @@ export default function HostResources({ connId, tech = 'postgresql' }) {
   }
 
   return (
-    <>
+    <DashboardScopeProvider tech={tech}>
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -117,7 +95,7 @@ export default function HostResources({ connId, tech = 'postgresql' }) {
 
       {drill && <DrillModal connId={connId} tech={tech} sortBy={drill.sortBy} onClose={() => setDrill(null)} />}
       {showHistory && <HistoryModal connId={connId} tech={tech} onClose={() => setShowHistory(false)} />}
-    </>
+    </DashboardScopeProvider>
   );
 }
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Cloud, RefreshCw, Plus, LayoutDashboard, Server, DollarSign,
@@ -25,6 +25,18 @@ const TABS = [
   { to: '/cloud/alerts', label: 'Alerts', icon: Bell },
 ];
 
+// Routes with their own full-page hero (Choose Provider, Provider's Accounts) —
+// the shell's dashboard-style header/tab bar would just duplicate/clash with these.
+const LITERAL_ROUTES = new Set(['accounts', 'resources', 'cost', 'security', 'topology', 'compliance', 'alerts']);
+
+const useHideChrome = () => {
+  const { pathname } = useLocation();
+  const segments = pathname.replace(/^\/cloud\/?/, '').split('/').filter(Boolean);
+  const isProviderChooser = segments.length === 0;
+  const isProviderAccountsList = segments.length === 1 && !LITERAL_ROUTES.has(segments[0]);
+  return isProviderChooser || isProviderAccountsList;
+};
+
 export const CloudShell: React.FC = () => {
   const qc = useQueryClient();
   const { data: accounts } = useCloudAccounts();
@@ -36,9 +48,16 @@ export const CloudShell: React.FC = () => {
   const { canHere } = usePermissions();
   const canAdd = canHere('add');
   const canScan = canHere('execute');
+  const hideChrome = useHideChrome();
+  const { accountId: routeAccountId } = useParams();
+
+  const isAccountScoped = !!routeAccountId;
+  const scopedAccount = isAccountScoped ? (accounts || []).find((a: any) => a.id === routeAccountId) : null;
 
   const accountCount = accounts?.length ?? 0;
-  const resourceCount = resources?.length ?? 0;
+  const resourceCount = isAccountScoped
+    ? (resources || []).filter((r: any) => r.account_id === routeAccountId).length
+    : resources?.length ?? 0;
   const providers = Array.from(new Set((accounts || []).map((a: any) => a.provider)));
   const scanning = scanAllPending || activeJobCount > 0;
 
@@ -48,6 +67,7 @@ export const CloudShell: React.FC = () => {
       <DiscoveryWatcher />
 
       {/* ─── TOP HEADER ─── */}
+      {!hideChrome && (
       <div className="text-white shadow-xl"
         style={{ background: 'linear-gradient(135deg,#0f172a 0%,#1e40af 52%,#0369a1 100%)' }}>
         <div className="px-6 py-4 flex flex-wrap justify-between items-center gap-3">
@@ -57,11 +77,19 @@ export const CloudShell: React.FC = () => {
               <Cloud size={24} className="text-sky-200" />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight">Cloud Dashboard</h1>
+              <h1 className="text-2xl font-black tracking-tight">
+                {isAccountScoped ? (scopedAccount?.account_name || 'Account') : 'Cloud Dashboard'}
+              </h1>
               <p className="text-sky-300 text-sm mt-0.5">
-                Multi-Cloud Discovery
-                {accountCount > 0 && ` — ${accountCount} account${accountCount > 1 ? 's' : ''}`}
-                {providers.length > 0 && ` · ${providers.join(', ')}`}
+                {isAccountScoped
+                  ? `${scopedAccount?.provider || routeAccountId} · ${scopedAccount?.tenant_or_region || scopedAccount?.environment || ''}`
+                  : (
+                    <>
+                      Multi-Cloud Discovery
+                      {accountCount > 0 && ` — ${accountCount} account${accountCount > 1 ? 's' : ''}`}
+                      {providers.length > 0 && ` · ${providers.join(', ')}`}
+                    </>
+                  )}
               </p>
             </div>
           </div>
@@ -78,7 +106,7 @@ export const CloudShell: React.FC = () => {
                 <Plus size={15} /> Add Account
               </button>
             )}
-            {canScan && accountCount > 0 && (
+            {!isAccountScoped && canScan && accountCount > 0 && (
               <button onClick={() => scanAll()} disabled={scanning}
                 className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold bg-sky-400 text-slate-900 hover:bg-sky-300 transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed">
                 <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
@@ -111,6 +139,7 @@ export const CloudShell: React.FC = () => {
           })}
         </div>
       </div>
+      )}
 
       {/* ─── PAGE CONTENT ─── */}
       <div className="flex-1 overflow-auto">

@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Production DB hosts run whatever Python they shipped with — the agent adapts to
 # them, never the other way around. Everything below is written for Python >= 3.5
@@ -622,10 +623,22 @@ def _win_diag(arg):
 def _shell(cmd, stdin_bytes=None, timeout=3600):
     """Run a shell command on this host. Returns (exit_code, stdout_bytes, stderr_text).
     Linux -> bash -c ; Windows -> cmd /c. stdout is captured as raw BYTES so binary
-    dump output survives; stderr is decoded text."""
-    args = ["cmd", "/c", cmd] if IS_WINDOWS else ["bash", "-c", cmd]
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         stdin=subprocess.PIPE if stdin_bytes is not None else None)
+    dump output survives; stderr is decoded text.
+
+    On Windows `cmd` is passed to Popen as a single STRING, not a list. If it were a
+    list (["cmd", "/c", cmd]), Python's list2cmdline() would re-escape every `"`
+    inside cmd as `\"` before handing the line to CreateProcess — but cmd.exe does
+    NOT treat `\"` as an escaped quote (it's a literal backslash plus a real quote
+    toggle), so any quoted path in cmd corrupts the whole parse ("The filename,
+    directory name, or volume label syntax is incorrect"). Passing a plain string
+    skips list2cmdline entirely, so our quoting reaches cmd.exe exactly as written.
+    """
+    if IS_WINDOWS:
+        p = subprocess.Popen("cmd /c " + cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             stdin=subprocess.PIPE if stdin_bytes is not None else None)
+    else:
+        p = subprocess.Popen(["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             stdin=subprocess.PIPE if stdin_bytes is not None else None)
     out, err = p.communicate(input=stdin_bytes, timeout=timeout)
     return p.returncode, (out or b""), (err or b"").decode("utf-8", "replace")
 
@@ -760,16 +773,26 @@ def _self_update_check(url):
             f.write(src)
         os.replace(tmp, me)                 # atomic swap
         _log("self-update: new agent version installed - restarting")
-        sys.exit(0)                         # systemd Restart=always relaunches us
-    except SystemExit:
-        raise
+        # This runs on the infra thread, not the main thread — sys.exit()/SystemExit
+        # raised here only unwinds THIS thread (Python swallows SystemExit at the
+        # thread boundary), leaving every other thread running old in-memory code
+        # forever and systemd's Restart=always never triggering, since the process
+        # itself never exits. os._exit() kills the whole process unconditionally
+        # regardless of which thread calls it — the file swap above already landed
+        # on disk, so the relaunch picks up the new version immediately.
+        os._exit(0)
     except Exception as e:  # noqa: BLE001
         _log("self-update check failed: %s" % e)
 
 
-def _poll_jobs_until(url, token, until_ts, stop_event=None):
-    """Answer host jobs until the next infra push is due (spends the idle window)."""
-    while time.time() < until_ts and not (stop_event is not None and stop_event.is_set()):
+def _poll_jobs_until(url, token, until_ts=None, stop_event=None):
+    """Answer host jobs (shell/dbquery/etc). With `until_ts` given, spends that idle
+    window then returns (legacy call shape); with `until_ts=None`, loops forever —
+    used as the dedicated job-poll thread in run_agent(), so a slow push cycle
+    (WMI/infra collection, DB pushes) can never starve the server's job requests,
+    and vice versa. The two used to share one thread; a stalled push cycle made the
+    agent silently miss every job request until it came back around."""
+    while (until_ts is None or time.time() < until_ts) and not (stop_event is not None and stop_event.is_set()):
         try:
             jobs = _get_text("%s/agents/fs-poll?token=%s&hold=12" % (url, token), timeout=20)
         except Exception:  # noqa: BLE001
@@ -1045,16 +1068,266 @@ def collect_mssql(tgt, state):
         conn.close()
 
 
+def collect_oracle(tgt, state):
+    """Connect to the local Oracle instance and collect internals (session counts +
+    top SQL). Mirrors the scope the server's pull-side Oracle collector already
+    covers — no session list, Oracle's pull path doesn't build one either."""
+    conn = _dbq_open("oracle", tgt.get("host") or "localhost", int(tgt.get("port") or 1521),
+                      tgt.get("username"), tgt.get("password") or "", tgt.get("database"))
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM v$session WHERE status = 'ACTIVE' AND type = 'USER'")
+        active = int((cur.fetchone() or [0])[0] or 0)
+        cur.execute("SELECT COUNT(*) FROM v$session WHERE type = 'USER'")
+        total = int((cur.fetchone() or [0])[0] or 0)
+        cur.execute("SELECT value FROM v$parameter WHERE name = 'sessions'")
+        row = cur.fetchone()
+        max_sess = int(row[0] or 0) if row else 0
+        cur.execute("SELECT (SYSDATE - startup_time) * 86400 FROM v$instance")
+        uptime = int((cur.fetchone() or [0])[0] or 0)
+
+        metrics = {
+            "host_cpu": 0.0, "host_memory": 0.0,
+            "db_cpu": round(active / max(max_sess, 1) * 100, 1),
+            "active_sessions": active, "connections_used": total,
+            "connections_max": max_sess, "cache_hit_pct": 0.0,
+            "qps": 0.0, "tps": 0.0, "uptime_seconds": uptime,
+        }
+
+        top = []
+        try:
+            cur.execute(
+                "SELECT sql_id, SUBSTR(sql_text,1,500), executions, "
+                "elapsed_time/1000.0/NULLIF(executions,0), cpu_time/1000.0, buffer_gets, "
+                "elapsed_time/1000.0 FROM v$sqlarea WHERE executions > 0 "
+                "ORDER BY elapsed_time DESC FETCH FIRST 20 ROWS ONLY")
+            for sid, txt, cnt, avg, _cput, bg, tot in cur.fetchall():
+                top.append({
+                    "sql_id": (sid or "")[:64], "sql_text": txt or "",
+                    "executions": int(cnt or 0), "avg_elapsed_ms": float(avg or 0),
+                    "total_ms": float(tot or 0), "rows_examined": float(bg or 0), "rows_sent": 0.0,
+                })
+        except Exception:  # noqa: BLE001 — needs SELECT_CATALOG_ROLE, tolerate its absence
+            pass
+        return metrics, top, []
+    finally:
+        conn.close()
+
+
+def collect_mongodb(tgt, state):
+    """Connect to the local MongoDB and collect connection/uptime internals via
+    serverStatus — matches the scope the server's pull-side collector already
+    covers (no profiler/top-query scraping there either)."""
+    client = _dbq_open("mongodb", tgt.get("host") or "localhost", int(tgt.get("port") or 27017),
+                        tgt.get("username"), tgt.get("password") or "", tgt.get("database"))
+    try:
+        status = client.admin.command("serverStatus")
+        conns = status.get("connections", {}) or {}
+        uptime = int(status.get("uptime", 0) or 0)
+        current = int(conns.get("current", 0) or 0)
+        avail = int(conns.get("available", 0) or 0)
+        metrics = {
+            "host_cpu": 0.0, "host_memory": 0.0, "db_cpu": 0.0,
+            "active_sessions": current, "connections_used": current,
+            "connections_max": current + avail, "cache_hit_pct": 0.0,
+            "qps": 0.0, "tps": 0.0, "uptime_seconds": uptime,
+        }
+        return metrics, [], []
+    finally:
+        client.close()
+
+
+def collect_clickhouse(tgt, state):
+    """Connect to the local ClickHouse and collect internals in a single round-trip
+    — same query the server's pull-side collector uses. QPS comes from the
+    cumulative Query-event counter via inter-cycle delta, using this connection's
+    own `state` dict (same pattern collect_mysql/collect_postgres use)."""
+    conn = _dbq_open("clickhouse", tgt.get("host") or "localhost", int(tgt.get("port") or 9000),
+                      tgt.get("username") or "default", tgt.get("password") or "",
+                      tgt.get("database") or "default")
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT "
+            "(SELECT count() FROM system.processes) AS active_q, "
+            "(SELECT value FROM system.metrics WHERE metric='TCPConnection') AS tcp_conn, "
+            "(SELECT toUInt64OrZero(value) FROM system.settings WHERE name='max_concurrent_queries') AS max_q, "
+            "(SELECT toUInt64(uptime())) AS uptime_s, "
+            "(SELECT value FROM system.events WHERE event='Query') AS q_total, "
+            "(SELECT value FROM system.events WHERE event='MarkCacheHits') AS hits, "
+            "(SELECT value FROM system.events WHERE event='MarkCacheMisses') AS misses")
+        row = cur.fetchone()
+        if not row:
+            raise RuntimeError("ClickHouse system query returned no rows")
+        active, tcp_conn, max_q, uptime, q_total, hits, misses = (int(v or 0) for v in row)
+        max_q = max_q or 100
+        cache_hit = round(hits / (hits + misses) * 100, 1) if (hits + misses) > 0 else 0.0
+
+        now = time.time()
+        qps = 0.0
+        if state.get("t") and q_total >= state.get("q", 0):
+            dt = max(1.0, now - state["t"])
+            qps = round((q_total - state["q"]) / dt, 1)
+        state.update(t=now, q=q_total)
+
+        metrics = {
+            "host_cpu": 0.0, "host_memory": 0.0,
+            "db_cpu": round(active / max(max_q, 1) * 100, 1),
+            "active_sessions": active, "connections_used": tcp_conn, "connections_max": max_q,
+            "cache_hit_pct": cache_hit, "qps": qps, "tps": 0.0, "uptime_seconds": uptime,
+        }
+        return metrics, [], []
+    finally:
+        conn.close()
+
+
+class _AgentIdentity:
+    """Thread-safe holder for the agent_name the infra push resolves — the DB
+    engine threads need it to push, but don't discover it themselves."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._name = None
+
+    def get(self):
+        with self._lock:
+            return self._name
+
+    def set(self, name):
+        if not name:
+            return
+        with self._lock:
+            self._name = name
+
+
+def _wait_out(stop_event, cycle_start, interval):
+    """Common end-of-cycle wait, shared by every loop below. Returns True if the
+    loop should stop."""
+    remaining = max(1, interval - (time.time() - cycle_start))
+    if stop_event is not None:
+        return stop_event.wait(remaining)
+    time.sleep(remaining)
+    return False
+
+
+def _infra_loop(url, token, os_type, collect_host, collector_url, collector, interval, stop_event, identity):
+    """Host infra collection + push, on its OWN thread — independent of every DB
+    engine thread below, so a slow WMI/infra collection can never delay a DB push
+    (or vice versa). Also runs the Linux self-update check (it has its own
+    internal hourly gate, so calling it every cycle here is cheap)."""
+    while not (stop_event is not None and stop_event.is_set()):
+        cycle_start = time.time()
+        _self_update_check(url)
+        try:
+            fresh = _get_text(collector_url)
+            if fresh and fresh.strip():
+                collector = fresh
+        except Exception:  # noqa: BLE001 — keep the cached collector on a transient failure
+            pass
+        try:
+            raw = collect_host(collector)
+            res = _post(url + "/agents/infra", {"token": token, "os_type": os_type, "raw": raw})
+            identity.set(res.get("agent_name"))
+            if res.get("status") == "success":
+                _log("infra pushed -> %s / %s" % (res.get("server_id"), identity.get()))
+            else:
+                _log("infra push rejected by server: %s" % res)
+        except Exception as e:  # noqa: BLE001
+            _log("infra push to %s/agents/infra FAILED - cannot reach server: %s" % (url, e))
+        if _wait_out(stop_event, cycle_start, interval):
+            break
+
+
+# One collector function per engine name the wizard can assign.
+_ENGINE_COLLECTORS = {
+    "mysql": collect_mysql, "mariadb": collect_mysql,
+    "postgresql": collect_postgres, "postgres": collect_postgres,
+    "mssql": collect_mssql, "sql server": collect_mssql, "sqlserver": collect_mssql,
+    "oracle": collect_oracle, "oracle db": collect_oracle,
+    "mongodb": collect_mongodb, "mongo": collect_mongodb,
+    "clickhouse": collect_clickhouse,
+}
+
+
+def _db_engine_loop(url, token, engine_names, interval, stop_event, identity):
+    """One thread per DB ENGINE TYPE (mysql, postgresql, mssql, ...). Every
+    connection of that engine configured for this agent is collected CONCURRENTLY
+    (thread pool) and pushed independently, so one slow connection never delays a
+    sibling connection of the same engine — let alone a different engine or host
+    infra, each of which now has its own thread and its own clock."""
+    state_by_key = {}
+
+    def _collect_and_push(tgt):
+        dbt = (tgt.get("db_type") or "").lower()
+        key = "%s:%s:%s" % (dbt, tgt.get("host"), tgt.get("port"))
+        state = state_by_key.setdefault(key, {})
+        metrics, top, sessions = _ENGINE_COLLECTORS[dbt](tgt, state)
+        _post(url + "/agents/data", {"agent_name": identity.get(), "metrics": metrics,
+                                     "top_sql": top, "sessions": sessions})
+        return dbt, metrics, top, sessions
+
+    while not (stop_event is not None and stop_event.is_set()):
+        cycle_start = time.time()
+        agent_name = identity.get()
+        try:
+            targets = _get_json("%s/agents/db-config?token=%s" % (url, token))
+        except Exception:  # noqa: BLE001
+            targets = []
+        mine = [t for t in (targets or []) if (t.get("db_type") or "").lower() in engine_names]
+
+        if mine and agent_name:
+            with ThreadPoolExecutor(max_workers=min(8, len(mine)), thread_name_prefix="actmon-db") as ex:
+                futures = {ex.submit(_collect_and_push, t): t for t in mine}
+                for fut in as_completed(futures):
+                    dbt = (futures[fut].get("db_type") or "").lower()
+                    try:
+                        dbt, metrics, top, sessions = fut.result()
+                        _log("%s pushed: qps=%s sessions=%s conns=%s top=%s" %
+                             (dbt, metrics["qps"], metrics["active_sessions"], len(sessions), len(top)))
+                    except Exception as e:  # noqa: BLE001
+                        _log("%s collect failed: %s" % (dbt, e))
+
+        if _wait_out(stop_event, cycle_start, interval):
+            break
+
+
 def run_agent(stop_event=None):
     """The monitoring loop. Runs from the Windows Service, a scheduled task, or the
-    command line. `stop_event` (threading.Event) lets the service stop it cleanly."""
+    command line. `stop_event` (threading.Event) lets the service stop it cleanly.
+
+    Every concern — host infra, each DB engine type, and the server's job-queue —
+    runs on its OWN thread with its own clock. They used to share a single loop;
+    a stall in any one (a slow WMI infra collection, a hung DB connection) silently
+    starved everything else sharing that loop, including the job-poll thread the
+    server's live queries and OS service-state checks depend on."""
     def _stopping():
         return bool(stop_event is not None and stop_event.is_set())
 
-    token, url = _resolve_config()
-    if not token or not url:
-        _log("ERROR: token/URL not configured (registry, --args, or env).")
-        return 1
+    # Missing/blank token or URL (an MSI double-clicked with no ACCESS_TOKEN/
+    # ACTMON_URL properties, a registry value cleared by mistake, ...) used to exit
+    # run_agent() once and for all. Since the Windows Service/Scheduled Task only
+    # re-invoke this on a real process restart, a config problem fixed LATER
+    # (msiexec repair, a manual registry edit) would otherwise never be picked up
+    # without someone manually restarting it. Retry instead: log loudly once, then
+    # only every 5 minutes (not every 30s) so it doesn't spam the log file, and
+    # keep waiting rather than giving up for good.
+    token = url = None
+    last_logged = 0.0
+    while not _stopping():
+        token, url = _resolve_config()
+        if token and url:
+            break
+        now = time.time()
+        if now - last_logged > 300:
+            _log("ERROR: token/URL not configured (registry, --args, or env) — "
+                 "waiting for it to be fixed (reinstall, msiexec repair, or a "
+                 "registry edit). Retrying every 30s.")
+            last_logged = now
+        for _ in range(30):
+            if _stopping():
+                return 0
+            time.sleep(1)
+    if _stopping():
+        return 0
 
     # 15s default feeds the Redis hot tier at its designed cadence (override with
     # ACTMON_INTERVAL in /etc/actmon/agent.conf or the service environment).
@@ -1079,64 +1352,37 @@ def run_agent(stop_event=None):
     if _stopping():
         return 0
 
-    # Identity for DB metric pushes (enroll returns the agent name for this token).
-    agent_name = None
-    db_state = {}
+    identity = _AgentIdentity()
 
-    while not _stopping():
-        # Self-update (Linux): hourly hash check against the server — keeps the whole
-        # fleet current without manual reinstalls.
-        _self_update_check(url)
+    threads = [
+        threading.Thread(target=_poll_jobs_until, args=(url, token),
+                         kwargs={"stop_event": stop_event}, daemon=True, name="actmon-job-poll"),
+        threading.Thread(target=_infra_loop,
+                         args=(url, token, os_type, collect_host, collector_url, collector, interval, stop_event, identity),
+                         daemon=True, name="actmon-infra"),
+    ]
+    for group_name, names in (
+        ("mysql", {"mysql", "mariadb"}),
+        ("postgresql", {"postgresql", "postgres"}),
+        ("mssql", {"mssql", "sql server", "sqlserver"}),
+        ("oracle", {"oracle", "oracle db"}),
+        ("mongodb", {"mongodb", "mongo"}),
+        ("clickhouse", {"clickhouse"}),
+    ):
+        threads.append(threading.Thread(
+            target=_db_engine_loop, args=(url, token, names, interval, stop_event, identity),
+            daemon=True, name="actmon-db-%s" % group_name))
 
-        # Refresh the collector each cycle so backend collector changes (e.g. metric
-        # fixes) apply to already-running agents WITHOUT a reinstall or restart.
-        try:
-            fresh = _get_text(collector_url)
-            if fresh and fresh.strip():
-                collector = fresh
-        except Exception:  # noqa: BLE001 — keep the cached collector on a transient failure
-            pass
+    for t in threads:
+        t.start()
 
-        # 1) Host infra (always). The response tells us this agent's name.
-        try:
-            raw = collect_host(collector)
-            res = _post(url + "/agents/infra", {"token": token, "os_type": os_type, "raw": raw})
-            agent_name = res.get("agent_name") or agent_name
-            if res.get("status") == "success":
-                _log("infra pushed -> %s / %s" % (res.get("server_id"), agent_name))
-            else:
-                _log("infra push rejected by server: %s" % res)
-        except Exception as e:  # noqa: BLE001
-            _log("infra push to %s/agents/infra FAILED - cannot reach server: %s" % (url, e))
-
-        # 2) DB internals for any DBs the wizard assigned to this agent.
-        try:
-            targets = _get_json("%s/agents/db-config?token=%s" % (url, token))
-        except Exception:  # noqa: BLE001
-            targets = []
-        if targets and agent_name:
-            for tgt in targets:
-                dbt = (tgt.get("db_type") or "").lower()
-                key = "%s:%s:%s" % (dbt, tgt.get("host"), tgt.get("port"))
-                stt = db_state.setdefault(key, {})
-                try:
-                    if dbt in ("mysql", "mariadb"):
-                        metrics, top, sessions = collect_mysql(tgt, stt)
-                    elif dbt in ("postgresql", "postgres"):
-                        metrics, top, sessions = collect_postgres(tgt, stt)
-                    elif dbt in ("mssql", "sql server", "sqlserver"):
-                        metrics, top, sessions = collect_mssql(tgt, stt)
-                    else:
-                        continue   # MySQL / PostgreSQL / MSSQL implemented so far
-                    _post(url + "/agents/data", {"agent_name": agent_name, "metrics": metrics,
-                                                 "top_sql": top, "sessions": sessions})
-                    _log("%s pushed: qps=%s sessions=%s conns=%s top=%s" % (dbt, metrics["qps"], metrics["active_sessions"], len(sessions), len(top)))
-                except Exception as e:  # noqa: BLE001
-                    _log("%s collect failed: %s" % (dbt, e))
-
-        # Spend the wait window answering interactive host jobs (file edit / firewall /
-        # services / reboot) instead of sleeping — same channel the Linux agent uses.
-        _poll_jobs_until(url, token, time.time() + max(5, interval), stop_event)
+    # Main thread just supervises from here — the real work happens on the threads
+    # above, each independent of the others.
+    if stop_event is not None:
+        stop_event.wait()
+    else:
+        while any(t.is_alive() for t in threads):
+            time.sleep(1)
     _log("ActMon Agent stopping.")
     return 0
 
@@ -1178,7 +1424,28 @@ if _HAS_PYWIN32:
                 pass
             t = __import__("threading").Thread(target=run_agent, args=(self._stop,), daemon=True)
             t.start()
-            win32event.WaitForSingleObject(self._wait, win32event.INFINITE)
+            # Poll instead of an infinite wait. run_agent() can return early (bad/
+            # missing token+URL, an uncaught startup error) and its thread just ends —
+            # waiting forever on ONLY the stop event meant Windows kept reporting this
+            # service "Running" permanently even after the real work had silently died,
+            # so the MSI's restart-on-failure policy (ServiceConfig) never got a chance
+            # to fire because SCM never saw a failure. Check thread liveness every 5s;
+            # if it died without us being told to stop, kill the whole process so SCM
+            # sees a genuine crash and actually restarts the service.
+            while True:
+                rc = win32event.WaitForSingleObject(self._wait, 5000)
+                if rc == win32event.WAIT_OBJECT_0:
+                    return  # SvcStop signalled us — clean, intentional shutdown
+                if not t.is_alive():
+                    try:
+                        servicemanager.LogErrorMsg(
+                            "ActMon Agent worker thread exited unexpectedly "
+                            "(check C:\\ProgramData\\ActMon\\agent.log) — "
+                            "terminating so Windows restarts the service.")
+                    except Exception:  # noqa: BLE001
+                        pass
+                    os._exit(1)  # whole-process kill — guarantees SCM sees a real
+                                 # failure, not a clean stop, so restart-on-failure fires
 
 
 def _entry():

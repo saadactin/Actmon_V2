@@ -23,12 +23,12 @@ logger = logging.getLogger("db_proxy")
 
 
 def agent_host_for_conn(conn_id, db):
-    """Return the enrolled agent host (token/hostname) linked to this connection via
-    database_instances, or None if the connection isn't tied to an agent host."""
+    """Return the enrolled agent host (token/hostname/os_type) linked to this connection
+    via database_instances, or None if the connection isn't tied to an agent host."""
     if not conn_id:
         return None
     return db.execute(text(
-        "SELECT s.agent_token AS token, s.hostname AS hostname "
+        "SELECT s.agent_token AS token, s.hostname AS hostname, s.os_type AS os_type "
         "FROM database_instances di JOIN os_servers s ON s.id = di.server_id "
         "WHERE di.connection_id = :c AND s.collector = 'agent' "
         "AND s.agent_token IS NOT NULL AND s.agent_token <> '' LIMIT 1"
@@ -111,7 +111,22 @@ def make_runner(conn, db):
                 raise RuntimeError("The agent on the DB host did not answer in time.")
             logger.warning("[db_proxy] agent '%s' unreachable for conn %s — direct fallback",
                            host.hostname, getattr(conn, "id", "?"))
-            return _direct_q(sql)
+            try:
+                return _direct_q(sql)
+            except Exception as exc:
+                # The agent didn't answer, and this courtesy direct attempt (useful
+                # when the agent flakes but the DB is ALSO reachable at a real,
+                # routable address) failed too — often because the connection's
+                # host is actually a private/NAT address (e.g. a VirtualBox
+                # host-only 192.168.56.x IP) the ActMon SERVER can never reach,
+                # regardless of the agent's own health. Either way we still have
+                # no real DB-level verdict, only confirmation we can't reach it
+                # from here right now — keep the "did not answer in time" marker
+                # so the collector treats this as ambiguous (alert, hold status),
+                # not a definitive DB-down verdict from a misleading raw exception.
+                raise RuntimeError(
+                    f"The agent on the DB host did not answer in time "
+                    f"(direct fallback also failed: {exc})") from exc
 
         q.via = "agent"
         return q

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
 import { useQueries } from '@tanstack/react-query';
@@ -31,15 +31,24 @@ const CHART_TOOLTIP_STYLE: React.CSSProperties = {
 
 export const CloudDashboard = () => {
   const navigate = useNavigate();
+  // Reached either as the aggregate dashboard (/cloud, legacy) or, via the new
+  // provider → accounts drill-down, scoped to one account (/cloud/:provider/:accountId).
+  // When accountId is present we lock the view to that single account and hide the
+  // provider-picker chrome — selection already happened on the pages before this one.
+  const { provider: routeProviderSlug, accountId: routeAccountId } = useParams();
   const { data: accounts, isLoading: accountsLoading } = useCloudAccounts();
   const { data: allResources, isLoading: resourcesLoading } = useAllResources();
   const activeJobs = useCloudStore(state => state.activeDiscoveryJobs);
   const activeJobsCount = Object.keys(activeJobs).length;
   const setDrawerOpen = useCloudStore(state => state.setAddAccountDrawerOpen);
 
+  const isAccountScoped = !!routeAccountId;
+  const scopedAccount = isAccountScoped ? (accounts || []).find(a => a.id === routeAccountId) : null;
+
   // Selected view: null = ALL, string = accountId
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null);
-  const [selectedView, setSelectedView] = useState<string>('ALL');
+  const [selectedViewState, setSelectedView] = useState<string>('ALL');
+  const selectedView = isAccountScoped ? routeAccountId : selectedViewState;
 
   // Fetch security posture for all accounts
   const postureQueries = useQueries({
@@ -172,17 +181,22 @@ export const CloudDashboard = () => {
 
   const barData = Object.entries(regionCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
 
-  // Recently Discovered
-  const recentlyDiscovered = allResources
-    ? [...allResources]
-      .sort((a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime())
-      .slice(0, 5)
-    : [];
+  // Recently Discovered — respects the current scope (one account, one provider, or all)
+  const recentlyDiscovered = [...filteredResources]
+    .sort((a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime())
+    .slice(0, 5);
 
   const handleAddAccount = () => {
     navigate('/cloud/accounts');
     setTimeout(() => setDrawerOpen(true), 100);
   };
+
+  // Accounts to display in this-scope-only sections (stat card, scan history) —
+  // just the one account when reached via Cloud → Provider → Account.
+  const scopedAccountsList = isAccountScoped
+    ? (scopedAccount ? [scopedAccount] : [])
+    : (accounts || []);
+  const postureByAccountId = new Map((accounts || []).map((acc, idx) => [acc.id, postureQueries[idx]?.data]));
 
   // Per-provider rollups for the three provider cards ("Oracle" counts as OCI)
   const providerKeyOf = (p: string) => (p === 'Oracle' ? 'OCI' : p);
@@ -195,7 +209,36 @@ export const CloudDashboard = () => {
 
   return (
     <div className="p-6 space-y-6">
-      {/* ── Provider cards: click a cloud to drill into it ── */}
+      {/* ── Scoped-account breadcrumb (only when reached via Cloud → Provider → Account) ── */}
+      {isAccountScoped && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => navigate('/cloud')}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            <ArrowLeft size={13} /> All clouds
+          </button>
+          <span className="h-4 w-px bg-gray-200" />
+          <button
+            onClick={() => navigate(`/cloud/${routeProviderSlug}`)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            {scopedAccount ? scopedAccount.provider : routeProviderSlug} accounts
+          </button>
+          <span className="h-4 w-px bg-gray-200" />
+          <span className="rounded-full border px-3.5 py-1.5 text-xs font-bold"
+            style={{
+              borderColor: PROVIDER_META[scopedAccount?.provider || '']?.color,
+              background: PROVIDER_META[scopedAccount?.provider || '']?.accent,
+              color: PROVIDER_META[scopedAccount?.provider || '']?.color,
+            }}>
+            {scopedAccount?.account_name || 'Account'}
+          </span>
+        </div>
+      )}
+
+      {/* ── Provider cards: click a cloud to drill into it (hidden once scoped to one account) ── */}
+      {!isAccountScoped && (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {providerStats.map(({ key, accounts: provAccounts, resourceCount }) => {
           const meta = PROVIDER_META[key];
@@ -256,9 +299,10 @@ export const CloudDashboard = () => {
           );
         })}
       </div>
+      )}
 
-      {/* ── Inside a provider: back link + its account chips ── */}
-      {selectedProvider && (
+      {/* ── Inside a provider: back link + its account chips (aggregate view only) ── */}
+      {!isAccountScoped && selectedProvider && (
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => { setSelectedProvider(null); setSelectedView('ALL'); }}
@@ -311,7 +355,7 @@ export const CloudDashboard = () => {
             </div>
             <div>
               <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Cloud Accounts</p>
-              <p className="text-2xl font-bold text-gray-900">{accounts?.length || 0}</p>
+              <p className="text-2xl font-bold text-gray-900">{scopedAccountsList.length}</p>
             </div>
           </div>
         </div>
@@ -495,8 +539,8 @@ export const CloudDashboard = () => {
             Scan History &amp; Account Health
           </h3>
           <div className="flex flex-col gap-3">
-            {(accounts || []).map((acc, idx) => {
-              const posture = postureQueries?.[idx]?.data;
+            {scopedAccountsList.map((acc) => {
+              const posture = postureByAccountId.get(acc.id);
               return (
                 <div key={acc.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -528,7 +572,7 @@ export const CloudDashboard = () => {
                 </div>
               );
             })}
-            {(!accounts || accounts.length === 0) && (
+            {scopedAccountsList.length === 0 && (
               <div className="flex flex-col items-center gap-2 py-12 text-center">
                 <Cloud className="h-6 w-6 text-gray-300" />
                 <div className="text-base font-semibold text-gray-900">No cloud accounts</div>

@@ -836,6 +836,14 @@ def oracle_objects(conn_id: int, db: Session):
 # ──────────────────────────────────────────────────────────────
 
 def oracle_schema_tables(conn_id: int, db: Session, owner: str = ""):
+    # Only the default (no owner filter) view is snapshot-cached — that's what the
+    # Tables tab requests on first load. An explicit owner selection is a deliberate,
+    # infrequent action, so it always goes live rather than needing a per-owner cache.
+    if not owner:
+        from app.utils.agent_cache import get_snapshot as _get_snap
+        _cached = _get_snap(conn_id, "oracle_schema_tables", db)
+        if _cached is not None:
+            return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -1074,6 +1082,10 @@ def oracle_redo_logs(conn_id: int, db: Session):
 # ──────────────────────────────────────────────────────────────
 
 def oracle_data_guard(conn_id: int, db: Session):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_data_guard", db)
+    if _cached is not None:
+        return _cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 

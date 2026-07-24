@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2, Eye, EyeOff, X, Search, RefreshCw, Check, ChevronLeft, ChevronRight, ChevronDown, KeyRound, ShieldCheck, UserCog, Loader2, LayoutGrid, List } from 'lucide-react';
+import { Plus, Pencil, Trash2, Eye, EyeOff, X, Search, RefreshCw, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, KeyRound, ShieldCheck, UserCog, Loader2, LayoutGrid, Table2, Filter, Columns3 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PERMISSION_BITS, decodePermission } from './mockDb';
 import { usePermissions } from '../../../hooks/usePermissions';
@@ -51,6 +51,18 @@ export default function AdminResourcePage({ config }) {
   const [loginFor, setLoginFor] = useState(null);  // employee → "Create Login" dialog
   const [treeStack, setTreeStack] = useState([]);  // drill path for hierarchical resources (tree mode)
   const [view, setView] = useState('grid');        // 'grid' | 'list'
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [statusFilter, setStatusFilter] = useState('all');   // 'all' | 'active' | 'inactive'
+  const [hiddenCols, setHiddenCols] = useState(() => new Set());
+  const [showFilters, setShowFilters] = useState(false);
+  const [showColsMenu, setShowColsMenu] = useState(false);
+
+  // Derive card/table layout roles from the columns config
+  const idCol     = columns[0];
+  const statusCol = columns.find((c) => c.type === 'status');
+  const titleCol  = columns.find((c) => c !== idCol && c.type !== 'status' && c.type !== 'permissions') || columns[1] || idCol;
+  const detailCols = columns.filter((c) => c !== idCol && c !== titleCol && c !== statusCol);
 
   // Current parent in the drill (tree mode): root when the stack is empty.
   const currentParent = tree && treeStack.length ? treeStack[treeStack.length - 1] : null;
@@ -72,15 +84,40 @@ export default function AdminResourcePage({ config }) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    let list;
     if (q) {   // searching flattens the hierarchy — match across all rows
       const keys = searchKeys.length ? searchKeys : columns.map((c) => c.key);
-      return rows.filter((r) => keys.some((k) => String(r[k] ?? '').toLowerCase().includes(q)));
+      list = rows.filter((r) => keys.some((k) => String(r[k] ?? '').toLowerCase().includes(q)));
+    } else if (tree) {   // show only the current drill level (children of currentParentId)
+      list = rows.filter((r) => String(r[tree.parentKey] ?? tree.rootValue) === String(currentParentId));
+    } else {
+      list = rows;
     }
-    if (tree) {   // show only the current drill level (children of currentParentId)
-      return rows.filter((r) => String(r[tree.parentKey] ?? tree.rootValue) === String(currentParentId));
+    if (statusCol && statusFilter !== 'all') {
+      list = list.filter((r) => {
+        const on = r[statusCol.key] === true || r[statusCol.key] === 'true';
+        return statusFilter === 'active' ? on : !on;
+      });
     }
-    return rows;
-  }, [rows, search, searchKeys, columns, tree, currentParentId]);
+    return list;
+  }, [rows, search, searchKeys, columns, tree, currentParentId, statusCol, statusFilter]);
+
+  // Reset to page 1 whenever the visible set could change shape.
+  useEffect(() => { setPage(1); }, [search, statusFilter, pageSize, config, orgId]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageSafe  = Math.min(page, pageCount);
+  const pageRows  = useMemo(() => filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize), [filtered, pageSafe, pageSize]);
+  const visibleColumns = columns.filter((c) => !hiddenCols.has(c.key));
+  const toggleCol = (key) => setHiddenCols((s) => {
+    const next = new Set(s);
+    if (next.has(key)) {
+      next.delete(key);
+    } else if (columns.length - (next.size + 1) >= 1) {   // never hide the last visible column
+      next.add(key);
+    }
+    return next;
+  });
 
   // How many children a row has (tree mode) → drives the drill button.
   const childCount = (row) =>
@@ -133,12 +170,6 @@ export default function AdminResourcePage({ config }) {
     try { await api.remove(confirm[idKey]); flash('Record deleted'); setConfirm(null); await load(); }
     catch (e) { flash(e.message || 'Delete failed', false); }
   };
-
-  // Derive card layout roles from the columns config
-  const idCol     = columns[0];
-  const statusCol = columns.find((c) => c.type === 'status');
-  const titleCol  = columns.find((c) => c !== idCol && c.type !== 'status' && c.type !== 'permissions') || columns[1] || idCol;
-  const detailCols = columns.filter((c) => c !== idCol && c !== titleCol && c !== statusCol);
 
   return (
     <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f5f9]">
@@ -198,12 +229,62 @@ export default function AdminResourcePage({ config }) {
               </button>
             )}
           </div>
+
+          {/* Filters (status) */}
+          {statusCol && (
+            <div className="relative">
+              <button onClick={() => { setShowFilters((s) => !s); setShowColsMenu(false); }}
+                className={`h-10 px-3.5 rounded-xl border text-sm font-bold flex items-center gap-2 transition-colors ${statusFilter !== 'all' ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                <Filter size={15} /> Filters{statusFilter !== 'all' && <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />}
+              </button>
+              {showFilters && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowFilters(false)} />
+                  <div className="absolute right-0 top-12 z-50 w-52 bg-white rounded-2xl border border-slate-200 shadow-xl p-2">
+                    <p className="px-2.5 py-1.5 text-[10.5px] font-black uppercase tracking-wider text-slate-400">Status</p>
+                    {[['all', 'All'], ['active', 'Active'], ['inactive', 'Inactive']].map(([v, label]) => (
+                      <button key={v} onClick={() => { setStatusFilter(v); setShowFilters(false); }}
+                        className={`w-full text-left px-2.5 py-2 rounded-lg text-sm font-semibold flex items-center justify-between ${statusFilter === v ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                        {label}{statusFilter === v && <Check size={14} />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Columns visibility */}
+          <div className="relative">
+            <button onClick={() => { setShowColsMenu((s) => !s); setShowFilters(false); }}
+              className={`h-10 px-3.5 rounded-xl border text-sm font-bold flex items-center gap-2 transition-colors ${hiddenCols.size > 0 ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+              <Columns3 size={15} /> Columns
+            </button>
+            {showColsMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowColsMenu(false)} />
+                <div className="absolute right-0 top-12 z-50 w-56 max-h-80 overflow-y-auto bg-white rounded-2xl border border-slate-200 shadow-xl p-2">
+                  <p className="px-2.5 py-1.5 text-[10.5px] font-black uppercase tracking-wider text-slate-400">Show columns</p>
+                  {columns.map((c) => (
+                    <button key={c.key} onClick={() => toggleCol(c.key)}
+                      className="w-full text-left px-2.5 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-50 flex items-center justify-between">
+                      {c.label}
+                      <span className={`w-[18px] h-[18px] rounded-md border flex items-center justify-center ${!hiddenCols.has(c.key) ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}`}>
+                        {!hiddenCols.has(c.key) && <Check size={12} className="text-white" />}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
           <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-bold ml-auto px-3 py-1.5 rounded-full bg-slate-100">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />{filtered.length} record{filtered.length !== 1 ? 's' : ''}
           </span>
           {/* Grid / List toggle */}
           <div className="flex bg-slate-100 rounded-xl p-0.5">
-            {[['grid', LayoutGrid], ['list', List]].map(([v, Ico]) => (
+            {[['grid', LayoutGrid], ['list', Table2]].map(([v, Ico]) => (
               <button key={v} onClick={() => setView(v)} title={`${v[0].toUpperCase()}${v.slice(1)} view`}
                 className={`h-8 w-9 rounded-lg flex items-center justify-center transition-all ${view === v ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
                 <Ico size={16} />
@@ -258,57 +339,65 @@ export default function AdminResourcePage({ config }) {
             )}
           </div>
         ) : view === 'list' ? (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm divide-y divide-slate-100 overflow-hidden">
-            {filtered.map((row, i) => {
-              const a = CARD_ACCENTS[i % CARD_ACCENTS.length];
-              const on = row[statusCol?.key] === true || row[statusCol?.key] === 'true';
-              return (
-                <div key={row[idKey]} className="flex items-center gap-3.5 px-4 sm:px-5 py-3 hover:bg-slate-50/70 transition-colors">
-                  <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${a.bar} flex items-center justify-center text-white font-black text-[13px] shadow ring-2 ring-white flex-shrink-0`}>
-                    {initialsOf(row[titleCol?.key])}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-[14px] font-extrabold text-slate-800 truncate">{String(row[titleCol?.key] ?? '—')}</h3>
-                      {statusCol && (
-                        <span className={`flex-shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${on ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${on ? 'bg-emerald-500' : 'bg-slate-400'}`} />{on ? 'Active' : 'Inactive'}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-x-2.5 gap-y-1 flex-wrap mt-1.5">
-                      {[
-                        { key: '__id', label: idCol.label, value: row[idCol.key] },
-                        ...detailCols.slice(0, 6).map((c) => ({ key: c.key, label: c.label, value: renderCell(c, row) })),
-                        ...(statusCol ? [{ key: '__status', label: 'Status', value: on ? 'Active' : 'Inactive' }] : []),
-                      ].map((f, idx) => (
-                        <span key={f.key} className="inline-flex items-center gap-1.5 min-w-0">
-                          {idx > 0 && <span className="text-slate-300 select-none mr-1">|</span>}
-                          <span className="uppercase text-[10px] font-bold tracking-wide text-slate-500">{f.label}</span>
-                          <span className="text-slate-400 font-bold">:</span>
-                          <span className="text-[12px] font-semibold text-slate-800 truncate max-w-[220px]">{f.value}</span>
-                        </span>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    {visibleColumns.map((c) => (
+                      <th key={c.key} style={c.width ? { width: c.width } : undefined}
+                        className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">
+                        {c === idCol ? '#' : c.label}
+                      </th>
+                    ))}
+                    {tree && <th className="px-4 py-3.5 w-10" />}
+                    <th className="px-4 py-3.5 text-right text-[13px] font-bold text-slate-700 whitespace-nowrap">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {pageRows.map((row, i) => {
+                    const a = CARD_ACCENTS[i % CARD_ACCENTS.length];
+                    return (
+                    <tr key={row[idKey]} className="hover:bg-slate-50/70 transition-colors">
+                      {visibleColumns.map((c) => (
+                        <td key={c.key} style={c.width ? { width: c.width } : undefined}
+                          className={`px-4 py-3 align-middle text-slate-700 font-semibold ${c === idCol ? 'font-mono text-slate-500' : ''} ${c.type === 'status' || c.type === 'permissions' ? '' : 'whitespace-nowrap max-w-[280px] truncate'}`}>
+                          {c === titleCol ? (
+                            <span className="inline-flex items-center gap-2.5 min-w-0">
+                              <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${a.bar} flex items-center justify-center text-white font-black text-[11px] shadow ring-2 ring-white flex-shrink-0`}>
+                                {initialsOf(row[titleCol?.key])}
+                              </span>
+                              <span className="truncate">{renderCell(c, row)}</span>
+                            </span>
+                          ) : renderCell(c, row)}
+                        </td>
                       ))}
-                    </div>
-                  </div>
-                  {tree && !search.trim() && childCount(row) > 0 && (
-                    <button onClick={() => setTreeStack([...treeStack, row])}
-                      className="h-8 px-3 rounded-lg text-[12px] font-bold text-indigo-600 hover:bg-indigo-50 flex items-center gap-1 flex-shrink-0">
-                      {childCount(row)} {tree.childLabel || 'items'} <ChevronRight size={13} />
-                    </button>
-                  )}
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    <ActionBtn title="View" onClick={() => openView(row)} tone="blue"><Eye size={15} /></ActionBtn>
-                    {allowEdit && <ActionBtn title="Edit" onClick={() => openEdit(row)} tone="indigo"><Pencil size={15} /></ActionBtn>}
-                    {allowDelete && <ActionBtn title="Delete" onClick={() => setConfirm(row)} tone="red"><Trash2 size={15} /></ActionBtn>}
-                  </div>
-                </div>
-              );
-            })}
+                      {tree && (
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          {!search.trim() && childCount(row) > 0 && (
+                            <button onClick={() => setTreeStack([...treeStack, row])}
+                              className="h-8 px-3 rounded-lg text-[12px] font-bold text-indigo-600 hover:bg-indigo-50 inline-flex items-center gap-1">
+                              {childCount(row)} {tree.childLabel || 'items'} <ChevronRight size={13} />
+                            </button>
+                          )}
+                        </td>
+                      )}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <ActionBtn title="View" onClick={() => openView(row)} tone="blue"><Eye size={15} /></ActionBtn>
+                          {allowEdit && <ActionBtn title="Edit" onClick={() => openEdit(row)} tone="indigo"><Pencil size={15} /></ActionBtn>}
+                          {allowDelete && <ActionBtn title="Delete" onClick={() => setConfirm(row)} tone="red"><Trash2 size={15} /></ActionBtn>}
+                        </div>
+                      </td>
+                    </tr>
+                  );})}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map((row, i) => {
+            {pageRows.map((row, i) => {
               const a = CARD_ACCENTS[i % CARD_ACCENTS.length];
               const on = row[statusCol?.key] === true || row[statusCol?.key] === 'true';
               return (
@@ -366,6 +455,33 @@ export default function AdminResourcePage({ config }) {
             })}
           </div>
         )}
+
+        {/* Pagination */}
+        {!loading && filtered.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mt-4 px-4 sm:px-5 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p className="text-[13px] text-slate-500 font-semibold">
+              Showing <b className="text-slate-700">{(pageSafe - 1) * pageSize + 1}</b> to{' '}
+              <b className="text-slate-700">{Math.min(pageSafe * pageSize, filtered.length)}</b> of{' '}
+              <b className="text-slate-700">{filtered.length}</b> record{filtered.length !== 1 ? 's' : ''}
+            </p>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1">
+                <PageBtn onClick={() => setPage(1)} disabled={pageSafe === 1}><ChevronsLeft size={15} /></PageBtn>
+                <PageBtn onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={pageSafe === 1}><ChevronLeft size={15} /></PageBtn>
+                <span className="h-8 min-w-8 px-2.5 rounded-lg bg-indigo-600 text-white text-[13px] font-bold flex items-center justify-center">{pageSafe}</span>
+                <PageBtn onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={pageSafe === pageCount}><ChevronRight size={15} /></PageBtn>
+                <PageBtn onClick={() => setPage(pageCount)} disabled={pageSafe === pageCount}><ChevronsRight size={15} /></PageBtn>
+              </div>
+              <div className="relative">
+                <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="h-8 pl-3 pr-8 rounded-lg border border-slate-200 text-[13px] font-bold text-slate-600 bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-indigo-200">
+                  {[10, 20, 50, 100].map((n) => <option key={n} value={n}>{n} / page</option>)}
+                </select>
+                <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {modal && (
@@ -394,6 +510,15 @@ function IconBtn({ children, title, onClick, cls }) {
   return (
     <button title={title} onClick={onClick}
       className={`w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 transition-all ${cls}`}>
+      {children}
+    </button>
+  );
+}
+
+function PageBtn({ children, onClick, disabled }) {
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className="h-8 w-8 rounded-lg border border-slate-200 text-slate-500 flex items-center justify-center hover:bg-slate-50 hover:text-slate-700 disabled:opacity-40 disabled:pointer-events-none transition-colors">
       {children}
     </button>
   );

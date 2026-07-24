@@ -12,3 +12,4 @@ export const getLogSql      = (connection_id, hours = 24) =>
   client.get('/logs/sql', { params: { connection_id: connection_id || undefined, hours } }).then((r) => r.data);
 export const getLogErrors   = (connection_id, hours = 72, severity) =>
   client.get('/logs/errors', { params: { connection_id: connection_id || undefined, hours, severity: severity || undefined } }).then((r) => r.data);
+export const getLogTelemetryTable = (params) => client.get('/logs/telemetry-table', { params }).then((r) => r.data);

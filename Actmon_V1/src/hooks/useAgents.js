@@ -8,12 +8,12 @@ import {
   getOracleSnapshot,
 } from '../api/agents';
 
-// Fetches list of all monitored database agents with 30s polling for dashboard
+// Fetches list of all monitored database agents with 10s polling for dashboard
 export const useAgentsList = (polling = false) => {
   return useQuery({
     queryKey: ['agents'],
     queryFn: listAgents,
-    refetchInterval: polling ? 30000 : false,
+    refetchInterval: polling ? 10000 : false,
     refetchIntervalInBackground: polling,
   });
 };

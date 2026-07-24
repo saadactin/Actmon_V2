@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Lock, Plus, Pencil, Trash2, Search, ChevronLeft, ChevronRight, ChevronDown, X, Shield, Check,
-  RefreshCw, Building2, ArrowRight, FileText, Copy, Loader2,
+  RefreshCw, Building2, ArrowRight, FileText, Copy, Loader2, Boxes, LayoutGrid, Table2,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import {
@@ -55,6 +55,8 @@ export default function GroupRolePagePermission() {
   const [saving, setSaving] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [treeStack, setTreeStack] = useState([]); // drill path: [{page_id, page_name}]
+  const [selectedModuleId, setSelectedModuleId] = useState(null); // module chosen within the role, before pages
+  const [pageView, setPageView] = useState('grid'); // 'grid' | 'list' — for the page-permission cards
   const [toast, setToast] = useState(null);
   const [selectedPerms, setSelectedPerms] = useState([]);
   const [form, setForm] = useState({ org_id: '', role_id: '', page_id: '', permission: 0 });
@@ -105,8 +107,9 @@ export default function GroupRolePagePermission() {
     }
   }, [loading, superAdmin, orgId, orgs, myOrgId, navigate]);
 
-  const selectedOrg  = orgId ? orgs.find((o) => String(o.org_id) === String(orgId)) : null;
-  const selectedRole = roleId ? roles.find((r) => String(r.role_id) === String(roleId)) : null;
+  const selectedOrg    = orgId ? orgs.find((o) => String(o.org_id) === String(orgId)) : null;
+  const selectedRole   = roleId ? roles.find((r) => String(r.role_id) === String(roleId)) : null;
+  const selectedModule = selectedModuleId ? modules.find((m) => Number(m.module_id) === Number(selectedModuleId)) : null;
 
   const isEditMode = editId != null;
   const pageName = (id) => pages.find((p) => Number(p.page_id) === Number(id))?.page_name || `#${id}`;
@@ -150,27 +153,48 @@ export default function GroupRolePagePermission() {
   }, [records, selectedOrg, selectedRole]);
 
   const pageById = useMemo(() => { const m = {}; pages.forEach((p) => { m[Number(p.page_id)] = p; }); return m; }, [pages]);
-  const grantedIds = useMemo(() => new Set(grantedAll.map((r) => Number(r.page_id))), [grantedAll]);
+
+  // Modules — one level ABOVE pages: click a role → see which modules it has grants
+  // in (all modules are listed, with a per-module grant count) → click a module →
+  // THEN see its parent pages (existing drill-down, now scoped to that module).
+  const moduleGrantCounts = useMemo(() => {
+    const m = {};
+    grantedAll.forEach((r) => {
+      const modId = Number(pageById[Number(r.page_id)]?.module_id || 0);
+      m[modId] = (m[modId] || 0) + 1;
+    });
+    return m;
+  }, [grantedAll, pageById]);
+  const roleModules = useMemo(
+    () => [...modules].sort((a, b) => (a.display_order || 0) - (b.display_order || 0)),
+    [modules],
+  );
+  const grantedInModule = useMemo(() => {
+    if (!selectedModuleId) return [];
+    return grantedAll.filter((r) => Number(pageById[Number(r.page_id)]?.module_id) === Number(selectedModuleId));
+  }, [grantedAll, selectedModuleId, pageById]);
+
+  const grantedIds = useMemo(() => new Set(grantedInModule.map((r) => Number(r.page_id))), [grantedInModule]);
   // A record's effective parent = its parent_id IF that parent is also granted; otherwise it floats to root (0)
   // so nothing ever disappears when a child is granted without its parent.
   const effParent = (r) => { const pid = Number(pageById[Number(r.page_id)]?.parent_id || 0); return pid && grantedIds.has(pid) ? pid : 0; };
   const childCountOf = useMemo(() => {
     const m = {};
-    grantedAll.forEach((r) => { const ep = effParent(r); m[ep] = (m[ep] || 0) + 1; });
+    grantedInModule.forEach((r) => { const ep = effParent(r); m[ep] = (m[ep] || 0) + 1; });
     return m;
-  }, [grantedAll, grantedIds, pageById]);
+  }, [grantedInModule, grantedIds, pageById]);
 
   const curParent = treeStack.length ? Number(treeStack[treeStack.length - 1].page_id) : 0;
   const searching = !!searchText.trim();
 
-  // Cards shown at the current level (or flat results while searching).
+  // Cards shown at the current level (or flat results while searching) — scoped to the selected module.
   const levelRecords = useMemo(() => {
     if (searching) {
       const q = searchText.toLowerCase();
-      return grantedAll.filter((r) => pageName(r.page_id).toLowerCase().includes(q));
+      return grantedInModule.filter((r) => pageName(r.page_id).toLowerCase().includes(q));
     }
-    return grantedAll.filter((r) => effParent(r) === curParent);
-  }, [grantedAll, searching, searchText, curParent, grantedIds, pageById]);
+    return grantedInModule.filter((r) => effParent(r) === curParent);
+  }, [grantedInModule, searching, searchText, curParent, grantedIds, pageById]);
 
   // all-pages parent→children map (used to cascade a parent grant down to its children)
   const childrenByParent = useMemo(() => {
@@ -194,7 +218,7 @@ export default function GroupRolePagePermission() {
   const drillTo = (idx) => setTreeStack((s) => s.slice(0, idx)); // idx = number of crumbs to keep (0 = root)
 
   // reset drill path when switching role / org
-  useEffect(() => { setTreeStack([]); setSearchText(''); }, [roleId, orgId]);
+  useEffect(() => { setTreeStack([]); setSearchText(''); setSelectedModuleId(null); }, [roleId, orgId]);
 
   /* ── permission tag handlers (bitwise) ── */
   const sumPerms = (list) => list.reduce((s, p) => s + Number(p.permission_value), 0);
@@ -219,7 +243,7 @@ export default function GroupRolePagePermission() {
   const openAdd = () => {
     setEditId(null);
     setForm({ org_id: selectedOrg.org_id, role_id: selectedRole.role_id, page_id: '', permission: 0 });
-    setPickModule(''); setPickParent('');
+    setPickModule(selectedModuleId ? String(selectedModuleId) : ''); setPickParent('');
     setSelectedPerms([]); setPermOpen(false); setFormVisible(true);
   };
   const openEdit = (rec) => {
@@ -287,10 +311,13 @@ export default function GroupRolePagePermission() {
     } finally { setCloning(false); }
   };
 
-  const crumb = selectedRole ? `${orgName(selectedOrg.org_id)} → ${selectedRole.role_name}`
+  const crumb = selectedModule ? `${selectedRole.role_name} → ${selectedModule.module_name}`
+    : selectedRole ? `${orgName(selectedOrg.org_id)} → ${selectedRole.role_name}`
     : selectedOrg ? `${selectedOrg.org_name} → Roles` : 'Organizations';
   const goBack = () => {
-    // role permissions table → back to that org's role list
+    // page-permission cards → back to this role's module list
+    if (selectedModuleId) { setSelectedModuleId(null); return; }
+    // module list → back to that org's role list
     if (roleId) navigate(`/role-permissions/${orgId}`);
     // role list (org chosen in Administration) → back to that org's Administration grid
     else if (orgId) navigate(`/administration/${orgId}`);
@@ -310,8 +337,17 @@ export default function GroupRolePagePermission() {
           <ChevronRight size={11} />
           <button onClick={() => navigate('/administration')} className="hover:text-slate-200 transition-colors">Administration</button>
           {selectedOrg && (<><ChevronRight size={11} /><span className="text-slate-200/80 truncate max-w-[160px]">{selectedOrg.org_name}</span></>)}
-          <ChevronRight size={11} />
-          <span className="text-white font-semibold truncate max-w-[220px]">{selectedRole ? selectedRole.role_name : 'Role Permissions'}</span>
+          {selectedRole ? (
+            <>
+              <ChevronRight size={11} />
+              {selectedModule
+                ? <button onClick={() => setSelectedModuleId(null)} className="hover:text-slate-200 transition-colors truncate max-w-[160px]">{selectedRole.role_name}</button>
+                : <span className="text-white font-semibold truncate max-w-[220px]">{selectedRole.role_name}</span>}
+            </>
+          ) : (
+            <><ChevronRight size={11} /><span className="text-white font-semibold truncate max-w-[220px]">Role Permissions</span></>
+          )}
+          {selectedModule && (<><ChevronRight size={11} /><span className="text-white font-semibold truncate max-w-[220px]">{selectedModule.module_name}</span></>)}
         </div>
         {/* header row */}
         <div className="relative flex items-center justify-between gap-3">
@@ -321,7 +357,10 @@ export default function GroupRolePagePermission() {
             <div className="min-w-0">
               <h1 className="text-lg font-black text-white tracking-tight leading-none truncate">{crumb}</h1>
               <p className="text-sky-200/70 text-[11px] mt-0.5 truncate">
-                {!selectedOrg ? 'Select an organization' : !selectedRole ? 'Select a role to manage its page permissions' : 'Manage page permissions for this role'}
+                {!selectedOrg ? 'Select an organization'
+                  : !selectedRole ? 'Select a role to manage its page permissions'
+                  : !selectedModule ? 'Select a module to manage its page permissions'
+                  : 'Manage page permissions for this module'}
               </p>
             </div>
           </div>
@@ -407,8 +446,48 @@ export default function GroupRolePagePermission() {
           </div>
         ))}
 
-        {/* LEVEL 2 — Page-permission cards */}
-        {selectedOrg && selectedRole && (
+        {/* LEVEL 1.5 — Modules (within the selected role) */}
+        {selectedOrg && selectedRole && !selectedModule && (
+          <>
+            {ownRoleOpen && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 mb-4 flex items-start gap-3">
+                <Lock size={18} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-black text-amber-800 text-sm">This is your own role</p>
+                  <p className="text-amber-700 text-xs mt-0.5">For security, you can view but not change the permissions of the role you're signed in with. Ask a super admin to adjust it.</p>
+                </div>
+              </div>
+            )}
+            {loading ? <CardSkeleton /> : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+                {roleModules.length === 0 && <p className="text-slate-400 col-span-full text-center py-10">No modules found.</p>}
+                {roleModules.map((mod, i) => {
+                  const a = ACCENTS[i % ACCENTS.length];
+                  const count = moduleGrantCounts[Number(mod.module_id)] || 0;
+                  return (
+                    <button key={mod.module_id} onClick={() => setSelectedModuleId(mod.module_id)}
+                      className={`group relative bg-white rounded-2xl border border-slate-200 ${a.ring} overflow-hidden p-5 text-left shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300`}>
+                      <div className={`pointer-events-none absolute -top-10 -right-10 w-32 h-32 rounded-full ${a.soft} opacity-0 group-hover:opacity-10 blur-3xl transition-opacity duration-500`} />
+                      <div className="flex items-center justify-between">
+                        <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${a.bar} flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform`}><Boxes size={22} /></div>
+                        <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200 ${a.text}`}>{count} page{count !== 1 ? 's' : ''}</span>
+                      </div>
+                      <h3 className="font-black text-slate-800 text-base mt-4 truncate">{mod.module_name}</h3>
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-1 font-mono">{mod.module_route || mod.module_code || '—'}</p>
+                      <div className="mt-4 flex items-center justify-between">
+                        <span className={`text-xs font-extrabold ${a.text}`}>View Pages</span>
+                        <ChevronRight size={16} className={`${a.text} group-hover:translate-x-1 transition-transform`} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* LEVEL 2 — Page-permission cards (within the selected module) */}
+        {selectedOrg && selectedRole && selectedModule && (
           <>
             {ownRoleOpen && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-4 mb-4 flex items-start gap-3">
@@ -422,12 +501,21 @@ export default function GroupRolePagePermission() {
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 mb-4 flex items-center gap-3 flex-wrap">
               <div className="relative flex-1 min-w-[220px] max-w-md">
                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Search all pages…"
+                <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder={`Search ${selectedModule.module_name} pages…`}
                   className="w-full h-10 pl-9 pr-3 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-rose-200 focus:border-rose-400" />
               </div>
               <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-bold ml-auto px-3 py-1.5 rounded-full bg-slate-100">
-                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />{grantedAll.length} page{grantedAll.length !== 1 ? 's' : ''} granted
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />{grantedInModule.length} page{grantedInModule.length !== 1 ? 's' : ''} granted
               </span>
+              {/* Grid / List toggle */}
+              <div className="flex bg-slate-100 rounded-xl p-0.5">
+                {[['grid', LayoutGrid], ['list', Table2]].map(([v, Ico]) => (
+                  <button key={v} onClick={() => setPageView(v)} title={`${v[0].toUpperCase()}${v.slice(1)} view`}
+                    className={`h-8 w-9 rounded-lg flex items-center justify-center transition-all ${pageView === v ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>
+                    <Ico size={16} />
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* ── Drill breadcrumb (hidden while searching) ── */}
@@ -452,8 +540,66 @@ export default function GroupRolePagePermission() {
             {levelRecords.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200 shadow-sm py-16 text-center">
                 <div className="w-14 h-14 mx-auto rounded-2xl bg-slate-100 flex items-center justify-center mb-3"><FileText className="text-slate-300" size={26} /></div>
-                <p className="text-slate-500 font-bold">{searching ? 'No matching pages' : grantedAll.length === 0 ? 'No page permissions yet' : 'No sub-pages here'}</p>
-                <p className="text-slate-400 text-sm mt-1">{grantedAll.length === 0 ? <>Click <b>Add Page Permission</b> to grant access.</> : searching ? 'Try a different search term.' : 'This page has no further child pages.'}</p>
+                <p className="text-slate-500 font-bold">{searching ? 'No matching pages' : grantedInModule.length === 0 ? 'No page permissions yet in this module' : 'No sub-pages here'}</p>
+                <p className="text-slate-400 text-sm mt-1">{grantedInModule.length === 0 ? <>Click <b>Add Page Permission</b> to grant access.</> : searching ? 'Try a different search term.' : 'This page has no further child pages.'}</p>
+              </div>
+            ) : pageView === 'list' ? (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200">
+                        <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Page</th>
+                        <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Permissions</th>
+                        <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Bitmask</th>
+                        <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Sub-pages</th>
+                        <th className="px-4 py-3.5 text-right text-[13px] font-bold text-slate-700 whitespace-nowrap">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {levelRecords.map((r, i) => {
+                        const a = ACCENTS[i % ACCENTS.length];
+                        const perms = decodePermission(r.permission);
+                        const kids = childCountOf[Number(r.page_id)] || 0;
+                        const canDrill = !searching && kids > 0;
+                        return (
+                          <tr key={r.page_permission_id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="px-4 py-3 align-middle">
+                              <span className="inline-flex items-center gap-2.5 min-w-0">
+                                <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${a.bar} flex items-center justify-center text-white shadow ring-2 ring-white flex-shrink-0`}><FileText size={14} /></span>
+                                <span className="min-w-0">
+                                  <span className="block font-bold text-slate-800 truncate max-w-[220px]">{pageName(r.page_id)}</span>
+                                  <span className="block text-[11px] font-mono text-slate-400 truncate max-w-[220px]">{pageUrl(r.page_id) || `Page #${r.page_id}`}</span>
+                                </span>
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 align-middle">
+                              <div className="flex flex-wrap gap-1.5 max-w-[320px]">
+                                {perms.length ? perms.map((p) => (
+                                  <span key={p} className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100">{p}</span>
+                                )) : <span className="text-slate-300 text-xs">No access</span>}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 align-middle whitespace-nowrap font-mono text-[12px] text-slate-500">{r.permission}</td>
+                            <td className="px-4 py-3 align-middle whitespace-nowrap">
+                              {canDrill ? (
+                                <button onClick={() => drillInto(r)} className="text-[12px] font-bold text-indigo-600 hover:underline inline-flex items-center gap-1">
+                                  {kids} sub-page{kids !== 1 ? 's' : ''} <ChevronRight size={13} />
+                                </button>
+                              ) : <span className="text-slate-300 text-xs">—</span>}
+                            </td>
+                            <td className="px-4 py-3 align-middle">
+                              <div className="flex items-center justify-end gap-1">
+                                {!ownRoleOpen && <button onClick={() => openEdit(r)} title="Edit" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-indigo-50 hover:text-indigo-600"><Pencil size={15} /></button>}
+                                {!ownRoleOpen && <button onClick={() => del(r.page_permission_id)} title="Delete" className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 size={15} /></button>}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">

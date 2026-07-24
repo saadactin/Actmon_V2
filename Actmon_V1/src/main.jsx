@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { FluentProvider, webLightTheme } from '@fluentui/react-components';
 import { ToastProvider } from './components/ui/ToastProvider';
 import { AuthProvider } from './auth/AuthProvider';
+import { DashboardAppearanceProvider } from './context/DashboardAppearanceContext';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { AppShell } from './components/layout/AppShell';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -48,7 +49,6 @@ const OracleSlowQueries       = React.lazy(() => import('./pages/oracle/SlowQuer
 const OracleErrorLogs         = React.lazy(() => import('./pages/oracle/ErrorLogs'));
 const OracleIndexAnalysis     = React.lazy(() => import('./pages/oracle/IndexAnalysis'));
 const OracleReportsPage       = React.lazy(() => import('./pages/oracle/OracleReportsPage'));
-const OracleLiveQueriesPage   = React.lazy(() => import('./pages/oracle/OracleLiveQueriesPage'));
 const MongoDBDashboard        = React.lazy(() => import('./pages/mongodb/MongoDBDashboard'));
 const MongoSlowOperations     = React.lazy(() => import('./pages/mongodb/SlowOperations'));
 const MongoErrorLogs          = React.lazy(() => import('./pages/mongodb/ErrorLogs'));
@@ -66,6 +66,8 @@ const ServerDetail            = React.lazy(() => import('./pages/databases/Serve
 const CloudPage               = React.lazy(() => import('./pages/cloud/CloudPage').then(m => ({ default: m.CloudPage })));
 // ── Cloud Discovery feature (from cloud service) — lazy-loaded, namespaced ──
 const CloudShell              = React.lazy(() => import('./features/cloud/components/CloudShell').then(m => ({ default: m.CloudShell })));
+const CloudProviderChooser    = React.lazy(() => import('./features/cloud/pages/CloudProviderChooser'));
+const CloudProviderAccountsPage = React.lazy(() => import('./features/cloud/pages/CloudProviderAccountsPage'));
 const CloudDashboard          = React.lazy(() => import('./features/cloud/pages/CloudDashboard').then(m => ({ default: m.CloudDashboard })));
 const CloudAccountsPage       = React.lazy(() => import('./features/cloud/pages/CloudAccountsPage').then(m => ({ default: m.CloudAccountsPage })));
 const CloudResourcesPage      = React.lazy(() => import('./features/cloud/pages/ResourcesPage').then(m => ({ default: m.ResourcesPage })));
@@ -242,7 +244,6 @@ const router = createBrowserRouter([
       { path: 'oracle-dashboard/:id/error-logs', element: <OracleErrorLogs /> },
       { path: 'oracle-dashboard/:id/index-analysis', element: <OracleIndexAnalysis /> },
       { path: 'oracle-dashboard/:id/reports', element: <OracleReportsPage /> },
-      { path: 'oracle-dashboard/:id/live-queries', element: <OracleLiveQueriesPage /> },
       { path: 'oracle-dashboard/:id/:tab', element: <OracleDashboard /> },
       // MongoDB
       { path: 'mongodb-dashboard/:id', element: <MongoDBDashboard /> },
@@ -288,8 +289,13 @@ const router = createBrowserRouter([
         path: 'cloud',
         element: <CloudShell />,
         children: [
-          { index: true, element: <CloudDashboard /> },
+          // Choose Provider (matches the Databases "Choose Technology" pattern) →
+          // Provider's accounts → account-scoped dashboard. All other cloud routes
+          // below are unchanged.
+          { index: true, element: <CloudProviderChooser /> },
           { path: 'accounts', element: <CloudAccountsPage /> },
+          { path: ':provider', element: <CloudProviderAccountsPage /> },
+          { path: ':provider/:accountId', element: <CloudDashboard /> },
           { path: 'resources', element: <CloudResourcesPage /> },
           { path: 'resources/:resourceId', element: <CloudResourceDetailPage /> },
           { path: 'cost', element: <CloudCostPage /> },
@@ -372,9 +378,11 @@ ReactDOM.createRoot(document.getElementById('app')).render(
       <QueryClientProvider client={queryClient}>
         <ToastProvider>
           <AuthProvider>
-            <ErrorBoundary>
-              <RouterProvider router={router} />
-            </ErrorBoundary>
+            <DashboardAppearanceProvider>
+              <ErrorBoundary>
+                <RouterProvider router={router} />
+              </ErrorBoundary>
+            </DashboardAppearanceProvider>
           </AuthProvider>
         </ToastProvider>
       </QueryClientProvider>

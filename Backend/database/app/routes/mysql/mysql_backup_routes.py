@@ -51,6 +51,12 @@ def backup_summary(conn_id: int, db: Session = Depends(get_db)):
     return mysql_backup_service.get_backup_summary(conn_id, db)
 
 
+@router.get("/{conn_id}/backup/storage-path")
+def backup_storage_path(conn_id: int, db: Session = Depends(get_db)):
+    """Fast, agent-independent — just the default storage folder (no DB status queries)."""
+    return mysql_backup_service.get_storage_path(conn_id, db)
+
+
 @router.get("/{conn_id}/backups")
 def list_backups(conn_id: int, db: Session = Depends(get_db)):
     return mysql_backup_service.list_backups(conn_id, db)

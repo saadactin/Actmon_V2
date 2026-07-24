@@ -431,11 +431,30 @@ def _to_ascii(s: str) -> str:
 def build_windows_install_bat(token: str, url: str) -> str:
     """A double-clickable installer (.bat) with token+URL baked in. It self-elevates
     (UAC) and runs the exe-based setup — so the user can just download and run it,
-    no PowerShell copy-paste needed."""
+    no PowerShell copy-paste needed.
+
+    Downloads the setup script to a file and runs it with -File, in two separate
+    steps — NOT `iex ((New-Object Net.WebClient).DownloadString(...)))`. That
+    in-memory download-and-eval one-liner is the textbook "fileless" pattern
+    Microsoft Defender's Attack Surface Reduction rules (and most enterprise EDR)
+    specifically detect and block, regardless of what the script actually does —
+    confirmed live: a real install hit an instant "Access is denied" the moment
+    that exact command ran, before the script's own logging even started. Saving
+    to disk first and executing with -File is the ordinary, unflagged way
+    legitimate installers fetch and run a script."""
     from urllib.parse import quote
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
     safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
     setup_url = f"{safe_url}/agents/install/actmon-setup.ps1?token={safe_token}&url={quote(safe_url, safe='')}"
+    # cmd.exe's batch parser expands ANY %N (digit) or %VAR% pattern it finds in a
+    # .bat file's text BEFORE the line ever reaches the program it's quoted for —
+    # including inside a quoted -Command argument. A percent-encoded URL (%3A,
+    # %2F, ...) gets silently mangled this way: %3 looks like an (undefined,
+    # therefore empty) positional parameter, leaving stray literal characters
+    # behind — confirmed live, this turned a valid URL into an unresolvable
+    # hostname. Doubling every % to %% is the standard batch-file escape that
+    # survives that pass intact and comes out as a single % on the other side.
+    setup_url_bat = setup_url.replace("%", "%%")
     # CRLF line endings — it's a Windows batch file.
     lines = [
         "@echo off",
@@ -447,7 +466,15 @@ def build_windows_install_bat(token: str, url: str) -> str:
         "  exit /b",
         ")",
         "echo Installing ActMon Agent...",
-        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"iex ((New-Object Net.WebClient).DownloadString('{setup_url}'))\"",
+        "set \"ACTMON_SETUP_PS1=%TEMP%\\actmon-setup.ps1\"",
+        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{setup_url_bat}' -OutFile '%ACTMON_SETUP_PS1%' -UseBasicParsing\"",
+        "if not exist \"%ACTMON_SETUP_PS1%\" (",
+        "  echo Failed to download the installer script - check your network and the ActMon server URL.",
+        "  pause",
+        "  exit /b 1",
+        ")",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ACTMON_SETUP_PS1%\"",
+        "del /f /q \"%ACTMON_SETUP_PS1%\" >nul 2>&1",
         "echo.",
         "pause",
     ]
@@ -526,7 +553,14 @@ try {{
   $action    = New-ScheduledTaskAction -Execute $exe
   $trigger   = New-ScheduledTaskTrigger -AtStartup
   $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-  $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  # MultipleInstances IgnoreNew: without this, re-running this installer on a host
+  # whose task was still finishing its own shutdown (schtasks /End above isn't
+  # synchronous) can race Register-ScheduledTask/Start-ScheduledTask into launching
+  # a SECOND overlapping instance alongside the one still stopping — confirmed live
+  # (4 actmon-agent.exe processes = 2 independent launches after one install run).
+  # This tells Task Scheduler to refuse a new launch while one is already active,
+  # so at most one instance ever runs regardless of that race.
+  $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
   Register-ScheduledTask -TaskName 'ActMonAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
   Start-ScheduledTask -TaskName 'ActMonAgent'
   Log "Scheduled task ActMonAgent registered and started."

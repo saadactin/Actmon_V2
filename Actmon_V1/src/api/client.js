@@ -10,6 +10,11 @@ const client = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // Axios has no default timeout (0 = wait forever). A dashboard tab whose data
+  // isn't cache-warm yet falls through to a live query over the agent's job
+  // channel — if that channel is ever genuinely stuck, the request (and the
+  // loading spinner) would otherwise hang indefinitely with no feedback at all.
+  timeout: 30000,
 });
 
 // Request interceptor: Attach JWT token if it exists
@@ -43,6 +48,10 @@ client.interceptors.response.use(
       
       const serverMessage = error.response.data?.detail || error.response.data?.message || 'Server error occurred.';
       return Promise.reject(new Error(serverMessage));
+    } else if (error.code === 'ECONNABORTED') {
+      // Our own client-side timeout (30s) firing — distinct from a genuine
+      // network failure, so it gets its own message rather than "cannot reach server".
+      return Promise.reject(new Error('The server took too long to respond. It may still be collecting data for this connection — try again in a moment.'));
     } else if (error.request) {
       // Network error (no response received)
       return Promise.reject(new Error('Cannot reach server. Please check your network connection.'));

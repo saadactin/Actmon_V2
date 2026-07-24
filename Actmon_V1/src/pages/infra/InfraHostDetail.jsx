@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, RefreshCw, Server, Cpu, MemoryStick, HardDrive, Activity,
@@ -9,7 +9,7 @@ import {
   Play, Square, RotateCw, Search, Settings2, Radio, Terminal, Database, Download,
 } from 'lucide-react';
 import {
-  PieChart, Pie, Cell, ResponsiveContainer, ScatterChart, Scatter,
+  Cell, ResponsiveContainer, ScatterChart, Scatter,
   XAxis, YAxis, ZAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import {
@@ -17,6 +17,8 @@ import {
   listServices, restartService, rebootHost, getNetFiles, fsList, fsRead, fsWrite,
   serviceAction, netDiag, killProcess, regGet, regSet, runCommand, updateAgent,
 } from '../../api/servers';
+import Gauge from '../../components/gauges/Gauge';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 const C = { blue: '#2563eb', green: '#16a34a', amber: '#d97706', red: '#dc2626', violet: '#7c3aed', cyan: '#0891b2', slate: '#475569' };
 const pctColor = (p) => (p > 90 ? C.red : p > 75 ? C.amber : C.blue);
@@ -56,32 +58,6 @@ const TABS = ['Overview', 'Ports', 'Processes', 'Storage', 'Network', 'Services'
 // error.response is gone — the real text lives on error.message. Support both shapes.
 const errText = (e, fb = 'Something went wrong. The host may be unreachable.') =>
   e?.response?.data?.detail || e?.message || fb;
-
-// Donut gauge — used % vs free, value in the middle.
-function Gauge({ label, pct, sub, color }) {
-  const v = Math.max(0, Math.min(100, Number(pct) || 0));
-  const data = [{ value: v }, { value: 100 - v }];
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-      <p className="text-[13px] font-black text-slate-500 uppercase tracking-wide">{label}</p>
-      <div className="relative" style={{ height: 170 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie data={data} dataKey="value" cx="50%" cy="50%" innerRadius={52} outerRadius={72}
-              startAngle={90} endAngle={-270} stroke="none">
-              <Cell fill={color} />
-              <Cell fill="#e9edf3" />
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <p className="text-[26px] font-black leading-none" style={{ color }}>{v}%</p>
-          {sub && <p className="text-[12px] text-slate-400 mt-1">{sub}</p>}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const BarRow = ({ label, pct, right, color }) => (
   <div className="py-1.5">
@@ -393,7 +369,7 @@ function FirewallPanel({ id }) {
 }
 
 // Reusable password re-auth modal for control actions (start/stop/restart).
-function PasswordPrompt({ title, confirmLabel = 'Confirm', danger, onConfirm, onClose }) {
+export function PasswordPrompt({ title, confirmLabel = 'Confirm', danger, onConfirm, onClose }) {
   const [pw, setPw] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -920,8 +896,8 @@ function FieldGrid({ items }) {
   );
 }
 
-function IpConfigMenu({ data, id, navigate, isWin }) {
-  const [view, setView] = useState(null);
+function IpConfigMenu({ data, id, navigate, isWin, initialView }) {
+  const [view, setView] = useState(initialView !== undefined ? initialView : null);
   const [layout, setLayout] = useState('grid');
   const [sel, setSel] = useState(0);
   const [checks, setChecks] = useState({});
@@ -1227,13 +1203,23 @@ const CFG_FILE_HINTS = {
   backup: { linux: ['/etc/cron.d/backup', 'rsync/borg config'] },
   monitoring: { linux: ['agent config', '/etc/prometheus/'] },
   license: { linux: ['/usr/share/doc/*/copyright'], win: ['slmgr /dlv'] },
+  software: { linux: ['/var/lib/dpkg/status', '/var/log/dpkg.log', '/var/log/yum.log'], win: ['HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall'] },
+  virt: { linux: ['/etc/libvirt/qemu.conf', '/etc/libvirt/libvirtd.conf'], win: ['Hyper-V Manager', 'Get-VM'] },
+  container: { linux: ['/etc/containers/containers.conf', '/etc/containers/registries.conf'] },
+  cloud: { linux: ['/etc/cloud/cloud.cfg', '/etc/cloud/cloud.cfg.d/'], win: ['EC2Launch config'] },
+  appserver: { linux: ['/etc/tomcat/server.xml', '/opt/tomcat/conf/server.xml'], win: ['Tomcat service config'] },
+  ha: { linux: ['/etc/corosync/corosync.conf', '/etc/pacemaker/'] },
+  cluster: { linux: ['/etc/corosync/corosync.conf', '/etc/pcs/'] },
+  lb: { linux: ['/etc/haproxy/haproxy.cfg', '/etc/nginx/conf.d/lb.conf'] },
+  san: { linux: ['/etc/multipath.conf', '/etc/iscsi/iscsid.conf'] },
+  regional: { linux: ['/etc/default/locale', '/etc/timezone'], win: ['Region Settings (intl.cpl)'] },
 };
 
 /* ── Config module drill: Files · Registry · Commands (per-module config) ── */
 
 // Per-module config: which real files / registry keys / info commands each
 // Config-Files card exposes. Each returns { title, files, regKeys, commands }.
-function moduleConfig(key, isWin) {
+function moduleConfig(key, isWin, fallbackTitle) {
   const M = {
     os: {
       title: 'Operating System',
@@ -1311,7 +1297,18 @@ function moduleConfig(key, isWin) {
       ],
     },
   };
-  return M[key];
+  if (M[key]) return M[key];
+
+  // Every other module: auto-build a real Files panel from its CFG_FILE_HINTS paths
+  // (same OsFilesEditor as os/hardware/cpu — real view/edit, not a placeholder).
+  const hint = CFG_FILE_HINTS[key];
+  if (!hint) return null;
+  const paths = (isWin ? (hint.win || hint.linux) : (hint.linux || hint.win)) || [];
+  if (!paths.length) return null;
+  return {
+    title: fallbackTitle || key,
+    files: paths.map((p) => ({ label: p, path: p })),
+  };
 }
 
 // Drill for a config module: shows the Files / Registry / Commands sub-cards the
@@ -1883,16 +1880,16 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
   const RAW = [
     ['Operating System Configuration', 'os', Info], ['Hardware Configuration', 'hardware', Server],
     ['CPU Configuration', 'cpu', Cpu], ['Memory Configuration', 'memory', MemoryStick],
-    ['Disk Configuration', 'disk', HardDrive, 'Storage'], ['Storage Configuration', 'storage', HardDrive, 'Storage'],
+    ['Disk Configuration', 'disk', HardDrive], ['Storage Configuration', 'storage', HardDrive],
     ['Filesystem Configuration', 'filesystem', HardDrive], ['Partition Configuration', 'partition', HardDrive],
     ['Boot Configuration', 'boot', Power], ['Kernel Configuration', 'kernel', Settings2],
-    ['Network Configuration', 'network', Network, 'Network'], ['IP Configuration', 'ip', Route, 'IP Configuration'],
-    ['DNS Configuration', 'dns', Globe, 'IP Configuration'], ['Proxy Configuration', 'proxy', ShieldCheck, 'IP Configuration'],
-    ['Routing Configuration', 'routing', Route, 'IP Configuration'], ['Firewall Configuration', 'firewall', ShieldCheck, 'IP Configuration'],
+    ['Network Configuration', 'network', Network], ['IP Configuration', 'ip', Route],
+    ['DNS Configuration', 'dns', Globe], ['Proxy Configuration', 'proxy', ShieldCheck],
+    ['Routing Configuration', 'routing', Route], ['Firewall Configuration', 'firewall', ShieldCheck],
     ['Security Configuration', 'security', ShieldCheck], ['Authentication Configuration', 'auth', ShieldCheck],
     ['User Configuration', 'user', Server], ['Group Configuration', 'group', Server],
-    ['SSH Configuration', 'ssh', Settings2], ['Service Configuration', 'service', Settings2, 'Services'],
-    ['Process Configuration', 'process', Box, 'Processes'], ['Environment Configuration', 'env', Settings2],
+    ['SSH Configuration', 'ssh', Settings2], ['Service Configuration', 'service', Settings2],
+    ['Process Configuration', 'process', Box], ['Environment Configuration', 'env', Settings2],
     ['System Variables Configuration', 'sysvars', Settings2], ['Time & NTP Configuration', 'ntp', Clock],
     ['Logging Configuration', 'logging', FileText], ['Audit Configuration', 'audit', FileText],
     ['Package Management Configuration', 'package', Box], ['Software Configuration', 'software', Box],
@@ -1988,7 +1985,22 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
   if (view === 'database') {
     return <DatabaseConfigPanel id={id} isWin={isWin} data={data} navigate={navigate} onBack={() => setView(null)} />;
   }
-  const modCfg = moduleConfig(view, isWin);
+  // These already have a full, real panel elsewhere (same one their own tab uses) —
+  // show it right here instead of sending the user off to a different tab.
+  if (view === 'network') {
+    return <>{back}<NetworkPanel data={data} id={id} navigate={navigate} /></>;
+  }
+  if (view === 'service') {
+    return <>{back}<ServicesPanel id={id} /></>;
+  }
+  if (view === 'process') {
+    return <>{back}<ProcessesPanel processes={data.processes || []} id={id} /></>;
+  }
+  const IP_SUBVIEW = { ip: null, dns: 'dns', proxy: 'proxy', routing: 'advanced', firewall: 'firewall' };
+  if (view in IP_SUBVIEW) {
+    return <>{back}<IpConfigMenu data={data} id={id} navigate={navigate} isWin={isWin} initialView={IP_SUBVIEW[view]} /></>;
+  }
+  const modCfg = moduleConfig(view, isWin, card.title);
   if (modCfg) {
     return <ConfigModulePanel id={id} isWin={isWin} cfg={modCfg} navigate={navigate} onBack={() => setView(null)} />;
   } else if (view === 'memory') {
@@ -1997,7 +2009,7 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
       ['Free', mem.free_mb != null ? fmtMB(mem.free_mb) : null], ['Available', mem.available_mb != null ? fmtMB(mem.available_mb) : null],
       ['Used %', mem.used_pct != null ? `${mem.used_pct}%` : null],
     ]} /></Section>;
-  } else if (view === 'filesystem' || view === 'partition') {
+  } else if (view === 'filesystem' || view === 'partition' || view === 'disk' || view === 'storage') {
     body = <Section title={card.title} icon={HardDrive} count={fss.length} color={C.green}>
       <Table headers={['Mount', 'Filesystem', 'Size', 'Used', 'Avail', 'Use %']}
         rows={fss.map((f) => [
@@ -2313,27 +2325,6 @@ function DashTile({ title, sub, children, className = '', onClick }) {
   );
 }
 
-// Donut with a big centred value + optional sub-label inside.
-function Donut({ pct: p, color, center, sub }) {
-  const v = Math.max(0, Math.min(100, Number(p) || 0));
-  return (
-    <div className="relative" style={{ height: 170 }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie data={[{ value: v }, { value: 100 - v }]} dataKey="value" cx="50%" cy="50%"
-            innerRadius={52} outerRadius={72} startAngle={90} endAngle={-270} stroke="none">
-            <Cell fill={color} /><Cell fill="#eef2f7" />
-          </Pie>
-        </PieChart>
-      </ResponsiveContainer>
-      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <p className="text-[28px] font-black leading-none" style={{ color }}>{center}</p>
-        {sub && <p className="text-[11px] text-slate-400 mt-1 text-center px-3">{sub}</p>}
-      </div>
-    </div>
-  );
-}
-
 // Horizontal ranked bar list (top processes, filesystem usage, …).
 function RankBars({ items, unit = '%', empty = 'No data', onItem }) {
   if (!items.length) return <p className="text-[13px] text-slate-400 py-6 text-center">{empty}</p>;
@@ -2398,8 +2389,11 @@ function ProcScatter({ points }) {
 export function InfraHostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const qc = useQueryClient();
-  const [tabRaw, setTabRaw] = useState('Overview');
+  // Cross-page navigation (e.g. from File Explorer's tab bar) can request a
+  // starting tab via navigate(..., { state: { tab } }); default to Overview.
+  const [tabRaw, setTabRaw] = useState(location.state?.tab || 'Overview');
   const [subView, setSubView] = useState(null);
   const [showRestart, setShowRestart] = useState(false);
   const [showUpdate, setShowUpdate] = useState(false);
@@ -2422,6 +2416,7 @@ export function InfraHostDetail() {
   const tabs = TABS;
 
   return (
+    <DashboardScopeProvider tech="infra">
     <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
       {/* ─── TOP HEADER (MySQL-dashboard style) ─── */}
       <div className="bg-gradient-to-r from-slate-900 via-cyan-900 to-teal-800 text-white shadow-xl">
@@ -2528,15 +2523,15 @@ export function InfraHostDetail() {
                   <SectionBand icon={Activity} title="Performance" />
                   <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
                     <DashTile title="CPU Utilization">
-                      <Donut pct={cpu} color={pctColor(cpu)} center={`${cpu}%`}
+                      <Gauge pct={cpu} label="" colorFn={pctColor}
                         sub={data.load ? `load ${data.load.one} / ${data.load.five} / ${data.load.fifteen}` : 'processor load'} />
                     </DashTile>
                     <DashTile title="Memory Utilization">
-                      <Donut pct={memPct} color={pctColor(memPct)} center={`${memPct}%`}
+                      <Gauge pct={memPct} label="" colorFn={pctColor}
                         sub={mem.total_mb ? `${fmtMB(mem.used_mb)} of ${fmtMB(mem.total_mb)}` : 'physical memory'} />
                     </DashTile>
                     <DashTile title="Disk — busiest mount">
-                      <Donut pct={diskPct} color={pctColor(diskPct)} center={`${diskPct}%`}
+                      <Gauge pct={diskPct} label="" colorFn={pctColor}
                         sub={rootFs ? `${rootFs.mount} · ${rootFs.used} / ${rootFs.size}` : 'no filesystem data'} />
                     </DashTile>
                     <DashTile title="Load & Uptime">
@@ -2722,11 +2717,12 @@ export function InfraHostDetail() {
         <RestartModal id={id} hostName={host.server_name || `Host #${id}`} onClose={() => setShowRestart(false)} />
       )}
     </div>
+    </DashboardScopeProvider>
   );
 }
 
 // Restart a service / reboot the host — requires the caller's password (re-auth).
-function RestartModal({ id, hostName, onClose, presetUnit, title }) {
+export function RestartModal({ id, hostName, onClose, presetUnit, title }) {
   const [mode, setMode] = useState('service');   // 'service' | 'reboot'
   const [unit, setUnit] = useState(presetUnit || '');
   const [password, setPassword] = useState('');

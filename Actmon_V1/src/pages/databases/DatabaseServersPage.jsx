@@ -777,22 +777,33 @@ export default function DatabaseServersPage({ tech = null }) {
                 {standaloneList.length} server{standaloneList.length>1?'s':''}
               </span>
             </div>
-            <div className={serverView === 'list' ? 'space-y-3' : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'}>
-              {standaloneList.map((server) => (
-                <TopologyNodeCard
-                  key={server.id}
-                  node={server}
-                  navigate={navigate}
-                  openTerminal={setTerminalServer}
-                  refreshMutation={refreshMutation}
-                  allConnections={allConnections}
-                  tech={selectedTech}
-                  fullWidth={serverView === 'list'}
-                  onDelete={() => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
-                  showMetricsInline
-                />
-              ))}
-            </div>
+            {serverView === 'list' ? (
+              <ServerTable
+                servers={standaloneList}
+                navigate={navigate}
+                openTerminal={setTerminalServer}
+                refreshMutation={refreshMutation}
+                allConnections={allConnections}
+                tech={selectedTech}
+                onDeleteServer={(server) => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
+              />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {standaloneList.map((server) => (
+                  <TopologyNodeCard
+                    key={server.id}
+                    node={server}
+                    navigate={navigate}
+                    openTerminal={setTerminalServer}
+                    refreshMutation={refreshMutation}
+                    allConnections={allConnections}
+                    tech={selectedTech}
+                    onDelete={() => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
+                    showMetricsInline
+                  />
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -889,6 +900,165 @@ function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allCon
         ))}
       </div>
     </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
+   SERVER TABLE — proper tabular list view (list-mode toggle)
+══════════════════════════════════════════════════════ */
+const ROW_ACCENTS = [
+  'from-indigo-500 to-blue-600', 'from-rose-500 to-pink-600', 'from-emerald-500 to-teal-600',
+  'from-amber-500 to-orange-600', 'from-violet-500 to-purple-600', 'from-cyan-500 to-sky-600',
+];
+const rowInitials = (s) => {
+  const str = String(s ?? '').trim();
+  if (!str) return '#';
+  const w = str.split(/\s+/);
+  return ((w[0][0] || '') + (w[1]?.[0] || (w[0][1] || ''))).toUpperCase();
+};
+
+function ServerTable({ servers, navigate, openTerminal, refreshMutation, allConnections = [], tech = null, onDeleteServer }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Server</th>
+              <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Host / OS</th>
+              <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">OS Status</th>
+              <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">DB Status</th>
+              <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Resources</th>
+              <th className="text-left px-4 py-3.5 text-[13px] font-bold text-slate-700 whitespace-nowrap">Uptime</th>
+              <th className="px-4 py-3.5 text-right text-[13px] font-bold text-slate-700 whitespace-nowrap">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {servers.map((node, i) => (
+              <ServerTableRow key={node.id} node={node} idx={i} navigate={navigate} openTerminal={openTerminal}
+                refreshMutation={refreshMutation} allConnections={allConnections} tech={tech}
+                onDelete={() => onDeleteServer(node)} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ServerTableRow({ node, idx, navigate, openTerminal, refreshMutation, allConnections = [], tech = null, onDelete }) {
+  const isRefreshing = refreshMutation.isPending && refreshMutation.variables === node.id;
+  const want = tech ? normDb(tech) : null;
+  const linkedInst = want
+    ? (node.db_instances || []).find((i) => i.connection_id && normDb(i.db_type) === want)
+    : (node.db_instances || []).find((i) => i.connection_id);
+  const conn = (linkedInst && allConnections.find((c) => c.id === linkedInst.connection_id))
+    || findConn(allConnections, node, tech);
+
+  const osUp   = node.status === 'Connected';
+  const osWarn = node.status === 'Warning';
+  const osDown = node.status === 'Disconnected';
+
+  const dbStatus   = (want && linkedInst) ? (linkedInst.status || 'Unknown') : (node.db_status || 'Unknown');
+  const dbUp       = dbStatus === 'Running';
+  const dbDegraded = dbStatus === 'Degraded';
+  const dbDown     = dbStatus === 'Stopped';
+
+  const accent = ROW_ACCENTS[idx % ROW_ACCENTS.length];
+  const connected = conn || linkedInst;
+  const connIdForDiag = conn?.id || linkedInst?.connection_id;
+  const onOpenDashboard = () => {
+    if (connIdForDiag && !dbUp) { navigate(`/db-diagnose/${connIdForDiag}`); return; }
+    if (conn) { navigate(getDashboardPath(conn)); return; }
+    if (linkedInst) { navigate(getDashboardPath({ db_type: linkedInst.db_type, id: linkedInst.connection_id })); return; }
+    const db = want || node.database_services?.[0]?.toLowerCase() || 'mysql';
+    const portMap = { mysql: 3306, postgresql: 5432, oracle: 1521, mssql: 1433, mongodb: 27017, clickhouse: 8123 };
+    navigate(`/connections/add?type=${db}&host=${node.ip_address}&port=${portMap[db] || 3306}&name=${encodeURIComponent(node.server_name + '-' + db)}`);
+  };
+
+  const metrics = [
+    { label: 'CPU', val: node.cpu_usage },
+    { label: 'RAM', val: node.ram_usage },
+    { label: 'Disk', val: node.disk_usage },
+  ];
+
+  return (
+    <tr className="hover:bg-slate-50/70 transition-colors">
+      <td className="px-4 py-3 align-middle">
+        <span className="inline-flex items-center gap-2.5 min-w-0">
+          <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${accent} flex items-center justify-center text-white font-black text-[11px] shadow ring-2 ring-white flex-shrink-0`}>
+            {rowInitials(conn?.connection_name || node.server_name)}
+          </span>
+          <span className="min-w-0">
+            <span className="block font-bold text-slate-800 truncate max-w-[180px]">{conn?.connection_name || node.server_name}</span>
+            {conn?.connection_name && conn.connection_name !== node.server_name && (
+              <span className="block text-[11px] text-slate-400 truncate max-w-[180px]">{node.server_name}</span>
+            )}
+          </span>
+        </span>
+      </td>
+      <td className="px-4 py-3 align-middle whitespace-nowrap">
+        <span className="font-mono text-[12px] text-slate-600 font-semibold">{node.ip_address}</span>
+        {node.os_type && <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-md">{node.os_type}</span>}
+      </td>
+      <td className="px-4 py-3 align-middle whitespace-nowrap">
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+          osUp ? 'bg-emerald-50 text-emerald-700' : osWarn ? 'bg-amber-50 text-amber-700' : osDown ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${osUp ? 'bg-emerald-500' : osWarn ? 'bg-amber-500' : osDown ? 'bg-red-500' : 'bg-slate-400'}`} />
+          {osUp ? 'Online' : osDown ? 'Offline' : node.status || 'Unknown'}
+        </span>
+      </td>
+      <td className="px-4 py-3 align-middle whitespace-nowrap">
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+          dbUp ? 'bg-emerald-50 text-emerald-700' : dbDegraded ? 'bg-amber-50 text-amber-700' : dbDown ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${dbUp ? 'bg-emerald-500 animate-pulse' : dbDegraded ? 'bg-amber-500' : dbDown ? 'bg-red-500' : 'bg-slate-400'}`} />
+          {dbUp ? 'Running' : dbDown ? 'Stopped' : dbDegraded ? 'Degraded' : 'Unknown'}
+        </span>
+      </td>
+      <td className="px-4 py-3 align-middle">
+        <div className="flex items-center gap-3 min-w-[180px]">
+          {metrics.map(({ label, val }) => {
+            const pct = parseFloat(val) || 0;
+            const barColor = pct > 85 ? 'bg-red-500' : pct > 65 ? 'bg-amber-400' : 'bg-emerald-500';
+            return (
+              <div key={label} className="flex-1" title={`${label}: ${val || '—'}`}>
+                <div className="flex justify-between mb-0.5">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase">{label}</span>
+                  <span className="text-[9px] font-black text-slate-600">{val || '—'}</span>
+                </div>
+                <div className="h-1 rounded-full bg-slate-200 overflow-hidden">
+                  {val && <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </td>
+      <td className="px-4 py-3 align-middle whitespace-nowrap text-slate-500 text-[12px] font-semibold">{node.uptime || '—'}</td>
+      <td className="px-4 py-3 align-middle">
+        <div className="flex items-center justify-end gap-1.5">
+          <button onClick={() => openTerminal(node)} title="Open SSH Terminal"
+            className="h-9 px-3 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-[11px] font-bold flex items-center gap-1.5 transition-all">
+            <Terminal size={12} />SSH
+          </button>
+          <button onClick={onOpenDashboard} title={connected ? (dbUp ? 'Dashboard' : 'Diagnose') : 'Connect'}
+            className={`h-9 w-9 rounded-xl border flex items-center justify-center transition-all ${
+              connected ? 'border-slate-200 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600'
+                        : 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}>
+            {connected ? (dbUp ? <Activity size={15} /> : <Stethoscope size={15} />) : <Plus size={15} />}
+          </button>
+          <button onClick={() => refreshMutation.mutate(node.id)} title="Deep refresh (SSH)"
+            className={`h-9 w-9 rounded-xl border flex items-center justify-center transition-all ${
+              isRefreshing ? 'border-indigo-300 bg-indigo-50 text-indigo-500' : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 text-slate-400 hover:text-indigo-500'}`}>
+            <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={onDelete} title="Delete"
+            className="h-9 w-9 rounded-xl border border-red-100 text-red-400 hover:bg-red-50 hover:border-red-200 flex items-center justify-center transition-all">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -991,23 +1161,35 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
           )}
         </div>
 
-        {/* DB services */}
-        {node.database_services?.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {node.database_services.map((svc) => {
-              const inst  = dbInstances.find(i => i.db_type === svc);
-              const st    = inst?.status || 'Unknown';
-              const stDot = st==='Running'?'bg-emerald-500':st==='Stopped'?'bg-red-500':st==='Degraded'?'bg-amber-500':'bg-slate-300';
-              return (
-                <span key={svc} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${dbColor(svc)}`}>
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stDot} ${st==='Running'?'animate-pulse':''}`}/>
-                  {svc}
-                  {st==='Stopped' && <span className="font-black text-red-600">↓</span>}
+        {/* DB services — scoped to the current tech tab; a host running several
+            engines side by side shouldn't clutter e.g. the MySQL Servers page
+            with equally-prominent Oracle/MSSQL/ClickHouse badges. */}
+        {node.database_services?.length > 0 && (() => {
+          const matched = tech ? node.database_services.filter((svc) => normDb(svc) === normDb(tech)) : node.database_services;
+          const others  = tech ? node.database_services.filter((svc) => normDb(svc) !== normDb(tech)) : [];
+          return (
+            <div className="flex flex-wrap items-center gap-1.5 mb-4">
+              {matched.map((svc) => {
+                const inst  = dbInstances.find(i => i.db_type === svc);
+                const st    = inst?.status || 'Unknown';
+                const stDot = st==='Running'?'bg-emerald-500':st==='Stopped'?'bg-red-500':st==='Degraded'?'bg-amber-500':'bg-slate-300';
+                return (
+                  <span key={svc} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${dbColor(svc)}`}>
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stDot} ${st==='Running'?'animate-pulse':''}`}/>
+                    {svc}
+                    {st==='Stopped' && <span className="font-black text-red-600">↓</span>}
+                  </span>
+                );
+              })}
+              {others.length > 0 && (
+                <span title={`This host also runs: ${others.join(', ')}`}
+                  className="px-2.5 py-1 rounded-full text-[11px] font-bold text-slate-400 bg-slate-50 border border-slate-200">
+                  +{others.length} other{others.length !== 1 ? 's' : ''} on this host
                 </span>
-              );
-            })}
-          </div>
-        )}
+              )}
+            </div>
+          );
+        })()}
 
         {/* OS + DB status badges */}
         <div className={`grid gap-2 mb-4 ${connectionOnly ? 'grid-cols-1' : 'grid-cols-2'}`}>

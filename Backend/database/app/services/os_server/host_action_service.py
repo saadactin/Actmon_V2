@@ -200,7 +200,13 @@ def svc_update_agent(server_id: int, db: Session) -> dict:
         raise HTTPException(status_code=400, detail="This host has no ActMon agent to update.")
     if not (srv.os_type or "").lower().startswith("win"):
         raise HTTPException(status_code=400, detail="Linux agents self-update automatically — no manual update needed.")
-    raw = agent_fs_service.request(srv.agent_token, "selfupdate", "")
+    try:
+        raw = agent_fs_service.request(srv.agent_token, "selfupdate", "")
+    except RuntimeError as e:
+        # The agent ran the job but hit an exception on its side (e.g. an older
+        # build without this feature, or a download/schtasks failure) — surface it
+        # as a clean 400 instead of leaking an unhandled 500.
+        raise HTTPException(status_code=400, detail=f"Agent update failed: {e}")
     if raw is None:
         raise HTTPException(status_code=504, detail="The agent didn't respond — it may be offline. Check that the ActMon service is running on the host.")
     out = raw.decode("utf-8", errors="replace").strip()

@@ -143,26 +143,49 @@ export default function StepInstallation({ data, onInstalled }) {
         </a>
       )}
 
-      {/* Windows downloads. The .bat is the ONE-CLICK installer with the token + URL
-          baked in — download, right-click Run as administrator, done. It's the primary
-          button. MSI is NOT offered: it can only be built on a Windows-hosted ActMon
-          server (needs WiX), and this deployment runs on Linux. The raw .exe is kept
-          as a secondary option for advanced/manual installs. */}
+      {/* Windows downloads, all three shown directly. The .bat is the ONLY
+          zero-input path: token + URL are baked into the download URL by the
+          server, so double-click → UAC "Yes" → done, nothing to type. The raw
+          .exe/.msi are the same pre-built generic agent with NO token baked in
+          (per-download token-baking needs WiX, which only runs on a Windows-hosted
+          ActMon server — this deployment runs on Linux), so they still need the
+          token/URL supplied manually — that's called out under each button rather
+          than hidden away, so the option is visible but the requirement is clear. */}
       {isWin && (
         <div className="mt-4">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <a href={`${apiBase}/agents/install/actmon-install.bat?token=${data.token}&url=${encodeURIComponent(apiBase)}`} download
-              className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
-              <Download size={16} /> Download ActMon Agent Installer
-            </a>
-            <a href={`${apiBase}/agents/download/windows?fmt=exe`} download
-              className="inline-flex items-center gap-2 h-11 px-4 rounded-lg border border-slate-300 bg-white text-slate-700 text-[14px] font-bold hover:bg-slate-50">
-              <Download size={15} /> Agent .exe (manual)
-            </a>
+          <div className="flex flex-wrap items-stretch gap-3">
+            <div>
+              <a href={`${apiBase}/agents/install/actmon-install.bat?token=${data.token}&url=${encodeURIComponent(apiBase)}`} download
+                className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
+                <Download size={16} /> Download ActMon Agent Installer (.bat)
+              </a>
+              <p className="text-[12px] text-emerald-700 font-semibold mt-1.5">Recommended — nothing to type, double-click and click Yes.</p>
+            </div>
+            <div>
+              <a href={`${apiBase}/agents/download/windows?fmt=msi`} download
+                className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
+                <Download size={16} /> Download Agent .msi
+              </a>
+              <p className="text-[12px] text-slate-500 mt-1.5">Needs the token/URL typed in — see below.</p>
+            </div>
+            <div>
+              <a href={`${apiBase}/agents/download/windows?fmt=exe`} download
+                className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
+                <Download size={16} /> Download Agent .exe
+              </a>
+              <p className="text-[12px] text-slate-500 mt-1.5">Needs the token/URL typed in — see below.</p>
+            </div>
           </div>
-          <p className="text-[13px] text-slate-500 mt-2">
-            Download the installer, then on the target machine <b>right-click → Run as administrator</b> (if SmartScreen appears: <b>More info → Run anyway</b>). It installs the agent service, auto-starts, and the host
-            appears in <b>Agents</b> under its own name — nothing to type. (The installer isn't code-signed, so "unknown publisher" is expected.)
+
+          <p className="text-[13px] text-slate-500 mt-3">
+            <b>.bat:</b> download, then on the target machine double-click it and click Yes on the admin prompt (if SmartScreen appears: <b>More info → Run anyway</b>) —
+            it installs and configures itself automatically, and the host appears in <b>Agents</b> under its own name. (Not code-signed, so "unknown publisher" is expected.)
+          </p>
+          <p className="text-[13px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2.5">
+            <b>.msi / .exe are NOT pre-configured with this token.</b> Double-clicking either one on its own installs with a blank server URL/token, and the host won't
+            appear in Agents until that's fixed. Install the .msi with the token/URL as properties:{' '}
+            <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">msiexec /i actmon-agent.msi ACCESS_TOKEN={data.token} ACTMON_URL={apiBase}</code>{' '}
+            — or set <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">ACTMON_ACCESS_TOKEN</code> / <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">ACTMON_URL</code> as environment variables before running the .exe.
           </p>
         </div>
       )}

@@ -1,15 +1,34 @@
 #!/usr/bin/env bash
 # Build the ActMon Windows agent: actmon-agent.exe (PyInstaller) → actmon-agent.msi (WiX).
-# Run from Backend/agent on a Windows host with Python (psutil, pyinstaller) available.
+# Run from Backend/agent on a Windows host with Python available.
 # WiX 3.11 binaries are expected under wix/wix311 (see build_agent.sh output for the download URL).
+#
+# Builds from an ISOLATED virtualenv (.venv-build), not whatever Python happens to be
+# on PATH — PyInstaller bundles anything reachable from the interpreter's site-packages,
+# so building against a shared/dev Python that also has unrelated heavy packages
+# installed (torch, numpy, scipy, ...) silently balloons the exe from ~20MB to 270MB+.
+# The venv is created once and reused; delete .venv-build to force a clean rebuild.
 set -euo pipefail
 cd "$(dirname "$0")"
 
+VENV=.venv-build
+if [ ! -f "$VENV/Scripts/python.exe" ]; then
+  echo "[0/3] Creating isolated build venv ($VENV) ..."
+  python -m venv "$VENV"
+  "$VENV/Scripts/python.exe" -m pip install --quiet --upgrade pip
+  "$VENV/Scripts/python.exe" -m pip install --quiet \
+    pyinstaller pymysql psycopg2-binary pymssql oracledb pymongo clickhouse-driver \
+    cryptography pywin32
+fi
+PY="$VENV/Scripts/python.exe"
+
 echo "[1/3] Building actmon-agent.exe ..."
-python -m PyInstaller --onefile --name actmon-agent --distpath dist --workpath build --specpath build \
+"$PY" -m PyInstaller --onefile --name actmon-agent --distpath dist --workpath build --specpath build \
   --hidden-import pymysql --collect-submodules pymysql \
   --hidden-import psycopg2 --hidden-import pymssql --collect-submodules pymssql \
   --hidden-import oracledb --collect-submodules oracledb \
+  --hidden-import pymongo --collect-submodules pymongo \
+  --hidden-import clickhouse_driver --collect-submodules clickhouse_driver \
   --collect-all cryptography \
   --hidden-import win32timezone --hidden-import win32serviceutil \
   --hidden-import win32service --hidden-import win32event --hidden-import servicemanager \

@@ -19,6 +19,8 @@ import {
 } from 'recharts';
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
+import Gauge from '../../components/gauges/Gauge';
+import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 /* ─── MongoDB palette ─── */
 const C = {
@@ -134,37 +136,6 @@ function KpiCard({ icon: Icon, title, value, accent }) {
         </div>
         <Icon size={20} className="text-slate-300 mt-0.5 flex-shrink-0" />
       </div>
-    </div>
-  );
-}
-
-function GaugeCard({ title, pct, sub, centerLabel, centerUnit = '%', colorFn }) {
-  const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
-  const fill = colorFn ? colorFn(safePct) : (safePct > 80 ? C.red : safePct > 60 ? C.orange : C.green);
-  const displayCenter = centerLabel !== undefined ? centerLabel : safePct;
-  const displayUnit   = centerLabel !== undefined ? centerUnit : '%';
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-col items-center">
-      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 text-center">{title}</p>
-      <div className="relative flex flex-col items-center">
-        <PieChart width={150} height={90}>
-          <Pie
-            data={[{ v: safePct }, { v: 100 - safePct }]}
-            cx={75} cy={86}
-            startAngle={180} endAngle={0}
-            innerRadius={50} outerRadius={68}
-            dataKey="v" stroke="none"
-          >
-            <Cell fill={fill} />
-            <Cell fill="#e2e8f0" />
-          </Pie>
-        </PieChart>
-        <div style={{ marginTop: '-38px' }} className="text-center pointer-events-none">
-          <p className="text-xl font-black text-slate-900 leading-none">{displayCenter}</p>
-          <p className="text-[10px] text-slate-400 mt-0.5">{displayUnit}</p>
-        </div>
-      </div>
-      <p className="text-[10px] text-slate-400 mt-2 text-center leading-tight">{sub}</p>
     </div>
   );
 }
@@ -862,6 +833,7 @@ export default function MongoDBDashboard() {
 
   /* ─────────────────────────────────────────────────────────────── */
   return (
+    <DashboardScopeProvider tech="mongodb">
     <div className="-mx-6 md:-mx-8 min-h-full bg-slate-50 flex flex-col">
 
       {/* ─── Collection Detail Modal ─── */}
@@ -995,28 +967,26 @@ export default function MongoDBDashboard() {
 
               {/* 4 Gauges */}
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                <GaugeCard
-                  title="Connection %"
+                <Gauge
+                  label="Connection %"
                   pct={connPct}
                   sub={`${connections.current ?? 0} current / ${connections.available ?? 0} available`}
                   colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.green}
                 />
-                <GaugeCard
-                  title="WT Cache Used %"
+                <Gauge
+                  label="WT Cache Used %"
                   pct={wtCachePct}
                   sub={`${wired_tiger.cache_used_mb ?? 0} MB / ${wired_tiger.cache_max_mb ?? 0} MB configured`}
                   colorFn={v => v > 85 ? C.red : v > 70 ? C.orange : C.green}
                 />
-                <GaugeCard
-                  title="Op Rate"
+                <Gauge
+                  label="Op Rate"
                   pct={Math.min(100, opRate > 0 ? Math.min(opRate / 10, 100) : 0)}
-                  centerLabel={fmtNum(opRate)}
-                  centerUnit=" ops"
-                  sub="Cumulative opcounters total"
+                  sub={`${fmtNum(opRate)} ops · Cumulative opcounters total`}
                   colorFn={() => C.green}
                 />
-                <GaugeCard
-                  title="WT Cache Hit %"
+                <Gauge
+                  label="WT Cache Hit %"
                   pct={cacheHitPct}
                   sub="WiredTiger cache read efficiency"
                   colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green}
@@ -2026,14 +1996,14 @@ export default function MongoDBDashboard() {
                 </Panel>
 
                 <div className="space-y-4">
-                  <GaugeCard
-                    title="Commit Rate"
+                  <Gauge
+                    label="Commit Rate"
                     pct={txn.commit_rate || 0}
                     sub={`${fmtNum(t.totalCommitted || 0)} committed / ${fmtNum(t.totalStarted || 0)} started`}
                     colorFn={v => v < 50 ? C.red : v < 80 ? C.orange : C.green}
                   />
-                  <GaugeCard
-                    title="Abort Rate"
+                  <Gauge
+                    label="Abort Rate"
                     pct={txn.abort_rate || 0}
                     sub={`${fmtNum(t.totalAborted || 0)} aborted / ${fmtNum(t.totalStarted || 0)} started`}
                     colorFn={v => v > 20 ? C.red : v > 10 ? C.orange : C.green}
@@ -2101,26 +2071,26 @@ export default function MongoDBDashboard() {
             <div className="space-y-5">
               {/* Gauges row */}
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                <GaugeCard
-                  title="Cache Used %"
+                <Gauge
+                  label="Cache Used %"
                   pct={cacheUsedPct}
                   sub={`${cache.cache_used_mb || 0} MB / ${cache.cache_max_mb || 0} MB`}
                   colorFn={v => v > 85 ? C.red : v > 70 ? C.orange : C.green}
                 />
-                <GaugeCard
-                  title="Read Tickets Used %"
+                <Gauge
+                  label="Read Tickets Used %"
                   pct={readUsedPct}
                   sub={`${readOut} out / ${readTotal} total (${readAvail} available)`}
                   colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.green}
                 />
-                <GaugeCard
-                  title="Write Tickets Used %"
+                <Gauge
+                  label="Write Tickets Used %"
                   pct={writeUsedPct}
                   sub={`${writeOut} out / ${writeTotal} total (${writeAvail} available)`}
                   colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.orange}
                 />
-                <GaugeCard
-                  title="WT Cache Dirty %"
+                <Gauge
+                  label="WT Cache Dirty %"
                   pct={cache.maximum_bytes_configured > 0 ? Math.round(((cache.tracked_dirty_bytes_in_cache || 0) / cache.maximum_bytes_configured) * 100) : 0}
                   sub={`${((cache.tracked_dirty_bytes_in_cache || 0) / 1024 / 1024).toFixed(2)} MB dirty`}
                   colorFn={v => v > 20 ? C.red : v > 10 ? C.orange : C.green}
@@ -2840,6 +2810,7 @@ export default function MongoDBDashboard() {
 
       </div>
     </div>
+    </DashboardScopeProvider>
   );
 }
 

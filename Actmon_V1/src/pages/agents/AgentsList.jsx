@@ -523,12 +523,12 @@ export const AgentsList = () => {
   const [envFilter, setEnvFilter] = useState('all');
   const [statFilterCtrl, setStatFilterCtrl] = useState('all');
 
-  // 30s countdown
-  const [countdown, setCountdown] = useState(30);
+  // 10s countdown
+  const [countdown, setCountdown] = useState(10);
   useEffect(() => {
     const t = setInterval(() => {
       setCountdown((c) => {
-        if (c <= 1) { refetch(); return 30; }
+        if (c <= 1) { refetch(); return 10; }
         return c - 1;
       });
     }, 1000);
@@ -830,8 +830,8 @@ export const AgentsList = () => {
             >
               <option value="name:asc">Name A→Z</option>
               <option value="name:desc">Name Z→A</option>
-              <option value="db_cpu:desc">CPU High→Low</option>
-              <option value="db_cpu:asc">CPU Low→High</option>
+              <option value="agent_host_cpu:desc">Host CPU High→Low</option>
+              <option value="agent_host_cpu:asc">Host CPU Low→High</option>
               <option value="active_sessions:desc">Sessions High→Low</option>
               <option value="last_heartbeat:desc">Last Seen</option>
             </select>
@@ -1010,8 +1010,8 @@ export const AgentsList = () => {
                     { key: 'db_type', label: 'Engine', w: 'w-28' },
                     { key: 'environment', label: 'Environment', w: 'w-28' },
                     { key: 'status', label: 'Status', w: 'w-24' },
-                    { key: 'db_cpu', label: 'DB CPU', w: 'w-32' },
-                    { key: 'memory_usage', label: 'RAM', w: 'w-32' },
+                    { key: 'agent_host_cpu', label: 'Agent Host CPU', w: 'w-32' },
+                    { key: 'agent_host_memory', label: 'Agent Host Memory', w: 'w-32' },
                     { key: 'active_sessions', label: 'Sessions', w: 'w-20' },
                     { key: 'last_heartbeat', label: 'Last Seen', w: 'w-28' },
                   ].map(({ key, label, w }) => (
@@ -1039,8 +1039,8 @@ export const AgentsList = () => {
                   filtered.map((agent) => {
                     const level = statusLevel(agent.status);
                     const statusColor = STATUS_COLORS[level];
-                    const cpu = Number(agent.db_cpu) || 0;
-                    const mem = Number(agent.memory_usage) || 0;
+                    const hostCpu = Number(agent.agent_host_cpu) || 0;
+                    const hostMem = Number(agent.agent_host_memory) || 0;
 
                     return (
                       <tr
@@ -1091,38 +1091,39 @@ export const AgentsList = () => {
                           })()}
                         </td>
 
-                        {/* DB CPU bar */}
+                        {/* Agent Host CPU bar — the actual host machine's CPU (from its
+                            infra push), not a per-DB-engine proxy */}
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
                             <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
                               <div
                                 className="h-full rounded-full transition-all"
                                 style={{
-                                  width: `${Math.min(cpu, 100)}%`,
-                                  backgroundColor: cpuColor(cpu),
+                                  width: `${Math.min(hostCpu, 100)}%`,
+                                  backgroundColor: cpuColor(hostCpu),
                                 }}
                               />
                             </div>
-                            <span className="text-xs font-bold" style={{ color: cpuColor(cpu) }}>
-                              {cpu.toFixed(1)}%
+                            <span className="text-xs font-bold" style={{ color: cpuColor(hostCpu) }}>
+                              {hostCpu.toFixed(1)}%
                             </span>
                           </div>
                         </td>
 
-                        {/* RAM bar */}
+                        {/* Agent Host Memory bar */}
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
                             <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
                               <div
                                 className="h-full rounded-full transition-all"
                                 style={{
-                                  width: `${Math.min(mem, 100)}%`,
-                                  backgroundColor: cpuColor(mem),
+                                  width: `${Math.min(hostMem, 100)}%`,
+                                  backgroundColor: cpuColor(hostMem),
                                 }}
                               />
                             </div>
-                            <span className="text-xs font-bold" style={{ color: cpuColor(mem) }}>
-                              {mem.toFixed(1)}%
+                            <span className="text-xs font-bold" style={{ color: cpuColor(hostMem) }}>
+                              {hostMem.toFixed(1)}%
                             </span>
                           </div>
                         </td>
