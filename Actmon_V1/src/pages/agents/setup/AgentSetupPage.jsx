@@ -205,13 +205,13 @@ const DX_SERVICES = [
     desc: 'Get insights into your websites performance.' },
   { title: 'RUM', icon: Eye, color: 'bg-cyan-100 text-cyan-600', soon: true,
     desc: 'Understand how users experience your site based on browser, device, and geographic location.' },
-  { title: 'TCP Port', icon: Plug, color: 'bg-amber-100 text-amber-600', soon: true,
+  { title: 'TCP Port', icon: Plug, color: 'bg-amber-100 text-amber-600', to: '/agents/setup/network-check?type=tcp_port',
     desc: 'Check the availability of your hostname and a specified port.' },
-  { title: 'Ping', icon: Radio, color: 'bg-blue-100 text-blue-600', soon: true,
+  { title: 'Ping', icon: Radio, color: 'bg-blue-100 text-blue-600', to: '/agents/setup/network-check?type=ping',
     desc: 'Check the availability of a specified IP and domain address.' },
-  { title: 'DNS', icon: Network, color: 'bg-blue-100 text-blue-600', soon: true,
+  { title: 'DNS', icon: Network, color: 'bg-blue-100 text-blue-600', to: '/agents/setup/network-check?type=dns',
     desc: 'Check the functionality of your DNS server.' },
-  { title: 'UDP Port', icon: Plug, color: 'bg-teal-100 text-teal-600', soon: true,
+  { title: 'UDP Port', icon: Plug, color: 'bg-teal-100 text-teal-600', to: '/agents/setup/network-check?type=udp_port',
     desc: 'Check the availability of your hostname and a specified port.' },
 ];
 
@@ -440,7 +440,15 @@ export default function AgentSetupPage() {
           {/* Panel */}
           <div className="flex-1 overflow-y-auto px-8 py-6">
             {isIntro && renderGrid(SERVICES)}
-            {isDX && renderGrid(DX_SERVICES)}
+            {isDX && (
+              <>
+                <div className="max-w-[1100px] mb-5 flex justify-end">
+                  <button onClick={() => navigate('/digital-experience')}
+                    className="text-[13px] font-bold text-blue-600 hover:underline">View existing monitors →</button>
+                </div>
+                {renderGrid(DX_SERVICES)}
+              </>
+            )}
             {isLogs && renderGrid(LOG_SERVICES)}
 
             {isAPM && (

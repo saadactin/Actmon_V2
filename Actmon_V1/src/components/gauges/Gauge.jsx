@@ -175,7 +175,7 @@ function MinimalGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
    `history` is a rolling in-memory buffer the parent <Gauge> accumulates from
    live `pct` updates; `historyOverride` lets previews (Settings gallery) supply
    fixed sample data instead of waiting for real re-renders to build history. */
-function GraphGauge({ icon: Icon, label, pct, sub, colorFn, history }) {
+function GraphGauge({ icon: Icon, label, pct, sub, colorFn, history, chartStyleOverride }) {
   const c = colorFor(pct, colorFn);
   const data = history.length >= 2 ? history : [{ t: 0, v: pct ?? 0 }, { t: 1, v: pct ?? 0 }];
   return (
@@ -187,6 +187,7 @@ function GraphGauge({ icon: Icon, label, pct, sub, colorFn, history }) {
         <span className="font-mono tabular-nums text-lg font-black" style={{ color: c }}>{fmtPct(pct)}</span>
       </div>
       <TrendChart data={data} xKey="t" height={72} showLegend={false} yDomain={[0, 100]}
+        styleOverride={chartStyleOverride}
         series={[{ key: 'v', label, color: c }]} />
       {sub && <p className="text-[10.5px] text-slate-400 mt-1.5">{sub}</p>}
       {history.length < 3 && <p className="text-[10px] text-slate-300 mt-1">Building history…</p>}
@@ -197,7 +198,7 @@ function GraphGauge({ icon: Icon, label, pct, sub, colorFn, history }) {
 const RENDERERS = { ring: RingGauge, stat: StatTileGauge, donut: DonutGauge, minimal: MinimalGauge };
 const MAX_HISTORY = 30;
 
-export default function Gauge({ styleOverride, displayModeOverride, historyOverride, ...props }) {
+export default function Gauge({ styleOverride, displayModeOverride, historyOverride, chartStyleOverride, ...props }) {
   const { indicatorStyle, displayMode } = useDashboardAppearance();
   const mode = displayModeOverride || displayMode;
   const historyRef = useRef([]);
@@ -215,7 +216,7 @@ export default function Gauge({ styleOverride, displayModeOverride, historyOverr
   }, [props.pct, historyOverride]);
 
   if (mode === 'graph') {
-    return <GraphGauge {...props} history={historyOverride || historyRef.current} />;
+    return <GraphGauge {...props} history={historyOverride || historyRef.current} chartStyleOverride={chartStyleOverride} />;
   }
   const Renderer = RENDERERS[styleOverride || indicatorStyle] || RingGauge;
   return <Renderer {...props} />;

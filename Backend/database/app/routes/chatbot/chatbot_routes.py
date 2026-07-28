@@ -334,6 +334,6 @@ def chatbot_health():
     api_key = os.getenv("GROQ_API_KEY", "")
     return {
         "status": "ok",
-        "model": "llama-3.3-70b-versatile",
-        "groq_key_set": bool(api_key),
+        "engine": "ActMon AI",
+        "ai_key_set": bool(api_key),
     }

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import client from '../api/client';
 
 export const INDICATOR_STYLES = ['ring', 'stat', 'donut', 'minimal'];
-export const CHART_STYLES = ['area', 'line', 'bar', 'spark'];
+export const CHART_STYLES = ['area', 'line', 'bar', 'barh', 'spark', 'pie', 'donut', 'scatter', 'gauge', 'bubble', 'gantt'];
 export const DISPLAY_MODES = ['gauge', 'graph'];
 
 export const SCOPES = [
@@ -14,13 +14,7 @@ export const SCOPES = [
   { key: 'mongodb',    label: 'MongoDB' },
   { key: 'clickhouse', label: 'ClickHouse' },
   { key: 'infra',      label: 'Infra Hosts' },
-];
-
-export const PRESETS = [
-  { key: 'classic', name: 'ActMon Classic', indicator: 'ring',    chart: 'area', desc: 'Banded ring gauges + filled area trends. High signal, NOC-familiar.' },
-  { key: 'ops',      name: 'ActMon Ops',     indicator: 'stat',   chart: 'bar',  desc: 'Stat tiles with sparklines + bar trends. Dense, ops-console feel.' },
-  { key: 'focus',    name: 'ActMon Focus',   indicator: 'donut',  chart: 'line', desc: 'Circular progress rings + clean line trends. Calm, presentation-friendly.' },
-  { key: 'perfect',  name: 'ActMon Perfect', indicator: 'minimal', chart: 'spark', desc: 'Numbers-first cards + compact sparklines. Fastest to scan.' },
+  { key: 'cosmosdb',   label: 'Azure Cosmos DB' },
 ];
 
 const DEFAULTS = { indicator_style: 'ring', chart_style: 'area', display_mode: 'gauge' };

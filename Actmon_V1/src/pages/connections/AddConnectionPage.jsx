@@ -15,6 +15,15 @@ const DATABASES = [
   { name: 'MSSQL', id: 'mssql', icon: '💠', port: 1433 },
   { name: 'MongoDB', id: 'mongodb', icon: '🍃', port: 27017 },
   { name: 'ClickHouse', id: 'clickhouse', icon: '📊', port: 8123 },
+  { name: 'CosmosDB', id: 'cosmosdb', icon: '🌌', port: 443, cloud: true },
+];
+
+const COSMOS_API_TYPES = [
+  { value: 'sql', label: 'SQL (Core) API' },
+  { value: 'mongodb', label: 'MongoDB API — coming soon', disabled: true },
+  { value: 'cassandra', label: 'Cassandra API — coming soon', disabled: true },
+  { value: 'gremlin', label: 'Gremlin API — coming soon', disabled: true },
+  { value: 'table', label: 'Table API — coming soon', disabled: true },
 ];
 
 const STEPS = ['Database', 'Configuration', 'Summary'];
@@ -68,8 +77,13 @@ export default function AddConnectionPage() {
     defaultValues: {
       port: DATABASES.find((d) => d.name === initialDb)?.port || 5432,
       sslMode: 'prefer',
+      cosmosApiType: 'sql',
+      cosmosConnectionTimeout: 30,
+      cosmosSslEnabled: 'true',
     },
   });
+
+  const isCosmos = selectedDatabase === 'CosmosDB';
 
   useEffect(() => {
     if (preHost) setValue('host', preHost);
@@ -94,21 +108,45 @@ export default function AddConnectionPage() {
     setMessage(null);
   };
 
-  const buildPayload = (data) => ({
-    connection_name: data.connectionName,
-    host: data.host,
-    port: Number(data.port),
-    username: data.username,
-    password: data.password,
-    database_name: data.databaseName,
-    ssl_mode: data.sslMode,
-    service_name: data.serviceName,
-    sid: data.sid,
-    auth_source: data.authSource,
-    replica_set: data.replicaSet,
-    server_id: selectedServerId && selectedServerId !== 'new' ? Number(selectedServerId) : undefined,
-    cluster_name: selectedServerId === 'new' ? (newClusterName || undefined) : undefined,
-  });
+  const buildPayload = (data) => {
+    if (isCosmos) {
+      return {
+        connection_name: data.connectionName,
+        account_name: data.cosmosAccountName || undefined,
+        endpoint: data.cosmosEndpoint,
+        primary_key: data.cosmosPrimaryKey,
+        secondary_key: data.cosmosSecondaryKey || undefined,
+        database_name: data.cosmosDatabaseName,
+        container_name: data.cosmosContainerName,
+        partition_key: data.cosmosPartitionKey || undefined,
+        api_type: data.cosmosApiType || 'sql',
+        preferred_region: data.cosmosPreferredRegion || undefined,
+        consistency_level: data.cosmosConsistencyLevel || undefined,
+        connection_timeout_sec: data.cosmosConnectionTimeout ? Number(data.cosmosConnectionTimeout) : undefined,
+        ssl_enabled: data.cosmosSslEnabled !== 'false',
+        proxy: data.cosmosProxy || undefined,
+        custom_headers: data.cosmosCustomHeaders || undefined,
+        description: data.cosmosDescription || undefined,
+        resource_group: data.cosmosResourceGroup || undefined,
+        subscription_id: data.cosmosSubscriptionId || undefined,
+      };
+    }
+    return {
+      connection_name: data.connectionName,
+      host: data.host,
+      port: Number(data.port),
+      username: data.username,
+      password: data.password,
+      database_name: data.databaseName,
+      ssl_mode: data.sslMode,
+      service_name: data.serviceName,
+      sid: data.sid,
+      auth_source: data.authSource,
+      replica_set: data.replicaSet,
+      server_id: selectedServerId && selectedServerId !== 'new' ? Number(selectedServerId) : undefined,
+      cluster_name: selectedServerId === 'new' ? (newClusterName || undefined) : undefined,
+    };
+  };
 
   const handleTestConnection = async (data) => {
     try {
@@ -135,7 +173,9 @@ export default function AddConnectionPage() {
   const goNext = async () => {
     setMessage(null);
     if (step === 1) {
-      const ok = await trigger(['connectionName', 'host', 'port', 'username']);
+      const ok = await trigger(isCosmos
+        ? ['connectionName', 'cosmosEndpoint', 'cosmosPrimaryKey', 'cosmosDatabaseName', 'cosmosContainerName']
+        : ['connectionName', 'host', 'port', 'username']);
       if (!ok) return;
     }
     setStep((s) => Math.min(STEPS.length - 1, s + 1));
@@ -177,48 +217,137 @@ export default function AddConnectionPage() {
         <TechLogo id={selectedMeta?.id} size={34} />
         <h2 className="text-xl font-bold text-slate-900">{selectedDatabase} Configuration</h2>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <InputField label="Connection Name" required error={errors.connectionName?.message}>
-          <input {...register('connectionName', { required: 'Connection name required' })}
-            placeholder={`${selectedDatabase} Production`} className={inputClass} />
-        </InputField>
-        <InputField label="Host Address" required error={errors.host?.message}>
-          <input {...register('host', { required: 'Host required' })} placeholder="127.0.0.1" className={inputClass} />
-        </InputField>
-        <InputField label="Port" required error={errors.port?.message}>
-          <input type="number" {...register('port', { required: 'Port required' })} className={inputClass} />
-        </InputField>
-        <InputField label="Database Name (optional — leave blank to test connectivity only)">
-          <input {...register('databaseName')} placeholder="Leave blank, or enter e.g. mydb" className={inputClass} autoComplete="off" />
-        </InputField>
-        <InputField label="Username" required error={errors.username?.message}>
-          <input {...register('username', { required: 'Username required' })} placeholder="postgres" className={inputClass} />
-        </InputField>
-        <InputField label="Password">
-          <input type="password" {...register('password')} placeholder="••••••••" className={inputClass} />
-        </InputField>
-      </div>
 
-      {selectedDatabase === 'PostgreSQL' && (
-        <div className="mt-5">
-          <InputField label="SSL Mode">
-            <select {...register('sslMode')} className={inputClass}>
-              <option value="prefer">prefer</option><option value="disable">disable</option><option value="require">require</option>
-            </select>
-          </InputField>
-        </div>
-      )}
-      {selectedDatabase === 'Oracle' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
-          <InputField label="Service Name"><input {...register('serviceName')} placeholder="ORCLPDB1" className={inputClass} /></InputField>
-          <InputField label="SID"><input {...register('sid')} placeholder="ORCL" className={inputClass} /></InputField>
-        </div>
-      )}
-      {selectedDatabase === 'MongoDB' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
-          <InputField label="Auth Source"><input {...register('authSource')} placeholder="admin" className={inputClass} /></InputField>
-          <InputField label="Replica Set"><input {...register('replicaSet')} placeholder="ClusterReplicaSet" className={inputClass} /></InputField>
-        </div>
+      {isCosmos ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <InputField label="Connection Name" required error={errors.connectionName?.message}>
+              <input {...register('connectionName', { required: 'Connection name required' })}
+                placeholder="CosmosDB Production" className={inputClass} />
+            </InputField>
+            <InputField label="Account Name (optional if Endpoint is provided)">
+              <input {...register('cosmosAccountName')} placeholder="my-cosmos-account" className={inputClass} />
+            </InputField>
+            <InputField label="Endpoint URL" required error={errors.cosmosEndpoint?.message}>
+              <input {...register('cosmosEndpoint', { required: 'Endpoint URL required' })}
+                placeholder="https://my-account.documents.azure.com:443/" className={inputClass} />
+            </InputField>
+            <InputField label="API Type">
+              <select {...register('cosmosApiType')} className={inputClass}>
+                {COSMOS_API_TYPES.map((t) => (
+                  <option key={t.value} value={t.value} disabled={t.disabled}>{t.label}</option>
+                ))}
+              </select>
+            </InputField>
+            <InputField label="Primary Key" required error={errors.cosmosPrimaryKey?.message}>
+              <input type="password" {...register('cosmosPrimaryKey', { required: 'Primary key required' })}
+                placeholder="••••••••••••••••" className={inputClass} />
+            </InputField>
+            <InputField label="Secondary Key (optional)">
+              <input type="password" {...register('cosmosSecondaryKey')} placeholder="••••••••••••••••" className={inputClass} />
+            </InputField>
+            <InputField label="Database Name" required error={errors.cosmosDatabaseName?.message}>
+              <input {...register('cosmosDatabaseName', { required: 'Database name required' })} placeholder="mydb" className={inputClass} />
+            </InputField>
+            <InputField label="Container Name" required error={errors.cosmosContainerName?.message}>
+              <input {...register('cosmosContainerName', { required: 'Container name required' })} placeholder="mycontainer" className={inputClass} />
+            </InputField>
+            <InputField label="Partition Key (optional, recommended)">
+              <input {...register('cosmosPartitionKey')} placeholder="/id" className={inputClass} />
+            </InputField>
+            <InputField label="Preferred Region (optional)">
+              <input {...register('cosmosPreferredRegion')} placeholder="East US" className={inputClass} />
+            </InputField>
+            <InputField label="Consistency Level (optional)">
+              <select {...register('cosmosConsistencyLevel')} className={inputClass} defaultValue="">
+                <option value="">Account default</option>
+                <option value="Strong">Strong</option>
+                <option value="BoundedStaleness">Bounded Staleness</option>
+                <option value="Session">Session</option>
+                <option value="ConsistentPrefix">Consistent Prefix</option>
+                <option value="Eventual">Eventual</option>
+              </select>
+            </InputField>
+            <InputField label="Connection Timeout (seconds)">
+              <input type="number" {...register('cosmosConnectionTimeout')} placeholder="30" className={inputClass} />
+            </InputField>
+            <InputField label="Resource Group (optional)">
+              <input {...register('cosmosResourceGroup')} placeholder="my-resource-group" className={inputClass} />
+            </InputField>
+            <InputField label="Subscription ID (optional)">
+              <input {...register('cosmosSubscriptionId')} placeholder="00000000-0000-0000-0000-000000000000" className={inputClass} />
+            </InputField>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+            <InputField label="SSL / TLS">
+              <select {...register('cosmosSslEnabled')} className={inputClass}>
+                <option value="true">Enabled (recommended)</option>
+                <option value="false">Disabled</option>
+              </select>
+            </InputField>
+            <InputField label="Proxy Settings (optional)">
+              <input {...register('cosmosProxy')} placeholder="http://proxy.internal:8080" className={inputClass} />
+            </InputField>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 mt-5">
+            <InputField label="Custom Headers (optional, JSON)">
+              <textarea {...register('cosmosCustomHeaders')} rows={2} placeholder='{"x-ms-custom": "value"}'
+                className={`${inputClass} h-auto py-2.5 font-mono text-sm`} />
+            </InputField>
+            <InputField label="Description (optional)">
+              <textarea {...register('cosmosDescription')} rows={2} placeholder="What this connection is used for"
+                className={`${inputClass} h-auto py-2.5`} />
+            </InputField>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <InputField label="Connection Name" required error={errors.connectionName?.message}>
+              <input {...register('connectionName', { required: 'Connection name required' })}
+                placeholder={`${selectedDatabase} Production`} className={inputClass} />
+            </InputField>
+            <InputField label="Host Address" required error={errors.host?.message}>
+              <input {...register('host', { required: 'Host required' })} placeholder="127.0.0.1" className={inputClass} />
+            </InputField>
+            <InputField label="Port" required error={errors.port?.message}>
+              <input type="number" {...register('port', { required: 'Port required' })} className={inputClass} />
+            </InputField>
+            <InputField label="Database Name (optional — leave blank to test connectivity only)">
+              <input {...register('databaseName')} placeholder="Leave blank, or enter e.g. mydb" className={inputClass} autoComplete="off" />
+            </InputField>
+            <InputField label="Username" required error={errors.username?.message}>
+              <input {...register('username', { required: 'Username required' })} placeholder="postgres" className={inputClass} />
+            </InputField>
+            <InputField label="Password">
+              <input type="password" {...register('password')} placeholder="••••••••" className={inputClass} />
+            </InputField>
+          </div>
+
+          {selectedDatabase === 'PostgreSQL' && (
+            <div className="mt-5">
+              <InputField label="SSL Mode">
+                <select {...register('sslMode')} className={inputClass}>
+                  <option value="prefer">prefer</option><option value="disable">disable</option><option value="require">require</option>
+                </select>
+              </InputField>
+            </div>
+          )}
+          {selectedDatabase === 'Oracle' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+              <InputField label="Service Name"><input {...register('serviceName')} placeholder="ORCLPDB1" className={inputClass} /></InputField>
+              <InputField label="SID"><input {...register('sid')} placeholder="ORCL" className={inputClass} /></InputField>
+            </div>
+          )}
+          {selectedDatabase === 'MongoDB' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5">
+              <InputField label="Auth Source"><input {...register('authSource')} placeholder="admin" className={inputClass} /></InputField>
+              <InputField label="Replica Set"><input {...register('replicaSet')} placeholder="ClusterReplicaSet" className={inputClass} /></InputField>
+            </div>
+          )}
+        </>
       )}
       {messageBlock}
     </div>
@@ -242,10 +371,25 @@ export default function AddConnectionPage() {
       <div className="rounded-xl border border-slate-200 p-5">
         <SummaryRow label="Engine" value={selectedDatabase} />
         <SummaryRow label="Connection Name" value={v.connectionName} />
-        <SummaryRow label="Host" value={v.host} />
-        <SummaryRow label="Port" value={String(v.port || '')} />
-        <SummaryRow label="Database" value={v.databaseName} />
-        <SummaryRow label="Username" value={v.username} />
+        {isCosmos ? (
+          <>
+            <SummaryRow label="API Type" value={COSMOS_API_TYPES.find((t) => t.value === v.cosmosApiType)?.label} />
+            <SummaryRow label="Account Name" value={v.cosmosAccountName} />
+            <SummaryRow label="Endpoint" value={v.cosmosEndpoint} />
+            <SummaryRow label="Database" value={v.cosmosDatabaseName} />
+            <SummaryRow label="Container" value={v.cosmosContainerName} />
+            <SummaryRow label="Partition Key" value={v.cosmosPartitionKey} />
+            <SummaryRow label="Preferred Region" value={v.cosmosPreferredRegion} />
+            <SummaryRow label="Consistency Level" value={v.cosmosConsistencyLevel} />
+          </>
+        ) : (
+          <>
+            <SummaryRow label="Host" value={v.host} />
+            <SummaryRow label="Port" value={String(v.port || '')} />
+            <SummaryRow label="Database" value={v.databaseName} />
+            <SummaryRow label="Username" value={v.username} />
+          </>
+        )}
       </div>
       {messageBlock}
     </div>

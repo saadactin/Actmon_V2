@@ -932,7 +932,7 @@ function AIAnalysisTab({ connId, allOps, top10 }) {
         <div>
           <h2 className="font-black text-lg">ActMon AI — Slow Operation Analysis</h2>
           <p className="text-xs mt-1" style={{ color: '#00ED64' }}>
-            Powered by LLaMA 3.3 70B via Groq · Select any operation for DBA-level insights and index recommendations
+            Powered by ActMon AI · Select any operation for DBA-level insights and index recommendations
           </p>
           <div className="flex gap-3 mt-3 flex-wrap">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-red-500/20 border border-red-400/30">

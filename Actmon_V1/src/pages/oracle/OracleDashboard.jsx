@@ -101,6 +101,7 @@ export default function OracleDashboard() {
   const [schemaOwner, setSchemaOwner]       = useState('');
   const [expandedTable, setExpandedTable]   = useState(null);
   const [schemaTableModal, setSchemaTableModal] = useState(null); // table → full detail modal
+  const [schemaInvalidOnly, setSchemaInvalidOnly] = useState(false); // KPI "Invalid" tile → filter tables list
   const countRef = useRef(null);
 
   /* ── Main dashboard query ── */
@@ -1540,8 +1541,10 @@ export default function OracleDashboard() {
         {activeTab === 'schemabrowser' && (
           schemaLoading && !schemaData ? <TabLoader /> : (() => {
             const schemas = schemaData?.schemas || [];
-            const tables  = schemaData?.tables  || [];
+            const allTables = schemaData?.tables  || [];
             const owner   = schemaData?.owner   || '';
+            const invalidCount = allTables.filter(t => t.status !== 'VALID').length;
+            const tables = schemaInvalidOnly ? allTables.filter(t => t.status !== 'VALID') : allTables;
             return (
               <div className="space-y-4">
                 {/* Schema selector */}
@@ -1550,7 +1553,7 @@ export default function OracleDashboard() {
                   <div className="flex flex-wrap gap-2">
                     {schemas.slice(0, 20).map(s => (
                       <button key={s}
-                        onClick={() => { setSchemaOwner(s); setExpandedTable(null); }}
+                        onClick={() => { setSchemaOwner(s); setExpandedTable(null); setSchemaInvalidOnly(false); }}
                         className={`px-3 py-1 rounded-lg text-xs font-bold transition-all border ${
                           owner === s
                             ? 'bg-red-600 text-white border-red-600'
@@ -1559,77 +1562,79 @@ export default function OracleDashboard() {
                     ))}
                     {schemas.length === 0 && <span className="text-xs text-slate-400">No user schemas found</span>}
                   </div>
-                  <span className="ml-auto text-[11px] text-slate-400">{tables.length} tables in <strong>{owner}</strong></span>
+                  <span className="ml-auto text-[11px] text-slate-400">{allTables.length} tables in <strong>{owner}</strong></span>
                 </div>
 
                 {/* KPI strip */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    ['Tables',   tables.length,                                       C.blue],
-                    ['Total Rows', fmtNum(tables.reduce((s,t)=>s+(Number(t.num_rows)||0),0)), C.green],
-                    ['Total Size', `${(tables.reduce((s,t)=>s+(Number(t.size_mb)||0),0)).toFixed(1)} MB`, C.orange],
-                    ['Invalid',  tables.filter(t=>t.status!=='VALID').length,         C.red],
-                  ].map(([l,v,c])=>(
-                    <div key={l} className="bg-white rounded-xl border border-slate-200 p-3" style={{borderLeft:`3px solid ${c}`}}>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase">{l}</p>
-                      <p className="text-lg font-black mt-0.5" style={{color:c}}>{v}</p>
-                    </div>
-                  ))}
+                  <MetricKpi title="Tables" value={allTables.length} accent="blue" />
+                  <MetricKpi title="Total Rows" value={fmtNum(allTables.reduce((s,t)=>s+(Number(t.num_rows)||0),0))} accent="green" />
+                  <MetricKpi title="Total Size" value={`${(allTables.reduce((s,t)=>s+(Number(t.size_mb)||0),0)).toFixed(1)} MB`} accent="orange" />
+                  <MetricKpi title="Invalid" value={invalidCount} accent="red"
+                    onClick={invalidCount > 0 ? () => setSchemaInvalidOnly(v => !v) : undefined} />
                 </div>
+                {schemaInvalidOnly && (
+                  <div className="flex items-center gap-2 text-[11px] font-bold text-red-600">
+                    Showing invalid tables only
+                    <button onClick={() => setSchemaInvalidOnly(false)} className="text-slate-400 hover:text-slate-600 font-bold">Clear ×</button>
+                  </div>
+                )}
 
                 {/* Tables list */}
-                {tables.length === 0 ? (
+                {allTables.length === 0 ? (
                   <div className="bg-white rounded-xl border border-slate-200 text-center py-16">
                     <Database size={32} className="mx-auto mb-3 text-slate-300" />
                     <p className="font-bold text-slate-500">No tables found in schema {owner}</p>
                     <p className="text-xs text-slate-400 mt-1">Select a different schema above or create tables</p>
                   </div>
                 ) : (
-                  <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-100" style={{borderLeft:'3px solid #C74634'}}>
-                      <h3 className="font-black text-slate-800 text-sm uppercase tracking-tight flex items-center gap-2">
-                        <Table size={14} style={{color:C.red}} /> Tables in {owner} ({tables.length})
-                      </h3>
+                  <Panel title={
+                    <span className="flex items-center gap-2">
+                      <Table size={14} style={{ color: C.red }} /> Tables in {owner} ({tables.length}{schemaInvalidOnly ? ` of ${allTables.length}` : ''})
+                    </span>
+                  }>
+                    <div className="overflow-x-auto -m-5">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 sticky top-0">
+                          <tr>
+                            {['Table Name','Rows','Columns','Indexes','Size (MB)','Last Analyzed','Status','Partitioned',''].map(h => (
+                              <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tables.map((t, i) => (
+                            <tr key={i}
+                              className={`border-t border-slate-100 cursor-pointer hover:bg-red-50/40 transition-colors ${i % 2 === 1 ? 'bg-slate-50/30' : ''}`}
+                              onClick={() => setSchemaTableModal(t)}>
+                              <td className="px-3 py-2.5 font-black text-red-700">
+                                <span className="flex items-center gap-1.5">
+                                  <Table size={11} className="opacity-40 flex-shrink-0" />
+                                  <span className="truncate">{t.table_name}</span>
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 font-mono text-slate-700 whitespace-nowrap">{fmtNum(t.num_rows)}</td>
+                              <td className="px-3 py-2.5 font-bold text-indigo-700">{t.col_count || '—'}</td>
+                              <td className={`px-3 py-2.5 font-bold ${t.idx_count > 0 ? 'text-green-600' : 'text-slate-400'}`}>{t.idx_count || 0}</td>
+                              <td className="px-3 py-2.5 font-mono text-slate-600 whitespace-nowrap">{t.size_mb != null ? t.size_mb : '—'}</td>
+                              <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">{t.last_analyzed ? String(t.last_analyzed).slice(0,10) : 'Not analyzed'}</td>
+                              <td className="px-3 py-2.5">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold w-fit whitespace-nowrap ${t.status==='VALID'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
+                                  {t.status || '—'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-[10px] whitespace-nowrap">
+                                {t.partitioned === 'YES' ? <span className="text-indigo-600 font-bold">Partitioned</span> : <span className="text-slate-300">—</span>}
+                              </td>
+                              <td className="px-3 py-2.5 text-right">
+                                <ChevronRight size={13} className="text-slate-300 inline-block" />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                    {/* Header */}
-                    <div className="grid text-[10px] font-bold text-slate-400 uppercase tracking-wide bg-slate-50 border-b border-slate-200 px-4 py-2"
-                      style={{gridTemplateColumns:'200px 90px 80px 80px 80px 100px 80px 1fr'}}>
-                      <span>Table Name</span>
-                      <span>Rows</span>
-                      <span>Columns</span>
-                      <span>Indexes</span>
-                      <span>Size (MB)</span>
-                      <span>Last Analyzed</span>
-                      <span>Status</span>
-                      <span>Partitioned</span>
-                    </div>
-                    {tables.map((t, i) => (
-                      <div
-                        key={i}
-                        className="grid items-center px-4 py-2.5 cursor-pointer hover:bg-red-50/40 transition-colors text-xs border-b border-slate-100 group"
-                        style={{gridTemplateColumns:'200px 90px 80px 80px 80px 100px 80px 1fr'}}
-                        onClick={() => setSchemaTableModal(t)}>
-                        <span className="font-black text-red-700 flex items-center gap-1.5">
-                          <Table size={11} className="opacity-40 flex-shrink-0" />
-                          <span className="truncate">{t.table_name}</span>
-                        </span>
-                        <span className="font-mono text-slate-700">{fmtNum(t.num_rows)}</span>
-                        <span className="font-bold text-indigo-700">{t.col_count || '—'}</span>
-                        <span className={`font-bold ${t.idx_count > 0 ? 'text-green-600' : 'text-slate-400'}`}>{t.idx_count || 0}</span>
-                        <span className="font-mono text-slate-600">{t.size_mb != null ? t.size_mb : '—'}</span>
-                        <span className="text-[10px] text-slate-400">{t.last_analyzed ? String(t.last_analyzed).slice(0,10) : 'Not analyzed'}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold w-fit ${t.status==='VALID'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
-                          {t.status || '—'}
-                        </span>
-                        <span className="text-[10px] text-slate-400 flex items-center justify-between gap-2">
-                          {t.partitioned === 'YES' ? <span className="text-indigo-600 font-bold">Partitioned</span> : '—'}
-                          <span className="flex items-center gap-1 text-[10px] font-bold text-red-600 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                            Inspect <ChevronRight size={12} />
-                          </span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                  </Panel>
                 )}
 
                 {schemaTableModal && (

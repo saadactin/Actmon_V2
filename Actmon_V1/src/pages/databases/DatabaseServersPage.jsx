@@ -97,6 +97,27 @@ const TECH_CONFIG = [
   },
 ];
 
+/* ══════════════════════════════════════════════════════
+   CLOUD-BASED DATABASES — managed cloud DB services (no OS host to monitor,
+   just a connection). Azure Cosmos DB is wired up for real; the rest are
+   listed as "Coming soon" so the category's extensibility is visible without
+   pretending they're already supported.
+══════════════════════════════════════════════════════ */
+const CLOUD_TECH_CONFIG = [
+  {
+    id: 'cosmosdb', name: 'Azure Cosmos DB', subtitle: 'Multi-model, globally distributed', emoji: '🌌',
+    accent: 'bg-gradient-to-br from-sky-500 to-blue-700', lightBg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-700', available: true,
+  },
+  { id: 'dynamodb', name: 'Amazon DynamoDB', subtitle: 'Key-value & document', emoji: '🟧', available: false },
+  { id: 'firestore', name: 'Google Cloud Firestore', subtitle: 'Document database', emoji: '🔶', available: false },
+  { id: 'bigtable', name: 'Google Cloud Bigtable', subtitle: 'Wide-column store', emoji: '🟦', available: false },
+  { id: 'tablestorage', name: 'Azure Table Storage', subtitle: 'NoSQL key-value store', emoji: '🗂️', available: false },
+  { id: 'documentdb', name: 'Amazon DocumentDB', subtitle: 'MongoDB-compatible', emoji: '📄', available: false },
+  { id: 'mongoatlas', name: 'MongoDB Atlas', subtitle: 'Managed MongoDB', emoji: '🍃', available: false },
+  { id: 'couchbase', name: 'Couchbase Capella', subtitle: 'Managed Couchbase', emoji: '🛋️', available: false },
+  { id: 'firebase', name: 'Firebase Realtime Database', subtitle: 'Realtime JSON store', emoji: '🔥', available: false },
+];
+
 function serverMatchesTech(server, tech) {
   const svcs = (server.database_services || []).map(s => s.toLowerCase());
   if (tech === 'mysql') return svcs.some(s => s === 'mysql' || s === 'mariadb');
@@ -117,6 +138,7 @@ function getDashboardPath(conn) {
     mssql: `/mssql-dashboard/${conn.id}`,
     mongodb: `/mongodb-dashboard/${conn.id}`,
     clickhouse: `/clickhouse-dashboard/${conn.id}`,
+    cosmosdb: `/cosmosdb-dashboard/${conn.id}`,
   };
   return map[type] || '/connections';
 }
@@ -184,7 +206,7 @@ function dbColor(s) { return DB_COLORS[(s||'').toLowerCase()] || 'bg-slate-100 t
 /* ══════════════════════════════════════════════════════
    TECH SELECTOR SCREEN
 ══════════════════════════════════════════════════════ */
-function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true }) {
+function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true, cosmosCount = 0 }) {
   return (
     <div className="-mx-6 md:-mx-8 min-h-full bg-[#f1f4f9]">
       {/* Hero — compact, cloud-blue (matches dashboard topbar) */}
@@ -329,6 +351,57 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
             </div>
           ))}
         </div>
+
+        {/* Cloud-Based Databases */}
+        <div className="flex items-center gap-3 mt-12 mb-7">
+          <h2 className="text-[18px] font-black text-slate-800">Cloud-Based Databases</h2>
+          <div className="flex-1 h-px bg-slate-200"/>
+          <span className="text-xs text-slate-400 font-medium">{CLOUD_TECH_CONFIG.length} technologies · more coming soon</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {CLOUD_TECH_CONFIG.map((tech) => (
+            <button
+              key={tech.id}
+              type="button"
+              disabled={!tech.available}
+              onClick={() => tech.available && navigate('/cosmosdb-servers')}
+              className={`group relative bg-white rounded-2xl border-2 p-6 text-left transition-all duration-200 ${
+                tech.available
+                  ? `border-slate-100 shadow-md hover:shadow-xl hover:-translate-y-1 ${tech.border ? `hover:${tech.border}` : ''}`
+                  : 'border-slate-100 opacity-60 cursor-not-allowed'}`}
+            >
+              <div className="flex items-start gap-4">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${tech.accent || 'bg-gradient-to-br from-slate-300 to-slate-400'}`}>
+                  <span className="text-2xl select-none">{tech.emoji}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-[17px] font-black text-slate-900 leading-tight">{tech.name}</h3>
+                  <p className="text-xs text-slate-400 mt-0.5 font-medium">{tech.subtitle}</p>
+                  {tech.available && (
+                    <div className="flex items-center gap-3 mt-3 flex-wrap">
+                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${tech.lightBg} ${tech.border} border`}>
+                        <Database size={11} className={tech.text}/>
+                        <span className={`text-[12px] font-black ${tech.text}`}>{cosmosCount}</span>
+                        <span className={`text-[10px] ${tech.text} opacity-70`}>connections</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
+                {tech.available ? (
+                  <span className={`text-[12px] font-bold ${tech.text}`}>
+                    {cosmosCount > 0 ? `Explore ${cosmosCount} connection${cosmosCount !== 1 ? 's' : ''}` : 'No connections yet · click to add'}
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-black text-slate-400 uppercase tracking-wide bg-slate-100 px-2.5 py-1 rounded-lg">Coming Soon</span>
+                )}
+                {tech.available && <ChevronRight size={15} className={`${tech.text} group-hover:translate-x-1 transition-transform`}/>}
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -380,6 +453,12 @@ export default function DatabaseServersPage({ tech = null }) {
       const results = await Promise.allSettled(types.map((t) => listConnections(t)));
       return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
     },
+    staleTime: 60000,
+  });
+
+  const { data: cosmosConnections = [] } = useQuery({
+    queryKey: ['cosmosdbConnections'],
+    queryFn: () => listConnections('cosmosdb'),
     staleTime: 60000,
   });
 
@@ -444,6 +523,7 @@ export default function DatabaseServersPage({ tech = null }) {
         navigate={navigate}
         techs={allowedTechs}
         canAdd={canHere('add')}
+        cosmosCount={cosmosConnections.length}
       />
     );
   }

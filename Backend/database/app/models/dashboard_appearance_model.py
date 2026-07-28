@@ -17,6 +17,6 @@ class DashboardAppearanceSettings(Base):
     user_id         = Column(Integer, ForeignKey("user_master.user_id"), nullable=False)
     scope           = Column(String(20), nullable=False, default="all")
     indicator_style = Column(String(20), nullable=False, default="ring")   # ring | stat | donut | minimal
-    chart_style     = Column(String(20), nullable=False, default="area")  # area | line | bar | spark
+    chart_style     = Column(String(20), nullable=False, default="area")  # area | line | bar | barh | spark | pie | donut | scatter | gauge | bubble | gantt
     display_mode    = Column(String(10), nullable=False, default="gauge") # gauge | graph
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

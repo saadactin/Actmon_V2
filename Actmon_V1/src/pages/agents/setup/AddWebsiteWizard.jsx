@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Zap, Info, Plus, ChevronDown, Check } from 'lucide-react';
+import { X, Zap, Info, Plus, ChevronDown, Check, Loader2 } from 'lucide-react';
+import { createExternalCheck } from '../../../api/digitalExperience';
+
+const INTERVAL_SECONDS = {
+  '1 minute': 60, '5 minutes': 300, '10 minutes': 600,
+  '15 minutes': 900, '30 minutes': 1800, '1 hour': 3600,
+};
 
 const REGIONS = ['North America (AWS)', 'Europe (AWS)', 'South America (AWS)', 'Asia (AWS)', 'Australia and Oceania (AWS)'];
 const COUNTRIES = [
@@ -108,6 +114,8 @@ export default function AddWebsiteWizard() {
   const [outage, setOutage] = useState('default');
   const [ssl, setSsl] = useState(false);
   const [insecure, setInsecure] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [sections, setSections] = useState({ auth: false, ua: false, headers: false, post: false, str: false, outage: true });
   const sec = (k) => setSections((s) => ({ ...s, [k]: !s[k] }));
 
@@ -324,7 +332,32 @@ export default function AddWebsiteWizard() {
 
   const next = () => setStep((s) => Math.min(3, s + 1));
   const prev = () => setStep((s) => Math.max(1, s - 1));
-  const finish = () => { window.alert('Website monitor created.'); navigate('/agents/setup'); };
+  const finish = async () => {
+    setSaving(true); setSaveError(null);
+    try {
+      await createExternalCheck({
+        name: name.trim(),
+        check_type: 'website',
+        target: url.trim(),
+        interval_seconds: INTERVAL_SECONDS[interval] || 300,
+        enabled: availMon,
+        config: {
+          protocol: https ? 'https' : 'http', protocols: [http && 'http', https && 'https'].filter(Boolean),
+          rum, mode, locations, private_probe: privateProbe || null,
+          auth: auth.user ? { user: auth.user } : null, // password intentionally not stored in config JSON
+          post_data: postData || null,
+          string_match: checkVal ? { op: checkOp, value: checkVal } : null,
+          outage: { mode: outage, threshold_locations: 'Any', consecutive_intervals: 2 },
+          ssl_monitoring: ssl, allow_insecure_renegotiation: insecure, tags,
+        },
+      });
+      navigate('/agents/setup');
+    } catch (e) {
+      setSaveError(e?.response?.data?.detail || e.message || 'Failed to create website monitor.');
+    } finally {
+      setSaving(false);
+    }
+  };
   const nextDisabled = (step === 1 && !canNext1) || (step === 2 && !canNext2);
 
   return (
@@ -378,7 +411,7 @@ export default function AddWebsiteWizard() {
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between pl-10 pr-28 py-4 border-t border-slate-200 flex-shrink-0">
+          <div className="relative flex items-center justify-between pl-10 pr-28 py-4 border-t border-slate-200 flex-shrink-0">
             <button className="text-[14px] font-semibold text-blue-600 hover:underline">Help &amp; User Guide</button>
             <div className="flex items-center gap-2">
               {step === 1 ? (
@@ -390,10 +423,15 @@ export default function AddWebsiteWizard() {
                 <button onClick={next} disabled={nextDisabled}
                   className="h-9 px-6 rounded-md bg-blue-600 text-white text-[13px] font-black uppercase tracking-wide hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
               ) : (
-                <button onClick={finish}
-                  className="h-9 px-6 rounded-md bg-blue-600 text-white text-[13px] font-black uppercase tracking-wide hover:bg-blue-700">Create</button>
+                <button onClick={finish} disabled={saving}
+                  className="h-9 px-6 rounded-md bg-blue-600 text-white text-[13px] font-black uppercase tracking-wide hover:bg-blue-700 disabled:opacity-60 flex items-center gap-2">
+                  {saving && <Loader2 size={14} className="animate-spin" />}{saving ? 'Creating…' : 'Create'}
+                </button>
               )}
             </div>
+            {saveError && (
+              <p className="absolute right-28 -top-8 text-[12px] font-semibold text-rose-600 bg-rose-50 border border-rose-200 rounded-md px-3 py-1.5">{saveError}</p>
+            )}
           </div>
         </section>
       </div>

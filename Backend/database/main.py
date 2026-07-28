@@ -6,6 +6,7 @@ from app.database.base import Base
 
 # Import ALL models so Base registers their tables
 from app.models.connection_model import ConnectionMaster          # noqa: F401
+from app.models.cosmos_query_log_model import CosmosQueryLog       # noqa: F401
 from app.models.os_server_model import OsServer, DatabaseInstance # noqa: F401
 from app.models.backup_model import BackupJob                     # noqa: F401
 from app.models.backup_schedule_model import BackupSchedule       # noqa: F401
@@ -38,6 +39,7 @@ from app.routes.postgres.postgres_routes import router as postgres_router
 from app.routes.mongo.mongo_routes import router as mongo_router
 from app.routes.clickhouse.clickhouse_routes import router as clickhouse_router
 from app.routes.mssql.mssql_routes import router as mssql_router
+from app.routes.cosmosdb.cosmosdb_routes import router as cosmosdb_router
 
 from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
 from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
@@ -75,6 +77,7 @@ from app.routes.common.db_diagnose_routes import router as db_diagnose_router
 from app.routes.os_server.os_server_routes import router as os_server_router
 from app.routes.os_server.terminal_routes import router as terminal_router
 from app.routes.os_server.test_connection_routes import router as test_connection_router
+from app.routes.digital_experience.external_check_routes import router as external_check_router
 from app.routes.auth.auth_routes import router as auth_router
 from app.routes.setup.setup_routes import router as setup_router
 from app.routes.admin.admin_crud_routes import admin_crud_routers
@@ -130,6 +133,9 @@ async def lifespan(app_instance):
     # Start PostgreSQL resource history collector (logs CPU/RAM/Disk + spike evidence)
     from app.services.postgres.postgres_resource_collector import start_resource_collector
     start_resource_collector()
+    # Start Digital Experience external-check scheduler (Website/Ping/DNS/TCP/UDP)
+    from app.services.digital_experience.external_check_service import start_external_check_scheduler
+    start_external_check_scheduler()
     # Start Oracle report email scheduler
     from app.services.oracle.oracle_report_email_service import start_oracle_report_scheduler
     start_oracle_report_scheduler()
@@ -171,6 +177,7 @@ app.include_router(postgres_router)
 app.include_router(mongo_router)
 app.include_router(clickhouse_router)
 app.include_router(mssql_router)
+app.include_router(cosmosdb_router)
 app.include_router(server_router)
 
 # Error analysis routes
@@ -216,6 +223,7 @@ app.include_router(mongo_monitoring_router)
 app.include_router(os_server_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
+app.include_router(external_check_router)
 from app.routes.onboarding_routes import router as onboarding_router
 app.include_router(onboarding_router)
 

@@ -17,6 +17,18 @@ export const deleteConnection = async (dbType, id) => {
   await client.delete(`/connections/${typePath}/${id}`);
 };
 
+export const getConnectionDetails = async (dbType, id) => {
+  const typePath = dbType.toLowerCase();
+  const response = await client.get(`/connections/${typePath}/${id}`);
+  return response.data;
+};
+
+export const updateConnection = async (dbType, id, data) => {
+  const typePath = dbType.toLowerCase();
+  const response = await client.put(`/connections/${typePath}/${id}`, data);
+  return response.data;
+};
+
 export const testConnection = async (
   dbType,
   data

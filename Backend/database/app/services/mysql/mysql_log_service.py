@@ -668,7 +668,7 @@ Return ONLY valid JSON. No markdown. No code blocks.
             "estimated_fix_time": "Unknown",
         }
     except Exception as e:
-        raise HTTPException(500, f"Groq analysis failed: {e}")
+        raise HTTPException(500, f"ActMon AI analysis failed: {e}")
 
     return {"status": "success", "analysis": analysis}
 

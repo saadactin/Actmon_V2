@@ -287,6 +287,27 @@ def test_clickhouse(req: TestRequest):
     )
 
 
+# ── Azure Cosmos DB ────────────────────────────────────────────
+class CosmosTestRequest(BaseModel):
+    endpoint: str
+    primary_key: str
+    database_name: Optional[str] = None
+    container_name: Optional[str] = None
+    connection_timeout_sec: Optional[int] = 30
+
+
+@router.post("/cosmosdb")
+def test_cosmosdb(req: CosmosTestRequest):
+    from app.services.cosmosdb.cosmosdb_service import test_inline
+    return test_inline({
+        "endpoint": req.endpoint,
+        "primary_key": req.primary_key,
+        "database_name": req.database_name,
+        "container_name": req.container_name,
+        "connection_timeout_sec": req.connection_timeout_sec,
+    })
+
+
 def _clean(e: Exception) -> str:
     """Return a short, readable error string from a SQLAlchemy or pymysql exception."""
     orig = getattr(e, 'orig', None) or getattr(e, '__cause__', None)

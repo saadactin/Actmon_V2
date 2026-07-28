@@ -22,6 +22,8 @@ const AgentSessions           = React.lazy(() => import('./pages/agents/AgentSes
 const AgentSetupPage          = React.lazy(() => import('./pages/agents/setup/AgentSetupPage'));
 const SetupWizard             = React.lazy(() => import('./pages/agents/setup/SetupWizard'));
 const AddWebsiteWizard        = React.lazy(() => import('./pages/agents/setup/AddWebsiteWizard'));
+const AddNetworkCheckWizard   = React.lazy(() => import('./pages/agents/setup/AddNetworkCheckWizard'));
+const DigitalExperiencePage   = React.lazy(() => import('./pages/digitalexperience/DigitalExperiencePage'));
 const DeployAgentWizard       = React.lazy(() => import('./pages/agents/setup/deploy/DeployAgentWizard'));
 const ConnectionsPage         = React.lazy(() => import('./pages/connections/ConnectionsPage').then(m => ({ default: m.ConnectionsPage })));
 const AddConnectionPage       = React.lazy(() => import('./pages/connections/AddConnectionPage'));
@@ -59,6 +61,9 @@ const CHSlowQueries           = React.lazy(() => import('./pages/clickhouse/Slow
 const CHErrorLogs             = React.lazy(() => import('./pages/clickhouse/ErrorLogs'));
 const CHTableAnalysis         = React.lazy(() => import('./pages/clickhouse/TableAnalysis'));
 const DatabaseServersPage     = React.lazy(() => import('./pages/databases/DatabaseServersPage'));
+const CosmosDBConnectionsPage = React.lazy(() => import('./pages/cosmosdb/CosmosDBConnectionsPage'));
+const CosmosDBDashboard       = React.lazy(() => import('./pages/cosmosdb/CosmosDBDashboard'));
+const CosmosDBEditConnectionPage = React.lazy(() => import('./pages/cosmosdb/CosmosDBEditConnectionPage'));
 const DatabaseDiagnosis       = React.lazy(() => import('./pages/databases/DatabaseDiagnosis'));
 const AddOsServerPage         = React.lazy(() => import('./pages/databases/AddOsServerPage'));
 const AddServerPage           = React.lazy(() => import('./pages/databases/AddServerPage'));
@@ -160,6 +165,14 @@ const router = createBrowserRouter([
         element: <AddWebsiteWizard />,
       },
       {
+        path: 'agents/setup/network-check',
+        element: <AddNetworkCheckWizard />,
+      },
+      {
+        path: 'digital-experience',
+        element: <DigitalExperiencePage />,
+      },
+      {
         path: 'agents/setup/:tech',
         element: <SetupWizard />,
       },
@@ -187,6 +200,7 @@ const router = createBrowserRouter([
       { path: 'mssql-servers', element: <DatabaseServersPage tech="mssql" /> },
       { path: 'mongodb-servers', element: <DatabaseServersPage tech="mongodb" /> },
       { path: 'clickhouse-servers', element: <DatabaseServersPage tech="clickhouse" /> },
+      { path: 'cosmosdb-servers', element: <CosmosDBConnectionsPage /> },
       { path: 'db-diagnose/:connId', element: <DatabaseDiagnosis /> },
       {
         path: 'mysql-dashboard/:id',
@@ -252,6 +266,8 @@ const router = createBrowserRouter([
       { path: 'mongodb-dashboard/:id/collection-analysis', element: <MongoCollectionAnalysis /> },
       { path: 'mongodb-dashboard/:id/backup', element: <MongoDBBackupPage /> },
       { path: 'mongodb-dashboard/:id/:tab', element: <MongoDBDashboard /> },
+      { path: 'cosmosdb-dashboard/:id', element: <CosmosDBDashboard /> },
+      { path: 'cosmosdb-edit/:id', element: <CosmosDBEditConnectionPage /> },
       // ClickHouse
       { path: 'clickhouse-dashboard/:id', element: <ClickHouseDashboard /> },
       { path: 'clickhouse-dashboard/:id/slow-queries', element: <CHSlowQueries /> },

@@ -3276,12 +3276,12 @@ def svc_pg_analyze_error(conn_id: int, payload: ErrorAnalysisRequest, db: Sessio
         from groq import Groq
     except ImportError:
         return {"status": "error",
-                "error": "Groq library not installed. Run: pip install groq"}
+                "error": "ActMon AI engine is not installed on the backend server."}
 
     api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         return {"status": "error",
-                "error": "GROQ_API_KEY environment variable is not set on the backend server."}
+                "error": "ActMon AI is not configured on the backend server."}
 
     ctx_lines = [
         "PostgreSQL 17 Error Log Entry",

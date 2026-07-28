@@ -214,6 +214,65 @@ END; $_$""",
            EXCEPTION WHEN duplicate_object THEN NULL;
            END;
        END $$""",
+    # Cloud-based databases (Azure Cosmos DB, and future providers) — new
+    # columns on the shared connection_master table.
+    """ALTER TABLE connection_master
+         ADD COLUMN IF NOT EXISTS cloud_provider          VARCHAR(50),
+         ADD COLUMN IF NOT EXISTS cloud_api_type           VARCHAR(30),
+         ADD COLUMN IF NOT EXISTS cloud_account_name       VARCHAR(255),
+         ADD COLUMN IF NOT EXISTS cloud_endpoint           VARCHAR(500),
+         ADD COLUMN IF NOT EXISTS cloud_primary_key_enc    TEXT,
+         ADD COLUMN IF NOT EXISTS cloud_secondary_key_enc  TEXT,
+         ADD COLUMN IF NOT EXISTS cloud_container_name     VARCHAR(255),
+         ADD COLUMN IF NOT EXISTS cloud_partition_key      VARCHAR(255),
+         ADD COLUMN IF NOT EXISTS cloud_config             JSONB""",
+    # Azure Monitor credentials (optional, separate from the Cosmos account key)
+    """ALTER TABLE connection_master
+         ADD COLUMN IF NOT EXISTS cloud_monitor_client_secret_enc TEXT""",
+    # Cosmos DB query log — request charge (RU) + a general numeric result value
+    # (e.g. a logged document count, for a real growth-over-time chart) per call.
+    """ALTER TABLE cosmos_query_log
+         ADD COLUMN IF NOT EXISTS request_charge DOUBLE PRECISION,
+         ADD COLUMN IF NOT EXISTS result_value   DOUBLE PRECISION""",
+    # Cosmos DB query log — storage-size sample (for a real storage-growth chart),
+    # Cosmos's own activity id (support/diagnostics correlation), and structured
+    # error fields (exception class + HTTP status) parsed from the SDK exception.
+    """ALTER TABLE cosmos_query_log
+         ADD COLUMN IF NOT EXISTS storage_bytes     DOUBLE PRECISION,
+         ADD COLUMN IF NOT EXISTS activity_id       VARCHAR(64),
+         ADD COLUMN IF NOT EXISTS error_type        VARCHAR(120),
+         ADD COLUMN IF NOT EXISTS http_status_code  INTEGER""",
+    # Digital Experience — Website Availability / Ping / DNS / TCP Port /
+    # UDP Port monitors (one shared table across check types) + their
+    # time-series probe results.
+    """CREATE TABLE IF NOT EXISTS external_check (
+         id                     SERIAL PRIMARY KEY,
+         org_id                 INTEGER      NOT NULL DEFAULT 1,
+         user_id                INTEGER,
+         name                   VARCHAR(255) NOT NULL,
+         check_type             VARCHAR(30)  NOT NULL,
+         target                 VARCHAR(500) NOT NULL,
+         port                   INTEGER,
+         interval_seconds       INTEGER      NOT NULL DEFAULT 300,
+         enabled                BOOLEAN      NOT NULL DEFAULT TRUE,
+         config                 JSONB,
+         created_at             TIMESTAMP    DEFAULT now(),
+         updated_at             TIMESTAMP    DEFAULT now(),
+         last_checked_at        TIMESTAMP,
+         last_status            VARCHAR(20),
+         last_response_time_ms  DOUBLE PRECISION)""",
+    """CREATE INDEX IF NOT EXISTS idx_external_check_org ON external_check (org_id)""",
+    """CREATE TABLE IF NOT EXISTS external_check_result (
+         id                SERIAL PRIMARY KEY,
+         check_id          INTEGER NOT NULL REFERENCES external_check(id),
+         org_id            INTEGER NOT NULL DEFAULT 1,
+         checked_at        TIMESTAMP DEFAULT now(),
+         status            VARCHAR(20) NOT NULL,
+         response_time_ms  DOUBLE PRECISION,
+         status_code       INTEGER,
+         error_message     TEXT)""",
+    """CREATE INDEX IF NOT EXISTS idx_external_check_result_check_ts
+         ON external_check_result (check_id, checked_at DESC)""",
 ]
 
 

@@ -48,6 +48,20 @@ export function TechLogo({ id, size = 44 }) {
           <svg width={s} height={s} viewBox="0 0 24 24" fill="none"><g fill="#161615"><rect x="3" y="5" width="2.6" height="14" rx="0.4"/><rect x="7.2" y="5" width="2.6" height="14" rx="0.4"/><rect x="11.4" y="5" width="2.6" height="14" rx="0.4"/><rect x="15.6" y="5" width="2.6" height="14" rx="0.4"/><rect x="19.8" y="10.6" width="2.6" height="2.8" rx="0.4" fill="#FAFF69"/></g><rect x="19.8" y="10.6" width="2.2" height="2.8" rx="0.4" fill="#F4C000"/></svg>
         </Wrap>
       );
+    case 'cosmosdb':
+      return (
+        <Wrap size={size} bg="#EAF3FE">
+          <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="8.5" stroke="#0078D4" strokeWidth="1.7"/>
+            <circle cx="12" cy="3.5" r="1.6" fill="#0078D4"/>
+            <circle cx="19" cy="8" r="1.6" fill="#0078D4"/>
+            <circle cx="19" cy="16" r="1.6" fill="#0078D4"/>
+            <circle cx="12" cy="20.5" r="1.6" fill="#0078D4"/>
+            <circle cx="5" cy="16" r="1.6" fill="#0078D4"/>
+            <circle cx="5" cy="8" r="1.6" fill="#0078D4"/>
+          </svg>
+        </Wrap>
+      );
     default:
       return <Wrap size={size} bg="#EEF2F6" />;
   }

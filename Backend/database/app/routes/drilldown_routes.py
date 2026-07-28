@@ -4,7 +4,9 @@ Generic resource drill-down routes for every engine.
                                      | session/{pid}/detail | rca | history | history/{id} | history/{id}/rca
 tech ∈ mysql | postgresql | oracle | mssql | clickhouse | mongodb
 """
-from fastapi import APIRouter, Depends
+from functools import wraps
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -21,57 +23,87 @@ def get_db():
         db.close()
 
 
+def _safe(fn):
+    """Every handler below talks to a real remote host (SSH/agent/DB-native
+    metrics) with many independent failure modes (no SSH configured, agent
+    offline, connection not found, etc.). Without this, an unhandled exception
+    here falls through FastAPI's default handler as a bodyless 500 that the
+    frontend can only report as a generic 'Server error occurred.' — this
+    converts any of those into a real HTTPException carrying the actual
+    reason, so the UI (and whoever's debugging it) can see what really failed."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e) or e.__class__.__name__)
+    return wrapper
+
+
 @router.get("/{tech}/{conn_id}/host-metrics")
+@_safe
 def host_metrics(tech: str, conn_id: int, db: Session = Depends(get_db)):
     return svc.host_metrics(tech, conn_id, db)
 
 
 @router.get("/{tech}/{conn_id}/processes")
+@_safe
 def processes(tech: str, conn_id: int, sort: str = "cpu", limit: int = 25, db: Session = Depends(get_db)):
     return svc.processes(tech, conn_id, db, sort=sort, limit=limit)
 
 
 @router.get("/{tech}/{conn_id}/process/{pid}/sessions")
+@_safe
 def process_sessions(tech: str, conn_id: int, pid: int, db: Session = Depends(get_db)):
     return svc.process_sessions(tech, conn_id, pid, db)
 
 
 @router.get("/{tech}/{conn_id}/session/{pid}/detail")
+@_safe
 def session_detail(tech: str, conn_id: int, pid: str, db: Session = Depends(get_db)):
     return svc.session_detail(tech, conn_id, pid, db)
 
 
 @router.get("/{tech}/{conn_id}/rca")
+@_safe
 def rca(tech: str, conn_id: int, resource: str = "cpu", pid: int | None = None, cmd: str | None = None, db: Session = Depends(get_db)):
     return svc.rca(tech, conn_id, db, pid=pid, resource=resource, target_cmd=cmd)
 
 
 @router.get("/{tech}/{conn_id}/history")
+@_safe
 def history(tech: str, conn_id: int, hours: int = 6, db: Session = Depends(get_db)):
     return svc.history(tech, conn_id, db, hours=hours)
 
 
 @router.get("/{tech}/{conn_id}/history/{sample_id}")
+@_safe
 def history_detail(tech: str, conn_id: int, sample_id: int, db: Session = Depends(get_db)):
     return svc.history_detail(tech, conn_id, sample_id, db)
 
 
 @router.get("/{tech}/{conn_id}/history/{sample_id}/rca")
+@_safe
 def history_rca(tech: str, conn_id: int, sample_id: int, resource: str = "cpu", db: Session = Depends(get_db)):
     return svc.history_rca(tech, conn_id, sample_id, db, resource=resource)
 
 
 # Windows OS process visibility (SQL Server hosts) — opt-in, uses xp_cmdshell.
 @router.get("/mssql/{conn_id}/os-processes")
+@_safe
 def mssql_os_processes(conn_id: int, db: Session = Depends(get_db)):
     return svc.mssql_os_processes(conn_id, db)
 
 
 @router.post("/mssql/{conn_id}/enable-os-visibility")
+@_safe
 def mssql_enable_os_visibility(conn_id: int, db: Session = Depends(get_db)):
     return svc.mssql_enable_os_visibility(conn_id, db)
 
 
 @router.get("/mssql/{conn_id}/table-detail")
+@_safe
 def mssql_table_detail(conn_id: int, db_name: str, schema: str, table: str, db: Session = Depends(get_db)):
     return svc.mssql_table_detail(conn_id, db, db_name, schema, table)

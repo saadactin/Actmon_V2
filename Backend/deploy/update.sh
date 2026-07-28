@@ -30,7 +30,13 @@ cp -a "$APP_DIR/backend/database/.env" /tmp/actmon.env.keep
 rm -rf "$APP_DIR/backend/database/app"
 cp -r "$BUNDLE/backend/database/app"        "$APP_DIR/backend/database/app"
 cp -f "$BUNDLE/backend/database/main.py"    "$APP_DIR/backend/database/main.py"
-cp -rf "$BUNDLE/backend/database/install"   "$APP_DIR/backend/database/install"
+[ -d "$APP_DIR/backend/database/install/downloads" ] && mv "$APP_DIR/backend/database/install/downloads" /tmp/actmon_downloads.keep
+rm -rf "$APP_DIR/backend/database/install"
+cp -r "$BUNDLE/backend/database/install"    "$APP_DIR/backend/database/install"
+if [ -d /tmp/actmon_downloads.keep ]; then
+  rm -rf "$APP_DIR/backend/database/install/downloads"
+  mv /tmp/actmon_downloads.keep "$APP_DIR/backend/database/install/downloads"
+fi
 cp -f "$BUNDLE/backend/database/requirements.txt" "$APP_DIR/backend/database/requirements.txt"
 cp -a /tmp/actmon.env.keep "$APP_DIR/backend/database/.env"; rm -f /tmp/actmon.env.keep
 # cloud + logs adapter + agent installers/scripts (agent .exe/.msi kept if bundle omits them)
@@ -54,7 +60,18 @@ systemctl restart actmon-cloud 2>/dev/null || true
 sleep 3   # let the fresh workers settle before the standalone seed scripts connect
 
 log "Applying DB migrations / seed (idempotent)"
-( cd "$APP_DIR/backend/database" && "$APP_DIR/venv/bin/python" install/db_setup.py ) || true
+MIGRATION_FAILED=0
+( cd "$APP_DIR/backend/database" && "$APP_DIR/venv/bin/python" install/db_setup.py ) || MIGRATION_FAILED=1
+if [ "$MIGRATION_FAILED" = "1" ]; then
+  echo ""
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "!! DB MIGRATION FAILED — the app is now running against an OUTDATED schema. !!"
+  echo "!! Every route touching a table this bundle added columns to WILL error.     !!"
+  echo "!! Fix, then re-run:                                                         !!"
+  echo "!!   cd $APP_DIR/backend/database && sudo $APP_DIR/venv/bin/python install/db_setup.py !!"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo ""
+fi
 
 log "Registering extra menu entries (Sales, etc. — idempotent)"
 "$APP_DIR/venv/bin/python" "$BUNDLE/deploy/register_extras.py" || true
@@ -79,3 +96,10 @@ echo "   Verify:  systemctl status actmon-api"
 echo "            curl -s http://127.0.0.1:8000/api/v1/download/actmon/status"
 echo " Then hard-refresh the browser (Ctrl+Shift+R) and re-login."
 echo "============================================================"
+if [ "$MIGRATION_FAILED" = "1" ]; then
+  echo ""
+  echo "!! REMINDER: the DB migration step above FAILED — re-run it manually before !!"
+  echo "!! trusting anything in the UI:                                            !!"
+  echo "!!   cd $APP_DIR/backend/database && sudo $APP_DIR/venv/bin/python install/db_setup.py !!"
+  echo ""
+fi

@@ -19,7 +19,7 @@ from app.routes.auth.auth_routes import current_claims
 
 router = APIRouter(prefix="/api/v1/settings/dashboard-appearance", tags=["dashboard-appearance"])
 
-SCOPES = ("all", "mysql", "mssql", "oracle", "postgresql", "mongodb", "clickhouse", "infra")
+SCOPES = ("all", "mysql", "mssql", "oracle", "postgresql", "mongodb", "clickhouse", "infra", "cosmosdb")
 
 
 def get_db():
@@ -32,7 +32,7 @@ def get_db():
 
 class DashboardAppearanceUpdate(BaseModel):
     indicator_style: Literal["ring", "stat", "donut", "minimal"]
-    chart_style: Literal["area", "line", "bar", "spark"]
+    chart_style: Literal["area", "line", "bar", "barh", "spark", "pie", "donut", "scatter", "gauge", "bubble", "gantt"]
     display_mode: Literal["gauge", "graph"] = "gauge"
 
 
@@ -67,7 +67,14 @@ def _full_map(db: Session, user_id: int) -> dict:
 
 @router.get("")
 def get_dashboard_appearance(claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
-    return _full_map(db, claims.get("user_id"))
+    user_id = claims.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Session is missing a user id — please log in again.")
+    try:
+        return _full_map(db, user_id)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to load dashboard appearance: {e}")
 
 
 @router.put("")
@@ -76,19 +83,27 @@ def update_dashboard_appearance(body: DashboardAppearanceUpdate, scope: str = Qu
     if scope not in SCOPES:
         raise HTTPException(status_code=400, detail=f"Unknown scope '{scope}'")
     user_id = claims.get("user_id")
-    row = db.query(DashboardAppearanceSettings).filter(
-        DashboardAppearanceSettings.user_id == user_id,
-        DashboardAppearanceSettings.scope == scope,
-    ).first()
-    if not row:
-        row = DashboardAppearanceSettings(user_id=user_id, scope=scope)
-        db.add(row)
-    row.indicator_style = body.indicator_style
-    row.chart_style = body.chart_style
-    row.display_mode = body.display_mode
-    db.commit()
-    db.refresh(row)
-    return _full_map(db, user_id)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Session is missing a user id — please log in again.")
+    try:
+        row = db.query(DashboardAppearanceSettings).filter(
+            DashboardAppearanceSettings.user_id == user_id,
+            DashboardAppearanceSettings.scope == scope,
+        ).first()
+        if not row:
+            row = DashboardAppearanceSettings(user_id=user_id, scope=scope)
+            db.add(row)
+        row.indicator_style = body.indicator_style
+        row.chart_style = body.chart_style
+        row.display_mode = body.display_mode
+        db.commit()
+        db.refresh(row)
+        return _full_map(db, user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save dashboard appearance: {e}")
 
 
 @router.delete("")
@@ -99,9 +114,17 @@ def delete_dashboard_appearance_override(scope: str = Query(...),
     if scope not in SCOPES:
         raise HTTPException(status_code=400, detail=f"Unknown scope '{scope}'")
     user_id = claims.get("user_id")
-    db.query(DashboardAppearanceSettings).filter(
-        DashboardAppearanceSettings.user_id == user_id,
-        DashboardAppearanceSettings.scope == scope,
-    ).delete()
-    db.commit()
-    return _full_map(db, user_id)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Session is missing a user id — please log in again.")
+    try:
+        db.query(DashboardAppearanceSettings).filter(
+            DashboardAppearanceSettings.user_id == user_id,
+            DashboardAppearanceSettings.scope == scope,
+        ).delete()
+        db.commit()
+        return _full_map(db, user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to reset dashboard appearance: {e}")

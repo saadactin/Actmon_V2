@@ -22,3 +22,6 @@ redis
 clickhouse-driver>=0.2.9
 clickhouse-sqlalchemy>=0.3.2
 clickhouse-connect==1.4.1
+# Cloud-based databases — Azure Cosmos DB (SQL/Core API). Uses only the
+# account endpoint + key (no App Registration / Azure Monitor dependency).
+azure-cosmos>=4.5.1,<5

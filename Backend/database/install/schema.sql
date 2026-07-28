@@ -1841,7 +1841,17 @@ CREATE TABLE public.connection_master (
     ssh_port integer,
     ssh_user character varying(255),
     ssh_password character varying(500),
-    org_id integer DEFAULT 1 NOT NULL
+    org_id integer DEFAULT 1 NOT NULL,
+    cloud_provider character varying(50),
+    cloud_api_type character varying(30),
+    cloud_account_name character varying(255),
+    cloud_endpoint character varying(500),
+    cloud_primary_key_enc text,
+    cloud_secondary_key_enc text,
+    cloud_container_name character varying(255),
+    cloud_partition_key character varying(255),
+    cloud_config jsonb,
+    cloud_monitor_client_secret_enc text
 );
 
 
@@ -4682,6 +4692,48 @@ ALTER TABLE ONLY public.user_master
 
 ALTER TABLE ONLY public.user_master
     ADD CONSTRAINT fk_user_master_role FOREIGN KEY (role_id) REFERENCES public.role(role_id);
+
+
+--
+-- Digital Experience — Website Availability / Ping / DNS / TCP Port / UDP
+-- Port monitors (one shared table across check types) + their time-series
+-- probe results. Added after this dump was taken, so plain CREATE TABLE
+-- rather than matching pg_dump's split sequence/constraint style above —
+-- functionally identical, and existing installs get the same tables via the
+-- idempotent patch in install/db_setup.py.
+--
+
+CREATE TABLE IF NOT EXISTS public.external_check (
+    id                     SERIAL PRIMARY KEY,
+    org_id                 INTEGER      NOT NULL DEFAULT 1,
+    user_id                INTEGER,
+    name                   VARCHAR(255) NOT NULL,
+    check_type             VARCHAR(30)  NOT NULL,
+    target                 VARCHAR(500) NOT NULL,
+    port                   INTEGER,
+    interval_seconds       INTEGER      NOT NULL DEFAULT 300,
+    enabled                BOOLEAN      NOT NULL DEFAULT TRUE,
+    config                 JSONB,
+    created_at             TIMESTAMP DEFAULT now(),
+    updated_at             TIMESTAMP DEFAULT now(),
+    last_checked_at        TIMESTAMP,
+    last_status            VARCHAR(20),
+    last_response_time_ms  DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS idx_external_check_org ON public.external_check (org_id);
+
+CREATE TABLE IF NOT EXISTS public.external_check_result (
+    id                SERIAL PRIMARY KEY,
+    check_id          INTEGER NOT NULL REFERENCES public.external_check(id),
+    org_id            INTEGER NOT NULL DEFAULT 1,
+    checked_at        TIMESTAMP DEFAULT now(),
+    status            VARCHAR(20) NOT NULL,
+    response_time_ms  DOUBLE PRECISION,
+    status_code       INTEGER,
+    error_message     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_external_check_result_check_ts
+    ON public.external_check_result (check_id, checked_at DESC);
 
 
 --
