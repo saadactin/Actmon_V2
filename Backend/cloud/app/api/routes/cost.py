@@ -29,3 +29,14 @@ async def get_cost_analytics(
     """Retrieve the 30-day growth, cost trends, and optimization suggestions."""
     return await svc.get_cost_analytics(account_id)
 
+
+@router.get("/report/{account_id}")
+async def get_cost_report(
+    account_id: str,
+    days: int = 30,
+    svc: CostService = Depends(get_cost_service),
+):
+    """Real day-by-day, per-service cost ledger for the given lookback window
+    (clamped to 365 days) — the data source for the downloadable cost report."""
+    return await svc.get_cost_report(account_id, days)
+

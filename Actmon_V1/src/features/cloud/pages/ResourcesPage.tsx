@@ -1,9 +1,9 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { ResourceTable } from '../components/ResourceTable';
 import { TriggerScanButton } from '../components/TriggerScanButton';
 import { DiscoveryStatus } from '../components/DiscoveryStatus';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
-import { useCloudAccounts } from '../hooks/useCloudAccounts';
+import { useCloudScope } from '../hooks/useCloudScope';
 import { useCloudStore } from '../state/cloudStore';
 import { useNavigate } from 'react-router-dom';
 import { Boxes, Cloud, Layers, MapPin, Clock, RefreshCw } from 'lucide-react';
@@ -18,18 +18,15 @@ const SUMMARY_ICONS = {
 
 export const ResourcesPage = () => {
   const navigate = useNavigate();
-  const { data: accounts } = useCloudAccounts();
-  const selectedAccountId = useCloudStore(state => state.selectedAccountId);
-  const setSelectedAccountId = useCloudStore(state => state.setSelectedAccountId);
   const setDrawerOpen = useCloudStore(state => state.setAddAccountDrawerOpen);
 
-  useEffect(() => {
-    if (!selectedAccountId && accounts && accounts.length > 0) {
-      setSelectedAccountId(accounts[0].id);
-    }
-  }, [accounts, selectedAccountId, setSelectedAccountId]);
-
-  const selectedAccount = accounts?.find(a => a.id === selectedAccountId);
+  // Scope-aware: inside a provider, only that provider's accounts are offered and
+  // the selected account is always one of them (never a stale cross-provider id).
+  const scope = useCloudScope();
+  const accounts = scope.scopedAccounts;
+  const selectedAccountId = scope.accountId;
+  const setSelectedAccountId = scope.setAccountScope;
+  const selectedAccount = scope.account;
 
   const handleAddAccount = () => {
     navigate('/cloud/accounts');
@@ -49,8 +46,12 @@ export const ResourcesPage = () => {
           </h1>
           <p className="text-sm text-gray-500 mt-1">
             {accounts && accounts.length > 0
-              ? `Discovered assets across your cloud providers`
-              : 'Connect a cloud account to view resources'}
+              ? (scope.isScoped
+                  ? `Discovered assets in ${scope.providerKey} · ${accounts.length} account${accounts.length > 1 ? 's' : ''}`
+                  : 'Discovered assets across your cloud providers')
+              : scope.isScoped
+                ? `No ${scope.providerKey} accounts connected yet`
+                : 'Connect a cloud account to view resources'}
           </p>
         </div>
 

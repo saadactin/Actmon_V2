@@ -10,6 +10,10 @@ import uuid
 
 logger = logging.getLogger("cloud_svc.discovery_runner")
 
+# Keep a strong reference to fire-and-forget cache-warming tasks so the event
+# loop doesn't garbage-collect them mid-run.
+_warm_tasks: set[asyncio.Task] = set()
+
 
 async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
     """
@@ -123,6 +127,21 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             # Per-resource cost_monthly stays as the provider reported it (usually
             # None → NA in the UI). Account-level spend comes from the billing API
             # via the cost service — no config-based estimates are fabricated here.
+
+            from app.services.alerting_service import check_storage_attachment_alerts
+
+            check_storage_attachment_alerts(
+                account.account_name, resources, account_id=str(account_id)
+            )
+
+            # Fire-and-forget: warm the cost cache now so the Cost page's
+            # first load after this scan doesn't pay a cold 30-50s billing
+            # API round trip. Not awaited — must not delay job completion.
+            from app.services.cost_service import prewarm_cost_cache
+
+            warm_task = asyncio.create_task(prewarm_cost_cache(account))
+            _warm_tasks.add(warm_task)
+            warm_task.add_done_callback(_warm_tasks.discard)
 
             await account_repo.update_last_discovery(account_id)
             await disco_repo.complete_job(job_id, count)

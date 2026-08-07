@@ -7,6 +7,7 @@ import { ToastProvider } from './components/ui/ToastProvider';
 import { AuthProvider } from './auth/AuthProvider';
 import { DashboardAppearanceProvider } from './context/DashboardAppearanceContext';
 import { ProtectedRoute } from './auth/ProtectedRoute';
+import { AUTH_DISABLED } from './auth/devAuthBypass';
 import { AppShell } from './components/layout/AppShell';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Login } from './pages/Login';
@@ -130,7 +131,9 @@ const router = createBrowserRouter([
   },
   {
     path: '/login',
-    element: <Login />,
+    // With the dev auth bypass on, the login page is unreachable — anything that
+    // still routes here (a bookmark, an expiry redirect) lands on the dashboard.
+    element: AUTH_DISABLED ? <Navigate to="/dashboard" replace /> : <Login />,
   },
   {
     path: '/',

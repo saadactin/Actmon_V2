@@ -65,6 +65,92 @@ class AWSScanner:
 
         return await loop.run_in_executor(None, _fetch)
 
+    # ── EBS Volumes ───────────────────────────────────────────────────────────
+    async def _scan_ebs(self, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            ec2 = self.auth.get_client("ec2", region)
+            try:
+                volumes = [
+                    vol
+                    for page in ec2.get_paginator("describe_volumes").paginate()
+                    for vol in page.get("Volumes", [])
+                ]
+            except Exception:
+                return []
+            if not volumes:
+                return []
+
+            # Resolve the instance each volume is attached to (name + power
+            # state) in one bulk call, so a volume attached to a stopped
+            # instance can be flagged without a describe call per volume.
+            instance_ids = {
+                att["InstanceId"]
+                for vol in volumes
+                for att in vol.get("Attachments", [])
+                if att.get("State") == "attached" and att.get("InstanceId")
+            }
+            instance_info: Dict[str, Dict[str, Any]] = {}
+            if instance_ids:
+                try:
+                    for page in ec2.get_paginator("describe_instances").paginate(
+                        InstanceIds=list(instance_ids)
+                    ):
+                        for reservation in page.get("Reservations", []):
+                            for inst in reservation.get("Instances", []):
+                                name = next(
+                                    (t["Value"] for t in inst.get("Tags", []) if t["Key"] == "Name"),
+                                    inst["InstanceId"],
+                                )
+                                instance_info[inst["InstanceId"]] = {
+                                    "name": name,
+                                    "status": inst.get("State", {}).get("Name"),
+                                }
+                except Exception:
+                    pass
+
+            results = []
+            for vol in volumes:
+                attachment = next(
+                    (a for a in vol.get("Attachments", []) if a.get("State") == "attached"), None
+                )
+                inst_id = attachment.get("InstanceId") if attachment else None
+                inst = instance_info.get(inst_id) if inst_id else None
+                name = next(
+                    (t["Value"] for t in vol.get("Tags", []) if t["Key"] == "Name"),
+                    vol["VolumeId"],
+                )
+                results.append(
+                    {
+                        "provider_resource_id": vol["VolumeId"],
+                        "resource_type": "EBSVolume",
+                        "resource_name": name,
+                        "region_or_zone": vol.get("AvailabilityZone", region),
+                        "status": vol.get("State"),
+                        "ip_address": None,
+                        "config": {
+                            "size_gb": vol.get("Size"),
+                            "volume_type": vol.get("VolumeType"),
+                            "iops": vol.get("Iops"),
+                            "encrypted": vol.get("Encrypted"),
+                            "attachment_status": "Attached" if inst_id else "Unattached",
+                            "attached_to_id": inst_id,
+                            "attached_to_name": inst["name"] if inst else None,
+                            "attached_to_status": inst["status"] if inst else None,
+                        },
+                        "metadata": {
+                            "create_time": str(vol.get("CreateTime")),
+                        },
+                        "cost_monthly": None,
+                        "tags": {t["Key"]: t["Value"] for t in vol.get("Tags", [])},
+                        "raw_data": vol,
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(None, _fetch)
+
     # ── RDS Instances ─────────────────────────────────────────────────────────
     async def _scan_rds(self, region: str) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
@@ -717,6 +803,7 @@ class AWSScanner:
         for region in regions:
             for scanner_fn, label in [
                 (self._scan_ec2, "EC2"),
+                (self._scan_ebs, "EBS"),
                 (self._scan_rds, "RDS"),
                 (self._scan_lambda, "Lambda"),
                 (self._scan_eks, "EKS"),

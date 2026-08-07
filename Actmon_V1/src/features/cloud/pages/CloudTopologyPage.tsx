@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useTopology } from '../hooks/useTopology';
-import { useCloudStore } from '../state/cloudStore';
+import { useCloudScope } from '../hooks/useCloudScope';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
 import {
   ZoomIn, ZoomOut, Maximize2, Search, ExternalLink, X,
@@ -78,14 +77,16 @@ const CARD_H = 68;
 
 export const CloudTopologyPage = () => {
   const navigate = useNavigate();
-  const { data: accounts } = useCloudAccounts();
-  const selectedAccountId = useCloudStore(state => state.selectedAccountId);
-  const setSelectedAccountId = useCloudStore(state => state.setSelectedAccountId);
+  // Scope-aware (see useCloudScope) — topology stays on the chosen provider.
+  const scope = useCloudScope();
+  const accounts = scope.scopedAccounts;
+  const selectedAccountId = scope.accountId;
+  const setSelectedAccountId = scope.setAccountScope;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [currentAccountView, setCurrentAccountView] = useState<string>('ALL');
+  const [accountView, setAccountView] = useState<string>('ALL');
 
   // ── Zoom / Pan ─────────────────────────────────────────────────
   const [zoom, setZoom] = useState(0.85);
@@ -95,11 +96,11 @@ export const CloudTopologyPage = () => {
   const dragStart = useRef({ x: 0, y: 0, px: 0, py: 0 });
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!selectedAccountId && accounts && accounts.length > 0) {
-      setSelectedAccountId(accounts[0].id);
-    }
-  }, [accounts, selectedAccountId, setSelectedAccountId]);
+  // 'ALL' must not cross provider boundaries while a provider is scoped.
+  const currentAccountView = accountView === 'ALL'
+    ? (scope.isScoped ? (selectedAccountId ?? 'ALL') : 'ALL')
+    : accountView;
+  const setCurrentAccountView = setAccountView;
 
   const { data: topology, isLoading, refetch } = useTopology(currentAccountView);
 

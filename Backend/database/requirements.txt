@@ -25,3 +25,6 @@ clickhouse-connect==1.4.1
 # Cloud-based databases — Azure Cosmos DB (SQL/Core API). Uses only the
 # account endpoint + key (no App Registration / Azure Monitor dependency).
 azure-cosmos>=4.5.1,<5
+# PDF attachments for the scheduled report emails (imports as `fpdf`).
+# Without it the report services email the body with no attachment.
+fpdf2>=2.8

@@ -7,6 +7,7 @@ hardcoded price tables, no invented savings figures.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -98,9 +99,104 @@ def _attach_oci_savings(opt: Dict[str, Any], resource, prices, currency: str) ->
         )
 
 # Real billing-API lookups are slow (2-10s) and rate-limited, so cache per account.
+# Cache entries are (stored_at, rows, errored). A transient failure (timeout,
+# throttling, a mid-request service reload) must NOT be cached as confidently
+# as a genuine "provider has no cost data" result — otherwise one bad request
+# locks in a fake "NA" for the full TTL. Failures get a much shorter TTL so
+# they self-heal on the next request instead of hiding real data for 15 min.
 _REAL_COST_TTL_SECONDS = 900
-_real_cost_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
-_daily_cost_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+_FAILURE_TTL_SECONDS = 20
+_real_cost_cache: Dict[str, Tuple[float, List[Dict[str, Any]], bool]] = {}
+_daily_cost_cache: Dict[str, Tuple[float, List[Dict[str, Any]], bool]] = {}
+_real_cost_by_resource_cache: Dict[str, Tuple[float, Dict[str, Dict[str, Any]], bool]] = {}
+# Keyed by (account_id, days) — a 365-day query is far heavier than a 30-day
+# one, so it gets its own cache slot rather than colliding with a 30-day entry.
+_cost_report_cache: Dict[Tuple[str, int], Tuple[float, List[Dict[str, Any]], bool]] = {}
+MAX_REPORT_DAYS = 365
+
+
+def _cache_get(cache: dict, key) -> Any:
+    cached = cache.get(key)
+    if not cached:
+        return None
+    stored_at, rows, errored = cached
+    ttl = _FAILURE_TTL_SECONDS if errored else _REAL_COST_TTL_SECONDS
+    return rows if time.time() - stored_at < ttl else None
+
+
+async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=None):
+    """Cache-with-stale-while-error around one slow billing-API call.
+
+    Providers raise on failure (they used to swallow it and return empty, which
+    made a transient timeout indistinguishable from "this account genuinely has
+    no billing data" — the empty result was then cached as a success for the
+    full 15 minutes, so cost would silently vanish from the UI until the TTL
+    expired). On failure here we keep serving the last GOOD value instead of
+    collapsing to NA, and mark the entry errored so it retries in 20s.
+
+    Also records WHY it failed (account_id, if given) so the UI can show a real
+    diagnostic instead of a bare "NA" — see get_cost_diagnostic().
+    """
+    entry = cache.get(key)
+    fresh = _cache_get(cache, key)
+    if fresh is not None:
+        return fresh
+    try:
+        value = await fetch()
+        cache[key] = (time.time(), value, False)
+        if account_id is not None:
+            _cost_error_reason.pop(str(account_id), None)
+        return value
+    except Exception as exc:
+        logger.warning("%s failed for %s: %s", label, key, exc)
+        if account_id is not None:
+            category, message = _categorize_error(exc)
+            _cost_error_reason[str(account_id)] = {"category": category, "message": message}
+        stale = entry[1] if entry else None
+        if stale:
+            # Serve the previous real numbers rather than a misleading NA.
+            cache[key] = (time.time(), stale, True)
+            return stale
+        cache[key] = (time.time(), empty, True)
+        return empty
+
+
+# Account IDs with a per-resource cost refresh already in flight, so concurrent
+# page loads don't each kick off the same 15s query.
+_warming: set = set()
+_warm_tasks: set = set()
+
+
+def peek_costs_by_resource(account) -> Dict[str, Dict[str, Any]]:
+    """Whatever per-resource cost data is already cached — never makes a network
+    call. The Resources page renders straight from the DB and must not hang on a
+    15-50s billing round trip just to decorate rows with cost."""
+    entry = _real_cost_by_resource_cache.get(str(account.id))
+    return entry[1] if entry else {}
+
+
+def ensure_costs_by_resource_warm(account) -> None:
+    """Kick off a background refresh when the per-resource cost cache is cold or
+    stale, so the next load has data. Never blocks the current request."""
+    key = str(account.id)
+    if _cache_get(_real_cost_by_resource_cache, key) is not None or key in _warming:
+        return
+    _warming.add(key)
+
+    async def _run():
+        try:
+            await fetch_real_costs_by_resource(account)
+        except Exception:
+            pass
+        finally:
+            _warming.discard(key)
+
+    try:
+        task = asyncio.create_task(_run())
+        _warm_tasks.add(task)
+        task.add_done_callback(_warm_tasks.discard)
+    except RuntimeError:
+        _warming.discard(key)  # no running loop (e.g. called from sync context)
 
 
 def _provider_class(provider: str):
@@ -136,6 +232,62 @@ def _build_provider(account):
     return cls(creds)
 
 
+class ProviderUnavailableError(RuntimeError):
+    """Raised when an account's provider can't even be constructed (unknown
+    provider type, or credentials that fail to decrypt) — distinguished from a
+    live API call failing so the UI can tell "your credentials are broken"
+    apart from "the provider's API errored"."""
+
+
+def _require_provider(account):
+    provider = _build_provider(account)
+    if provider is None:
+        raise ProviderUnavailableError(
+            f"Could not authenticate account '{account.account_name}' — its stored "
+            "credentials failed to decrypt or the provider type is unrecognized."
+        )
+    return provider
+
+
+# Human-readable "why is this broken" reason per account, refreshed on every
+# fetch attempt (cleared on success). Backs the diagnostics popup in the UI —
+# without this, a failed billing call just renders as a silent "NA" with no
+# way to tell credentials/permissions/network/no-data apart.
+_cost_error_reason: Dict[str, Dict[str, str]] = {}
+
+
+def _categorize_error(exc: Exception) -> Tuple[str, str]:
+    if isinstance(exc, ProviderUnavailableError):
+        return "credentials", str(exc)
+    msg = str(exc)
+    low = msg.lower()
+    if any(k in msg for k in (
+        "AuthorizationFailed", "AccessDenied", "Forbidden", "NotAuthorizedOrNotFound",
+        "UnauthorizedOperation", "AuthorizationError",
+    )) or " 403" in msg or msg.startswith("403"):
+        return "permission", (
+            "The account's credentials don't have permission to read billing data "
+            f"from the provider's API. Raw error: {msg[:400]}"
+        )
+    if any(k in low for k in (
+        "expired", "invalidclienttokenid", "signaturedoesnotmatch",
+        "invalid_client", "invalid_grant", "unauthorized_client",
+    )):
+        return "credentials", f"The account's credentials appear to be invalid or expired. Raw error: {msg[:400]}"
+    if any(k in low for k in (
+        "timeout", "timed out", "connection", "network", "resolve host",
+        "unreachable", "connectionerror", "max retries exceeded",
+    )):
+        return "network", f"A network error occurred while contacting the provider's billing API. Raw error: {msg[:400]}"
+    return "unknown", f"An unexpected error occurred while fetching billing data. Raw error: {msg[:400]}"
+
+
+def get_cost_diagnostic(account_id) -> Optional[Dict[str, str]]:
+    """The last known reason this account's cost data isn't available, or None
+    if the last attempt succeeded (or none has been made yet)."""
+    return _cost_error_reason.get(str(account_id))
+
+
 async def fetch_real_costs(account) -> List[Dict[str, Any]]:
     """Last-30-day actual spend per service from the provider's billing API.
 
@@ -144,40 +296,175 @@ async def fetch_real_costs(account) -> List[Dict[str, Any]]:
     the Cost Management API — or when the query fails. Callers surface NA
     in that case.
     """
-    key = str(account.id)
-    cached = _real_cost_cache.get(key)
-    if cached and time.time() - cached[0] < _REAL_COST_TTL_SECONDS:
-        return cached[1]
+    async def _fetch():
+        provider = _require_provider(account)
+        return await provider.get_cost_data() or []
 
-    rows: List[Dict[str, Any]] = []
-    provider = _build_provider(account)
-    if provider:
-        try:
-            rows = await provider.get_cost_data() or []
-        except Exception as exc:
-            logger.warning("Billing API query failed for account %s: %s", account.id, exc)
-            rows = []
-    _real_cost_cache[key] = (time.time(), rows)
-    return rows
+    return await _cached_fetch(
+        _real_cost_cache, str(account.id), "Billing API query", _fetch, [],
+        account_id=account.id,
+    )
 
 
 async def fetch_daily_costs(account) -> List[Dict[str, Any]]:
     """Real per-day spend for the last 30 days ([{date, cost, currency}])."""
-    key = str(account.id)
-    cached = _daily_cost_cache.get(key)
-    if cached and time.time() - cached[0] < _REAL_COST_TTL_SECONDS:
-        return cached[1]
 
-    rows: List[Dict[str, Any]] = []
-    provider = _build_provider(account)
-    if provider and hasattr(provider, "get_daily_costs"):
-        try:
-            rows = await provider.get_daily_costs() or []
-        except Exception as exc:
-            logger.warning("Daily cost query failed for account %s: %s", account.id, exc)
-            rows = []
-    _daily_cost_cache[key] = (time.time(), rows)
-    return rows
+    async def _fetch():
+        provider = _require_provider(account)
+        if not hasattr(provider, "get_daily_costs"):
+            return []
+        return await provider.get_daily_costs() or []
+
+    return await _cached_fetch(
+        _daily_cost_cache, str(account.id), "Daily cost query", _fetch, [],
+        account_id=account.id,
+    )
+
+
+async def fetch_cost_report(account, days: int) -> List[Dict[str, Any]]:
+    """Real day-by-day, per-service spend for the given lookback window, when
+    the provider supports it (AWS/Azure/OCI all do). Returns [] when
+    unsupported or the query fails — never a fabricated row."""
+    days = max(1, min(days, MAX_REPORT_DAYS))
+
+    async def _fetch():
+        provider = _require_provider(account)
+        if not hasattr(provider, "get_cost_report"):
+            return []
+        return await provider.get_cost_report(days) or []
+
+    return await _cached_fetch(
+        _cost_report_cache, (str(account.id), days), "Cost report query", _fetch, [],
+        account_id=account.id,
+    )
+
+
+async def fetch_real_costs_by_resource(account) -> Dict[str, Dict[str, Any]]:
+    """Real last-30-day spend keyed by provider resource ID, when the provider
+    supports resource-level cost grouping (OCI Usage API today). Returns {}
+    when unsupported or the query fails — callers show NA, never a guess."""
+
+    async def _fetch():
+        provider = _require_provider(account)
+        if not hasattr(provider, "get_cost_by_resource"):
+            return {}
+        return await provider.get_cost_by_resource() or {}
+
+    return await _cached_fetch(
+        _real_cost_by_resource_cache, str(account.id),
+        "Per-resource billing query", _fetch, {}, account_id=account.id,
+    )
+
+
+# Compute resource types that represent a stoppable server, per provider, and
+# the storage types that can be left attached (and billing) after it stops.
+_COMPUTE_TYPES = {"EC2Instance", "ComputeInstance", "VirtualMachine"}
+_STORAGE_TYPES = {"BlockVolume", "ManagedDisk", "EBSVolume"}
+
+
+def _stopped_status(resource) -> tuple[bool, Optional[str]]:
+    """Whether a compute resource is stopped, and the real status string to
+    display for it. Azure VMs report provisioning_state (e.g. 'Succeeded')
+    which says nothing about power — use the scanner's power_state field
+    instead; AWS/OCI already report the real lifecycle state in .status."""
+    cfg = resource.config or {}
+    if resource.resource_type == "VirtualMachine":
+        power_state = cfg.get("power_state")
+        s = (power_state or "").lower()
+        return ("stop" in s or "deallocat" in s), power_state
+    if resource.resource_type == "EC2Instance":
+        return (resource.status or "").lower() == "stopped", resource.status
+    if resource.resource_type == "ComputeInstance":
+        return (resource.status or "").upper() == "STOPPED", resource.status
+    return False, resource.status
+
+
+async def build_stopped_instances(resources: List[Any], accounts: List[Any]) -> List[Dict[str, Any]]:
+    """Stopped compute instances across the given resources, each with its own
+    billed cost and any attached storage's billed cost over the last 30 days
+    (both real, from the provider's billing API — NA when unsupported, e.g.
+    AWS/Azure don't have per-resource billing wired up yet)."""
+    account_by_id = {str(a.id): a for a in accounts}
+    per_account_maps = await asyncio.gather(*(fetch_real_costs_by_resource(a) for a in accounts))
+    cost_maps: Dict[str, Dict[str, Dict[str, Any]]] = {
+        str(a.id): m for a, m in zip(accounts, per_account_maps)
+    }
+
+    storage_by_attached_to: Dict[str, List[Any]] = {}
+    for r in resources:
+        if r.resource_type not in _STORAGE_TYPES:
+            continue
+        attached_id = (r.config or {}).get("attached_to_id")
+        if attached_id:
+            storage_by_attached_to.setdefault(attached_id, []).append(r)
+
+    items: List[Dict[str, Any]] = []
+    for r in resources:
+        if r.resource_type not in _COMPUTE_TYPES:
+            continue
+        stopped, display_status = _stopped_status(r)
+        if not stopped:
+            continue
+
+        account = account_by_id.get(str(r.account_id))
+        cost_map = cost_maps.get(str(r.account_id), {})
+        own_entry = cost_map.get(r.provider_resource_id)
+        own_cost = own_entry["monthly_cost"] if own_entry else None
+        currency = own_entry.get("currency") if own_entry else None
+
+        attached_storage = []
+        attached_total = 0.0
+        attached_known = False
+        for sr in storage_by_attached_to.get(r.provider_resource_id, []):
+            sr_entry = cost_map.get(sr.provider_resource_id)
+            sr_cost = sr_entry["monthly_cost"] if sr_entry else None
+            if sr_cost is not None:
+                attached_total += sr_cost
+                attached_known = True
+                currency = currency or sr_entry.get("currency")
+            attached_storage.append({
+                "resource_id": str(sr.id),
+                "resource_name": sr.resource_name,
+                "resource_type": sr.resource_type,
+                "monthly_cost": sr_cost,
+            })
+
+        known_parts = [v for v in (own_cost, attached_total if attached_known else None) if v is not None]
+        total_cost = round(sum(known_parts), 2) if known_parts else None
+
+        items.append({
+            "resource_id": str(r.id),
+            "provider_resource_id": r.provider_resource_id,
+            "resource_name": r.resource_name,
+            "resource_type": r.resource_type,
+            "provider": account.provider if account else None,
+            "account_id": str(r.account_id),
+            "account_name": account.account_name if account else None,
+            "region": r.region_or_zone,
+            "status": display_status,
+            "own_cost_monthly": own_cost,
+            "attached_storage": attached_storage,
+            "attached_storage_cost_monthly": round(attached_total, 2) if attached_known else None,
+            "total_cost_monthly": total_cost,
+            "currency": currency,
+        })
+
+    items.sort(key=lambda x: -(x["total_cost_monthly"] or 0))
+    return items
+
+
+async def prewarm_cost_cache(account) -> None:
+    """Fire this right after a discovery scan completes so the Cost page's
+    first load hits a warm cache instead of a cold 30-50s provider billing
+    call. Exceptions are swallowed — the caller doesn't await this to block
+    on it, and a failed pre-warm just means the next real request pays the
+    normal (now-short, 20s) failure-cache cost instead of the full one."""
+    await asyncio.gather(
+        fetch_real_costs(account),
+        fetch_daily_costs(account),
+        fetch_real_costs_by_resource(account),
+        return_exceptions=True,
+    )
 
 
 def _single_currency(values: List[Optional[str]]) -> Optional[str]:
@@ -289,13 +576,26 @@ class CostService:
                 raise HTTPException(status_code=404, detail="Account not found")
             accounts = [acc]
 
+        # Every account's real-cost, daily-cost, AND per-resource-cost billing
+        # calls are independent of each other — fan them ALL out concurrently
+        # instead of awaiting 3×N billing API round-trips one at a time. This
+        # is the difference between "as slow as the sum of every call" and "as
+        # slow as the single slowest call". The third gather's result isn't
+        # used directly here — it just warms fetch_real_costs_by_resource's
+        # cache so build_stopped_instances's later call is a cache hit instead
+        # of a fourth sequential network wave.
+        real_cost_rows, daily_cost_rows, _ = await asyncio.gather(
+            asyncio.gather(*(fetch_real_costs(acc) for acc in accounts)),
+            asyncio.gather(*(fetch_daily_costs(acc) for acc in accounts)),
+            asyncio.gather(*(fetch_real_costs_by_resource(acc) for acc in accounts)),
+        )
+
         # ── Real billed totals per service ────────────────────────────────────
         by_service: List[Dict[str, Any]] = []
         real_total = 0.0
         real_found = False
         currencies: List[Optional[str]] = []
-        for acc in accounts:
-            rows = await fetch_real_costs(acc)
+        for acc, rows in zip(accounts, real_cost_rows):
             if rows:
                 real_found = True
                 real_total += sum(float(r.get("monthly_cost") or 0.0) for r in rows)
@@ -318,8 +618,8 @@ class CostService:
         # ── Real daily spend trend (billing API, last 30 days) ────────────────
         trend_by_date: Dict[str, Dict[str, Any]] = {}
         trend_currencies: List[Optional[str]] = []
-        for acc in accounts:
-            for d in await fetch_daily_costs(acc):
+        for daily_rows in daily_cost_rows:
+            for d in daily_rows:
                 if not d.get("date"):
                     continue
                 entry = trend_by_date.setdefault(d["date"], {"date": d["date"], "cost": 0.0})
@@ -716,11 +1016,28 @@ class CostService:
         ]
         potential_savings = round(sum(known_savings), 2) if known_savings else None
 
+        stopped_instances = await build_stopped_instances(resources, accounts)
+
+        # Real reasons for any account that failed above — one bad account in an
+        # "ALL" view shouldn't be silently absorbed into a lower total with no
+        # explanation of which account is broken or why.
+        cost_diagnostics: List[Dict[str, Any]] = []
+        for acc in accounts:
+            reason = get_cost_diagnostic(acc.id)
+            if reason:
+                cost_diagnostics.append({
+                    "account_id": str(acc.id),
+                    "account_name": acc.account_name,
+                    "provider": acc.provider,
+                    **reason,
+                })
+
         return {
             "account_id": str(account_id),
             "trends": trends,
             "trend_currency": trend_currency,
             "optimizations": optimizations,
+            "stopped_instances": stopped_instances,
             "total_monthly_cost": total_monthly_cost,
             "total_resources": len(resources),
             "potential_savings": potential_savings,
@@ -732,4 +1049,55 @@ class CostService:
             "cost_source": cost_source,
             "currency": currency,
             "by_service": by_service[:20],
+            "cost_diagnostics": cost_diagnostics,
+        }
+
+    async def get_cost_report(self, account_id: uuid.UUID | str, days: int) -> Dict[str, Any]:
+        """Real day-by-day, per-service, cross-provider cost ledger for the
+        requested lookback window (clamped to MAX_REPORT_DAYS). Every row is
+        tagged with provider/account so the frontend can filter and export
+        without a second round-trip."""
+        from app.repository.cloud_account_repo import CloudAccountRepository
+
+        days = max(1, min(days, MAX_REPORT_DAYS))
+        acc_repo = CloudAccountRepository(self.db)
+
+        if account_id == "ALL":
+            accounts = await acc_repo.list_all()
+        else:
+            try:
+                aid = uuid.UUID(str(account_id))
+            except ValueError:
+                return {"error": "Invalid account ID"}
+            acc = await acc_repo.get_by_id(aid)
+            if not acc:
+                raise HTTPException(status_code=404, detail="Account not found")
+            accounts = [acc]
+
+        rows: List[Dict[str, Any]] = []
+        currencies: List[Optional[str]] = []
+        for acc in accounts:
+            for r in await fetch_cost_report(acc, days):
+                currencies.append(r.get("currency"))
+                rows.append({
+                    "date": r.get("date"),
+                    "provider": acc.provider,
+                    "account_id": str(acc.id),
+                    "account_name": acc.account_name,
+                    "service": r.get("service"),
+                    "region": r.get("region"),
+                    "cost": r.get("cost"),
+                    "currency": r.get("currency"),
+                })
+        rows.sort(key=lambda x: (x["date"] or "", -(x["cost"] or 0)))
+
+        total_cost = round(sum(float(r["cost"] or 0) for r in rows), 2) if rows else None
+
+        return {
+            "account_id": str(account_id),
+            "days": days,
+            "currency": _single_currency(currencies) if rows else None,
+            "total_cost": total_cost,
+            "row_count": len(rows),
+            "rows": rows,
         }

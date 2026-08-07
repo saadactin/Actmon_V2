@@ -103,7 +103,68 @@ class AzureProvider(BaseCloudProvider):
             return await loop.run_in_executor(None, _fetch)
         except Exception as exc:
             logger.warning("Azure Cost Management query failed: %s", exc)
-            return []
+            raise
+
+    async def get_cost_report(self, days: int = 30) -> List[Dict[str, Any]]:
+        """Real day-by-day, per-service spend from Azure Cost Management, for
+        an arbitrary lookback window."""
+        import asyncio
+        from datetime import date, timedelta
+
+        def _fetch():
+            from azure.mgmt.costmanagement import CostManagementClient
+            from azure.mgmt.costmanagement.models import (
+                QueryDefinition, QueryTimePeriod,
+                QueryDataset, QueryAggregation, QueryGrouping
+            )
+
+            cm = CostManagementClient(self.auth.get_credential())
+            today = date.today()
+            start = (today - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT23:59:59Z")
+            scope = f"/subscriptions/{self.auth.subscription_id}"
+            query = QueryDefinition(
+                type="ActualCost",
+                timeframe="Custom",
+                time_period=QueryTimePeriod(from_property=start, to=end),
+                dataset=QueryDataset(
+                    granularity="Daily",
+                    aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
+                    grouping=[
+                        QueryGrouping(type="Dimension", name="ServiceName"),
+                        QueryGrouping(type="Dimension", name="ResourceLocation"),
+                    ],
+                ),
+            )
+            result = cm.query.usage(scope=scope, parameters=query)
+            rows = result.rows or []
+            cols = [c.name for c in (result.columns or [])]
+            report = []
+            for row in rows:
+                row_dict = dict(zip(cols, row))
+                usage_date = row_dict.get("UsageDate")
+                iso = None
+                if usage_date is not None:
+                    s = str(int(usage_date))
+                    if len(s) == 8:
+                        iso = f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+                if not iso:
+                    continue
+                report.append({
+                    "date": iso,
+                    "service": row_dict.get("ServiceName", "Unknown"),
+                    "region": row_dict.get("ResourceLocation") or None,
+                    "cost": round(float(row_dict.get("Cost", 0)), 4),
+                    "currency": row_dict.get("Currency") or None,
+                })
+            return report
+
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, _fetch)
+        except Exception as exc:
+            logger.warning("Azure Cost Management report query failed: %s", exc)
+            raise
 
     async def get_daily_costs(self) -> List[Dict[str, Any]]:
         """Real per-day spend for the last 30 days from Azure Cost Management."""
@@ -158,4 +219,4 @@ class AzureProvider(BaseCloudProvider):
             return await loop.run_in_executor(None, _fetch)
         except Exception as exc:
             logger.warning("Azure daily cost query failed: %s", exc)
-            return []
+            raise

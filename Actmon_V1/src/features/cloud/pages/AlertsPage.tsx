@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCircle2, AlertTriangle, ShieldAlert, Loader2 } from 'lucide-react';
+import { useCloudScope } from '../hooks/useCloudScope';
 
 const SEVERITY_PILL_CLASSES: Record<string, string> = {
   CRITICAL: 'bg-red-50 text-red-700 border-red-200',
@@ -12,8 +13,14 @@ const SEVERITY_PILL_CLASSES: Record<string, string> = {
 
 export const AlertsPage = () => {
   const navigate = useNavigate();
-  const [alerts, setAlerts] = useState<any[]>([]);
+  const [allAlerts, setAllAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // The alerts endpoint returns every account's alerts; narrow to the scope so
+  // this tab agrees with the provider selected in the chooser.
+  const scope = useCloudScope();
+  const alerts = scope.filterByScope(allAlerts);
+  const setAlerts = setAllAlerts;
 
   const fetchAlerts = async () => {
     try {

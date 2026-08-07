@@ -1,30 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useSecurityPosture } from '../hooks/useSecurity';
-import { useCloudStore } from '../state/cloudStore';
+import { useCloudScope } from '../hooks/useCloudScope';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
 import { ShieldAlert, ShieldCheck, AlertTriangle, Info, RefreshCw, ExternalLink, Filter, Wrench, Loader2 } from 'lucide-react';
 
 export const SecurityPosturePage = () => {
   const navigate = useNavigate();
-  const { data: accounts } = useCloudAccounts();
-  const selectedAccountId = useCloudStore(state => state.selectedAccountId);
-  const setSelectedAccountId = useCloudStore(state => state.setSelectedAccountId);
+  // Scope-aware account resolution (see useCloudScope) — keeps this tab on the
+  // provider the user drilled into instead of defaulting to accounts[0].
+  const scope = useCloudScope();
+  const accounts = scope.scopedAccounts;
+  const selectedAccountId = scope.accountId;
+  const setSelectedAccountId = scope.setAccountScope;
 
   // Filters
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
 
-  useEffect(() => {
-    if (!selectedAccountId && accounts && accounts.length > 0) {
-      setSelectedAccountId(accounts[0].id);
-    }
-  }, [accounts, selectedAccountId, setSelectedAccountId]);
-
   const { data: posture, isLoading, isError, refetch, isRefetching } = useSecurityPosture(selectedAccountId);
 
-  const selectedAccount = accounts?.find(a => a.id === selectedAccountId);
+  const selectedAccount = scope.account;
 
   if (isLoading) {
     return (

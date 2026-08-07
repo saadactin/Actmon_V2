@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCloudAccounts, useDeleteCloudAccount } from '../hooks/useCloudAccounts';
+import { useCloudScope } from '../hooks/useCloudScope';
 import { CloudAccount } from '../types/cloud';
 import { useCloudStore } from '../state/cloudStore';
 import { Cloud, Trash2, Loader2 } from 'lucide-react';
@@ -16,9 +17,12 @@ function providerBadgeClass(provider: string): string {
 }
 
 export const CloudAccountList = () => {
-  const { data: accounts, isLoading } = useCloudAccounts();
+  const { isLoading } = useCloudAccounts();
   const { mutate: deleteAccount } = useDeleteCloudAccount();
   const { selectedAccountId, setSelectedAccountId } = useCloudStore();
+  // Only list accounts for the provider currently scoped (all when unscoped).
+  const scope = useCloudScope();
+  const accounts = scope.scopedAccounts;
   const { canHere } = usePermissions();
   const navigate = useNavigate();
 

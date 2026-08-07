@@ -14,3 +14,8 @@ export const createCloudAccount = async (payload: CloudAccountCreatePayload): Pr
 export const deleteCloudAccount = async (accountId: string): Promise<void> => {
   await cloudAxios.delete(`/accounts/${accountId}`);
 };
+
+export const getAccountDiagnostics = async (accountId: string): Promise<any> => {
+  const { data } = await cloudAxios.get(`/accounts/${accountId}/diagnostics`);
+  return data;
+};

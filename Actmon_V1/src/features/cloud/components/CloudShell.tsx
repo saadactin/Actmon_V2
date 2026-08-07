@@ -1,14 +1,16 @@
 import React from 'react';
-import { NavLink, Outlet, useLocation, useParams } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Cloud, RefreshCw, Plus, LayoutDashboard, Server, DollarSign,
-  ShieldAlert, Share2, ClipboardCheck, Bell,
+  ShieldAlert, Share2, ClipboardCheck, Bell, Filter, X,
 } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
 import { useTriggerAllDiscovery } from '../hooks/useDiscovery';
 import { useCloudStore } from '../state/cloudStore';
+import { useCloudScope } from '../hooks/useCloudScope';
+import { keyFromSlug, providerKeyOf } from '../utils/providerScope';
 import { DrawerPanel } from '../../../components/ui/DrawerPanel';
 import { AddCloudAccountForm } from './AddCloudAccountForm';
 import { DiscoveryWatcher } from './DiscoveryWatcher';
@@ -37,8 +39,36 @@ const useHideChrome = () => {
   return isProviderChooser || isProviderAccountsList;
 };
 
+/**
+ * Mirror the provider/account in the URL into the persisted scope.
+ *
+ * The tab bar links to flat routes (/cloud/cost, /cloud/resources, …) which carry
+ * no provider segment, so without this the scope would be lost the moment you
+ * left the account dashboard. Landing on /cloud (the chooser) clears the scope,
+ * which is what makes "All providers" the natural reset.
+ */
+const useSyncScopeFromUrl = () => {
+  const { pathname } = useLocation();
+  const { provider: providerSlug, accountId: routeAccountId } = useParams();
+  const setProviderScope = useCloudStore((s) => s.setScopeProviderKey);
+  const setAccountScope = useCloudStore((s) => s.setSelectedAccountId);
+  const clearScope = useCloudStore((s) => s.clearScope);
+
+  React.useEffect(() => {
+    // Provider chooser is the "everything" view — drop any previous scope.
+    if (pathname.replace(/\/+$/, '') === '/cloud') {
+      clearScope();
+      return;
+    }
+    const key = keyFromSlug(providerSlug);
+    if (key) setProviderScope(key);
+    if (routeAccountId) setAccountScope(routeAccountId);
+  }, [pathname, providerSlug, routeAccountId, setProviderScope, setAccountScope, clearScope]);
+};
+
 export const CloudShell: React.FC = () => {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { data: accounts } = useCloudAccounts();
   const { data: resources } = useAllResources();
   const isDrawerOpen = useCloudStore((s) => s.isAddAccountDrawerOpen);
@@ -50,15 +80,21 @@ export const CloudShell: React.FC = () => {
   const canScan = canHere('execute');
   const hideChrome = useHideChrome();
   const { accountId: routeAccountId } = useParams();
+  useSyncScopeFromUrl();
+  const scope = useCloudScope();
 
   const isAccountScoped = !!routeAccountId;
   const scopedAccount = isAccountScoped ? (accounts || []).find((a: any) => a.id === routeAccountId) : null;
 
-  const accountCount = accounts?.length ?? 0;
+  // Counts follow the scope: inside a provider, only that provider's accounts and
+  // resources are counted, so the header never contradicts the tab content.
+  const accountCount = scope.isScoped ? scope.scopedAccounts.length : (accounts?.length ?? 0);
   const resourceCount = isAccountScoped
     ? (resources || []).filter((r: any) => r.account_id === routeAccountId).length
-    : resources?.length ?? 0;
-  const providers = Array.from(new Set((accounts || []).map((a: any) => a.provider)));
+    : scope.filterByScope(resources as any[]).length;
+  const providers = Array.from(
+    new Set((scope.isScoped ? scope.scopedAccounts : accounts || []).map((a: any) => providerKeyOf(a.provider))),
+  );
   const scanning = scanAllPending || activeJobCount > 0;
 
   return (
@@ -77,15 +113,30 @@ export const CloudShell: React.FC = () => {
               <Cloud size={24} className="text-sky-200" />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight">
-                {isAccountScoped ? (scopedAccount?.account_name || 'Account') : 'Cloud Dashboard'}
+              <h1 className="text-2xl font-black tracking-tight flex items-center gap-2.5 flex-wrap">
+                {isAccountScoped
+                  ? (scopedAccount?.account_name || 'Account')
+                  : scope.isScoped ? `${scope.providerKey} Cloud` : 'Cloud Dashboard'}
+                {/* Active scope chip — makes it obvious every tab is filtered, and
+                    gives a one-click way back to the all-providers view. */}
+                {scope.isScoped && (
+                  <button
+                    onClick={() => { scope.clearScope(); navigate('/cloud'); }}
+                    title="Showing one provider — click to view all providers"
+                    className="group flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-all"
+                    style={{ background: 'rgba(56,189,248,0.18)', border: '1px solid rgba(56,189,248,0.45)' }}>
+                    <Filter size={11} className="text-sky-200" />
+                    <span className="text-sky-100">{scope.providerKey} only</span>
+                    <X size={11} className="text-sky-300 group-hover:text-white" />
+                  </button>
+                )}
               </h1>
               <p className="text-sky-300 text-sm mt-0.5">
                 {isAccountScoped
                   ? `${scopedAccount?.provider || routeAccountId} · ${scopedAccount?.tenant_or_region || scopedAccount?.environment || ''}`
                   : (
                     <>
-                      Multi-Cloud Discovery
+                      {scope.isScoped ? `${scope.providerKey} Discovery` : 'Multi-Cloud Discovery'}
                       {accountCount > 0 && ` — ${accountCount} account${accountCount > 1 ? 's' : ''}`}
                       {providers.length > 0 && ` · ${providers.join(', ')}`}
                     </>

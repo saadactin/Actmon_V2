@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import uuid
-from typing import List
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_account_service
+from app.api.deps import get_account_service, get_resource_service
 from app.schemas.cloud_account import CloudAccountCreate, CloudAccountResponse
 from app.services.cloud_account_service import CloudAccountService
+from app.services.resource_service import ResourceService
 
 router = APIRouter(prefix="/cloud/accounts", tags=["Cloud Accounts"])
 
@@ -46,6 +47,30 @@ async def get_cloud_account(
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     return account
+
+
+@router.get("/{account_id}/diagnostics")
+async def get_account_diagnostics(
+    account_id: uuid.UUID,
+    svc: CloudAccountService = Depends(get_account_service),
+    res_svc: ResourceService = Depends(get_resource_service),
+) -> Dict[str, Any]:
+    """Why this account's cost and/or resources look the way they do — real
+    reasons (credentials, permissions, network, no data, scan status), never
+    a guess. Backs the "why is this NA/empty" popup on Cost and Resources."""
+    account = await svc.get_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    from app.services.cost_service import get_cost_diagnostic
+
+    return {
+        "account_id": str(account_id),
+        "account_name": account.account_name,
+        "provider": account.provider,
+        "cost": get_cost_diagnostic(account_id),
+        "resources": await res_svc.get_scan_diagnostic(account_id),
+    }
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

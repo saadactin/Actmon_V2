@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useCloudAccounts } from '../hooks/useCloudAccounts';
-import { useCloudStore } from '../state/cloudStore';
+import { useCloudScope } from '../hooks/useCloudScope';
 import { CloudProviderSelector } from '../components/CloudProviderSelector';
 import { CheckCircle, AlertTriangle, Download, ShieldCheck, ClipboardCheck, Loader2, Info, Clock } from 'lucide-react';
 import { cloudAxios } from '../api/axios';
@@ -34,9 +33,11 @@ const getScoreBadgeClass = (score: number | null) => {
 
 export const CompliancePage = () => {
   const navigate = useNavigate();
-  const { data: accounts } = useCloudAccounts();
-  const selectedAccountId = useCloudStore(state => state.selectedAccountId);
-  const setSelectedAccountId = useCloudStore(state => state.setSelectedAccountId);
+  // Scope-aware (see useCloudScope) — compliance reports the chosen provider.
+  const scope = useCloudScope();
+  const accounts = scope.scopedAccounts;
+  const selectedAccountId = scope.accountId;
+  const setSelectedAccountId = scope.setAccountScope;
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -61,12 +62,6 @@ export const CompliancePage = () => {
   const handleDownloadPDF = () => {
     window.print();
   };
-
-  useEffect(() => {
-    if (!selectedAccountId && accounts && accounts.length > 0) {
-      setSelectedAccountId(accounts[0].id);
-    }
-  }, [accounts, selectedAccountId, setSelectedAccountId]);
 
   useEffect(() => {
     if (selectedAccountId) {

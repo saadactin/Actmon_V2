@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useResources } from '../hooks/useResources';
+import { useAccountDiagnostics } from '../hooks/useCloudAccounts';
+import { DiagnosticModal, DiagnosticItem } from './DiagnosticModal';
 import {
   Server, HardDrive, SquareFunction, Database, Container, Scale, Inbox,
   Megaphone, Globe, Lock, Shield, User, Bot, Brain, BookOpen, Cloud,
-  Search, MapPin, ChevronUp, ChevronDown, ChevronRight, Loader2,
+  Search, MapPin, ChevronUp, ChevronDown, ChevronRight, Loader2, Link2, Unlink,
+  HelpCircle, Inbox as EmptyIcon,
 } from 'lucide-react';
+
+// Resource types that represent detachable block storage across providers —
+// these are the only ones with a meaningful Attached/Unattached state.
+const STORAGE_TYPES = new Set(['BlockVolume', 'ManagedDisk', 'EBSVolume']);
 
 interface Props {
   accountId: string | null;
@@ -41,10 +48,18 @@ const TYPE_META: Record<string, { Icon: LucideIcon; tone: PillTone }> = {
   BedrockModel:         { Icon: Bot,            tone: 'green' },
   BedrockAgent:         { Icon: Brain,          tone: 'orange' },
   BedrockKnowledgeBase: { Icon: BookOpen,       tone: 'blue' },
+  BlockVolume:          { Icon: HardDrive,      tone: 'orange' },
+  ManagedDisk:          { Icon: HardDrive,      tone: 'orange' },
+  EBSVolume:            { Icon: HardDrive,      tone: 'orange' },
 };
 
 function getMeta(type: string): { Icon: LucideIcon; tone: PillTone } {
   return TYPE_META[type] || { Icon: Cloud, tone: 'gray' };
+}
+
+function _isStopped(status?: string | null): boolean {
+  const s = (status || '').toLowerCase();
+  return s.includes('stop') || s.includes('deallocat');
 }
 
 function statusPill(status?: string | null): { pill: string; dot: string } {
@@ -63,8 +78,11 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
+  const [attachFilter, setAttachFilter] = useState<'All' | 'Attached' | 'Unattached'>('All');
   const [sortKey, setSortKey] = useState<'resource_name' | 'resource_type' | 'region_or_zone' | 'status'>('resource_type');
   const [sortAsc, setSortAsc] = useState(true);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const { data: diagnostics, isLoading: diagnosticsLoading } = useAccountDiagnostics(accountId, showDiagnostic);
 
   if (!accountId) return null;
 
@@ -77,10 +95,58 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
     );
   }
 
+  // Zero resources for the whole account (not just a filtered-down view) —
+  // explain why instead of a bare, unexplained empty table.
+  if ((resources || []).length === 0) {
+    const resourceDiagItems: DiagnosticItem[] = diagnostics?.resources
+      ? [{
+          scope: diagnostics.account_name || 'Resources',
+          provider: diagnostics.provider,
+          category: diagnostics.resources.status,
+          message: diagnostics.resources.message
+            || (diagnostics.resources.status === 'ok'
+              ? `Discovery completed successfully (${diagnostics.resources.resources_found ?? 0} resources found) — if the list still looks empty, try refreshing.`
+              : 'No further detail was recorded.'),
+        }]
+      : [];
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-16 px-6">
+        <EmptyIcon size={40} className="text-gray-300 mb-3" />
+        <h3 className="text-base font-semibold text-gray-900">No Resources Found</h3>
+        <p className="text-sm text-gray-500 mt-1 max-w-md">
+          No resources have been discovered yet for this account.
+        </p>
+        <button
+          onClick={() => setShowDiagnostic(true)}
+          className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700"
+        >
+          <HelpCircle size={14} /> Why is this empty?
+        </button>
+        {showDiagnostic && (
+          <DiagnosticModal
+            title="Why are there no resources?"
+            items={
+              diagnosticsLoading
+                ? [{ scope: 'Loading…', category: 'unknown', message: 'Fetching diagnostic information…' }]
+                : resourceDiagItems.length > 0
+                  ? resourceDiagItems
+                  : [{ scope: 'Resources', category: 'unknown', message: 'No diagnostic information could be retrieved for this account.' }]
+            }
+            onClose={() => setShowDiagnostic(false)}
+          />
+        )}
+      </div>
+    );
+  }
+
   const allTypes = ['All', ...Array.from(new Set((resources || []).map(r => r.resource_type))).sort()];
+  const hasStorage = (resources || []).some(r => STORAGE_TYPES.has(r.resource_type));
+  const attachedCount = (resources || []).filter(r => r.config?.attachment_status === 'Attached').length;
+  const unattachedCount = (resources || []).filter(r => r.config?.attachment_status === 'Unattached').length;
 
   const filtered = (resources || [])
     .filter(r => typeFilter === 'All' || r.resource_type === typeFilter)
+    .filter(r => attachFilter === 'All' || r.config?.attachment_status === attachFilter)
     .filter(r => !search || r.resource_name.toLowerCase().includes(search.toLowerCase()) || r.resource_type.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
       const av = (a as any)[sortKey] || '';
@@ -136,6 +202,34 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
         })}
       </div>
 
+      {/* Attach / detach filter — only relevant when storage resources exist */}
+      {hasStorage && (
+        <div className="flex flex-wrap gap-2">
+          {([
+            { key: 'All', label: 'All Storage', Icon: HardDrive, count: attachedCount + unattachedCount },
+            { key: 'Attached', label: 'Attached', Icon: Link2, count: attachedCount },
+            { key: 'Unattached', label: 'Unattached', Icon: Unlink, count: unattachedCount },
+          ] as const).map(({ key, label, Icon, count }) => {
+            const active = attachFilter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setAttachFilter(key)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+                  active ? PILL.orange : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                <span>{label}</span>
+                <span className={`rounded-full px-1.5 text-[11px] font-bold ${
+                  active ? 'bg-white/70' : 'bg-gray-100 text-gray-500'
+                }`}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
@@ -165,13 +259,16 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
                 <th className={thClass('status')} onClick={() => toggle('status')}>
                   Status{sortIndicator('status')}
                 </th>
+                {hasStorage && (
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Attached To</th>
+                )}
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-sm text-gray-500">
+                  <td colSpan={hasStorage ? 6 : 5} className="px-4 py-12 text-center text-sm text-gray-500">
                     No resources found. Try adjusting your filters.
                   </td>
                 </tr>
@@ -222,6 +319,31 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
                           {(item.status || 'NA').toUpperCase()}
                         </span>
                       </td>
+                      {/* Attached To */}
+                      {hasStorage && (
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {STORAGE_TYPES.has(item.resource_type) ? (
+                            item.config?.attachment_status === 'Attached' ? (
+                              <span className="inline-flex items-center gap-1.5 text-gray-700">
+                                <Link2 className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                                {item.config?.attached_to_name || item.config?.attached_to_id || 'Unknown'}
+                                {item.config?.attached_to_status && _isStopped(item.config.attached_to_status) && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 text-[9px] font-bold uppercase tracking-wide">
+                                    stopped
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-gray-400">
+                                <Unlink className="h-3.5 w-3.5 shrink-0" />
+                                Unattached
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      )}
                       {/* Arrow */}
                       <td className="px-4 py-3 text-center whitespace-nowrap">
                         <ChevronRight className="inline h-4 w-4 text-gray-400" />
@@ -239,9 +361,9 @@ export const ResourceTable: React.FC<Props> = ({ accountId }) => {
           <span className="text-xs text-gray-500">
             Showing <strong className="font-semibold text-gray-700">{filtered.length}</strong> of <strong className="font-semibold text-gray-700">{(resources || []).length}</strong> resources
           </span>
-          {search || typeFilter !== 'All' ? (
+          {search || typeFilter !== 'All' || attachFilter !== 'All' ? (
             <button
-              onClick={() => { setSearch(''); setTypeFilter('All'); }}
+              onClick={() => { setSearch(''); setTypeFilter('All'); setAttachFilter('All'); }}
               className="text-xs font-semibold text-blue-600 hover:text-blue-700"
             >
               Clear filters

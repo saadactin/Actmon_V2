@@ -212,7 +212,98 @@ class OCIProvider(BaseCloudProvider):
             return await loop.run_in_executor(None, _fetch)
         except Exception as exc:
             logger.warning("OCI cost API failed: %s", exc)
-            return []
+            raise
+
+    async def get_cost_by_resource(self) -> Dict[str, Dict[str, Any]]:
+        """OCI Usage API grouped by resourceId — real last-30-day spend per
+        resource OCID, keyed to match provider_resource_id in cloud_resources.
+        Resources OCI doesn't bill individually (e.g. VCNs, NSGs) simply never
+        appear here; callers show NA for those, never a guessed figure."""
+        import asyncio
+        from datetime import date, timedelta
+
+        def _fetch():
+            import oci
+
+            usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
+            today = date.today()
+            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT00:00:00Z")
+            request = oci.usage_api.models.RequestSummarizedUsagesDetails(
+                tenant_id=self.auth.tenancy_ocid,
+                time_usage_started=start,
+                time_usage_ended=end,
+                granularity="DAILY",
+                query_type="COST",
+                group_by=["resourceId"],
+            )
+            response = usage_client.request_summarized_usages(
+                request_summarized_usages_details=request
+            )
+            by_resource: Dict[str, Dict[str, Any]] = {}
+            for item in response.data.items or []:
+                rid = getattr(item, "resource_id", None)
+                if not rid:
+                    continue
+                row = by_resource.setdefault(
+                    rid, {"monthly_cost": 0.0, "currency": item.currency or None}
+                )
+                row["monthly_cost"] += float(item.computed_amount or 0)
+            for row in by_resource.values():
+                row["monthly_cost"] = round(row["monthly_cost"], 2)
+            return by_resource
+
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, _fetch)
+        except Exception as exc:
+            logger.warning("OCI per-resource cost query failed: %s", exc)
+            raise
+
+    async def get_cost_report(self, days: int = 30) -> List[Dict[str, Any]]:
+        """Real day-by-day, per-service spend from the OCI Usage API, for an
+        arbitrary lookback window."""
+        import asyncio
+        from datetime import date, timedelta
+
+        def _fetch():
+            import oci
+
+            usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
+            today = date.today()
+            start = (today - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
+            end = today.strftime("%Y-%m-%dT00:00:00Z")
+            request = oci.usage_api.models.RequestSummarizedUsagesDetails(
+                tenant_id=self.auth.tenancy_ocid,
+                time_usage_started=start,
+                time_usage_ended=end,
+                granularity="DAILY",
+                query_type="COST",
+                group_by=["service", "region"],
+            )
+            response = usage_client.request_summarized_usages(
+                request_summarized_usages_details=request
+            )
+            rows = []
+            for item in response.data.items or []:
+                started = getattr(item, "time_usage_started", None)
+                if not started:
+                    continue
+                rows.append({
+                    "date": str(started)[:10],
+                    "service": item.service or "Unknown",
+                    "region": getattr(item, "region", None) or None,
+                    "cost": round(float(item.computed_amount or 0), 4),
+                    "currency": item.currency or None,
+                })
+            return rows
+
+        loop = asyncio.get_event_loop()
+        try:
+            return await loop.run_in_executor(None, _fetch)
+        except Exception as exc:
+            logger.warning("OCI Usage API report query failed: %s", exc)
+            raise
 
     async def get_daily_costs(self) -> List[Dict[str, Any]]:
         """Real per-day spend for the last 30 days from the OCI Usage API."""
@@ -257,7 +348,7 @@ class OCIProvider(BaseCloudProvider):
             return await loop.run_in_executor(None, _fetch)
         except Exception as exc:
             logger.warning("OCI daily cost query failed: %s", exc)
-            return []
+            raise
 
     async def get_security_data(self) -> List[Dict[str, Any]]:
         """OCI Cloud Guard — fetch security problems across all compartments."""

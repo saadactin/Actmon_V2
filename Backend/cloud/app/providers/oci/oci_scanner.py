@@ -232,16 +232,47 @@ class OCIScanner:
 
         def _fetch():
             block = self._client_for_region(oci.core.BlockstorageClient, region)
+            compute = self._client_for_region(oci.core.ComputeClient, region)
             try:
                 volumes = oci.pagination.list_call_get_all_results(
                     block.list_volumes, compartment_id
                 ).data
             except Exception:
                 return []
+
+            # Map each volume to the instance holding it (if any), so the UI can
+            # filter Attached/Unattached and show which server is still paying
+            # for a volume attached to a stopped instance.
+            vol_instance: Dict[str, str] = {}
+            try:
+                for a in oci.pagination.list_call_get_all_results(
+                    compute.list_volume_attachments, compartment_id
+                ).data:
+                    if a.lifecycle_state == "DETACHED":
+                        continue
+                    vol_instance[a.volume_id] = a.instance_id
+            except Exception:
+                pass
+
+            instance_info: Dict[str, Dict[str, str]] = {}
+            if vol_instance:
+                try:
+                    for inst in oci.pagination.list_call_get_all_results(
+                        compute.list_instances, compartment_id
+                    ).data:
+                        instance_info[inst.id] = {
+                            "name": inst.display_name,
+                            "status": inst.lifecycle_state,
+                        }
+                except Exception:
+                    pass
+
             results = []
             for vol in volumes:
                 if vol.lifecycle_state in ("TERMINATED",):
                     continue
+                inst_id = vol_instance.get(vol.id)
+                inst = instance_info.get(inst_id) if inst_id else None
                 results.append(
                     {
                         "provider_resource_id": vol.id,
@@ -254,6 +285,10 @@ class OCIScanner:
                             "size_gb": vol.size_in_gbs,
                             "vpus_per_gb": vol.vpus_per_gb,
                             "is_auto_tune_enabled": vol.is_auto_tune_enabled,
+                            "attachment_status": "Attached" if inst_id else "Unattached",
+                            "attached_to_id": inst_id,
+                            "attached_to_name": inst["name"] if inst else None,
+                            "attached_to_status": inst["status"] if inst else None,
                         },
                         "metadata": {
                             "compartment_id": compartment_id,

@@ -82,6 +82,24 @@ class AzureScanner:
     def __init__(self, auth: AzureAuth) -> None:
         self.auth = auth
 
+    @staticmethod
+    def _vm_power_state(compute, vm_resource_id: str) -> str | None:
+        """Real power state (VM running/stopped/deallocated) for an ARM VM
+        resource ID. provisioning_state only reflects the last ARM operation
+        (e.g. 'Succeeded'), not whether the VM is actually on — this requires
+        the separate instanceView call. Best-effort: any failure leaves None."""
+        try:
+            rg = vm_resource_id.split("/resourceGroups/")[1].split("/")[0]
+            vm_name = vm_resource_id.split("/")[-1]
+            iv = compute.virtual_machines.instance_view(rg, vm_name)
+            return next(
+                (s.display_status for s in (iv.statuses or [])
+                 if s.code and s.code.startswith("PowerState/")),
+                None,
+            )
+        except Exception:
+            return None
+
     # ── Virtual Machines ─────────────────────────────────────────────────────
     async def _scan_vms(self) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
@@ -99,6 +117,7 @@ class AzureScanner:
             results = []
             for vm in compute.virtual_machines.list_all():
                 location = vm.location or "unknown"
+                power_state = self._vm_power_state(compute, vm.id)
                 # Try to get public IP if available
                 ip = None
                 try:
@@ -142,6 +161,7 @@ class AzureScanner:
                                 and vm.storage_profile.os_disk
                                 else None
                             ),
+                            "power_state": power_state,
                         },
                         "metadata": {
                             "resource_group": vm.id.split("/resourceGroups/")[1].split("/")[0]
@@ -151,6 +171,59 @@ class AzureScanner:
                         "cost_monthly": None,
                         "tags": tags,
                         "raw_data": {"id": vm.id, "name": vm.name, "location": location},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(None, _fetch)
+
+    # ── Managed Disks ────────────────────────────────────────────────────────
+    async def _scan_disks(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            from azure.mgmt.compute import ComputeManagementClient
+
+            compute = ComputeManagementClient(
+                self.auth.get_credential(), self.auth.subscription_id
+            )
+            disks = list(compute.disks.list())
+
+            # Resolve power state for each distinct VM a disk is attached to, so
+            # a disk attached to a STOPPED/deallocated VM can be flagged as still
+            # billing while idle. Best-effort: any failure just leaves it None.
+            attached_vm_ids = {d.managed_by for d in disks if d.managed_by}
+            vm_power_state: Dict[str, str | None] = {
+                vm_id: self._vm_power_state(compute, vm_id) for vm_id in attached_vm_ids
+            }
+
+            results = []
+            for disk in disks:
+                managed_by = disk.managed_by
+                results.append(
+                    {
+                        "provider_resource_id": disk.id,
+                        "resource_type": "ManagedDisk",
+                        "resource_name": disk.name,
+                        "region_or_zone": disk.location,
+                        "status": disk.provisioning_state,
+                        "ip_address": None,
+                        "config": {
+                            "disk_size_gb": disk.disk_size_gb,
+                            "sku": disk.sku.name if disk.sku else None,
+                            "os_type": getattr(disk.os_type, "value", None) if disk.os_type else None,
+                            # disk_state is Azure's own attachment field: Attached,
+                            # Unattached, Reserved, ActiveSAS, ActiveUpload, etc.
+                            "disk_state": getattr(disk, "disk_state", None),
+                            "attachment_status": "Attached" if managed_by else "Unattached",
+                            "attached_to_id": managed_by,
+                            "attached_to_name": managed_by.split("/")[-1] if managed_by else None,
+                            "attached_to_status": vm_power_state.get(managed_by) if managed_by else None,
+                        },
+                        "metadata": {"resource_group": _resource_group_of(disk.id)},
+                        "cost_monthly": None,
+                        "tags": disk.tags or {},
+                        "raw_data": {"id": disk.id, "name": disk.name},
                     }
                 )
             return results
@@ -317,6 +390,7 @@ class AzureScanner:
         # which are sub-resources not returned by resources.list()).
         for scanner_fn, label in [
             (self._scan_vms, "VMs"),
+            (self._scan_disks, "Disks"),
             (self._scan_storage, "Storage"),
             (self._scan_sql, "SQL"),
             (self._scan_aks, "AKS"),
