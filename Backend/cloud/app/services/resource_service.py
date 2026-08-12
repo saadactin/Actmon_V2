@@ -29,7 +29,13 @@ class ResourceService:
 
     def _apply_real_cost(self, resp: CloudResourceResponse, provider_resource_id: str,
                           cost_map: Dict[str, Dict[str, Any]]) -> None:
+        # Azure's Cost Management API returns ResourceId in a different case than
+        # ARM's resources.list() does, so an exact-match lookup silently misses
+        # every Azure resource. Fall back to a case-insensitive match (OCI/AWS
+        # ids are already consistent, so the exact hit short-circuits first).
         entry = cost_map.get(provider_resource_id)
+        if entry is None and provider_resource_id:
+            entry = cost_map.get(provider_resource_id.lower())
         if entry:
             resp.cost_monthly = entry["monthly_cost"]
 

@@ -6,13 +6,27 @@ import logging
 from typing import Any, Dict, List
 
 from app.providers.aws.aws_auth import AWSAuth
+from app.providers.scan_pool import scan_pool, is_denial, is_transient
 
 logger = logging.getLogger("cloud_svc.aws.scanner")
 
 
 class AWSScanner:
+    # Max scanner calls in flight across the region x service fan-out. Sized to
+    # keep the scan thread pool busy without building a backlog behind it.
+    _MAX_CONCURRENT_SCANS = 20
+
+    # Retries for dropped connections only (never for denials). Enough to get
+    # through the TLS aborts on this network: a DynamoDB ListTables that needed
+    # several attempts was otherwise being recorded as "no tables" while the
+    # account really had 21.
+    _TRANSIENT_ATTEMPTS = 4
+
     def __init__(self, auth: AWSAuth) -> None:
         self.auth = auth
+        # Scopes that failed to enumerate this run. Non-empty means the sweep
+        # is INCOMPLETE and must not be pruned against (see BaseCloudProvider).
+        self.scan_failures: list[str] = []
 
     # ── EC2 Instances ─────────────────────────────────────────────────────────
     async def _scan_ec2(self, region: str) -> List[Dict[str, Any]]:
@@ -63,7 +77,7 @@ class AWSScanner:
                         )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── EBS Volumes ───────────────────────────────────────────────────────────
     async def _scan_ebs(self, region: str) -> List[Dict[str, Any]]:
@@ -77,7 +91,12 @@ class AWSScanner:
                     for page in ec2.get_paginator("describe_volumes").paginate()
                     for vol in page.get("Volumes", [])
                 ]
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             if not volumes:
                 return []
@@ -149,7 +168,7 @@ class AWSScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── RDS Instances ─────────────────────────────────────────────────────────
     async def _scan_rds(self, region: str) -> List[Dict[str, Any]]:
@@ -192,7 +211,7 @@ class AWSScanner:
                     )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── S3 Buckets ────────────────────────────────────────────────────────────
     async def _scan_s3(self) -> List[Dict[str, Any]]:
@@ -257,7 +276,7 @@ class AWSScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Lambda Functions ──────────────────────────────────────────────────────
     async def _scan_lambda(self, region: str) -> List[Dict[str, Any]]:
@@ -305,7 +324,7 @@ class AWSScanner:
                     )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── EKS Clusters ─────────────────────────────────────────────────────────
     async def _scan_eks(self, region: str) -> List[Dict[str, Any]]:
@@ -315,7 +334,12 @@ class AWSScanner:
             eks = self.auth.get_client("eks", region)
             try:
                 names = eks.list_clusters().get("clusters", [])
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             results = []
             for name in names:
@@ -344,9 +368,11 @@ class AWSScanner:
                     )
                 except Exception as exc:
                     logger.warning("EKS describe_cluster %s failed: %s", name, exc)
+                    if is_transient(exc):
+                        raise
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── DynamoDB Tables ───────────────────────────────────────────────────
     async def _scan_dynamodb(self, region: str) -> List[Dict[str, Any]]:
@@ -356,7 +382,12 @@ class AWSScanner:
             ddb = self.auth.get_client("dynamodb", region)
             try:
                 paginator = ddb.get_paginator("list_tables")
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             results = []
             try:
@@ -395,9 +426,11 @@ class AWSScanner:
                             logger.warning("DynamoDB describe_table %s failed: %s", table_name, exc)
             except Exception as exc:
                 logger.warning("DynamoDB list_tables [%s] failed: %s", region, exc)
+                if is_transient(exc):
+                    raise
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── ELB / ALB ─────────────────────────────────────────────────────────────
     async def _scan_elb(self, region: str) -> List[Dict[str, Any]]:
@@ -411,7 +444,12 @@ class AWSScanner:
                     for page in elbv2.get_paginator("describe_load_balancers").paginate()
                     for lb in page.get("LoadBalancers", [])
                 ]
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             results = []
             for lb in lbs:
@@ -438,7 +476,7 @@ class AWSScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── VPCs ──────────────────────────────────────────────────────────────────
     async def _scan_vpc(self, region: str) -> List[Dict[str, Any]]:
@@ -452,7 +490,12 @@ class AWSScanner:
                     for page in ec2.get_paginator("describe_vpcs").paginate()
                     for vpc in page.get("Vpcs", [])
                 ]
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             results = []
             for vpc in vpcs:
@@ -482,7 +525,7 @@ class AWSScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Security Groups ───────────────────────────────────────────────────────
     async def _scan_security_group(self, region: str) -> List[Dict[str, Any]]:
@@ -496,7 +539,12 @@ class AWSScanner:
                     for page in ec2.get_paginator("describe_security_groups").paginate()
                     for sg in page.get("SecurityGroups", [])
                 ]
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             results = []
             for sg in sgs:
@@ -523,7 +571,7 @@ class AWSScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── IAM Roles ─────────────────────────────────────────────────────────────
     async def _scan_iam_role(self) -> List[Dict[str, Any]]:
@@ -537,7 +585,12 @@ class AWSScanner:
                     for page in iam.get_paginator("list_roles").paginate()
                     for role in page.get("Roles", [])
                 ]
-            except Exception:
+            except Exception as exc:
+                # A dropped connection is not an empty account — let it reach
+                # run_scanner, which retries transient failures. Swallowing it
+                # here is what recorded 21 real DynamoDB tables as "none".
+                if is_transient(exc):
+                    raise
                 return []
             results = []
             for role in roles:
@@ -567,7 +620,7 @@ class AWSScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── API Gateway ───────────────────────────────────────────────────────────
     async def _scan_apigateway(self, region: str) -> List[Dict[str, Any]]:
@@ -635,7 +688,7 @@ class AWSScanner:
 
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Bedrock ───────────────────────────────────────────────────────────────
     async def _scan_bedrock(self, region: str) -> List[Dict[str, Any]]:
@@ -728,7 +781,7 @@ class AWSScanner:
 
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── All regions ───────────────────────────────────────────────────────────
     async def _get_regions(self) -> List[str]:
@@ -740,7 +793,7 @@ class AWSScanner:
             return [r["RegionName"] for r in resp.get("Regions", [])]
 
         try:
-            return await loop.run_in_executor(None, _fetch)
+            return await loop.run_in_executor(scan_pool(), _fetch)
         except Exception:
             return [self.auth.region]
 
@@ -755,6 +808,7 @@ class AWSScanner:
 
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
+        self.scan_failures = []
 
         async def _emit(batch):
             if batch and on_batch:
@@ -788,16 +842,57 @@ class AWSScanner:
         # Build list of async tasks for per-region scanning
         tasks = []
 
+        # 18 regions x 11 services is ~200 blocking calls. Dispatching them all
+        # at once just queues them in the thread pool while flooding DNS/TLS, and
+        # each stalled call burns its full connect timeout plus retries. Bounding
+        # the in-flight count keeps the pool saturated without the pile-up, and
+        # lets results stream out steadily rather than in one late burst.
+        sem = asyncio.Semaphore(self._MAX_CONCURRENT_SCANS)
+
+        # A denied IAM action is denied account-wide, not per-region, so once a
+        # service comes back AccessDenied there is no point paying for the same
+        # call in the other 17 regions. Bedrock and API Gateway alone were
+        # burning dozens of slow round trips to re-learn the same denial.
+        denied_services: set = set()
+
         async def run_scanner(scanner_fn, region: str, label: str):
-            try:
-                results = await scanner_fn(region)
-                logger.info("AWS %s [%s]: found %d resources", label, region, len(results))
-                await _emit(results)
-                return results
-            except Exception as exc:
+            if label in denied_services:
+                return []
+            async with sem:
+                if label in denied_services:  # denial may have landed while queued
+                    return []
+                last: Exception | None = None
+                for attempt in range(self._TRANSIENT_ATTEMPTS):
+                    try:
+                        results = await scanner_fn(region)
+                        logger.info("AWS %s [%s]: found %d resources", label, region, len(results))
+                        await _emit(results)
+                        return results
+                    except Exception as exc:
+                        last = exc
+                        if is_denial(exc):
+                            break
+                        if attempt == self._TRANSIENT_ATTEMPTS - 1 or not is_transient(exc):
+                            break
+                        backoff = 2 * (attempt + 1)
+                        logger.info(
+                            "AWS %s [%s] hit a dropped connection (attempt %d/%d) — retrying "
+                            "in %ss so a blocked call is not mistaken for an empty result.",
+                            label, region, attempt + 1, self._TRANSIENT_ATTEMPTS, backoff,
+                        )
+                        await asyncio.sleep(backoff)
+
+                exc = last  # type: ignore[assignment]
+                msg = str(exc)
                 logger.warning("AWS %s scan [%s] failed: %s", label, region, exc)
-                if "AccessDenied" in str(exc) or "UnauthorizedOperation" in str(exc):
-                    permission_errors.append(str(exc))
+                self.scan_failures.append(f"{label} [{region}]: {msg[:160]}")
+                if is_denial(exc):
+                    permission_errors.append(msg)
+                    denied_services.add(label)
+                    logger.info(
+                        "AWS %s is not permitted for these credentials — skipping it "
+                        "in the remaining regions.", label,
+                    )
                 return []
 
         for region in regions:

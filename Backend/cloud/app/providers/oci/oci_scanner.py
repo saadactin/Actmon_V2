@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 import oci
 
 from app.providers.oci.oci_auth import OCIAuth
+from app.providers.scan_pool import scan_pool
 
 logger = logging.getLogger("cloud_svc.oci.scanner")
 
@@ -22,12 +23,22 @@ class OCIScanner:
         self.config = auth.get_config()
         # compartment OCID -> readable name, populated during compartment discovery
         self._compartment_names: Dict[str, str] = {}
+        # Scopes (region/compartment/service) whose enumeration failed this run.
+        # Non-empty means the sweep is INCOMPLETE and its result must never be
+        # treated as the full inventory — pruning against a partial sweep would
+        # delete live resources that simply couldn't be listed.
+        self.scan_failures: List[str] = []
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     # (connect, read) seconds. Without this an unreachable service/region hangs
     # the socket indefinitely and blocks the whole parallel scan from finishing.
     _CLIENT_TIMEOUT = (10, 60)
+
+    # Max scanner calls in flight at once across the whole region × compartment
+    # fan-out. Keeps concurrent TLS/DNS well below the level that makes the
+    # local network stack start refusing connections.
+    _MAX_CONCURRENT_SCANS = 8
 
     @staticmethod
     def _retry_strategy():
@@ -70,7 +81,7 @@ class OCIScanner:
             return [s.region_name for s in subscriptions if s.status == "READY"]
 
         try:
-            regions = await loop.run_in_executor(None, _fetch)
+            regions = await loop.run_in_executor(scan_pool(), _fetch)
             logger.info("OCI subscribed regions: %s", regions)
             return regions or [self.auth.region]
         except Exception as exc:
@@ -106,7 +117,7 @@ class OCIScanner:
             ]
             return ids, names
 
-        ids, names = await loop.run_in_executor(None, _fetch)
+        ids, names = await loop.run_in_executor(scan_pool(), _fetch)
         self._compartment_names = names
         return ids
 
@@ -121,7 +132,10 @@ class OCIScanner:
                 instances = oci.pagination.list_call_get_all_results(
                     compute.list_instances, compartment_id
                 ).data
-            except Exception:
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"Compute [{region}]: {str(exc)[:160]}")
                 return []
             active = [i for i in instances if i.lifecycle_state not in ("TERMINATED",)]
             if not active:
@@ -138,7 +152,7 @@ class OCIScanner:
             vol_size: Dict[str, float] = {}          # block volume id -> GB
             try:
                 for v in oci.pagination.list_call_get_all_results(
-                    block.list_volumes, compartment_id
+                    block.list_volumes, compartment_id=compartment_id
                 ).data:
                     vol_size[v.id] = v.size_in_gbs
             except Exception:
@@ -223,7 +237,7 @@ class OCIScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Block Volumes ─────────────────────────────────────────────────────────
 
@@ -235,9 +249,12 @@ class OCIScanner:
             compute = self._client_for_region(oci.core.ComputeClient, region)
             try:
                 volumes = oci.pagination.list_call_get_all_results(
-                    block.list_volumes, compartment_id
+                    block.list_volumes, compartment_id=compartment_id
                 ).data
-            except Exception:
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"BlockVolume [{region}]: {str(exc)[:160]}")
                 return []
 
             # Map each volume to the instance holding it (if any), so the UI can
@@ -302,7 +319,7 @@ class OCIScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Object Storage Buckets ────────────────────────────────────────────────
 
@@ -316,7 +333,10 @@ class OCIScanner:
                 buckets = oci.pagination.list_call_get_all_results(
                     ns_client.list_buckets, namespace, compartment_id
                 ).data
-            except Exception:
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"ObjectStorage [{region}]: {str(exc)[:160]}")
                 return []
             results = []
             for b in buckets:
@@ -354,7 +374,7 @@ class OCIScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Autonomous Databases ──────────────────────────────────────────────────
 
@@ -406,7 +426,7 @@ class OCIScanner:
                 logger.warning("OCI ADB scan failed [%s/%s]: %s", region, compartment_id[:20], exc)
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── VCN (Virtual Cloud Network) ───────────────────────────────────────────
 
@@ -419,7 +439,10 @@ class OCIScanner:
                 vcns = oci.pagination.list_call_get_all_results(
                     net.list_vcns, compartment_id
                 ).data
-            except Exception:
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"VCN [{region}]: {str(exc)[:160]}")
                 return []
             results = []
             for vcn in vcns:
@@ -452,7 +475,7 @@ class OCIScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Network Security Groups (NSG) ─────────────────────────────────────────
 
@@ -463,9 +486,12 @@ class OCIScanner:
             net = self._client_for_region(oci.core.VirtualNetworkClient, region)
             try:
                 nsgs = oci.pagination.list_call_get_all_results(
-                    net.list_network_security_groups, compartment_id
+                    net.list_network_security_groups, compartment_id=compartment_id
                 ).data
-            except Exception:
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"NSG [{region}]: {str(exc)[:160]}")
                 return []
             results = []
             for nsg in nsgs:
@@ -508,7 +534,7 @@ class OCIScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Load Balancers ────────────────────────────────────────────────────────
 
@@ -608,7 +634,7 @@ class OCIScanner:
 
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── OCI Functions ─────────────────────────────────────────────────────────
 
@@ -672,7 +698,7 @@ class OCIScanner:
                 logger.debug("OCI Functions Applications scan [%s/%s]: %s", region, compartment_id[:20], exc)
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── OKE (Container Engine for Kubernetes) ─────────────────────────────────
 
@@ -687,7 +713,10 @@ class OCIScanner:
                 clusters = oci.pagination.list_call_get_all_results(
                     oke_client.list_clusters, compartment_id
                 ).data
-            except Exception:
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"OKE [{region}]: {str(exc)[:160]}")
                 return []
             results = []
             for cluster in clusters:
@@ -737,7 +766,7 @@ class OCIScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── API Gateway ───────────────────────────────────────────────────────────
 
@@ -798,7 +827,7 @@ class OCIScanner:
                 logger.debug("OCI API Gateway scan [%s/%s]: %s", region, compartment_id[:20], exc)
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── IAM Groups & Policies (global, no region loop) ────────────────────────
 
@@ -885,7 +914,7 @@ class OCIScanner:
 
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Main scan_all ─────────────────────────────────────────────────────────
 
@@ -931,6 +960,12 @@ class OCIScanner:
                 except Exception as cb_exc:
                     logger.warning("OCI on_batch callback failed: %s", cb_exc)
 
+        self.scan_failures = []
+        if not regions:
+            self.scan_failures.append("region discovery returned nothing")
+        if not compartments:
+            self.scan_failures.append("compartment discovery returned nothing")
+
         # IAM is global (single region call)
         try:
             iam_resources = await self._scan_iam_groups()
@@ -939,6 +974,7 @@ class OCIScanner:
             await _emit(iam_resources)
         except Exception as exc:
             logger.warning("OCI IAM scan failed: %s", exc)
+            self.scan_failures.append(f"IAM: {exc}")
             if "NotAuthorizedOrNotFound" in str(exc) or "Authorization failed" in str(exc):
                 permission_errors.append(str(exc))
 
@@ -956,21 +992,33 @@ class OCIScanner:
             (self._scan_api_gateway,    "APIGateway"),
         ]
 
+        # regions × compartments × scanners is a large product (20 compartments
+        # over 2 regions with 10 scanners = 400). Launching all of them at once
+        # opens hundreds of simultaneous TLS connections and DNS lookups, which
+        # in practice swamps the local resolver and trips connection-aborting
+        # security software — surfacing as getaddrinfo failures, SSL EOFs and
+        # ConnectionAborted(10053) rather than any real OCI error. Bounding the
+        # in-flight count makes the sweep reliable (and usually no slower, since
+        # the failures were costing full retry/timeout cycles).
+        sem = asyncio.Semaphore(self._MAX_CONCURRENT_SCANS)
+
         async def _run(scanner_fn, compartment_id: str, region: str, label: str):
-            try:
-                results = await scanner_fn(compartment_id, region)
-                if results:
-                    logger.info(
-                        "OCI %s [%s/%s]: %d resources",
-                        label, region, compartment_id[:20], len(results),
-                    )
-                    await _emit(results)
-                return results
-            except Exception as exc:
-                logger.warning("OCI %s [%s/%s] failed: %s", label, region, compartment_id[:20], exc)
-                if "NotAuthorizedOrNotFound" in str(exc) or "Authorization failed" in str(exc):
-                    permission_errors.append(str(exc))
-                return []
+            async with sem:
+                try:
+                    results = await scanner_fn(compartment_id, region)
+                    if results:
+                        logger.info(
+                            "OCI %s [%s/%s]: %d resources",
+                            label, region, compartment_id[:20], len(results),
+                        )
+                        await _emit(results)
+                    return results
+                except Exception as exc:
+                    logger.warning("OCI %s [%s/%s] failed: %s", label, region, compartment_id[:20], exc)
+                    self.scan_failures.append(f"{label} [{region}]: {str(exc)[:160]}")
+                    if "NotAuthorizedOrNotFound" in str(exc) or "Authorization failed" in str(exc):
+                        permission_errors.append(str(exc))
+                    return []
 
         tasks = [
             _run(scanner_fn, cid, region, label)
@@ -985,6 +1033,12 @@ class OCIScanner:
                 all_resources.extend(results)
 
         logger.info("OCI total resources discovered: %d", len(all_resources))
+        if self.scan_failures:
+            logger.warning(
+                "OCI sweep INCOMPLETE — %d scope(s) failed to enumerate; the caller must "
+                "not prune against this result. First few: %s",
+                len(self.scan_failures), self.scan_failures[:3],
+            )
 
         if len(all_resources) == 0 and len(permission_errors) > 0:
             raise PermissionError("Missing required IAM permissions (Read-Only). Oracle Cloud returned NotAuthorizedOrNotFound during the scan.")

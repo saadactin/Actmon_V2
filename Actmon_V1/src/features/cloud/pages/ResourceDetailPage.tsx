@@ -6,9 +6,10 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 import {
   ArrowLeft, Loader2, AlertTriangle, Activity, BarChart3, Braces,
   Calendar, ClipboardList, Clock, Cloud, Cpu, Database, DollarSign,
-  Fingerprint, Globe, HardDrive, Inbox, MapPin, Megaphone, Package,
+  Fingerprint, Globe, HardDrive, Inbox, Info, MapPin, Megaphone, Package,
   Scale, Server, Settings, Boxes, Table2, Tag, Tags, Timer, Zap,
 } from 'lucide-react';
+import { DiagnosticModal } from '../components/DiagnosticModal';
 import type { LucideIcon } from 'lucide-react';
 
 
@@ -213,6 +214,43 @@ function TypeSpecificPanel({ resource }: { resource: any }) {
   return null;
 }
 
+/** Empty metrics panel that can explain itself, instead of a dead-end message. */
+function MetricsEmpty({ diagnostic, source }: { diagnostic?: any; source?: string | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-16 px-6">
+      <BarChart3 size={40} className="text-gray-300 mb-3" />
+      <h3 className="text-base font-semibold text-gray-900">No Metrics Available</h3>
+      <p className="text-sm text-gray-500 mt-1 max-w-md">
+        No monitoring datapoints were returned for this resource in the last 24 hours.
+      </p>
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700"
+      >
+        <Info size={14} /> Why are metrics unavailable?
+      </button>
+      {open && (
+        <DiagnosticModal
+          title="Why are metrics unavailable?"
+          items={[
+            diagnostic
+              ? { scope: source || 'Monitoring', category: diagnostic.category, message: diagnostic.message }
+              : {
+                  scope: source || 'Monitoring',
+                  category: 'unknown',
+                  message:
+                    'No diagnostic detail was returned by the backend for this resource. Re-open the tab to retry, ' +
+                    'and check the cloud service logs if it keeps happening.',
+                },
+          ]}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 function MonitoringTabContent({ resourceId }: { resourceId: string }) {
   const { data: metricsData, isLoading, isError } = useQuery({
     queryKey: ['resource-metrics', resourceId],
@@ -232,7 +270,7 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
   }
 
   if (isError || !metricsData || !metricsData.metrics) {
-    return <Empty icon={BarChart3} msg="No metrics available for this resource." />;
+    return <MetricsEmpty diagnostic={metricsData?.diagnostic} />;
   }
 
   const metrics    = metricsData.metrics as Record<string, Array<{ timestamp: string; value: number }>>;
@@ -244,8 +282,18 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
   const hasAnyData  = metricNames.some(name => (metrics[name] || []).length > 0);
 
   if (metricNames.length === 0 || !hasAnyData) {
-    return <Empty icon={BarChart3} msg="No metrics available for this resource." />;
+    return <MetricsEmpty diagnostic={metricsData.diagnostic} source={source} />;
   }
+
+  // Y-axis / tooltip number formatting — "Execute Count" can run into the
+  // millions, which needs abbreviating (1.2M) rather than a wall of zeros.
+  const formatCompactNumber = (value: number): string => {
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+    if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (abs >= 1_000) return `${(value / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}K`;
+    return Number.isInteger(value) ? `${value}` : value.toFixed(2);
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -300,42 +348,64 @@ function MonitoringTabContent({ resourceId }: { resourceId: string }) {
           strokeColor = '#f59e0b';
         }
 
+        // The gradient id is derived from the metric name (e.g. "CPU Utilization
+        // (%)"), which contains spaces/parens — invalid inside a url(#...) fill
+        // reference. An unresolvable reference silently falls back to solid
+        // black, which is why every chart was rendering as a black wedge.
+        const gradientId = `chart-grad-${metricName.replace(/[^a-zA-Z0-9]/g, '-')}`;
+
         return (
           <div key={metricName} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
             <div className="flex items-center justify-between gap-4 mb-3">
               <h4 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider">
-                <Activity size={16} className="text-blue-600" />
+                <Activity size={16} style={{ color: strokeColor }} />
                 {metricName}
                 <span className="text-[11px] font-normal normal-case tracking-normal text-gray-400">(Last 24h)</span>
               </h4>
-              <span className="text-[11px] font-semibold text-green-600">
-                Max: {seriesMax.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              <span className="text-[11px] font-semibold text-gray-500">
+                Max: <span className="font-bold text-gray-700">{formatCompactNumber(seriesMax)}</span>
               </span>
             </div>
             <div className="h-40">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                <AreaChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
                   <defs>
-                    <linearGradient id={`color-${metricName}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={strokeColor} stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor={strokeColor} stopOpacity={0.01}/>
+                    <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor={strokeColor} stopOpacity={0.25}/>
+                      <stop offset="100%" stopColor={strokeColor} stopOpacity={0}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
-                  <XAxis dataKey="time" tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} />
-                  <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
+                  <XAxis
+                    dataKey="time"
+                    tick={{ fill: '#9ca3af', fontSize: 11 }}
+                    axisLine={{ stroke: '#eef0f3' }}
+                    tickLine={false}
+                    minTickGap={24}
+                  />
+                  <YAxis
+                    tick={{ fill: '#9ca3af', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={44}
+                    tickFormatter={formatCompactNumber}
+                  />
                   <Tooltip
-                    contentStyle={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 8 }}
-                    itemStyle={{ color: '#374151', fontSize: 12 }}
-                    labelStyle={{ color: '#6b7280', fontSize: 11 }}
+                    cursor={{ stroke: strokeColor, strokeWidth: 1, strokeDasharray: '3 3' }}
+                    contentStyle={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                    itemStyle={{ color: '#374151', fontSize: 12, fontWeight: 600 }}
+                    labelStyle={{ color: '#9ca3af', fontSize: 11, marginBottom: 2 }}
+                    formatter={(value: number) => [formatCompactNumber(value), metricName]}
                   />
                   <Area
                     type="monotone"
                     dataKey="value"
                     stroke={strokeColor}
                     strokeWidth={2}
+                    strokeLinecap="round"
                     fillOpacity={1}
-                    fill={`url(#color-${metricName})`}
+                    fill={`url(#${gradientId})`}
+                    activeDot={{ r: 4, fill: strokeColor, stroke: '#ffffff', strokeWidth: 2 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>

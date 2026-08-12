@@ -380,7 +380,9 @@ export const CloudDashboard = () => {
             <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-green-50 text-green-600 shrink-0">
               <DollarSign size={20} />
             </div>
-            <div>
+            {/* min-w-0 lets the amount truncate instead of overflowing the card:
+                a flex child defaults to min-width:auto and refuses to shrink. */}
+            <div className="min-w-0">
               <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Monthly Cost (billed)</p>
               {costsLoading ? (
                 <div className="h-7 w-24 mt-1 rounded bg-gray-100 animate-pulse" />
@@ -392,7 +394,10 @@ export const CloudDashboard = () => {
                   <p className="text-[11px] text-gray-400">mixed currencies</p>
                 </>
               ) : (
-                <p className="text-2xl font-bold text-gray-900">
+                <p
+                  className="text-2xl font-bold text-gray-900 truncate"
+                  title={singleCurrency ? formatCurrency(totalCost, singleCurrency) : totalCost.toFixed(2)}
+                >
                   {singleCurrency ? formatCurrency(totalCost, singleCurrency) : totalCost.toFixed(2)}
                 </p>
               )}

@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.providers.azure.azure_auth import AzureAuth
+from app.providers.scan_pool import scan_pool
 
 logger = logging.getLogger("cloud_svc.azure.scanner")
 
@@ -81,6 +82,9 @@ def _resource_group_of(resource_id: str | None) -> str | None:
 class AzureScanner:
     def __init__(self, auth: AzureAuth) -> None:
         self.auth = auth
+        # Scopes that failed to enumerate this run. Non-empty means the sweep
+        # is INCOMPLETE and must not be pruned against (see BaseCloudProvider).
+        self.scan_failures: list[str] = []
 
     @staticmethod
     def _vm_power_state(compute, vm_resource_id: str) -> str | None:
@@ -175,7 +179,7 @@ class AzureScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Managed Disks ────────────────────────────────────────────────────────
     async def _scan_disks(self) -> List[Dict[str, Any]]:
@@ -228,7 +232,7 @@ class AzureScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Storage Accounts ─────────────────────────────────────────────────────
     async def _scan_storage(self) -> List[Dict[str, Any]]:
@@ -265,7 +269,7 @@ class AzureScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── SQL Databases ────────────────────────────────────────────────────────
     async def _scan_sql(self) -> List[Dict[str, Any]]:
@@ -305,7 +309,7 @@ class AzureScanner:
                     )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── AKS Clusters ─────────────────────────────────────────────────────────
     async def _scan_aks(self) -> List[Dict[str, Any]]:
@@ -340,7 +344,7 @@ class AzureScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Generic catch-all (every resource type via ARM resources.list) ───────
     async def _scan_generic(self) -> List[Dict[str, Any]]:
@@ -372,11 +376,12 @@ class AzureScanner:
                 )
             return results
 
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(scan_pool(), _fetch)
 
     async def scan_all(self, on_batch=None) -> List[Dict[str, Any]]:
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
+        self.scan_failures = []
 
         async def _emit(batch):
             if batch and on_batch:
@@ -402,6 +407,7 @@ class AzureScanner:
                 await _emit(results)
             except Exception as exc:
                 logger.warning("Azure %s scan failed: %s", label, exc)
+                self.scan_failures.append(f"{label}: {str(exc)[:160]}")
                 if "AuthorizationFailed" in str(exc) or "forbidden" in str(exc).lower():
                     permission_errors.append(str(exc))
 
@@ -423,6 +429,9 @@ class AzureScanner:
             await _emit(new_batch)
         except Exception as exc:
             logger.warning("Azure generic scan failed: %s", exc)
+            # The generic ARM sweep is the only source for most resource types,
+            # so losing it makes the whole result unrepresentative.
+            self.scan_failures.append(f"Generic ARM sweep: {str(exc)[:160]}")
             if "AuthorizationFailed" in str(exc) or "forbidden" in str(exc).lower():
                 permission_errors.append(str(exc))
 

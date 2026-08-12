@@ -124,6 +124,31 @@ def _cache_get(cache: dict, key) -> Any:
     return rows if time.time() - stored_at < ttl else None
 
 
+# A dropped TLS handshake or reset connection says nothing about the request —
+# retrying usually just works. These fire constantly on this network:
+#   SSL: UNEXPECTED_EOF_WHILE_READING
+#   ConnectionResetError(10054, 'forcibly closed by the remote host')
+#   ConnectionAbortedError(10053, 'aborted by the software in your host machine')
+# Without a retry each one surfaced as a bare "NA" on the Cost page even though
+# the credentials and permissions were fine.
+_TRANSIENT_MARKERS = (
+    "unexpected_eof", "ssl", "connection aborted", "connection reset",
+    "forcibly closed", "10053", "10054", "connectionreseterror",
+    "connectionabortederror", "timed out", "timeout",
+    "max retries exceeded", "endpointconnectionerror", "remotedisconnected",
+)
+_TRANSIENT_ATTEMPTS = 3
+
+# Longest the Cost page will wait on billing APIs before rendering with whatever
+# is cached. The refresh continues in the background, so a reload picks it up.
+_ANALYTICS_DEADLINE_SECONDS = 12
+
+
+def _is_transient(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return any(m in low for m in _TRANSIENT_MARKERS)
+
+
 async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=None):
     """Cache-with-stale-while-error around one slow billing-API call.
 
@@ -134,6 +159,10 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=N
     expired). On failure here we keep serving the last GOOD value instead of
     collapsing to NA, and mark the entry errored so it retries in 20s.
 
+    Transient network failures are retried first, since a killed TLS handshake
+    is not an answer about the account. Permission/credential errors are not
+    retried — those are real answers and retrying only wastes time.
+
     Also records WHY it failed (account_id, if given) so the UI can show a real
     diagnostic instead of a bare "NA" — see get_cost_diagnostic().
     """
@@ -141,13 +170,27 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=N
     fresh = _cache_get(cache, key)
     if fresh is not None:
         return fresh
-    try:
-        value = await fetch()
-        cache[key] = (time.time(), value, False)
-        if account_id is not None:
-            _cost_error_reason.pop(str(account_id), None)
-        return value
-    except Exception as exc:
+
+    exc: Exception | None = None
+    for attempt in range(_TRANSIENT_ATTEMPTS):
+        try:
+            value = await fetch()
+            cache[key] = (time.time(), value, False)
+            if account_id is not None:
+                _cost_error_reason.pop(str(account_id), None)
+            return value
+        except Exception as err:
+            exc = err
+            if attempt == _TRANSIENT_ATTEMPTS - 1 or not _is_transient(err):
+                break
+            backoff = 2 ** attempt
+            logger.warning(
+                "%s hit a transient network error for %s (attempt %d/%d), retrying in %ss: %s",
+                label, key, attempt + 1, _TRANSIENT_ATTEMPTS, backoff, str(err)[:120],
+            )
+            await asyncio.sleep(backoff)
+
+    if exc is not None:
         logger.warning("%s failed for %s: %s", label, key, exc)
         if account_id is not None:
             category, message = _categorize_error(exc)
@@ -160,6 +203,9 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=N
         cache[key] = (time.time(), empty, True)
         return empty
 
+    # Unreachable: the loop either returns a value or records an exception.
+    return empty
+
 
 # Account IDs with a per-resource cost refresh already in flight, so concurrent
 # page loads don't each kick off the same 15s query.
@@ -167,25 +213,31 @@ _warming: set = set()
 _warm_tasks: set = set()
 
 
+# The window used to decorate the Resources page and resource detail. The cache
+# is keyed by (account, days), so this constant must match what those callers ask
+# for or the peek below would always miss.
+RESOURCE_DECORATION_DAYS = 30
+
+
 def peek_costs_by_resource(account) -> Dict[str, Dict[str, Any]]:
     """Whatever per-resource cost data is already cached — never makes a network
     call. The Resources page renders straight from the DB and must not hang on a
     15-50s billing round trip just to decorate rows with cost."""
-    entry = _real_cost_by_resource_cache.get(str(account.id))
+    entry = _real_cost_by_resource_cache.get((str(account.id), RESOURCE_DECORATION_DAYS))
     return entry[1] if entry else {}
 
 
 def ensure_costs_by_resource_warm(account) -> None:
     """Kick off a background refresh when the per-resource cost cache is cold or
     stale, so the next load has data. Never blocks the current request."""
-    key = str(account.id)
+    key = (str(account.id), RESOURCE_DECORATION_DAYS)
     if _cache_get(_real_cost_by_resource_cache, key) is not None or key in _warming:
         return
     _warming.add(key)
 
     async def _run():
         try:
-            await fetch_real_costs_by_resource(account)
+            await fetch_real_costs_by_resource(account, RESOURCE_DECORATION_DAYS)
         except Exception:
             pass
         finally:
@@ -212,14 +264,37 @@ def _provider_class(provider: str):
     }.get((provider or "").upper())
 
 
+# Provider instances, keyed by (account_id, credentials fingerprint).
+#
+# Building a provider per call was quietly expensive: a fresh AzureProvider makes
+# a fresh ClientSecretCredential, which acquires a brand-new OAuth2 token from
+# login.microsoftonline.com on first use. With three Azure accounts and the UI
+# polling cost, that produced a constant stream of token requests, and Azure
+# started resetting the connections outright:
+#   ClientSecretCredential.get_token_info failed: ('Connection aborted.',
+#   ConnectionResetError(10054, 'An existing connection was forcibly closed...'))
+# Re-using the instance lets the SDK's own token cache do its job (it refreshes
+# on expiry), and likewise re-uses the boto3 Session / OCI signer.
+#
+# The fingerprint is the encrypted blob itself, so re-adding an account or
+# rotating its credentials naturally produces a new entry rather than a stale one.
+_provider_cache: Dict[Tuple[str, int], Any] = {}
+
+
 def _build_provider(account):
-    """Instantiate the account's provider, or None (logged) if that fails."""
+    """The account's provider (cached), or None (logged) if it can't be built."""
     from app.utils.encryption import decrypt_credentials
 
     cls = _provider_class(account.provider)
     if not cls:
         logger.warning("Unknown provider %r for account %s", account.provider, account.id)
         return None
+
+    key = (str(account.id), hash(account.credentials_enc))
+    cached = _provider_cache.get(key)
+    if cached is not None:
+        return cached
+
     try:
         creds = decrypt_credentials(account.credentials_enc)
     except Exception as exc:
@@ -229,7 +304,13 @@ def _build_provider(account):
             account.account_name, account.id, exc,
         )
         return None
-    return cls(creds)
+
+    provider = cls(creds)
+    # Drop any older entry for this account (credentials rotated) before storing.
+    for stale in [k for k in _provider_cache if k[0] == str(account.id)]:
+        _provider_cache.pop(stale, None)
+    _provider_cache[key] = provider
+    return provider
 
 
 class ProviderUnavailableError(RuntimeError):
@@ -339,19 +420,22 @@ async def fetch_cost_report(account, days: int) -> List[Dict[str, Any]]:
     )
 
 
-async def fetch_real_costs_by_resource(account) -> Dict[str, Dict[str, Any]]:
-    """Real last-30-day spend keyed by provider resource ID, when the provider
-    supports resource-level cost grouping (OCI Usage API today). Returns {}
-    when unsupported or the query fails — callers show NA, never a guess."""
+async def fetch_real_costs_by_resource(account, days: int = 30) -> Dict[str, Dict[str, Any]]:
+    """Real spend over `days` keyed by provider resource ID, when the provider
+    supports resource-level cost grouping (OCI + Azure). Returns {} when
+    unsupported or the query fails — callers show NA, never a guess."""
+    days = max(1, min(days, MAX_REPORT_DAYS))
 
     async def _fetch():
         provider = _require_provider(account)
         if not hasattr(provider, "get_cost_by_resource"):
             return {}
-        return await provider.get_cost_by_resource() or {}
+        return await provider.get_cost_by_resource(days) or {}
 
+    # Keyed by (account, days): the 30-day map that decorates the Resources page
+    # must not be evicted by a 365-day report query.
     return await _cached_fetch(
-        _real_cost_by_resource_cache, str(account.id),
+        _real_cost_by_resource_cache, (str(account.id), days),
         "Per-resource billing query", _fetch, {}, account_id=account.id,
     )
 
@@ -383,12 +467,19 @@ async def build_stopped_instances(resources: List[Any], accounts: List[Any]) -> 
     """Stopped compute instances across the given resources, each with its own
     billed cost and any attached storage's billed cost over the last 30 days
     (both real, from the provider's billing API — NA when unsupported, e.g.
-    AWS/Azure don't have per-resource billing wired up yet)."""
+    AWS per-resource cost isn't available from Cost Explorer).
+
+    Cost here is a DECORATION on inventory the caller already has, so it reads
+    the cache only and never issues a blocking billing call. Awaiting one made
+    the Cost page exceed its own deadline: the analytics deadline bounded the
+    main fan-out, then this ran afterwards unbounded and re-added 20s+. A cold
+    cache simply means cost shows NA on this pass while a refresh runs behind it.
+    """
     account_by_id = {str(a.id): a for a in accounts}
-    per_account_maps = await asyncio.gather(*(fetch_real_costs_by_resource(a) for a in accounts))
-    cost_maps: Dict[str, Dict[str, Dict[str, Any]]] = {
-        str(a.id): m for a, m in zip(accounts, per_account_maps)
-    }
+    cost_maps: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for a in accounts:
+        cost_maps[str(a.id)] = peek_costs_by_resource(a)
+        ensure_costs_by_resource_warm(a)
 
     storage_by_attached_to: Dict[str, List[Any]] = {}
     for r in resources:
@@ -451,6 +542,65 @@ async def build_stopped_instances(resources: List[Any], accounts: List[Any]) -> 
 
     items.sort(key=lambda x: -(x["total_cost_monthly"] or 0))
     return items
+
+
+def _identify_from_provider_id(pid: str) -> Tuple[Optional[str], Optional[str]]:
+    """Best-effort (type, name) parsed from a provider resource ID, for billed
+    resources that aren't in our inventory.
+
+    Providers bill plenty of things discovery doesn't scan — OCI boot volumes,
+    VNICs and volume replicas; sub-resources on the Azure side — and those rows
+    would otherwise be anonymous in the report. The ID formats are structured,
+    so the type is always recoverable and Azure even carries the real name:
+
+      OCI:   ocid1.<type>.<realm>.<region>.<unique>   → type only
+      Azure: /subscriptions/../providers/<NS>/<type>/<name> → type and name
+    """
+    if not pid:
+        return None, None
+    s = str(pid)
+
+    if s.startswith("ocid1."):
+        parts = s.split(".")
+        raw = parts[1] if len(parts) > 1 else None
+        if not raw:
+            return None, None
+        pretty = {
+            "bootvolume": "Boot Volume",
+            "volume": "Block Volume",
+            "blockvolumereplica": "Block Volume Replica",
+            "volumebackup": "Volume Backup",
+            "bootvolumebackup": "Boot Volume Backup",
+            "vnic": "VNIC",
+            "instance": "Compute Instance",
+            "autonomousdatabase": "Autonomous Database",
+            "dbsystem": "DB System",
+            "filesystem": "File System",
+            "mounttarget": "Mount Target",
+            "loadbalancer": "Load Balancer",
+            "bucket": "Object Storage Bucket",
+            "analyticsinstance": "Analytics Instance",
+            "vcn": "VCN",
+            "subnet": "Subnet",
+            "drg": "Dynamic Routing Gateway",
+            "ipsecconnection": "IPSec Connection",
+            "cpe": "Customer-Premises Equipment",
+            "waaspolicy": "WAF Policy",
+            "webappfirewall": "Web App Firewall",
+            "key": "Vault Key",
+            "vault": "Vault",
+            "logGroup": "Log Group",
+        }.get(raw, raw.replace("-", " ").title())
+        return pretty, None
+
+    if s.startswith("/subscriptions/") and "/providers/" in s:
+        tail = s.split("/providers/", 1)[1].split("/")
+        # <namespace>/<type>[/<subtype>...]/<name>
+        if len(tail) >= 3:
+            return f"{tail[0]}/{tail[1]}", tail[-1]
+        return (tail[0] if tail else None), None
+
+    return None, None
 
 
 async def prewarm_cost_cache(account) -> None:
@@ -584,11 +734,36 @@ class CostService:
         # used directly here — it just warms fetch_real_costs_by_resource's
         # cache so build_stopped_instances's later call is a cache hit instead
         # of a fourth sequential network wave.
-        real_cost_rows, daily_cost_rows, _ = await asyncio.gather(
+        #
+        # Bounded: the fan-out is only as fast as the SLOWEST provider, and a
+        # sick one can take a minute (Azure was measured at 52s while its token
+        # endpoint kept resetting connections). Blocking on that meant the whole
+        # Cost page never rendered. Past the deadline we stop waiting, return
+        # whatever is cached, and let the in-flight work keep going so the next
+        # load is a cache hit — the same treatment that fixed the Resources page.
+        gathered = asyncio.gather(
             asyncio.gather(*(fetch_real_costs(acc) for acc in accounts)),
             asyncio.gather(*(fetch_daily_costs(acc) for acc in accounts)),
             asyncio.gather(*(fetch_real_costs_by_resource(acc) for acc in accounts)),
         )
+        partial = False
+        try:
+            # shield: on timeout the work must continue populating the cache,
+            # not be cancelled — otherwise every load restarts from cold.
+            real_cost_rows, daily_cost_rows, _ = await asyncio.wait_for(
+                asyncio.shield(gathered), _ANALYTICS_DEADLINE_SECONDS
+            )
+        except asyncio.TimeoutError:
+            partial = True
+            _warm_tasks.add(gathered)
+            gathered.add_done_callback(_warm_tasks.discard)
+            real_cost_rows = [_cache_get(_real_cost_cache, str(a.id)) or [] for a in accounts]
+            daily_cost_rows = [_cache_get(_daily_cost_cache, str(a.id)) or [] for a in accounts]
+            logger.warning(
+                "Cost analytics exceeded %ss for %d account(s) — returning cached data and "
+                "finishing the refresh in the background.",
+                _ANALYTICS_DEADLINE_SECONDS, len(accounts),
+            )
 
         # ── Real billed totals per service ────────────────────────────────────
         by_service: List[Dict[str, Any]] = []
@@ -1050,13 +1225,26 @@ class CostService:
             "currency": currency,
             "by_service": by_service[:20],
             "cost_diagnostics": cost_diagnostics,
+            # True when a provider was still responding at the deadline: the
+            # numbers shown are cached, and a refresh is finishing in the
+            # background. Lets the UI say "still refreshing" instead of
+            # presenting a stale/NA figure as final.
+            "partial": partial,
         }
 
-    async def get_cost_report(self, account_id: uuid.UUID | str, days: int) -> Dict[str, Any]:
-        """Real day-by-day, per-service, cross-provider cost ledger for the
-        requested lookback window (clamped to MAX_REPORT_DAYS). Every row is
-        tagged with provider/account so the frontend can filter and export
-        without a second round-trip."""
+    async def get_cost_report(
+        self, account_id: uuid.UUID | str, days: int, group_by: str = "service",
+    ) -> Dict[str, Any]:
+        """Real cost ledger for the requested lookback window (clamped to
+        MAX_REPORT_DAYS), in one of two shapes:
+
+        group_by="service"  — one row per day per service (the spend timeline).
+        group_by="resource" — one row per billed RESOURCE, totalled over the
+            window, enriched from our inventory with the resource's name, type,
+            size and what it is attached to. Per-resource-PER-DAY is deliberately
+            not offered: OCI alone returns ~11k rows for 7 days, so a year would
+            be ~570k rows — unusable in a browser and pointless in a report.
+        """
         from app.repository.cloud_account_repo import CloudAccountRepository
 
         days = max(1, min(days, MAX_REPORT_DAYS))
@@ -1076,28 +1264,88 @@ class CostService:
 
         rows: List[Dict[str, Any]] = []
         currencies: List[Optional[str]] = []
-        for acc in accounts:
-            for r in await fetch_cost_report(acc, days):
-                currencies.append(r.get("currency"))
-                rows.append({
-                    "date": r.get("date"),
-                    "provider": acc.provider,
-                    "account_id": str(acc.id),
-                    "account_name": acc.account_name,
-                    "service": r.get("service"),
-                    "region": r.get("region"),
-                    "cost": r.get("cost"),
-                    "currency": r.get("currency"),
-                })
-        rows.sort(key=lambda x: (x["date"] or "", -(x["cost"] or 0)))
+
+        if group_by == "resource":
+            res_repo = ResourceRepository(self.db)
+            for acc in accounts:
+                cost_map = await fetch_real_costs_by_resource(acc, days)
+                if not cost_map:
+                    continue
+                # Providers report only an ID on billing rows (OCI never sends a
+                # name), so join our own inventory for the human-readable detail.
+                inventory = await res_repo.list_by_account(acc.id)
+                by_pid: Dict[str, Any] = {}
+                for r in inventory:
+                    if r.provider_resource_id:
+                        by_pid[r.provider_resource_id] = r
+                        by_pid.setdefault(r.provider_resource_id.lower(), r)
+
+                for pid, entry in cost_map.items():
+                    res = by_pid.get(pid) or by_pid.get(str(pid).lower())
+                    cfg = (res.config or {}) if res is not None else {}
+                    size_gb = (
+                        cfg.get("size_gb") or cfg.get("disk_size_gb")
+                        or cfg.get("attached_storage_gb")
+                    )
+                    # Fall back to the ID's own structure when inventory has no
+                    # match, so a billed row is never fully anonymous.
+                    id_type, id_name = _identify_from_provider_id(pid)
+                    in_inventory = res is not None
+                    currencies.append(entry.get("currency"))
+                    rows.append({
+                        "provider": acc.provider,
+                        "account_id": str(acc.id),
+                        "account_name": acc.account_name,
+                        "service": entry.get("service"),
+                        "region": entry.get("region")
+                                  or (res.region_or_zone if in_inventory else None),
+                        "resource_name": (res.resource_name if in_inventory else None) or id_name,
+                        "resource_type": (res.resource_type if in_inventory else None) or id_type,
+                        "status": res.status if in_inventory else None,
+                        "provider_resource_id": pid,
+                        "size_gb": size_gb,
+                        "attachment_status": cfg.get("attachment_status"),
+                        "attached_to_name": cfg.get("attached_to_name"),
+                        "attached_to_status": cfg.get("attached_to_status"),
+                        # False = billed but not in inventory (a type discovery
+                        # doesn't scan, or deleted mid-window). Surfaced so the UI
+                        # can label it instead of showing a blank name.
+                        "in_inventory": in_inventory,
+                        "cost": entry.get("monthly_cost"),
+                        "currency": entry.get("currency"),
+                    })
+            # Most expensive first — that is the question this view answers.
+            rows.sort(key=lambda x: -(x["cost"] or 0))
+        else:
+            for acc in accounts:
+                for r in await fetch_cost_report(acc, days):
+                    currencies.append(r.get("currency"))
+                    rows.append({
+                        "date": r.get("date"),
+                        "provider": acc.provider,
+                        "account_id": str(acc.id),
+                        "account_name": acc.account_name,
+                        "service": r.get("service"),
+                        "region": r.get("region"),
+                        "cost": r.get("cost"),
+                        "currency": r.get("currency"),
+                    })
+            rows.sort(key=lambda x: (x["date"] or "", -(x["cost"] or 0)))
 
         total_cost = round(sum(float(r["cost"] or 0) for r in rows), 2) if rows else None
+        unmatched = sum(
+            1 for r in rows if group_by == "resource" and not r.get("in_inventory")
+        )
 
         return {
             "account_id": str(account_id),
             "days": days,
+            "group_by": group_by,
             "currency": _single_currency(currencies) if rows else None,
             "total_cost": total_cost,
             "row_count": len(rows),
+            # Billed IDs with no inventory match — usually deleted resources still
+            # billed for part of the window, or sub-resources we don't scan.
+            "unmatched_resources": unmatched,
             "rows": rows,
         }

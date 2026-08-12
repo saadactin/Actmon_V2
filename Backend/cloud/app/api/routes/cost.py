@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_cost_service
 from app.schemas.cost import CostSummaryResponse
@@ -34,9 +34,17 @@ async def get_cost_analytics(
 async def get_cost_report(
     account_id: str,
     days: int = 30,
+    group_by: str = "service",
     svc: CostService = Depends(get_cost_service),
 ):
-    """Real day-by-day, per-service cost ledger for the given lookback window
-    (clamped to 365 days) — the data source for the downloadable cost report."""
-    return await svc.get_cost_report(account_id, days)
+    """Real cost ledger for the given lookback window (clamped to 365 days) —
+    the data source for the downloadable cost report.
+
+    group_by=service  → one row per day per service.
+    group_by=resource → one row per billed resource, totalled over the window,
+                        with its name, type, size and attachment from inventory.
+    """
+    if group_by not in ("service", "resource"):
+        raise HTTPException(status_code=400, detail="group_by must be 'service' or 'resource'")
+    return await svc.get_cost_report(account_id, days, group_by)
 

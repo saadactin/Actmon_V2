@@ -95,7 +95,29 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
 
             resources = await provider.scan_resources(on_batch=on_batch)
 
-            if seen_ids:
+            # A sweep that couldn't enumerate every scope returns a SUBSET of
+            # reality. Pruning against a subset deletes live resources: one
+            # unreachable region reduced a 127-resource OCI account to the 65
+            # global IAM objects that happened to list successfully. Only a clean
+            # sweep is authoritative enough to delete anything.
+            failures = provider.scan_failures()
+
+            if seen_ids and failures:
+                count = len(seen_ids)
+                logger.warning(
+                    "Discovery job=%s found %d resources but %d scope(s) failed to "
+                    "enumerate — SKIPPING prune to avoid deleting live resources. "
+                    "Stale rows (if any) will clear on the next clean scan. First: %s",
+                    job_id, count, len(failures), failures[:3],
+                )
+                await disco_repo.set_partial(
+                    job_id,
+                    f"Incomplete sweep: {len(failures)} scope(s) failed to enumerate, so "
+                    f"existing resources were kept rather than pruned. First failure: "
+                    f"{failures[0]}",
+                )
+                await db.commit()
+            elif seen_ids:
                 # Streamed path: batches already persisted. Prune rows from prior
                 # scans that weren't seen this time.
                 async with write_lock:

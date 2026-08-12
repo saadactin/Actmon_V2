@@ -17,19 +17,28 @@ const getScoreColor = (score: number | null) => {
   return '#ef4444'; // Red
 };
 
-const getScoreBarClass = (score: number | null) => {
-  if (score == null) return 'bg-gray-300';
-  if (score >= 90) return 'bg-green-500';
-  if (score >= 70) return 'bg-amber-500';
-  return 'bg-red-500';
-};
-
 const getScoreBadgeClass = (score: number | null) => {
   if (score == null) return 'bg-gray-50 text-gray-600 border-gray-200';
   if (score >= 90) return 'bg-green-50 text-green-700 border-green-200';
   if (score >= 70) return 'bg-amber-50 text-amber-700 border-amber-200';
   return 'bg-red-50 text-red-700 border-red-200';
 };
+
+// Only these reach the compliance view; the backend keeps LOW/INFO advisory
+// findings out of framework mapping entirely.
+const SEVERITY_LEVELS = ['CRITICAL', 'HIGH', 'MEDIUM'] as const;
+type SeverityFilter = 'ALL' | typeof SEVERITY_LEVELS[number];
+
+const SEVERITY_STYLE: Record<string, { pill: string; bar: string; dot: string }> = {
+  CRITICAL: { pill: 'bg-red-50 text-red-700 border-red-300',          bar: 'border-l-red-500',    dot: 'bg-red-500' },
+  HIGH:     { pill: 'bg-orange-50 text-orange-700 border-orange-300', bar: 'border-l-orange-500', dot: 'bg-orange-500' },
+  MEDIUM:   { pill: 'bg-amber-50 text-amber-700 border-amber-300',    bar: 'border-l-amber-500',  dot: 'bg-amber-500' },
+  LOW:      { pill: 'bg-blue-50 text-blue-700 border-blue-300',       bar: 'border-l-blue-400',   dot: 'bg-blue-400' },
+  INFO:     { pill: 'bg-gray-100 text-gray-600 border-gray-300',      bar: 'border-l-gray-400',   dot: 'bg-gray-400' },
+};
+
+const severityStyle = (sev?: string) =>
+  SEVERITY_STYLE[(sev || '').toUpperCase()] || SEVERITY_STYLE.INFO;
 
 export const CompliancePage = () => {
   const navigate = useNavigate();
@@ -43,21 +52,11 @@ export const CompliancePage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Track current page per framework for pagination
-  const [pages, setPages] = useState<Record<string, number>>({
-    "SOC2": 0,
-    "HIPAA": 0,
-    "PCI-DSS": 0
-  });
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('ALL');
+  const [frameworkFilter, setFrameworkFilter] = useState<string>('ALL');
+  const [page, setPage] = useState(0);
 
-  const PAGE_SIZE = 5;
-
-  const handlePageChange = (frameworkName: string, delta: number) => {
-    setPages(prev => ({
-      ...prev,
-      [frameworkName]: Math.max(0, (prev[frameworkName] || 0) + delta)
-    }));
-  };
+  const PAGE_SIZE = 10;
 
   const handleDownloadPDF = () => {
     window.print();
@@ -111,8 +110,22 @@ export const CompliancePage = () => {
     );
   }
 
-  const { overall_compliance_score, frameworks, note } = data;
+  const { overall_compliance_score, note } = data;
   const selectedAccount = accounts?.find(acc => acc.id === selectedAccountId);
+
+  const allViolations: any[] = data.violations || [];
+  const frameworkSummary: Record<string, any> = data.framework_summary || {};
+  const severityTotals: Record<string, number> = data.severity_totals || {};
+
+  // A framework filter narrows to violations that framework actually cites.
+  const violations = allViolations.filter(v => {
+    if (frameworkFilter !== 'ALL' && !(v.frameworks || []).includes(frameworkFilter)) return false;
+    if (severityFilter !== 'ALL' && (v.severity || '').toUpperCase() !== severityFilter) return false;
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(violations.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
 
   return (
     <div className="p-6 space-y-6">
@@ -158,32 +171,27 @@ export const CompliancePage = () => {
           )}
         </div>
 
-        {/* Methodology / data-source note */}
-        {note && (
-          <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
-            <Info size={16} className="mt-0.5 shrink-0" />
-            <span>{note}</span>
-          </div>
-        )}
-
-        {/* Main Score Overview */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-wrap items-center gap-10">
+        {/* Headline counts */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-wrap items-center gap-8">
           <div className="shrink-0">
             <div
-              className="w-36 h-36 rounded-full border-8 flex flex-col items-center justify-center"
-              style={{ borderColor: getScoreColor(overall_compliance_score) }}
+              className="w-28 h-28 rounded-full border-8 flex flex-col items-center justify-center"
+              style={{ borderColor: allViolations.length === 0 ? '#10b981' : '#ef4444' }}
             >
-              <span className="text-4xl font-bold text-gray-900 leading-none">
-                {overall_compliance_score != null ? `${overall_compliance_score}%` : 'NA'}
+              <span className="text-3xl font-bold text-gray-900 leading-none">
+                {allViolations.length}
               </span>
-              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mt-1.5">Overall Score</span>
+              <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mt-1 text-center px-2">
+                Violations
+              </span>
             </div>
           </div>
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-gray-900">Enterprise Compliance Posture</h2>
-            <p className="text-sm text-gray-600 mt-2 max-w-xl leading-relaxed">
-              Real security findings from your connected account are mapped against critical industry frameworks.
-              Scores are shown as NA when control-level evaluation data is not available.
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-semibold text-gray-900">Control Violations Across Frameworks</h2>
+            <p className="text-sm text-gray-600 mt-2 max-w-2xl leading-relaxed">
+              Each violation is listed once below, with the specific control it breaches in every
+              framework that covers it. Overall percentage scores stay NA — those require a certified
+              provider assessment, not an inferred number.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${selectedAccount?.auto_discovery ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
@@ -192,101 +200,203 @@ export const CompliancePage = () => {
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-50 text-gray-600 border border-gray-200">
                 <Clock size={14} /> Last Scan: {selectedAccount?.last_discovery ? new Date(selectedAccount.last_discovery).toLocaleString() : 'NA'}
               </span>
+              {typeof data.advisory_findings === 'number' && data.advisory_findings > 0 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-gray-50 text-gray-500 border border-gray-200">
+                  <Info size={14} /> {data.advisory_findings} advisory (Security tab)
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Framework Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {Object.entries(frameworks || {}).map(([name, data]: [string, any]) => (
-            <div key={name} className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col">
-              <div className="flex items-start justify-between mb-5">
-                <div>
-                  <h3 className="text-[15px] font-semibold text-gray-900">{name}</h3>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {data.total_controls != null ? `${data.total_controls} Controls Evaluated` : 'Controls Evaluated: NA'}
-                  </p>
+        {/* Framework tiles — click to narrow the list to that framework */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {Object.entries(frameworkSummary).map(([fw, s]: [string, any]) => {
+            const active = frameworkFilter === fw;
+            const n = s.violations ?? 0;
+            return (
+              <button
+                key={fw}
+                onClick={() => { setFrameworkFilter(active ? 'ALL' : fw); setPage(0); }}
+                className={`text-left bg-white rounded-xl border shadow-sm p-5 transition-all ${
+                  active ? 'border-blue-500 ring-2 ring-blue-100' : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-[15px] font-semibold text-gray-900">{fw}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {s.total_controls != null ? `${s.total_controls} Controls Evaluated` : 'Controls Evaluated: NA'}
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border ${getScoreBadgeClass(s.score)}`}>
+                    {s.score != null ? `${s.score}%` : 'NA'}
+                  </span>
                 </div>
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border ${getScoreBadgeClass(data.score)}`}>
-                  {data.score != null ? `${data.score}%` : 'NA'}
-                </span>
+
+                <div className={`mt-4 flex items-center gap-2 text-sm font-semibold ${n === 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                  {n === 0 ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
+                  {n} Control Violation{n === 1 ? '' : 's'}
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {SEVERITY_LEVELS.map(lvl => {
+                    const c = s.by_severity?.[lvl] ?? 0;
+                    if (!c) return null;
+                    const st = severityStyle(lvl);
+                    return (
+                      <span key={lvl} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border ${st.pill}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />{c} {lvl}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                {(s.controls_cited?.length ?? 0) > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+                      Controls Breached
+                    </p>
+                    <ul className="space-y-0.5">
+                      {s.controls_cited.map((c: string) => (
+                        <li key={c} className="text-[11px] text-gray-600 truncate">{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Filters */}
+        <div className="no-print flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mr-1">Severity</span>
+          {(['ALL', ...SEVERITY_LEVELS] as SeverityFilter[]).map(level => {
+            const active = severityFilter === level;
+            const n = level === 'ALL'
+              ? (data.total_violations ?? allViolations.length)
+              : (severityTotals[level] ?? 0);
+            const st = level === 'ALL' ? null : severityStyle(level);
+            return (
+              <button
+                key={level}
+                onClick={() => { setSeverityFilter(level); setPage(0); }}
+                disabled={n === 0 && level !== 'ALL'}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  active
+                    ? (st ? st.pill : 'bg-gray-900 text-white border-gray-900')
+                    : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {st && <span className={`h-1.5 w-1.5 rounded-full ${st.dot}`} />}
+                {level === 'ALL' ? 'All' : level.charAt(0) + level.slice(1).toLowerCase()}
+                <span className={`rounded-full px-1.5 text-[11px] font-bold ${
+                  active ? 'bg-white/70 text-gray-700' : 'bg-gray-100 text-gray-500'
+                }`}>{n}</span>
+              </button>
+            );
+          })}
+          {frameworkFilter !== 'ALL' && (
+            <button
+              onClick={() => { setFrameworkFilter('ALL'); setPage(0); }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100"
+            >
+              {frameworkFilter} only — clear
+            </button>
+          )}
+        </div>
+
+        {/* One list, each violation once, with per-framework control citations */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-gray-200 bg-gray-50">
+            <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider">
+              Control Violations
+            </h3>
+            <span className="text-xs text-gray-500">
+              {violations.length} shown
+              {violations.length !== allViolations.length && ` of ${allViolations.length}`}
+            </span>
+          </div>
+
+          {violations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center text-center py-14 px-6">
+              <CheckCircle size={36} className="text-green-500 mb-3" />
+              <h4 className="text-base font-semibold text-gray-900 mb-1">No matching violations</h4>
+              <p className="text-sm text-gray-500 max-w-md">
+                {allViolations.length === 0
+                  ? 'No CRITICAL, HIGH or MEDIUM control violations were found for this account.'
+                  : 'Nothing matches the current filters — try clearing them.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="divide-y divide-gray-100">
+                {violations
+                  .slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
+                  .map((v: any, idx: number) => {
+                    const st = severityStyle(v.severity);
+                    return (
+                      <div key={idx} className={`border-l-4 ${st.bar} px-5 py-4`}>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide border ${st.pill}`}>
+                            {(v.severity || 'NA').toUpperCase()}
+                          </span>
+                          <h4 className="text-sm font-semibold text-gray-900">{v.rule}</h4>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1 font-mono">{v.affected_resource}</p>
+                        {v.description && (
+                          <p className="text-xs text-gray-600 mt-2 leading-relaxed max-w-3xl">{v.description}</p>
+                        )}
+
+                        {/* Per-framework control citations — the part that differs */}
+                        <div className="mt-3 flex flex-col gap-1.5">
+                          {Object.entries(v.controls || {}).map(([fw, refs]: [string, any]) => (
+                            <div key={fw} className="flex items-baseline gap-2 flex-wrap">
+                              <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-600 border border-gray-200">
+                                {fw}
+                              </span>
+                              <span className="text-[11px] text-gray-600">
+                                {(refs as string[]).join('   ·   ')}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {v.recommendation && (
+                          <div className="mt-3 bg-blue-50/60 border border-blue-100 rounded-lg px-3 py-2">
+                            <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Remediation</p>
+                            <p className="text-xs text-gray-700">{v.recommendation}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
 
-              {/* Progress Bar (only when a real score exists) */}
-              {data.score != null && (
-                <div className="bg-gray-100 rounded-full h-2 mb-5 overflow-hidden">
-                  <div
-                    className={`h-2 rounded-full ${getScoreBarClass(data.score)}`}
-                    style={{ width: `${data.score}%` }}
-                  />
+              {violations.length > PAGE_SIZE && (
+                <div className="no-print flex items-center justify-between px-5 py-3 border-t border-gray-200 bg-gray-50">
+                  <button
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={currentPage === 0}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Prev
+                  </button>
+                  <span className="text-[11px] font-semibold text-gray-500">
+                    Page {currentPage + 1} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                    disabled={currentPage >= totalPages - 1}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Next
+                  </button>
                 </div>
               )}
-
-              {data.failed_controls != null ? (
-                <div className={`mb-4 flex items-center gap-2 text-sm font-semibold ${data.failed_controls === 0 ? 'text-green-600' : 'text-amber-600'}`}>
-                  {data.failed_controls === 0 ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
-                  {data.failed_controls === 0 ? 'All Controls Passing' : `${data.failed_controls} Controls Failing`}
-                </div>
-              ) : (
-                <div className={`mb-4 flex items-center gap-2 text-sm font-semibold ${(data.related_findings ?? 0) === 0 ? 'text-green-600' : 'text-amber-600'}`}>
-                  {(data.related_findings ?? 0) === 0 ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
-                  {data.related_findings != null
-                    ? `${data.related_findings} Related Security Finding${data.related_findings === 1 ? '' : 's'}`
-                    : 'Related Findings: NA'}
-                </div>
-              )}
-
-              {/* Related Security Findings List */}
-              {(data.issues?.length ?? 0) > 0 && (() => {
-                const currentPage = pages[name] || 0;
-                const totalPages = Math.ceil(data.issues.length / PAGE_SIZE);
-                const paginatedIssues = data.issues.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
-
-                return (
-                  <div className="flex-1 flex flex-col">
-                    <div className="flex-1 overflow-y-auto flex flex-col gap-2 min-h-[330px]">
-                      {paginatedIssues.map((issue: any, idx: number) => (
-                        <div
-                          key={idx}
-                          className={`bg-gray-50 rounded-lg border border-gray-200 border-l-4 px-3 py-2.5 ${issue.severity === 'CRITICAL' ? 'border-l-red-500' : 'border-l-amber-500'}`}
-                        >
-                          <div className="text-xs font-semibold text-gray-900 truncate mb-1">
-                            {issue.rule}
-                          </div>
-                          <div className="text-[11px] text-gray-500">
-                            {issue.affected_resource}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Pagination Controls */}
-                    {data.issues.length > PAGE_SIZE && (
-                      <div className="no-print flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                        <button
-                          onClick={() => handlePageChange(name, -1)}
-                          disabled={currentPage === 0}
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          Prev
-                        </button>
-                        <span className="text-[11px] font-semibold text-gray-500">
-                          Page {currentPage + 1} of {totalPages}
-                        </span>
-                        <button
-                          onClick={() => handlePageChange(name, 1)}
-                          disabled={currentPage >= totalPages - 1}
-                          className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          Next
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          ))}
+            </>
+          )}
         </div>
       </div>
     </div>

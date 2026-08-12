@@ -8,6 +8,7 @@ at least one real datapoint was retrieved — the UI shows NA otherwise.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,22 @@ from app.models.cloud_account import CloudAccount
 from app.repository.resource_repo import ResourceRepository
 
 logger = logging.getLogger("cloud_svc.metrics")
+
+# Per-request collector for provider query errors. The individual _get_*_stats
+# helpers deliberately swallow their exceptions and return {} so one dead metric
+# doesn't kill the whole panel — but that erases the reason the panel is empty.
+# A ContextVar keeps the reasons request-scoped (safe under concurrency, and
+# asyncio.to_thread copies the context so worker threads append to the same list)
+# so the UI can explain WHY there are no metrics instead of a bare empty state.
+_metric_errors: contextvars.ContextVar[Optional[List[str]]] = contextvars.ContextVar(
+    "metric_errors", default=None
+)
+
+
+def _record_metric_error(exc: Exception) -> None:
+    bucket = _metric_errors.get()
+    if bucket is not None:
+        bucket.append(str(exc))
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,6 +77,7 @@ def _get_cw_stats(
         return result
     except Exception as exc:
         logger.warning("CloudWatch query failed (%s / %s): %s", namespace, metric_name, exc)
+        _record_metric_error(exc)
         return {}
 
 
@@ -94,6 +112,7 @@ def _get_az_stats(
         return result
     except Exception as exc:
         logger.warning("Azure Monitor query failed (%s / %s): %s", resource_uri, metric_names, exc)
+        _record_metric_error(exc)
         return {}
 
 
@@ -175,7 +194,90 @@ def _get_oci_stats(
             "OCI Monitoring query failed (%s / %s for %s): %s",
             namespace, metric_name, match_value, exc,
         )
+        _record_metric_error(exc)
         return {}
+
+
+def _build_metrics_diagnostic(
+    provider: str,
+    resource_type: str,
+    unsupported_type: bool,
+    client_error: Optional[str],
+    query_errors: List[str],
+    source_label: Optional[str],
+) -> Dict[str, str]:
+    """Explain an empty metrics panel using only what actually happened —
+    credentials that wouldn't build, a provider API that refused the query, or a
+    resource type this service has no metric mapping for."""
+    if client_error:
+        return {
+            "category": "credentials",
+            "message": (
+                "Could not authenticate to the provider's monitoring API for this "
+                f"account, so no metrics could be requested. Raw error: {client_error[:400]}"
+            ),
+        }
+
+    if unsupported_type:
+        return {
+            "category": "unsupported",
+            "message": (
+                f"'{resource_type}' has no metrics mapping in this tool yet — no "
+                "monitoring query is issued for this resource type. This is a product "
+                "gap, not a problem with your cloud account. Metrics are currently "
+                "collected for compute instances, databases, storage buckets, load "
+                "balancers and serverless functions."
+            ),
+        }
+
+    if provider == "UNKNOWN":
+        return {
+            "category": "credentials",
+            "message": (
+                "This resource isn't linked to a cloud account with usable credentials, "
+                "so no monitoring API could be queried."
+            ),
+        }
+
+    if query_errors:
+        joined = " | ".join(dict.fromkeys(query_errors))[:400]
+        low = joined.lower()
+        if any(k in joined for k in (
+            "AuthorizationFailed", "AccessDenied", "Forbidden", "NotAuthorizedOrNotFound",
+            "UnauthorizedOperation",
+        )) or " 403" in joined:
+            return {
+                "category": "permission",
+                "message": (
+                    f"{source_label or 'The provider monitoring API'} refused the metrics "
+                    f"query — the account's credentials lack monitoring read permission. "
+                    f"Raw error: {joined}"
+                ),
+            }
+        if any(k in low for k in ("timeout", "timed out", "connection", "unreachable", "network")):
+            return {
+                "category": "network",
+                "message": (
+                    f"A network error occurred while querying {source_label or 'the monitoring API'}. "
+                    f"Raw error: {joined}"
+                ),
+            }
+        return {
+            "category": "unknown",
+            "message": (
+                f"{source_label or 'The monitoring API'} returned an error for every metric "
+                f"query. Raw error: {joined}"
+            ),
+        }
+
+    return {
+        "category": "no_data",
+        "message": (
+            f"{source_label or 'The provider monitoring API'} accepted the query but returned "
+            "no datapoints for the last 24 hours. This normally means the resource is stopped, "
+            "idle, or was created too recently to have emitted metrics yet."
+        ),
+    }
 
 
 def _align_to_timestamps(
@@ -207,6 +309,12 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
     timestamps = _make_timestamps(24)
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=24)
+
+    # Collect provider query errors for this request so an empty panel can
+    # explain itself (see _metric_errors).
+    _metric_errors.set([])
+    client_error: Optional[str] = None
+    unsupported_type = False
 
     # ── Fetch the cloud account's credentials ─────────────────────────────
     cw_client = None
@@ -264,6 +372,7 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
                 oci_tenancy_ocid = oci_auth.tenancy_ocid
     except Exception as exc:
         logger.warning("Could not build metrics client for resource %s: %s", resource_id, exc)
+        client_error = str(exc)
 
     # ── Fetch metrics per resource type ──────────────────────────────────
     metrics: Dict[str, List[Dict[str, Any]]] = {}
@@ -554,10 +663,29 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
     else:
         # Unsupported resource type — no invented metric names/values
         metrics = {}
+        unsupported_type = True
 
     # realtime is true only when at least one REAL datapoint came back —
     # a constructed client whose queries all failed does not count.
     has_real_data = any(len(series) > 0 for series in metrics.values())
+
+    source_label = {
+        "AWS": "AWS CloudWatch",
+        "AZURE": "Azure Monitor",
+        "OCI": "OCI Monitoring",
+        "ORACLE": "OCI Monitoring",
+    }.get(provider)
+
+    diagnostic = None
+    if not has_real_data:
+        diagnostic = _build_metrics_diagnostic(
+            provider=provider,
+            resource_type=rtype,
+            unsupported_type=unsupported_type,
+            client_error=client_error,
+            query_errors=_metric_errors.get() or [],
+            source_label=source_label,
+        )
 
     return {
         "resource_id":   str(resource_id),
@@ -566,10 +694,7 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
         "realtime":      has_real_data,
         "provider":      provider,
         # Real metrics source, for honest UI labeling
-        "source": {
-            "AWS": "AWS CloudWatch",
-            "AZURE": "Azure Monitor",
-            "OCI": "OCI Monitoring",
-            "ORACLE": "OCI Monitoring",
-        }.get(provider),
+        "source": source_label,
+        # Why the panel is empty — real reasons only, never a guess.
+        "diagnostic": diagnostic,
     }

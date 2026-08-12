@@ -21,10 +21,15 @@ export const useCostAnalytics = (accountId: string | null) => {
 
 // enabled defaults to false — the report is opt-in (365-day queries against 3
 // billing APIs are slow), fetched only once the user opens/expands the panel.
-export const useCostReport = (accountId: string | null, days: number, enabled: boolean) => {
+export const useCostReport = (
+  accountId: string | null,
+  days: number,
+  enabled: boolean,
+  groupBy: 'service' | 'resource' = 'service',
+) => {
   return useQuery<any>({
-    queryKey: ['costReport', accountId, days],
-    queryFn: () => (accountId ? getCostReport(accountId, days) : Promise.resolve(null)),
+    queryKey: ['costReport', accountId, days, groupBy],
+    queryFn: () => (accountId ? getCostReport(accountId, days, groupBy) : Promise.resolve(null)),
     enabled: !!accountId && enabled,
     staleTime: 5 * 60_000,
   });

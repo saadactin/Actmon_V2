@@ -166,10 +166,13 @@ export const CostPage = () => {
                   <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
                     {isBilled ? 'Billed Spend (Last 30 Days)' : 'Monthly Spend'}
                   </p>
-                  <p className="text-2xl font-bold text-gray-900 mt-0.5">
+                  <p
+                    className="text-2xl font-bold text-gray-900 mt-0.5 truncate"
+                    title={analytics.total_monthly_cost != null ? `${currencySymbol}${analytics.total_monthly_cost.toFixed(2)}` : undefined}
+                  >
                     {analytics.total_monthly_cost == null
                       ? 'NA'
-                      : `${currencySymbol}${analytics.total_monthly_cost.toFixed(2)}`}
+                      : `${currencySymbol}${analytics.total_monthly_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </p>
                   {analytics.total_monthly_cost != null && !currencyCode && (
                     <p className="text-[11px] text-gray-400 mt-0.5">currency: NA</p>
@@ -199,10 +202,10 @@ export const CostPage = () => {
                 </div>
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Potential Savings</p>
-                  <p className="text-2xl font-bold text-green-600 mt-0.5">
+                  <p className="text-2xl font-bold text-green-600 mt-0.5 truncate" title={analytics.potential_savings != null ? `${currencySymbol}${analytics.potential_savings.toFixed(2)}` : undefined}>
                     {analytics.potential_savings == null
                       ? 'NA'
-                      : `-${currencySymbol}${analytics.potential_savings.toFixed(2)}`}
+                      : `${currencySymbol}${analytics.potential_savings.toFixed(2)}`}
                   </p>
                 </div>
               </div>
@@ -216,10 +219,13 @@ export const CostPage = () => {
                 </div>
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Optimized Net Spend</p>
-                  <p className="text-2xl font-bold text-purple-600 mt-0.5">
+                  <p
+                    className="text-2xl font-bold text-purple-600 mt-0.5 truncate"
+                    title={analytics.net_projected_cost != null ? `${currencySymbol}${analytics.net_projected_cost.toFixed(2)}` : undefined}
+                  >
                     {analytics.net_projected_cost == null
                       ? 'NA'
-                      : `${currencySymbol}${analytics.net_projected_cost.toFixed(2)}`}
+                      : `${currencySymbol}${analytics.net_projected_cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </p>
                 </div>
               </div>
@@ -526,7 +532,13 @@ export const CostPage = () => {
           {/* Detailed cross-provider cost report (365-day, per-service, downloadable) —
               opened via the "Download Report" button in the header. */}
           <div ref={reportRef}>
-            <CostReportPanel accountId="ALL" open={reportOpen} onOpenChange={setReportOpen} />
+            {/* Follows the page's account/provider scope — viewing OCI should not
+                fan out to every provider's billing API just to build a report. */}
+            <CostReportPanel
+              accountId={currentAccountView}
+              open={reportOpen}
+              onOpenChange={setReportOpen}
+            />
           </div>
         </>
       )}

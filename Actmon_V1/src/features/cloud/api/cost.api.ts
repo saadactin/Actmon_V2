@@ -16,8 +16,12 @@ export const getCostAnalytics = async (accountId: string): Promise<any> => {
   return data;
 };
 
-export const getCostReport = async (accountId: string, days: number): Promise<any> => {
-  const { data } = await cloudAxios.get(`/cost/report/${accountId}`, { params: { days } });
+export const getCostReport = async (
+  accountId: string, days: number, groupBy: 'service' | 'resource' = 'service',
+): Promise<any> => {
+  const { data } = await cloudAxios.get(`/cost/report/${accountId}`, {
+    params: { days, group_by: groupBy },
+  });
   return data;
 };
 

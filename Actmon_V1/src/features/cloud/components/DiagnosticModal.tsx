@@ -28,6 +28,7 @@ const CATEGORY_META: Record<string, { label: string; Icon: React.ComponentType<{
   scanning:       { label: 'Scan In Progress',    Icon: Loader2,      tone: 'bg-blue-50 text-blue-700 border-blue-200' },
   failed:         { label: 'Scan Failed',         Icon: AlertTriangle, tone: 'bg-red-50 text-red-700 border-red-200' },
   ok:             { label: 'Scan Succeeded',      Icon: CheckCircle2, tone: 'bg-green-50 text-green-700 border-green-200' },
+  unsupported:    { label: 'Not Supported Yet',   Icon: Info,         tone: 'bg-purple-50 text-purple-700 border-purple-200' },
 };
 
 const SUGGESTED_FIX: Record<string, string> = {
@@ -39,6 +40,7 @@ const SUGGESTED_FIX: Record<string, string> = {
   never_scanned: 'Click "Scan All Accounts" or "Refresh" to run discovery for this account.',
   scanning: 'Wait for the current scan to finish, then refresh this page.',
   failed: 'See the error detail below for what the scanner hit. Fix the underlying cause (usually credentials or permissions), then re-run the scan.',
+  unsupported: 'Nothing to fix on your side — this resource type has no metrics mapping in the product yet.',
 };
 
 export const DiagnosticModal: React.FC<Props> = ({ title, items, onClose }) => {

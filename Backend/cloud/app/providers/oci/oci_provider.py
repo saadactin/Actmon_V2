@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 from app.providers.base import BaseCloudProvider
 from app.providers.oci.oci_auth import OCIAuth
 from app.providers.oci.oci_scanner import OCIScanner
+from app.providers.scan_pool import query_pool
 
 logger = logging.getLogger("cloud_svc.oci")
 
@@ -157,7 +158,29 @@ class OCIProvider(BaseCloudProvider):
             return {"id": resource_id, "error": "Resource not found across known OCI resource types"}
 
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(query_pool(), _fetch)
+
+    @staticmethod
+    def _summarize_usages_all(usage_client, request):
+        """Every usage item across all pages.
+
+        request_summarized_usages accepts a `page` token and echoes
+        `opc-next-page` when more remains. Current tenancies return everything
+        in one page (verified at ~47k items), but a single un-paged call would
+        silently under-report once a tenancy outgrows that, so follow the cursor.
+        """
+        items = []
+        page = None
+        while True:
+            kwargs = {"request_summarized_usages_details": request}
+            if page:
+                kwargs["page"] = page
+            response = usage_client.request_summarized_usages(**kwargs)
+            items.extend(response.data.items or [])
+            page = response.headers.get("opc-next-page")
+            if not page:
+                break
+        return items
 
     async def get_cost_data(self) -> List[Dict[str, Any]]:
         """OCI Usage API — retrieve cost per service for the last 30 days."""
@@ -182,11 +205,9 @@ class OCIProvider(BaseCloudProvider):
                 query_type="COST",
                 group_by=["service", "region"],
             )
-            response = usage_client.request_summarized_usages(
-                request_summarized_usages_details=request
-            )
+            usage_items = self._summarize_usages_all(usage_client, request)
             by_key: Dict[tuple, Dict[str, Any]] = {}
-            for item in response.data.items or []:
+            for item in usage_items:
                 service = item.service or "Unknown"
                 # Real region from the usage row; None = unknown (UI shows NA)
                 region = getattr(item, "region", None) or None
@@ -209,14 +230,18 @@ class OCIProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(None, _fetch)
+            return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("OCI cost API failed: %s", exc)
             raise
 
-    async def get_cost_by_resource(self) -> Dict[str, Dict[str, Any]]:
-        """OCI Usage API grouped by resourceId — real last-30-day spend per
-        resource OCID, keyed to match provider_resource_id in cloud_resources.
+    async def get_cost_by_resource(self, days: int = 30) -> Dict[str, Dict[str, Any]]:
+        """OCI Usage API grouped by resourceId — real spend per resource OCID over
+        the given window, keyed to match provider_resource_id in cloud_resources.
+
+        Also carries the billed service and region per resource. OCI never
+        populates resource_name on usage rows (only resource_id), so display
+        names have to come from our own inventory table — the caller joins them.
         Resources OCI doesn't bill individually (e.g. VCNs, NSGs) simply never
         appear here; callers show NA for those, never a guessed figure."""
         import asyncio
@@ -227,7 +252,7 @@ class OCIProvider(BaseCloudProvider):
 
             usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
             today = date.today()
-            start = (today - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00Z")
+            start = (today - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
             end = today.strftime("%Y-%m-%dT00:00:00Z")
             request = oci.usage_api.models.RequestSummarizedUsagesDetails(
                 tenant_id=self.auth.tenancy_ocid,
@@ -235,19 +260,20 @@ class OCIProvider(BaseCloudProvider):
                 time_usage_ended=end,
                 granularity="DAILY",
                 query_type="COST",
-                group_by=["resourceId"],
+                group_by=["resourceId", "service", "region"],
             )
-            response = usage_client.request_summarized_usages(
-                request_summarized_usages_details=request
-            )
+            usage_items = self._summarize_usages_all(usage_client, request)
             by_resource: Dict[str, Dict[str, Any]] = {}
-            for item in response.data.items or []:
+            for item in usage_items:
                 rid = getattr(item, "resource_id", None)
                 if not rid:
                     continue
-                row = by_resource.setdefault(
-                    rid, {"monthly_cost": 0.0, "currency": item.currency or None}
-                )
+                row = by_resource.setdefault(rid, {
+                    "monthly_cost": 0.0,
+                    "currency": item.currency or None,
+                    "service": item.service or None,
+                    "region": getattr(item, "region", None) or None,
+                })
                 row["monthly_cost"] += float(item.computed_amount or 0)
             for row in by_resource.values():
                 row["monthly_cost"] = round(row["monthly_cost"], 2)
@@ -255,7 +281,7 @@ class OCIProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(None, _fetch)
+            return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("OCI per-resource cost query failed: %s", exc)
             raise
@@ -281,11 +307,9 @@ class OCIProvider(BaseCloudProvider):
                 query_type="COST",
                 group_by=["service", "region"],
             )
-            response = usage_client.request_summarized_usages(
-                request_summarized_usages_details=request
-            )
+            usage_items = self._summarize_usages_all(usage_client, request)
             rows = []
-            for item in response.data.items or []:
+            for item in usage_items:
                 started = getattr(item, "time_usage_started", None)
                 if not started:
                     continue
@@ -300,7 +324,7 @@ class OCIProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(None, _fetch)
+            return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("OCI Usage API report query failed: %s", exc)
             raise
@@ -324,11 +348,9 @@ class OCIProvider(BaseCloudProvider):
                 granularity="DAILY",
                 query_type="COST",
             )
-            response = usage_client.request_summarized_usages(
-                request_summarized_usages_details=request
-            )
+            usage_items = self._summarize_usages_all(usage_client, request)
             by_day: Dict[str, Dict[str, Any]] = {}
-            for item in response.data.items or []:
+            for item in usage_items:
                 started = getattr(item, "time_usage_started", None)
                 if not started:
                     continue
@@ -345,7 +367,7 @@ class OCIProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(None, _fetch)
+            return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("OCI daily cost query failed: %s", exc)
             raise
@@ -386,4 +408,4 @@ class OCIProvider(BaseCloudProvider):
                 return []
 
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _fetch)
+        return await loop.run_in_executor(query_pool(), _fetch)
