@@ -17,6 +17,7 @@ from app.services.oracle.oracle_monitoring_service import (
     oracle_tablespaces,
     oracle_objects,
     oracle_schema_tables,
+    oracle_table_detail,
     oracle_users,
     oracle_redo_logs,
     oracle_data_guard,
@@ -104,6 +105,12 @@ def route_oracle_objects(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-schema-tables")
 def route_oracle_schema_tables(conn_id: int, owner: str = "", db: Session = Depends(get_db)):
     return oracle_schema_tables(conn_id, db, owner)
+
+
+# 9b — extra query params: owner, table
+@router.get("/{conn_id}/oracle-table-detail")
+def route_oracle_table_detail(conn_id: int, owner: str, table: str, db: Session = Depends(get_db)):
+    return oracle_table_detail(conn_id, db, owner, table)
 
 
 # 10

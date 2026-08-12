@@ -3,24 +3,19 @@ PostgreSQL Error Analysis Service — business logic for error analysis endpoint
 """
 
 import datetime
-from urllib.parse import quote_plus
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.services.postgres.postgres_ai_analysis import analyze_postgresql_error
+from app.services.postgres.postgres_connection_service import _pg_engine
 
 
 # ──────────────────────────────────────────────────────────────
 #  HELPERS
 # ──────────────────────────────────────────────────────────────
-
-def _pg_engine(conn):
-    url = f"postgresql://{conn.username}:{quote_plus(conn.password)}@{conn.host}:{conn.port}/{conn.database_name}"
-    return create_engine(url, echo=False)
-
 
 def _get_conn_or_404(connection_id: int, db: Session):
     conn = db.query(ConnectionMaster).filter(

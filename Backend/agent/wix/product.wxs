@@ -12,7 +12,7 @@
 <?ifndef Url ?><?define Url = "" ?><?endif ?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
-  <Product Id="*" Name="ActMon Agent" Language="1033" Version="1.0.0.0"
+  <Product Id="*" Name="ActMon Agent" Language="1033" Version="1.1.1.0"
            Manufacturer="ActMon" UpgradeCode="A1B2C3D4-1111-2222-3333-444455556666">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
              Description="ActMon Host Monitoring Agent" Manufacturer="ActMon" />

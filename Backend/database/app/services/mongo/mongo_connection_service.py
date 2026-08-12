@@ -99,17 +99,30 @@ def delete_connection(connection_id: int, db: Session):
 
 
 def test_connection(connection_id: int, db: Session):
+    """Real auth+query probe — was previously a stub that returned canned
+    success without ever opening a connection, which made the Diagnosis and
+    Database Agent pages' "Connection" check silently fake for MongoDB."""
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == connection_id,
         ConnectionMaster.db_type == "mongodb",
     ).first()
     if not connection:
         raise HTTPException(status_code=404, detail="MongoDB connection not found")
+
+    import time
+    from app.services.mongo.mongo_monitoring_service import _mongo_client
+
+    t0 = time.monotonic()
     try:
-        return {
-            "status": "success",
-            "message": "MongoDB connection test successful",
-            "version": "Atlas/Community",
-        }
+        mc = _mongo_client(connection)
+        mc.admin.command("ping")
+        build_info = mc.admin.command("buildInfo")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    latency_ms = round((time.monotonic() - t0) * 1000, 1)
+    return {
+        "status": "success",
+        "message": "Connected and authenticated successfully.",
+        "version": build_info.get("version", "unknown"),
+        "latency_ms": latency_ms,
+    }

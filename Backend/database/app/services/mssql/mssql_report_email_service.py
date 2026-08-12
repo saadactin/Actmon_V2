@@ -328,9 +328,33 @@ def _next_run(sched: MssqlReportSchedule) -> datetime:
     return c + timedelta(days=1) if c <= now else c
 
 
+def _finish_schedule(sched, db_session, result=None, error=None):
+    """Record the outcome and ALWAYS move next_run_at forward.
+
+    The scheduler re-picks any row whose next_run_at is still in the past, so a
+    row that fails to advance re-fires every 60s indefinitely. Advancing here
+    unconditionally means a broken schedule retries at its next *scheduled*
+    time instead of hammering (and, if the send half-succeeded, stops it
+    emailing on every tick).
+    """
+    sched.last_sent_at = datetime.utcnow()
+    if error is not None:
+        sched.last_status = "error"
+    elif isinstance(result, dict):
+        sched.last_status = result.get("status") or "unknown"
+    sched.next_run_at = _next_run(sched)
+    db_session.commit()
+
 def _run_schedule(sched: MssqlReportSchedule, db_session):
     recipients = json.loads(sched.recipient_emails or "[]")
     if not recipients:
+        # Reschedule even though there is nothing to send. Returning here
+        # WITHOUT advancing next_run_at left the row permanently due, so the
+        # 60s scheduler tick re-picked it forever — a hot loop burning a DB
+        # query every minute for a schedule that can never deliver.
+        sched.last_status = "no recipients"
+        sched.next_run_at = _next_run(sched)
+        db_session.commit()
         return
     smtp_host = sched.smtp_host; smtp_port = sched.smtp_port or 587
     smtp_user = sched.smtp_user; smtp_password = sched.smtp_password
@@ -361,8 +385,7 @@ def _run_schedule(sched: MssqlReportSchedule, db_session):
         smtp_tls=smtp_tls, sender_email=sender_email, sender_name=sender_name,
         report_period=sched.report_period or "24h", base_url="http://localhost:8000",
         pdf_base64=None, conn_host=conn_host, conn_db=conn_db)
-    sched.last_sent_at = datetime.utcnow(); sched.last_status = result["status"]
-    sched.next_run_at = _next_run(sched); db_session.commit()
+    _finish_schedule(sched, db_session, result)
 
 
 def _scheduler_loop():
@@ -376,7 +399,16 @@ def _scheduler_loop():
                     try:
                         _run_schedule(sched, session)
                     except Exception as exc:
+                        # See the equivalent guard in the other engines: without
+                        # forcing next_run_at forward, a failing schedule stays
+                        # due and re-fires every 60s tick.
                         log.error("MSSQL schedule %s error: %s", sched.id, exc)
+                        try:
+                            session.rollback()
+                            _finish_schedule(sched, session, error=exc)
+                        except Exception as exc2:
+                            log.error("MSSQL schedule %s could not be rescheduled: %s", sched.id, exc2)
+                            session.rollback()
         except Exception as exc:
             log.error("MSSQL scheduler tick error: %s", exc)
         _sched_stop.wait(60)

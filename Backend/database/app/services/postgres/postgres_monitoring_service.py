@@ -523,7 +523,11 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             "s.tup_inserted AS n_tup_ins, s.tup_updated AS n_tup_upd, "
             "s.tup_deleted AS n_tup_del, "
             "pg_catalog.pg_get_userbyid(d.datdba) AS owner, "
-            "pg_encoding_to_char(d.encoding) AS encoding "
+            "pg_encoding_to_char(d.encoding) AS encoding, "
+            # Unlike MySQL, PostgreSQL records a real owner and collation per
+            # database, so these are facts rather than derivations.
+            "d.datcollate AS collation, d.datctype AS ctype, "
+            "d.datallowconn AS allow_conn, d.datconnlimit AS conn_limit "
             "FROM pg_stat_database s "
             "JOIN pg_database d ON s.datid = d.oid "
             "WHERE s.datname NOT IN ('template0','template1') "
@@ -537,6 +541,17 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             d["xact_rollback"] = int(d.get("xact_rollback") or 0)
             d["blks_read"]     = int(d.get("blks_read") or 0)
             d["blks_hit"]      = int(d.get("blks_hit") or 0)
+            d["numbackends"]   = int(d.get("numbackends") or 0)
+            # Status from what PostgreSQL actually knows. There is deliberately no
+            # created_on: pg_database records no creation time, so the UI shows it
+            # as unavailable rather than inventing a proxy.
+            if d.get("allow_conn") is False:
+                d["status"] = "inaccessible"
+            elif d["numbackends"] > 0:
+                d["status"] = "active"
+            else:
+                d["status"] = "idle"
+            d["owner_source"] = "pg_database" if d.get("owner") else None
     except Exception:
         databases = []
 
@@ -1984,6 +1999,10 @@ def svc_table_structure(
     top_queries = []
     slow_queries = []
     has_pg_stat_statements = False
+    ddl = None
+    sample_columns = None
+    sample_rows = []
+    sample_returned = 0
 
     try:
         with db_eng.connect() as conn:
@@ -2295,6 +2314,64 @@ def svc_table_structure(
             except Exception as e:
                 errors.append(f"top_queries: {e}")
 
+            try:
+                # Postgres has no single built-in function that returns a full
+                # CREATE TABLE statement the way some other engines do. This DDL
+                # is synthesized in Python from the columns/constraints already
+                # fetched above via pg_catalog / information_schema -- it is a
+                # reasonable reconstruction of the table's shape (columns, PK,
+                # unique constraints), not a byte-perfect pg_dump output.
+                col_lines = []
+                for c in columns:
+                    col_def = f'"{c.get("column_name")}" {c.get("data_type")}'
+                    if str(c.get("is_nullable")) == "NO":
+                        col_def += " NOT NULL"
+                    default = c.get("column_default")
+                    if default:
+                        col_def += f" DEFAULT {default}"
+                    col_lines.append(col_def)
+
+                constraint_lines = []
+                for con in constraints:
+                    ctype = (con.get("constraint_type") or "").upper()
+                    cname = con.get("constraint_name")
+                    ccols = con.get("columns")
+                    if not ccols:
+                        continue
+                    if ctype == "PRIMARY KEY":
+                        constraint_lines.append(f'CONSTRAINT "{cname}" PRIMARY KEY ({ccols})')
+                    elif ctype == "UNIQUE":
+                        constraint_lines.append(f'CONSTRAINT "{cname}" UNIQUE ({ccols})')
+
+                body_lines = col_lines + constraint_lines
+                if body_lines:
+                    body = ",\n  ".join(body_lines)
+                    ddl = f'CREATE TABLE "{schema}"."{table}" (\n  {body}\n);'
+                else:
+                    ddl = None
+            except Exception as e:
+                ddl = None
+                errors.append(f"ddl: {e}")
+
+            try:
+                # Reuses the same connection/engine as every other section above.
+                sample_result = conn.execute(text(
+                    f'SELECT * FROM "{schema}"."{table}" LIMIT 100'
+                ))
+                sample_columns = list(sample_result.keys())
+                for r in sample_result.mappings().fetchall():
+                    row = {}
+                    for k, v in dict(r).items():
+                        if v is None or isinstance(v, (int, float, str, bool)):
+                            row[k] = v
+                        else:
+                            row[k] = str(v)
+                    sample_rows.append(row)
+                sample_returned = len(sample_rows)
+            except Exception as e:
+                sample_columns, sample_rows, sample_returned = None, [], 0
+                errors.append(f"sample_data: {e}")
+
     except Exception as e:
         errors.append(str(e))
     finally:
@@ -2317,6 +2394,10 @@ def svc_table_structure(
         "top_queries":            top_queries,
         "slow_queries":           slow_queries,
         "has_pg_stat_statements": has_pg_stat_statements,
+        "ddl":                    ddl,
+        "sample_columns":         sample_columns,
+        "sample_rows":            sample_rows,
+        "sample_returned":        sample_returned,
         "errors":                 errors,
     }
 

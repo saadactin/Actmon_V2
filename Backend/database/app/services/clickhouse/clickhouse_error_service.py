@@ -37,8 +37,39 @@ def analyze_error(connection_id: int, error_message: str, error_code: str, db: S
 
 
 def get_error_logs(connection_id: int, limit: int, db: Session) -> dict:
-    _get_conn(connection_id, db)
-    return {"status": "success", "data": []}
+    conn = _get_conn(connection_id, db)
+    from app.services.clickhouse.clickhouse_monitoring_service import _safe_query
+
+    n = int(limit) if limit else 20
+    # system.text_log carries the server's own log stream (same content as the
+    # clickhouse-server log file) — only enabled servers have rows here, so an
+    # empty result can mean either "no errors" or "text_log isn't configured";
+    # the caller (diagnose_orchestrate_service) reports that honestly rather
+    # than treating an empty list as "healthy".
+    #
+    # Bounded to the last hour: this check reports CURRENT problems, not a
+    # permanent archive. Without a time bound, a resolved one-off (e.g. a
+    # transient query bug that has since been fixed) stays pinned at the top
+    # of "recent errors" indefinitely on a quiet server, because there's never
+    # enough NEWER log volume to push it past LIMIT — it just sits there
+    # looking like an ongoing problem forever.
+    rows, err = _safe_query(
+        conn,
+        f"SELECT event_time, level, logger_name, message FROM system.text_log "
+        f"WHERE level IN ('Error','Fatal') AND event_time > now() - INTERVAL 1 HOUR "
+        f"ORDER BY event_time DESC LIMIT {n}",
+    )
+    if err:
+        return {"status": "success", "data": [], "note": f"system.text_log unavailable: {err}"}
+    entries = [
+        {
+            "timestamp": str(r.get("event_time")) if r.get("event_time") is not None else None,
+            "severity": str(r.get("level") or "ERROR").upper(),
+            "message": r.get("message"),
+        }
+        for r in (rows or [])
+    ]
+    return {"status": "success", "data": entries, "source": "system.text_log"}
 
 
 def get_metrics(connection_id: int, db: Session) -> dict:

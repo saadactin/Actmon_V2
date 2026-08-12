@@ -147,6 +147,9 @@ def svc_register_agent(req: AgentRegisterRequest, db: Session):
 
 
 def svc_sync_connections_to_agents(db: Session):
+    from app.models.agent_model import AgentDbTarget
+    from app.models.os_server_model import OsServer
+
     connections = db.query(ConnectionMaster).all()
     created, skipped = [], []
     for c in connections:
@@ -162,6 +165,23 @@ def svc_sync_connections_to_agents(db: Session):
                     db.commit()
                 skipped.append(name)
                 continue
+
+            # A connection attached to an ALREADY-ENROLLED host agent (the Add
+            # Database wizard's "existing agent" flow — svc_save_db_target) has no
+            # `agents` row of its own to match above: AgentDbTarget links it to
+            # that host's token, and OsServer.agent_token resolves the token to
+            # the host's own Agent row. Without this hop, every Sync run created a
+            # SECOND, disconnected "<db name>"-named agent for a host that was
+            # already listed — same physical collector, two rows. Skip creating
+            # one; never rename the host agent to the connection's name either,
+            # since that row is shared (may collect more than this one DB).
+            target = db.query(AgentDbTarget).filter(AgentDbTarget.connection_id == c.id).first()
+            if target:
+                server = db.query(OsServer).filter(OsServer.agent_token == target.token).first()
+                if server and db.query(Agent).filter(Agent.agent_name == server.server_name).first():
+                    skipped.append(name)
+                    continue
+
             db_type = (c.db_type or "mysql").lower()
             display_type = {
                 "mysql": "MySQL", "postgresql": "PostgreSQL", "postgres": "PostgreSQL",
@@ -194,6 +214,21 @@ def svc_ingest_agent_data(payload: AgentDataIngest, db: Session):
         )
 
     m = payload.metrics
+    # This endpoint is DB-metric-only — host telemetry always arrives via
+    # /agents/infra instead — so kind is ALWAYS "database", never "infra".
+    # That matters because a multi-engine host agent pushes every engine's
+    # metrics under the SAME shared agent_name as its own host identity; without
+    # forcing kind here, the metrics_pipeline's by-agent_name classification
+    # resolved this row to the host's "infra" bucket, and since these DB pushes
+    # never set host_cpu/host_memory (that's not their job — they default to 0),
+    # that silently zero-diluted the host's own CPU/Memory trend by ~6x (one real
+    # host sample vs six database engines' worth of zero "host" samples every
+    # cycle). agent.db_type still names the real engine for a single-engine
+    # agent; for a shared host identity it resolves to "Host" here, which would
+    # be a wrong tech to file this row under, so that case gets an honest
+    # placeholder instead of a misleading one.
+    _dbt = (agent.db_type or "").strip().lower()
+    tech = _dbt if _dbt and _dbt != "host" else "unclassified"
     db.add(AgentMetric(
         agent_name=payload.agent_name,
         host_cpu=m.host_cpu,
@@ -206,6 +241,7 @@ def svc_ingest_agent_data(payload: AgentDataIngest, db: Session):
         qps=m.qps,
         tps=m.tps,
         uptime_seconds=m.uptime_seconds,
+        kind="database", tech=tech, conn_id=agent.db_connection_id or 0,
     ))
 
     for s in (payload.top_sql or []):
@@ -343,6 +379,8 @@ def svc_list_agents(db: Session):
             "environment": a.environment or "Production",
             "status": a.status or "offline",
             "last_error": getattr(a, "last_error", None),
+            # None on hosts still running a pre-1.1.0 agent (no version reporting).
+            "agent_version": getattr(a, "agent_version", None),
             "cpu_usage": latest["host_cpu"],
             "memory_usage": latest["host_memory"],
             "db_cpu": latest["db_cpu"],

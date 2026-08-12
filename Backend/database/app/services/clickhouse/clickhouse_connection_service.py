@@ -87,10 +87,27 @@ def delete_connection(connection_id: int, db: Session) -> dict:
 
 
 def test_connection(connection_id: int, db: Session) -> dict:
+    """Real auth+query probe — was previously a stub that returned canned
+    success without ever opening a connection, which made the Diagnosis and
+    Database Agent pages' "Connection" check silently fake for ClickHouse."""
     conn = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == connection_id,
         ConnectionMaster.db_type == "clickhouse",
     ).first()
     if not conn:
         raise HTTPException(404, "ClickHouse connection not found")
-    return {"status": "success", "message": "ClickHouse connection test successful", "version": "Latest"}
+
+    import time
+    from app.services.clickhouse.clickhouse_monitoring_service import _safe_query
+
+    t0 = time.monotonic()
+    rows, err = _safe_query(conn, "SELECT version() AS version")
+    latency_ms = round((time.monotonic() - t0) * 1000, 1)
+    if err or not rows:
+        raise HTTPException(400, err or "ClickHouse did not return a version — connection failed.")
+    return {
+        "status": "success",
+        "message": "Connected and authenticated successfully.",
+        "version": rows[0].get("version", "unknown"),
+        "latency_ms": latency_ms,
+    }

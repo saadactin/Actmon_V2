@@ -30,7 +30,7 @@ logger = logging.getLogger("metrics_history")
 TTL_DAYS = int(os.getenv("METRICS_CH_TTL_DAYS", "90") or 90)
 
 # Numeric fields carried through the pipeline (mirror of AgentMetric).
-FIELDS = ("host_cpu", "host_memory", "db_cpu", "active_sessions", "connections_used",
+FIELDS = ("host_cpu", "host_memory", "host_disk", "db_cpu", "active_sessions", "connections_used",
           "connections_max", "cache_hit_pct", "qps", "tps", "uptime_seconds")
 INT_FIELDS = ("active_sessions", "connections_used", "connections_max", "uptime_seconds")
 COLUMNS = ["ts", "kind", "tech", "agent", "conn_id"] + list(FIELDS)
@@ -86,6 +86,7 @@ def ensure_table(cli, table):
                 conn_id          UInt32,
                 host_cpu         Float64,
                 host_memory      Float64,
+                host_disk        Float64,
                 db_cpu           Float64,
                 active_sessions  Int32,
                 connections_used Int32,
@@ -99,6 +100,10 @@ def ensure_table(cli, table):
               ORDER BY (agent, conn_id, ts)
               TTL ts + INTERVAL {TTL_DAYS} DAY
         """)
+        # CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists from
+        # before a field was added here — ADD COLUMN IF NOT EXISTS is what actually
+        # backfills the schema on every table this process has ever created.
+        cli.command(f"ALTER TABLE actmon.{table} ADD COLUMN IF NOT EXISTS host_disk Float64 DEFAULT 0")
         _tables_ready.add(table)
         return True
     except Exception as e:  # noqa: BLE001
@@ -266,14 +271,73 @@ def history(agent_name=None, minutes=60, kind=None, tech=None, conn_id=None):
             where.append("agent = %(a)s"); params["a"] = agent_name
         if conn_id:
             where.append("conn_id = %(c)s"); params["c"] = int(conn_id)
+        # toTimeZone(..., 'UTC') pins the OUTPUT to UTC regardless of this particular
+        # ClickHouse server's own display timezone (session tz defaults to whatever
+        # the server's OS is set to — UTC here, but not guaranteed elsewhere; see
+        # history_bucketed's note). Callers can then always parse `ts` as UTC.
         res = cli.query(
-            "SELECT ts, kind, tech, agent, conn_id, " + ", ".join(FIELDS) +
+            "SELECT toTimeZone(ts, 'UTC') AS ts, kind, tech, agent, conn_id, " + ", ".join(FIELDS) +
             " FROM " + source + " WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT 5000", parameters=params)
         cols = ["ts", "kind", "tech", "agent", "conn_id"] + list(FIELDS)
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] history: %s", e)
+        mark_down()
+        return []
+
+
+def history_bucketed(agent_name=None, minutes=60, bucket_seconds=60, kind=None, tech=None, conn_id=None):
+    """Same window as `history()`, averaged into fixed-width time buckets server-side.
+
+    `history()` alone can't serve a real range picker: it caps at 5000 raw rows,
+    which is ~20 hours of this agent's own 15s-cadence samples — a "Last 7 Days"
+    selection would just silently truncate to under a day with no indication why.
+    Bucketing moves the row cap from "how much history" to "how many buckets"
+    (a 7-day window at 1-hour buckets is 168 rows, comfortably under the cap
+    regardless of how many raw samples fed each one), and doubles as the
+    granularity control itself — the "per minute / per 15 min / per hour"
+    choice a caller makes IS this bucket width.
+    """
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        if kind or tech:
+            source = "actmon.%s" % table_for(kind or ("infra" if tech == "host" else "database"), tech)
+        else:
+            source = "merge('actmon', '^metrics_')"
+        where, params = ["ts > now() - INTERVAL %(m)s MINUTE"], {"m": int(minutes), "b": int(bucket_seconds)}
+        if agent_name:
+            where.append("agent = %(a)s"); params["a"] = agent_name
+        if conn_id:
+            where.append("conn_id = %(c)s"); params["c"] = int(conn_id)
+        # kind/tech/agent/conn_id are NOT re-selected from the aggregate: they're
+        # already known from the call's own arguments (this bucket's row always
+        # describes the same agent/connection the caller asked for), and aliasing
+        # an aggregate to the SAME name as a column filtered in WHERE (any(agent)
+        # AS agent, alongside `agent = %(a)s`) hits a real ClickHouse quirk —
+        # ILLEGAL_AGGREGATION, "Aggregate function ... is found in WHERE" — because
+        # it resolves the WHERE reference to the SELECT alias instead of the
+        # underlying column. Simplest fix is to just not create that alias.
+        # Same toTimeZone(..., 'UTC') pin as history() above — the bucket boundary
+        # is rendered in UTC no matter what timezone this ClickHouse server's OS
+        # defaults its DateTime display to (confirmed to differ between this dev
+        # WSL install [UTC] and at least one prior deployment [server-local] —
+        # this is a per-install setting, not a ClickHouse universal, so the API
+        # must not depend on the server's default to stay correct everywhere).
+        avg_cols = ", ".join("avg(%s) AS %s" % (f, f) for f in FIELDS)
+        res = cli.query(
+            "SELECT toTimeZone(toStartOfInterval(ts, INTERVAL %(b)s SECOND), 'UTC') AS bucket, " + avg_cols
+            + " FROM " + source + " WHERE " + " AND ".join(where)
+            + " GROUP BY bucket ORDER BY bucket DESC LIMIT 5000", parameters=params)
+        return [
+            {"ts": str(r[0]), "kind": kind or "", "tech": tech or "", "agent": agent_name or "",
+             "conn_id": int(conn_id or 0), **dict(zip(FIELDS, r[1:]))}
+            for r in res.result_rows
+        ]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] history_bucketed: %s", e)
         mark_down()
         return []
 

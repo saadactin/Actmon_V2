@@ -1,4 +1,5 @@
 import datetime
+import re
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
@@ -49,21 +50,25 @@ def analyze_error(connection_id: int, error_data: dict, db: Session):
 
 
 def get_error_logs(connection_id: int, limit: int, db: Session):
+    """Reads the real SQL Server error log via xp_readerrorlog — the actual
+    instance error log, not a DMV (sys.dm_exec_query_stats has no error
+    columns at all; that query could never have returned real data)."""
     connection = _get_conn_or_404(connection_id, db)
     try:
         engine = _engine(connection)
         with engine.connect() as conn:
-            result = conn.execute(text(f"""
-                SELECT TOP {limit}
-                    error_number,
-                    severity,
-                    message,
-                    log_date
-                FROM sys.dm_exec_query_stats
-                ORDER BY log_date DESC
-            """))
-            logs = [dict(row) for row in result.fetchall()]
-        return {"status": "success", "data": logs}
+            result = conn.execute(text("EXEC xp_readerrorlog 0, 1"))
+            rows = [dict(row._mapping) for row in result.fetchall()]
+        # xp_readerrorlog returns the current log oldest-first; take the most recent `limit`.
+        recent = list(reversed(rows[-limit:]))
+        logs = []
+        for r in recent:
+            msg = r.get("Text") or ""
+            sev = "ERROR" if re.search(r"\b(error|fail(ed)?|severity\s*1[6-9]|severity\s*2\d)\b", msg, re.I) \
+                else "WARNING" if re.search(r"\bwarning\b", msg, re.I) else "INFO"
+            logs.append({"timestamp": r.get("LogDate"), "message": msg, "severity": sev,
+                         "process_info": r.get("ProcessInfo")})
+        return {"status": "success", "data": logs, "source": "xp_readerrorlog"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

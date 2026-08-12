@@ -22,6 +22,10 @@ from app.database.connection import SessionLocal
 from app.models.alert_rule_model import AlertRule
 from app.models.agent_model import AgentNotification
 from app.models.os_server_model import OsServer
+from app.services.alerts.alert_engine_service import (
+    applies as _applies, evaluate as _evaluate, infer_metric as _infer_metric, techs_of as _techs,
+)
+from app.services.common.time_utils import iso_utc
 
 router = APIRouter(prefix="/api/v1/alerts", tags=["Alerts"])
 
@@ -48,6 +52,15 @@ class AlertRuleIn(BaseModel):
     cooldown_seconds: int = 600
     enabled: bool = True
     org_id: Optional[int] = 1
+    # Which channels to notify on firing — e.g. ["email", "teams"]. Empty
+    # means "fall back to the org's severity-based default routing".
+    notification_channel_types: List[str] = Field(default_factory=list)
+    # Who this rule's email actually goes to — there is no org-wide default
+    # any more, so a rule using the "email" channel needs at least one
+    # address here or its sends fail with a clear configuration error.
+    notification_recipients: List[str] = Field(default_factory=list)
+    notification_cc: List[str] = Field(default_factory=list)
+    notification_bcc: List[str] = Field(default_factory=list)
 
 
 class ToggleIn(BaseModel):
@@ -73,8 +86,12 @@ def _serialize(r: AlertRule) -> dict:
         "duration_seconds": r.duration_seconds,
         "cooldown_seconds": r.cooldown_seconds,
         "enabled": r.enabled,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
-        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        "notification_channel_types": r.notification_channel_types or [],
+        "notification_recipients": r.notification_recipients or [],
+        "notification_cc": r.notification_cc or [],
+        "notification_bcc": r.notification_bcc or [],
+        "created_at": iso_utc(r.created_at),
+        "updated_at": iso_utc(r.updated_at),
     }
 
 
@@ -176,91 +193,10 @@ def delete_rule(rule_id: int, db: Session = Depends(get_db)):
 # Active alerts are computed live from the CURRENT server state against the
 # ENABLED rules only. Disable a rule → its alerts stop immediately. Only
 # metrics we can actually measure fire; the rest simply don't (no false noise).
-_NUMERIC_HOST = {"cpu": "cpu_usage", "memory": "ram_usage", "disk": "disk_usage"}
-_UNIT = {"cpu": "%", "memory": "%", "disk": "%"}
-_OPSYM = {"gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "eq": "="}
-
-
-def _pct(v):
-    try:
-        return float(str(v).replace("%", "").strip())
-    except (TypeError, ValueError):
-        return None
-
-
-def _cmp(val, op, thr):
-    return {
-        "gt": val > thr, "gte": val >= thr,
-        "lt": val < thr, "lte": val <= thr, "eq": val == thr,
-    }.get(op, False)
-
-
-def _techs(server):
-    svcs = server.database_services or []
-    return ", ".join(svcs) if svcs else ""
-
-
-def _applies(rule, server):
-    st = rule.scope_type
-    if st == "all":
-        return True
-    if st == "technology":
-        svcs = [str(s).lower() for s in (server.database_services or [])]
-        v = (rule.scope_value or "").lower()
-        return any(s in ("mysql", "mariadb") for s in svcs) if v == "mysql" else v in svcs
-    if st == "server":
-        return server.server_name == rule.scope_value
-    return False  # agent / account scopes are not host-based
-
-
-def _infer_metric(message):
-    """Best-effort map a collector notification message → (metric_id, short label)
-    so the feed can show a sensible icon/section for real alerts."""
-    m = (message or "").lower()
-    if "cache" in m or "buffer" in m: return "cache_hit", "Cache / buffer hit ratio"
-    if "cpu" in m:                    return "cpu", "CPU usage"
-    if "memory" in m or "ram" in m:   return "memory", "Memory usage"
-    if "disk" in m or "space" in m:   return "disk", "Disk usage"
-    if "connection" in m:             return "connections", "Connections"
-    if "replicat" in m:               return "replication_lag", "Replication"
-    if "deadlock" in m:               return "deadlocks", "Deadlocks"
-    if "backup" in m:                 return "backup_failed", "Backup"
-    if "slow" in m or "quer" in m:    return "slow_queries", "Slow queries"
-    if any(k in m for k in ("offline", "unreachable", "down", "crash", "stopped")):
-        return "host_down", "Availability"
-    return "", "Alert"
-
-
-def _evaluate(rule, server):
-    """Return (value_str, threshold_str, message) if the rule fires, else None."""
-    metric = rule.metric
-    techs = _techs(server)
-    tail = f" ({techs})" if techs else ""
-
-    if metric in _NUMERIC_HOST:
-        val = _pct(getattr(server, _NUMERIC_HOST[metric]))
-        if val is None or not _cmp(val, rule.operator, rule.threshold):
-            return None
-        label = {"cpu": "CPU usage", "memory": "Memory usage", "disk": "Disk usage"}[metric]
-        return (
-            f"{val:g}%",
-            f"{_OPSYM.get(rule.operator, '')} {rule.threshold:g}%",
-            f"{label} is {val:g}% on {server.server_name}{tail} — threshold {_OPSYM.get(rule.operator,'')} {rule.threshold:g}%",
-        )
-
-    if metric == "host_down":
-        if (server.status or "") != "Connected":
-            return (server.status or "Unknown", None, f"Host {server.server_name}{tail} is offline / unreachable")
-        return None
-
-    if metric == "service_down":
-        stopped = [i.db_type for i in (server.db_instances or []) if (i.status or "") == "Stopped"]
-        if stopped:
-            return ("Stopped", None, f"Database service stopped on {server.server_name}: {', '.join(stopped)}")
-        return None
-
-    # metrics without a live data source do not fire (no false positives)
-    return None
+# The detection logic itself (_applies/_evaluate/_infer_metric) lives in
+# services/alerts/alert_engine_service.py, shared with the background
+# evaluator that actually triggers notifications — see that module for the
+# implementation.
 
 
 @router.get("/active", summary="Live active alerts (evaluated from enabled rules)")
@@ -268,7 +204,7 @@ def active_alerts(db: Session = Depends(get_db)):
     _seed_if_empty(db)
     rules = db.query(AlertRule).filter(AlertRule.enabled.is_(True)).all()
     servers = db.query(OsServer).all()
-    now = datetime.utcnow().isoformat()
+    now = iso_utc(datetime.utcnow())
     out = []
     for s in servers:
         for r in rules:
@@ -321,7 +257,7 @@ def active_alerts(db: Session = Depends(get_db)):
             "value": None,
             "threshold": None,
             "message": n.message,
-            "created_at": n.created_at.isoformat() if n.created_at else now,
+            "created_at": iso_utc(n.created_at) or now,
         })
 
     # latest first (newest alerts at the top)

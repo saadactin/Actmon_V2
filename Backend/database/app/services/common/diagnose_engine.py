@@ -12,13 +12,30 @@ Design goals (per product spec):
     MySQL / MariaDB / PostgreSQL / Oracle / MSSQL / MongoDB / ClickHouse / Redis /
     Elasticsearch / Cassandra all get a dedicated center with the same UX.
 """
+import base64
 import re
+import time
 from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
+
+
+def _age_str(ts) -> str:
+    """A DB timestamp → 'Ns'/'Nm'/'Nh', for labelling a stale-but-real reading
+    honestly rather than presenting it as fresh."""
+    if not ts:
+        return "unknown"
+    import datetime
+    now = ts.__class__.now(ts.tzinfo) if getattr(ts, "tzinfo", None) else datetime.datetime.now()
+    secs = max(0, (now - ts).total_seconds())
+    if secs < 90:
+        return f"{int(secs)}s"
+    if secs < 3600:
+        return f"{int(secs / 60)}m"
+    return f"{int(secs / 3600)}h"
 
 # ── per-engine profiles ─────────────────────────────────────────────────────
 PROFILES = {
@@ -63,6 +80,62 @@ def profile_for(db_type: str) -> dict:
     return PROFILES.get((db_type or "").lower()) or {
         "label": (db_type or "Database"), "services": [], "port": 0, "proc": (db_type or "").lower(),
         "data": [], "logs": [], "conf": "", "version_cmd": "true", "pkg": (db_type or "").lower()}
+
+
+# ── Windows profile — process name (Get-Process, wildcard) and log-file glob
+# roots per technology. Deliberately smaller than the Linux PROFILES: a few
+# techs (Elasticsearch/Cassandra, JVM processes with no distinguishing native
+# name) have no reliable process/log signal on Windows yet, so those checks
+# honestly report "not available" instead of guessing at a Java process name.
+WIN_PROFILES = {
+    "postgresql": {"proc": "postgres", "logs": [r"C:\Program Files\PostgreSQL\*\data\log"]},
+    "mysql":      {"proc": "mysqld", "logs": [r"C:\ProgramData\MySQL\MySQL Server*\Data", r"C:\Program Files\MySQL\MySQL Server*\Data"]},
+    "mariadb":    {"proc": "mysqld", "logs": [r"C:\Program Files\MariaDB*\data"]},
+    "mssql":      {"proc": "sqlservr", "logs": [r"C:\Program Files\Microsoft SQL Server\MSSQL*.MSSQLSERVER\MSSQL\Log"]},
+    "mongodb":    {"proc": "mongod", "logs": [r"C:\Program Files\MongoDB\Server\*\log"]},
+    "clickhouse": {"proc": "clickhouse*", "logs": [r"C:\ProgramData\ClickHouse\log\clickhouse-server"]},
+    "oracle":     {"proc": "oracle*", "logs": []},
+    "redis":      {"proc": "redis-server", "logs": [r"C:\Program Files\Redis"]},
+}
+WIN_PROFILES["postgres"] = WIN_PROFILES["postgresql"]
+
+
+def win_profile_for(db_type: str) -> dict:
+    return WIN_PROFILES.get((db_type or "").lower()) or {"proc": None, "logs": []}
+
+
+def _is_windows(os_type) -> bool:
+    return "win" in (os_type or "").lower()
+
+
+def os_type_for_conn(conn_id: int, db: Session) -> Optional[str]:
+    """Best-effort os_type for a connection — agent record first (it reports the
+    live host OS directly), then the registered infra server behind it. Returns
+    None (not "linux") when genuinely unknown, so callers don't assume a default."""
+    row = db.execute(text(
+        "SELECT os_type FROM agents WHERE db_connection_id = :c AND os_type IS NOT NULL LIMIT 1"
+    ), {"c": conn_id}).first()
+    if row and row[0]:
+        return row[0]
+    row = db.execute(text(
+        "SELECT s.os_type FROM database_instances di JOIN os_servers s ON s.id = di.server_id "
+        "WHERE di.connection_id = :c AND s.os_type IS NOT NULL LIMIT 1"
+    ), {"c": conn_id}).first()
+    return row[0] if row else None
+
+
+def _ps_encoded(script: str) -> str:
+    """Wrap a PowerShell snippet as -EncodedCommand (base64 UTF-16LE) so it can
+    travel through the agent's plain-string `shell` op with zero quoting risk —
+    matching the pattern already proven in service_state_service.py. The shell
+    op runs a raw command through cmd.exe on a Windows host, so a bare
+    PowerShell one-liner (quotes, pipes, `$_`) would get mis-parsed by cmd
+    before it ever reached PowerShell; this sidesteps that entirely."""
+    b = base64.b64encode(script.encode("utf-16-le")).decode()
+    return "powershell -NoProfile -NonInteractive -EncodedCommand " + b
+
+
+_NOT_APPLICABLE_WIN = "ACTMON_NOT_APPLICABLE_WINDOWS"
 
 
 # ── transport (agent / ssh / local) ─────────────────────────────────────────
@@ -225,9 +298,11 @@ def _files_for(check_id: str, p: dict) -> list:
     return m.get(check_id, [])
 
 
-def plan(db_type: str) -> dict:
+def plan(db_type: str, conn_id: Optional[int] = None, db: Optional[Session] = None) -> dict:
     p = profile_for(db_type)
     port = p.get("port", 0)
+    windows = bool(conn_id and db is not None and _is_windows(os_type_for_conn(conn_id, db)))
+    wp = win_profile_for(db_type) if windows else None
     checks = []
     for cid, title, group in CHECKS:
         meta = CHECK_META.get(cid, {})
@@ -236,8 +311,8 @@ def plan(db_type: str) -> dict:
             "id": cid, "title": title, "group": group,
             "why": (meta.get("why", "").format(eng=eng)),
             "what": (meta.get("what", "").format(eng=eng)),
-            "files": _files_for(cid, p),
-            "command": _cmd(cid, p, port),
+            "files": [] if windows else _files_for(cid, p),
+            "command": _cmd_display(cid, p, port, windows, wp),
             "command_desc": (meta.get("cmd_desc", "").format(eng=eng)),
         })
     return {"engine": p["label"], "checks": checks}
@@ -249,7 +324,112 @@ def _first_glob(paths):
     return f'for d in {parts}; do [ -e "$d" ] && echo "$d" && break; done'
 
 
-def _cmd(check_id: str, p: dict, port: int) -> str:
+def _win_script(check_id: str, p: dict, port: int, wp: dict) -> str:
+    """Windows counterpart of _cmd() — same check ids, same output conventions
+    _evaluate() already parses (NOTLISTENING / NONE / LOGFILE: / NO_JOURNAL /
+    percentage-with-% text), so _evaluate() and build_rca() need no branching
+    on OS. Checks with no reliable Windows signal yet (packages/version/config/
+    data_dir/permissions/inodes/env) report the shared "not applicable" marker
+    rather than guessing at install paths that vary by version and edition.
+
+    Returns the RAW, human-readable PowerShell text — this is what the admin
+    sees before running a check (the "Command" field). `_win_cmd()` below
+    wraps this for actual execution; nothing here should assume encoding."""
+    proc = wp.get("proc")
+    if check_id == "process":
+        if not proc:
+            return f"'{_NOT_APPLICABLE_WIN}: no known process name for this technology on Windows yet'"
+        return (
+            f"$procs = Get-Process -Name '{proc}' -ErrorAction SilentlyContinue; "
+            "if (-not $procs) { 'NONE' } else { $procs | ForEach-Object { "
+            "try { \"$($_.Id) $($_.ProcessName) $($_.StartTime)\" } catch { \"$($_.Id) $($_.ProcessName)\" } } }"
+        )
+    if check_id == "port":
+        return (
+            f"$c = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue; "
+            "if (-not $c) { 'NOTLISTENING' } else { $c | ForEach-Object { \"LISTENING $($_.LocalAddress):$($_.LocalPort) pid=$($_.OwningProcess)\" } }"
+        )
+    if check_id == "logs":
+        roots = wp.get("logs") or []
+        if not roots:
+            return f"'{_NOT_APPLICABLE_WIN}: no known log location for this technology on Windows yet'"
+        roots_ps = ",".join("'" + r.replace("'", "''") + "'" for r in roots)
+        return (
+            f"$roots = @({roots_ps}); $log = $null; "
+            "foreach ($r in $roots) { "
+            "  $dirs = Resolve-Path $r -ErrorAction SilentlyContinue; "
+            "  foreach ($d in $dirs) { "
+            "    $f = Get-ChildItem -Path $d.Path -Include *.log,*.err,ERRORLOG -Recurse -ErrorAction SilentlyContinue "
+            "         | Sort-Object LastWriteTime -Descending | Select-Object -First 1; "
+            "    if ($f) { $log = $f; break } "
+            "  }; if ($log) { break } "
+            "}; "
+            "if (-not $log) { 'LOGFILE:' } else { "
+            "  \"LOGFILE:$($log.FullName)\"; "
+            "  Get-Content -Path $log.FullName -Tail 80 -ErrorAction SilentlyContinue "
+            "    | Select-String -Pattern 'fatal','panic','error','denied','could not','corrupt','killed','out of memory' "
+            "    | Select-Object -Last 25 | ForEach-Object { $_.Line } "
+            "}"
+        )
+    if check_id == "journal":
+        pattern = re.sub(r"[^a-zA-Z]", "", (p.get("label") or "")) or (proc or "")
+        return (
+            "$since = (Get-Date).AddMinutes(-30); "
+            "$ev = Get-WinEvent -FilterHashtable @{LogName='Application','System'; StartTime=$since} -ErrorAction SilentlyContinue "
+            f"| Where-Object {{ $_.ProviderName -match '{pattern}' -or $_.Message -match '{pattern}' }} "
+            "| Select-Object -First 40; "
+            "if (-not $ev) { 'NO_JOURNAL' } else { $ev | ForEach-Object { "
+            "\"$($_.LevelDisplayName): $($_.TimeCreated) $($_.ProviderName) - $(($_.Message -split \"`n\")[0])\" } }"
+        )
+    if check_id == "oom":
+        return (
+            "$since = (Get-Date).AddHours(-24); "
+            "$ev = Get-WinEvent -FilterHashtable @{LogName='System'; Id=2004; StartTime=$since} -ErrorAction SilentlyContinue; "
+            "if ($ev) { 'resource_exhaustion_detected: ' + (($ev | Select-Object -First 3 | ForEach-Object { $_.TimeCreated }) -join ', ') } "
+            "else { 'NO_OOM_EVENTS' }"
+        )
+    if check_id == "disk":
+        return (
+            "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" -ErrorAction SilentlyContinue | ForEach-Object { "
+            "$pct = if ($_.Size -gt 0) { [math]::Round((($_.Size - $_.FreeSpace) / $_.Size) * 100) } else { 0 }; "
+            "\"$($_.DeviceID) $pct% used ($([math]::Round($_.FreeSpace/1GB,1))GB free of $([math]::Round($_.Size/1GB,1))GB)\" }"
+        )
+    if check_id == "memory":
+        return (
+            "$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue; "
+            "$t=[math]::Round($os.TotalVisibleMemorySize/1024); $f=[math]::Round($os.FreePhysicalMemory/1024); "
+            "\"Mem: total=${t}MB free=${f}MB used=$($t-$f)MB\""
+        )
+    if check_id == "cpu":
+        return (
+            "$cpu = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Measure-Object -Property LoadPercentage -Average).Average; "
+            "\"cpu_load=$cpu% cores:$env:NUMBER_OF_PROCESSORS\""
+        )
+    if check_id == "network":
+        return (
+            "$env:COMPUTERNAME; "
+            "((Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.*' }).IPAddress) -join ' '"
+        )
+    if check_id == "firewall":
+        return (
+            "'--firewall--'; Get-NetFirewallProfile -ErrorAction SilentlyContinue | ForEach-Object { \"$($_.Name): $($_.Enabled)\" }; "
+            "'--defender--'; try { (Get-MpComputerStatus -ErrorAction Stop).AntivirusEnabled } catch { 'unavailable' }"
+        )
+    # data_dir / config / permissions / inodes / packages / version / env / service
+    # (service is resolved separately via service_state_service, never through here)
+    return f"'{_NOT_APPLICABLE_WIN}: not implemented for Windows yet'"
+
+
+def _win_cmd(check_id: str, p: dict, port: int, wp: dict) -> str:
+    """Transport form of _win_script() — base64/-EncodedCommand wrapped so it
+    survives the agent's cmd.exe-based shell op. Use _win_script() directly
+    whenever the goal is to SHOW the command rather than run it."""
+    return _ps_encoded(_win_script(check_id, p, port, wp))
+
+
+def _cmd(check_id: str, p: dict, port: int, windows: bool = False, wp: Optional[dict] = None) -> str:
+    if windows:
+        return _win_cmd(check_id, p, port, wp or {})
     svc = " ".join(p["services"]) or "none"
     if check_id == "service":
         if not p["services"]:
@@ -300,9 +480,68 @@ def _cmd(check_id: str, p: dict, port: int) -> str:
     return "echo unsupported-check"
 
 
+def _cmd_display(check_id: str, p: dict, port: int, windows: bool = False, wp: Optional[dict] = None) -> str:
+    """Human-readable command text for the UI's "Command" field — the exact
+    thing that is about to run (or just ran), never the base64 transport
+    wrapper _win_cmd() actually sends over the wire."""
+    if windows:
+        if check_id == "service":
+            # Never goes through _win_script — resolved via service_state_service
+            # (see run_check()), which doesn't know the concrete service name
+            # until it actually queries the host, so the plan-time preview
+            # describes the mechanism rather than showing "not applicable".
+            return "Get-Service (Windows Service Control Manager query, resolved via service_state_service)"
+        return _win_script(check_id, p, port, wp or {})
+    return _cmd(check_id, p, port, False, None)
+
+
+# ── permission-issue detection ───────────────────────────────────────────────
+# The ActMon agent runs as LocalSystem (Windows, see product.wxs ServiceInstall
+# Account="LocalSystem") / root (Linux, no User= in the systemd unit) — both
+# already have blanket local rights for every check here, so there is no real
+# permission system to build. This only classifies the rare case where a
+# check's own output looks access-denied-shaped anyway (Group Policy, AV, or
+# a manually reconfigured service account) so the UI can say something honest
+# instead of a generic failure.
+_PERMISSION_PATTERNS = re.compile(
+    r"access is denied|unauthorizedaccess|permission denied|operation not permitted|must be superuser",
+    re.IGNORECASE,
+)
+_PERMISSION_EXPLANATIONS = {
+    "service": ("query the Windows Service Control Manager / systemd", "know whether the database's service is running"),
+    "process": ("list running processes", "confirm the database's process is alive"),
+    "port": ("query active TCP listeners", "confirm the database's port is open"),
+    "journal": ("read the Application/System Event Log or systemd journal", "surface startup/runtime failures"),
+    "logs": ("read the database's log file", "show the latest real error"),
+    "disk": ("query filesystem/volume usage", "detect a full disk"),
+    "memory": ("query system memory counters", "detect memory pressure"),
+    "cpu": ("query CPU load", "detect CPU starvation"),
+    "oom": ("read Resource-Exhaustion / OOM kernel events", "detect a process killed under memory pressure"),
+    "network": ("query host network configuration", "detect DNS/hostname/IP problems"),
+    "firewall": ("query firewall/AV state", "detect a blocked port"),
+}
+
+
+def _permission_issue(check_id: str, output: str) -> Optional[dict]:
+    if not output or not _PERMISSION_PATTERNS.search(output):
+        return None
+    need, enables = _PERMISSION_EXPLANATIONS.get(check_id, ("run this check", "complete this diagnostic"))
+    return {
+        "required": f"Rights to {need}.",
+        "why": f"ActMon needs this to {enables}.",
+        "enables": enables.capitalize() + ".",
+        "status": "Unexpected — the ActMon agent runs as LocalSystem (Windows) / root (Linux) and should already have this.",
+        "how_obtained": "Granted automatically when the ActMon agent is installed — no manual setup is needed. "
+                        "Seeing this usually means the agent's service account was reconfigured after install, "
+                        "or a Group Policy / endpoint-protection rule is blocking it on this specific host.",
+    }
+
+
 def _evaluate(check_id: str, out: str, port: int):
     o = out or ""
     low = o.lower()
+    if _NOT_APPLICABLE_WIN.lower() in low:
+        return "info", "Not available on Windows for this check yet — see Service/Process/Connectivity/Logs instead."
     if check_id == "service":
         if "no_systemd_unit" in low:
             return "info", "Managed outside systemd — see process/port checks."
@@ -347,12 +586,20 @@ def _evaluate(check_id: str, out: str, port: int):
         return "passed", "No fatal errors in recent log."
     if check_id == "journal":
         if "NO_JOURNAL" in o or not o.strip():
-            return "info", "No journal entries."
-        if any(t in low for t in ("fatal", "panic", "failed", "could not", "killed")):
-            return "failed", "Failures found in the journal."
-        return "passed", "No failures in the journal."
+            return "info", "No journal / Event Log entries in the recent window."
+        # "critical:"/"error:" are Windows Event Log's own LevelDisplayName prefixes
+        # (added alongside the Linux journal's existing fatal/panic/failed/killed
+        # wording) — Critical carries the same weight as a Linux failure, Error is
+        # downgraded to a warning since Windows logs routine app errors there too.
+        if any(t in low for t in ("fatal", "panic", "failed", "could not", "killed", "critical:")):
+            return "failed", "Failures found in the journal / Event Log."
+        if "error:" in low:
+            return "warning", "Error-level Event Log entries found."
+        return "passed", "No failures in the journal / Event Log."
     if check_id == "oom":
-        return ("failed", "OOM killer terminated the process.") if any(t in low for t in ("out of memory", "killed process", "oom-kill")) else ("passed", "No OOM events.")
+        return ("failed", "The process was killed under memory pressure (OOM killer / Resource Exhaustion Detector).") \
+            if any(t in low for t in ("out of memory", "killed process", "oom-kill", "resource_exhaustion_detected")) \
+            else ("passed", "No OOM / resource-exhaustion events.")
     if check_id == "memory":
         return "info", (o.strip().splitlines()[1] if len(o.strip().splitlines()) > 1 else o.strip())[:160]
     if check_id == "cpu":
@@ -406,22 +653,91 @@ def run_check(conn_id: int, check_id: str, db: Session) -> dict:
     port = rec.port or p["port"]
     title = next((c[1] for c in CHECKS if c[0] == check_id), check_id)
     group = next((c[2] for c in CHECKS if c[0] == check_id), "General")
+    windows = _is_windows(os_type_for_conn(conn_id, db))
+    wp = win_profile_for(rec.db_type) if windows else None
+    command = _cmd_display(check_id, p, port, windows, wp)
+    t0 = time.monotonic()
+
+    # Service state on Windows is resolved through service_state_service — the
+    # same already-proven probe the collector uses to decide up/down, rather
+    # than a fresh Get-Service call here. It knows the SQL Server per-instance
+    # naming rule and the port-first resolution strategy; reimplementing that
+    # in a shell one-liner would risk reporting on the wrong service.
+    if check_id == "service" and windows:
+        from app.services.common.service_state_service import get_service_state
+        result = get_service_state(conn_id, db)
+        duration_ms = round((time.monotonic() - t0) * 1000)
+        # _cmd_display()'s generic Windows fallback would show the "not
+        # applicable" marker here (this check never goes through _win_script —
+        # it delegates to service_state_service instead), which is honest but
+        # unhelpful for the one check the admin most wants to see the real
+        # command for. Build the real, resolved command instead, once known.
+        resolved = result.get("service_name")
+        command = (f"Get-Service -Name '{resolved}'" if resolved
+                   else "Get-Service (Windows Service Control Manager query, resolved via service_state_service)")
+        if not result.get("checked"):
+            # A live probe shares the SAME one-job-at-a-time agent channel as
+            # every DB connection's own collector cycle and every other
+            # on-demand check — under load it can lose that race within its
+            # 10s window even though the collector itself resolved this exact
+            # service just moments ago and is sitting on a good answer in
+            # `agents`. Surfacing that last-known reading (clearly labelled as
+            # such, with its own age) beats discarding known information and
+            # reporting "unknown" for a state ActMon already has.
+            stale = db.execute(text(
+                "SELECT status, last_error, last_heartbeat FROM agents WHERE db_connection_id = :c"
+            ), {"c": conn_id}).first()
+            if stale and stale.last_error:
+                age = _age_str(stale.last_heartbeat)
+                st = "failed" if stale.status == "error" else "passed" if stale.status == "online" else "skipped"
+                return {"id": check_id, "title": title, "group": group, "status": st,
+                        "detail": f"Live probe timed out — last known from the collector "
+                                  f"({age} ago): {stale.last_error}",
+                        "evidence": f"stale_source=agents.last_error age={age}",
+                        "command": command, "duration_ms": duration_ms, "exit_code": None,
+                        "permission_issue": None}
+            return {"id": check_id, "title": title, "group": group, "status": "skipped",
+                    "detail": "Could not determine the Windows service state (no agent/SSH reachable, "
+                              "or no matching service found on this host).", "evidence": "",
+                    "command": command, "duration_ms": duration_ms, "exit_code": None, "permission_issue": None}
+        st = "passed" if result.get("active") else "failed"
+        detail = result.get("detail") or result.get("state") or "unknown"
+        evidence = f"service_name={resolved} state={result.get('state')} source={result.get('source')}"
+        return {"id": check_id, "title": title, "group": group, "status": st,
+                "detail": detail, "evidence": evidence, "output": evidence,
+                "command": command, "duration_ms": duration_ms, "exit_code": 0, "permission_issue": None,
+                "service_name": resolved,
+                "analysis": _step_analysis(check_id, st, "" if st == "passed" else "service inactive", p)}
+
     t = Transport(rec, db)
     if not t.connect():
         return {"id": check_id, "title": title, "group": group, "status": "skipped",
-                "detail": "No connection method available (agent/SSH).", "evidence": ""}
+                "detail": "No connection method available (agent/SSH).", "evidence": "",
+                "command": command, "duration_ms": round((time.monotonic() - t0) * 1000),
+                "exit_code": None, "permission_issue": None}
     try:
-        code, out = t.shell(_cmd(check_id, p, port), timeout=45)
+        code, out = t.shell(_cmd(check_id, p, port, windows, wp), timeout=45)
     finally:
         t.close()
+    duration_ms = round((time.monotonic() - t0) * 1000)
     if out is None:
         return {"id": check_id, "title": title, "group": group, "status": "skipped",
-                "detail": "Host did not respond.", "evidence": ""}
+                "detail": "Host did not respond.", "evidence": "",
+                "command": command, "duration_ms": duration_ms, "exit_code": code, "permission_issue": None}
     st, detail = _evaluate(check_id, out, port)
-    return {"id": check_id, "title": title, "group": group, "status": st,
-            "detail": detail, "evidence": (out or "").strip()[:4000],
-            "output": (out or "").strip()[:4000],
-            "analysis": _step_analysis(check_id, st, out, p)}
+    result = {"id": check_id, "title": title, "group": group, "status": st,
+              "detail": detail, "evidence": (out or "").strip()[:4000],
+              "output": (out or "").strip()[:4000],
+              "command": command, "duration_ms": duration_ms, "exit_code": code,
+              "permission_issue": _permission_issue(check_id, out),
+              "analysis": _step_analysis(check_id, st, out, p)}
+    if check_id == "service" and not windows:
+        # Which of the candidate units actually answered (_cmd()'s loop prints
+        # "<unit>=<state>" for each one it could query) — Recommended Actions
+        # needs the real matched unit name, not just "did the service check pass".
+        m = re.search(r"^(\S+)=(active|inactive|failed|activating|deactivating)\b", out or "", re.MULTILINE)
+        result["service_name"] = m.group(1) if m else (p["services"][0] if p.get("services") else None)
+    return result
 
 
 def _step_analysis(check_id: str, status: str, out: str, p: dict) -> dict:

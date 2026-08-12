@@ -1331,9 +1331,24 @@ def _collect_one_agent(agent_id):
             # dead service). Left untouched during the online grace window.
             inst_status = "Running" if new_status == "online" else ("Stopped" if new_status == "error" else None)
             if inst_status and conn_rec is not None:
-                db.execute(text(
-                    "UPDATE database_instances SET status = :st WHERE connection_id = :c"),
-                    {"st": inst_status, "c": conn_rec.id})
+                # Stamp status_changed_at only on an actual transition — mirrors
+                # os_server_service._apply_instance_status's behavior for the
+                # SSH-polled path. Without this, "Down since" / the Diagnosis
+                # timeline had nothing to show for agent-collected hosts even
+                # though the status itself was correct.
+                current = db.execute(text(
+                    "SELECT status FROM database_instances WHERE connection_id = :c"),
+                    {"c": conn_rec.id}).scalar()
+                if current != inst_status:
+                    db.execute(text(
+                        "UPDATE database_instances SET status = :st, status_changed_at = now(), "
+                        "status_detail = :detail WHERE connection_id = :c"),
+                        {"st": inst_status, "c": conn_rec.id,
+                         "detail": err_text if inst_status == "Stopped" else None})
+                else:
+                    db.execute(text(
+                        "UPDATE database_instances SET status = :st WHERE connection_id = :c"),
+                        {"st": inst_status, "c": conn_rec.id})
             db.commit()
 
             if success:

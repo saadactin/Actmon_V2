@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
 from app.models.smtp_config_model import SmtpConfig
+from app.services.common.crypto_service import encrypt_secret, decrypt_secret
 
 router = APIRouter(prefix="/api/v1/settings/smtp", tags=["smtp-config"])
 log = logging.getLogger("smtp_config")
@@ -58,6 +59,19 @@ class SmtpUpdate(BaseModel):
 
 
 # ─── Helpers ───────────────────────────────────────────────────
+def _effective_password(cfg: SmtpConfig) -> Optional[str]:
+    """The password to actually connect with — decrypted if the config was
+    saved after the encryption retrofit, else the legacy plaintext column
+    (still readable so configs saved before this change keep working until
+    they're next edited, at which point they migrate to smtp_password_enc)."""
+    if cfg.smtp_password_enc:
+        try:
+            return decrypt_secret(cfg.smtp_password_enc)
+        except Exception:
+            log.warning("Could not decrypt smtp_password_enc for config %s — falling back to legacy column", cfg.id)
+    return cfg.smtp_password
+
+
 def _to_dict(s: SmtpConfig) -> dict:
     return {
         "id":           s.id,
@@ -65,7 +79,7 @@ def _to_dict(s: SmtpConfig) -> dict:
         "smtp_host":    s.smtp_host,
         "smtp_port":    s.smtp_port,
         "smtp_user":    s.smtp_user,
-        "smtp_password": "•" * 12 if s.smtp_password else None,  # never expose raw password
+        "smtp_password": "•" * 12 if (s.smtp_password_enc or s.smtp_password) else None,  # never expose raw password
         "smtp_tls":     s.smtp_tls,
         "sender_email": s.sender_email,
         "sender_name":  s.sender_name,
@@ -144,7 +158,8 @@ def create_config(req: SmtpCreate, db: Session = Depends(get_db)):
         smtp_host=req.smtp_host,
         smtp_port=req.smtp_port,
         smtp_user=req.smtp_user or None,
-        smtp_password=req.smtp_password or None,
+        smtp_password=None,
+        smtp_password_enc=encrypt_secret(req.smtp_password) if req.smtp_password else None,
         smtp_tls=req.smtp_tls,
         sender_email=req.sender_email,
         sender_name=req.sender_name,
@@ -164,10 +179,15 @@ def update_config(cfg_id: int, req: SmtpUpdate, db: Session = Depends(get_db)):
     data = req.model_dump(exclude_unset=True)
     if data.get("is_default"):
         db.query(SmtpConfig).filter(SmtpConfig.id != cfg_id).update({"is_default": False})
-    # Only update password if a non-masked value is provided
+    # Password is handled separately: a masked placeholder means "unchanged",
+    # a real value gets encrypted into smtp_password_enc and the legacy
+    # plaintext column is cleared (this is the migration point for configs
+    # saved before the encryption retrofit).
+    new_password = data.pop("smtp_password", None)
+    if new_password and set(new_password) != {"•"}:
+        cfg.smtp_password_enc = encrypt_secret(new_password)
+        cfg.smtp_password = None
     for k, v in data.items():
-        if k == "smtp_password" and v and set(v) == {"•"}:
-            continue  # masked — don't overwrite
         setattr(cfg, k, v)
     db.commit()
     return {"status": "success", "config": _to_dict(cfg)}
@@ -188,7 +208,7 @@ def test_config(cfg_id: int, db: Session = Depends(get_db)):
     cfg = db.query(SmtpConfig).filter(SmtpConfig.id == cfg_id).first()
     if not cfg:
         raise HTTPException(status_code=404, detail="SMTP config not found")
-    result = _test_smtp(cfg.smtp_host, cfg.smtp_port, cfg.smtp_user, cfg.smtp_password, cfg.smtp_tls)
+    result = _test_smtp(cfg.smtp_host, cfg.smtp_port, cfg.smtp_user, _effective_password(cfg), cfg.smtp_tls)
     cfg.last_test_at  = datetime.utcnow()
     cfg.last_test_ok  = result["ok"]
     cfg.last_test_msg = result["msg"]

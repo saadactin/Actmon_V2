@@ -76,6 +76,71 @@ def _prune_metrics(db):
     db.commit()
 
 
+def _probe_service_states(names):
+    """Record WHY each of these agents stopped reporting, straight from its own
+    service manager. Runs on its own thread — each probe blocks for its timeout
+    when the agent is genuinely down, which is exactly the common case here."""
+    from app.services.agent import agent_service_state_service as svc_state
+    db = SessionLocal()
+    try:
+        for name in names:
+            try:
+                res = svc_state.probe(name, db)
+                if not res.get("checked"):
+                    continue   # SSH-collected host: no channel, nothing to record
+                detail = res["detail"]
+                if res.get("running"):
+                    # The service answered AND reports itself healthy, yet we just
+                    # marked this agent offline for heartbeat silence. Those two
+                    # facts together are a distinct diagnosis — the agent process
+                    # is alive but its data push is failing (collector script
+                    # error, blocked egress, wrong backend URL) — and pointing the
+                    # operator at the service would send them the wrong way.
+                    detail = (f"{res['detail']} It is running but has stopped sending data — "
+                              f"the process is alive, so this is a collection/connectivity "
+                              f"problem rather than a stopped service. Check the agent log on "
+                              f"the host (Linux: journalctl -u actmon-agent; "
+                              f"Windows: C:\\ProgramData\\ActMon\\agent.log).")
+                db.execute(text(
+                    "UPDATE agents SET last_error = :d WHERE agent_name = :n AND status = 'offline'"),
+                    {"d": detail, "n": name})
+                db.commit()
+                logger.info("[reaper] '%s' service state: %s", name, res["state"])
+            except Exception as e:  # noqa: BLE001 — one bad probe must not stop the rest
+                db.rollback()
+                logger.debug("[reaper] service probe failed for %s: %s", name, e)
+    finally:
+        db.close()
+
+
+def _spawn_service_probes(names):
+    if not names:
+        return
+    threading.Thread(target=_probe_service_states, args=(list(names),),
+                     daemon=True, name="agent-svc-probe").start()
+
+
+# Re-probe agents that are ALREADY offline, throttled per agent. Probing only on
+# the online->offline transition left the recorded reason frozen at whatever the
+# first probe said: an agent offline for hours kept showing a stale message, and
+# a fix to the probe itself could never change it because no new transition ever
+# happened. Refresh it periodically instead so the reason tracks reality.
+_PROBE_REFRESH_SEC = int(os.getenv("AGENT_SVC_PROBE_REFRESH_SECS", "600"))
+_probe_last = {}     # agent_name -> monotonic seconds of the last probe
+
+
+def _due_for_reprobe(names):
+    import time as _t
+    now = _t.monotonic()
+    due = [n for n in names if (now - _probe_last.get(n, 0.0)) >= _PROBE_REFRESH_SEC]
+    for n in due:
+        _probe_last[n] = now
+    # Don't let the throttle dict grow forever as agents come and go.
+    if len(_probe_last) > 5000:
+        _probe_last.clear()
+    return due
+
+
 def reap_once():
     """One reaping pass. Returns a dict of what changed (for logging/tests)."""
     db = SessionLocal()
@@ -126,6 +191,23 @@ def reap_once():
             for name in going_offline:
                 _notify(db, name, f"Agent '{name}' went offline - it stopped reporting "
                                   f"(uninstalled or host unreachable).", "warning")
+            # Heartbeat silence says "not reporting"; it can't say WHY. Ask each
+            # agent's own service, off-thread so a non-answering host can't stall
+            # this pass (the probe waits out its timeout by design).
+            _due_for_reprobe(going_offline)   # stamp them so the refresh pass doesn't immediately redo these
+            _spawn_service_probes(going_offline)
+
+        # Refresh the recorded reason for agents that were ALREADY offline, so a
+        # long-dead host's message stays accurate (and picks up probe fixes)
+        # instead of being frozen at its first-ever probe. Throttled per agent by
+        # _PROBE_REFRESH_SEC, and it runs off-thread like the transition probes.
+        try:
+            still_offline = [r[0] for r in db.execute(text(
+                "SELECT agent_name FROM agents WHERE status = 'offline'")).fetchall()]
+            _spawn_service_probes(_due_for_reprobe(
+                [n for n in still_offline if n not in set(going_offline)]))
+        except Exception as e:  # noqa: BLE001 — refresh is best-effort
+            logger.debug("[reaper] offline re-probe skipped: %s", e)
 
         # 2) Stale agent-hosts -> Disconnected.
         r = db.execute(text(

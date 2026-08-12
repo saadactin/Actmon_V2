@@ -120,6 +120,15 @@ def get_dashboard(conn_id: int, db: Session, live: bool = False) -> dict:
         "host": connection.host, "port": connection.port,
         "database": connection.database_name,
     }
+    try:
+        from app.models.os_server_model import OsServer, DatabaseInstance
+        inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+        srv = db.query(OsServer).filter(OsServer.id == inst.server_id).first() if inst else None
+        if srv:
+            conn_meta["server_id"] = srv.id
+            conn_meta["server_name"] = srv.server_name
+    except Exception:
+        pass
 
     try:
         eng = _engine(connection)

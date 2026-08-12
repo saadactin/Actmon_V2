@@ -273,6 +273,133 @@ END; $_$""",
          error_message     TEXT)""",
     """CREATE INDEX IF NOT EXISTS idx_external_check_result_check_ts
          ON external_check_result (check_id, checked_at DESC)""",
+    # Agent version reporting — which build each host actually runs.
+    """ALTER TABLE agents
+         ADD COLUMN IF NOT EXISTS agent_version          VARCHAR(40),
+         ADD COLUMN IF NOT EXISTS agent_version_seen_at  TIMESTAMPTZ""",
+    # Agent upgrade ledger — proves an update landed instead of assuming it did.
+    """CREATE TABLE IF NOT EXISTS agent_pending_update (
+         id                 SERIAL PRIMARY KEY,
+         agent_name         VARCHAR(255) NOT NULL,
+         expected_version   VARCHAR(40),
+         from_version       VARCHAR(40),
+         status             VARCHAR(30)  NOT NULL DEFAULT 'pending',
+         detail             TEXT,
+         issued_at          TIMESTAMPTZ  DEFAULT now(),
+         issued_by          INTEGER,
+         delivered_at       TIMESTAMPTZ,
+         confirmed_at       TIMESTAMPTZ,
+         confirmed_version  VARCHAR(40))""",
+    """CREATE INDEX IF NOT EXISTS idx_agent_pending_update_agent
+         ON agent_pending_update (agent_name, issued_at DESC)""",
+    # ── Enterprise Alert Notification System ──────────────────────────────
+    # Channel configs (one row per org+channel_type, secrets Fernet-encrypted
+    # into secrets_enc — see app/services/common/crypto_service.py), per-rule
+    # channel selection, severity-based default routing, persistent firing
+    # state (makes alert_rules.duration_seconds/cooldown_seconds actually
+    # mean something instead of sitting unused), the dispatch/retry queue,
+    # and the append-only delivery history log.
+    """ALTER TABLE alert_rules
+         ADD COLUMN IF NOT EXISTS notification_channel_types JSONB NOT NULL DEFAULT '[]'::jsonb""",
+    """ALTER TABLE alert_rules
+         ADD COLUMN IF NOT EXISTS notification_recipients JSONB NOT NULL DEFAULT '[]'::jsonb""",
+    """ALTER TABLE alert_rules
+         ADD COLUMN IF NOT EXISTS notification_cc JSONB NOT NULL DEFAULT '[]'::jsonb""",
+    """ALTER TABLE alert_rules
+         ADD COLUMN IF NOT EXISTS notification_bcc JSONB NOT NULL DEFAULT '[]'::jsonb""",
+    """CREATE TABLE IF NOT EXISTS notification_channels (
+         id               SERIAL PRIMARY KEY,
+         org_id           INTEGER      NOT NULL DEFAULT 1,
+         channel_type     VARCHAR(30)  NOT NULL,
+         enabled          BOOLEAN      NOT NULL DEFAULT FALSE,
+         config           JSONB        NOT NULL DEFAULT '{}'::jsonb,
+         secrets_enc      TEXT,
+         last_test_at     TIMESTAMP,
+         last_test_ok     BOOLEAN,
+         last_test_msg    VARCHAR(500),
+         last_success_at  TIMESTAMP,
+         last_failure_at  TIMESTAMP,
+         last_error       TEXT,
+         created_at       TIMESTAMP DEFAULT now(),
+         updated_at       TIMESTAMP,
+         UNIQUE (org_id, channel_type))""",
+    """CREATE TABLE IF NOT EXISTS severity_channel_routing (
+         id            SERIAL PRIMARY KEY,
+         org_id        INTEGER      NOT NULL DEFAULT 1,
+         severity      VARCHAR(20)  NOT NULL,
+         channel_type  VARCHAR(30)  NOT NULL,
+         enabled       BOOLEAN      NOT NULL DEFAULT TRUE,
+         UNIQUE (org_id, severity, channel_type))""",
+    """CREATE TABLE IF NOT EXISTS alert_fired_state (
+         id                SERIAL PRIMARY KEY,
+         alert_rule_id     INTEGER      NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+         scope_key         VARCHAR(300) NOT NULL,
+         first_breach_at   TIMESTAMP    NOT NULL,
+         last_breach_at    TIMESTAMP    NOT NULL,
+         last_notified_at  TIMESTAMP,
+         is_firing         BOOLEAN      NOT NULL DEFAULT FALSE,
+         UNIQUE (alert_rule_id, scope_key))""",
+    """CREATE TABLE IF NOT EXISTS notification_queue (
+         id               SERIAL PRIMARY KEY,
+         org_id           INTEGER      NOT NULL DEFAULT 1,
+         alert_rule_id    INTEGER      REFERENCES alert_rules(id) ON DELETE SET NULL,
+         channel_type     VARCHAR(30)  NOT NULL,
+         payload          JSONB        NOT NULL,
+         status           VARCHAR(20)  NOT NULL DEFAULT 'pending',
+         attempt_count    INTEGER      NOT NULL DEFAULT 0,
+         max_attempts     INTEGER      NOT NULL DEFAULT 3,
+         next_attempt_at  TIMESTAMP    NOT NULL DEFAULT now(),
+         timeout_seconds  INTEGER      NOT NULL DEFAULT 15,
+         last_error       TEXT,
+         created_at       TIMESTAMP    DEFAULT now(),
+         sent_at          TIMESTAMP)""",
+    """CREATE INDEX IF NOT EXISTS idx_notification_queue_due
+         ON notification_queue (status, next_attempt_at)""",
+    """CREATE TABLE IF NOT EXISTS notification_history (
+         id                SERIAL PRIMARY KEY,
+         org_id            INTEGER      NOT NULL DEFAULT 1,
+         sent_at           TIMESTAMP    DEFAULT now(),
+         alert_rule_id     INTEGER      REFERENCES alert_rules(id) ON DELETE SET NULL,
+         alert_name        VARCHAR(200),
+         server_name       VARCHAR(255),
+         database_name     VARCHAR(255),
+         severity          VARCHAR(20),
+         channel_type      VARCHAR(30)  NOT NULL,
+         recipient         VARCHAR(500),
+         status            VARCHAR(20)  NOT NULL,
+         response_code     VARCHAR(20),
+         response_time_ms  DOUBLE PRECISION,
+         retry_count       INTEGER      NOT NULL DEFAULT 0,
+         error_message     TEXT)""",
+    """CREATE INDEX IF NOT EXISTS idx_notification_history_org_sent
+         ON notification_history (org_id, sent_at DESC)""",
+    """CREATE TABLE IF NOT EXISTS notification_templates (
+         id                SERIAL PRIMARY KEY,
+         org_id            INTEGER      NOT NULL DEFAULT 1,
+         channel_type      VARCHAR(30)  NOT NULL,
+         subject_template  TEXT,
+         body_template     TEXT,
+         UNIQUE (org_id, channel_type))""",
+    # SMTP password encryption-at-rest (Fernet, same crypto_service used for
+    # Cosmos DB keys) — smtp_password stays readable during the transition;
+    # new saves populate smtp_password_enc and routes prefer it when present.
+    """ALTER TABLE smtp_configs
+         ADD COLUMN IF NOT EXISTS smtp_password_enc TEXT""",
+    # Per-instance service-down diagnostics — when a status actually
+    # transitions (not just re-checked) and the raw check output at that
+    # time, so a "Database Service Down" alert can say WHEN and show real
+    # systemctl output instead of guessing from the alert's own poll tick.
+    """ALTER TABLE database_instances
+         ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP""",
+    """ALTER TABLE database_instances
+         ADD COLUMN IF NOT EXISTS status_detail TEXT""",
+    # Org-wide notification preferences — currently just the timezone alert
+    # {{Timestamp}}s render in (default IST; everything is stored/evaluated
+    # in UTC internally, converted only at send time).
+    """CREATE TABLE IF NOT EXISTS notification_settings (
+         org_id      INTEGER PRIMARY KEY DEFAULT 1,
+         timezone    VARCHAR(64) NOT NULL DEFAULT 'Asia/Kolkata',
+         updated_at  TIMESTAMP)""",
 ]
 
 

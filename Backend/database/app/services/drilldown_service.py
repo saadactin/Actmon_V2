@@ -210,6 +210,20 @@ def _agent_processes(conn_id: int, db, sort: str = "cpu", limit: int = 25) -> di
     }
 
 
+def _os_server_link(conn_id: int, db) -> dict | None:
+    """The registered OsServer this DB connection is attached to, if any — lets a
+    caller (the dashboard's "Server Information" panel) link straight back to the
+    host's Infrastructure page instead of showing the hostname as dead text."""
+    from app.models.os_server_model import OsServer, DatabaseInstance
+    inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+    if not inst:
+        return None
+    server = db.query(OsServer).filter(OsServer.id == inst.server_id).first()
+    if not server:
+        return None
+    return {"server_id": server.id, "server_name": server.server_name}
+
+
 def _agent_host_metrics(conn_id: int, db) -> dict | None:
     """Host CPU/RAM/Disk from the ActMon agent's last pushed snapshot (for hosts
     monitored via agent, where SSH isn't configured and the DB may be remote)."""
@@ -709,7 +723,9 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
     D = (dbname or "").replace("]", "]]")
     obj = f"[{dbname}].[{schema}].[{table}]"
     out = {"database": dbname, "schema": schema, "table": table,
-           "columns": [], "indexes": [], "missing_indexes": [], "stats": {}, "recommendations": []}
+           "columns": [], "indexes": [], "missing_indexes": [], "stats": {}, "recommendations": [],
+           "constraints": [], "foreign_keys": [], "triggers": [], "ddl": None,
+           "sample_columns": [], "sample_rows": [], "sample_returned": 0, "errors": {}}
     with eng.connect() as c:
         out["stats"] = (_dec(_mrows(c, f"""
             SELECT MAX(CASE WHEN i.index_id <= 1 THEN p.rows END) AS row_count,
@@ -759,6 +775,128 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
             JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
             WHERE mid.object_id = OBJECT_ID('{obj}') AND mid.database_id = DB_ID('{dbname}')
             ORDER BY migs.avg_user_impact DESC"""))
+
+        # ── Constraints: PK/UNIQUE (key_constraints), CHECK, DEFAULT ──────────
+        try:
+            pk_uq = [dict(r) for r in c.execute(text(f"""
+                SELECT kc.name AS constraint_name, kc.type,
+                    STUFF((SELECT ', ' + col.name FROM [{D}].sys.index_columns ic
+                           JOIN [{D}].sys.columns col ON ic.object_id = col.object_id AND ic.column_id = col.column_id
+                           WHERE ic.object_id = kc.parent_object_id AND ic.index_id = kc.unique_index_id
+                           ORDER BY ic.key_ordinal FOR XML PATH('')), 1, 2, '') AS cols
+                FROM [{D}].sys.key_constraints kc
+                WHERE kc.parent_object_id = OBJECT_ID('{obj}') AND kc.type IN ('PK','UQ')""")).mappings().all()]
+            checks = [dict(r) for r in c.execute(text(f"""
+                SELECT cc.name AS constraint_name, cc.definition
+                FROM [{D}].sys.check_constraints cc
+                WHERE cc.parent_object_id = OBJECT_ID('{obj}')""")).mappings().all()]
+            defaults = [dict(r) for r in c.execute(text(f"""
+                SELECT dc.name AS constraint_name, dc.definition, col.name AS column_name
+                FROM [{D}].sys.default_constraints dc
+                JOIN [{D}].sys.columns col ON dc.parent_object_id = col.object_id AND dc.parent_column_id = col.column_id
+                WHERE dc.parent_object_id = OBJECT_ID('{obj}')""")).mappings().all()]
+            cons = []
+            for r in pk_uq:
+                cons.append({"type": "PRIMARY KEY" if r["type"] == "PK" else "UNIQUE",
+                             "name": r["constraint_name"], "columns": r.get("cols") or "", "definition": None})
+            for r in checks:
+                cons.append({"type": "CHECK", "name": r["constraint_name"], "columns": "", "definition": r.get("definition")})
+            for r in defaults:
+                cons.append({"type": "DEFAULT", "name": r["constraint_name"], "columns": r.get("column_name") or "", "definition": r.get("definition")})
+            out["constraints"] = cons
+        except Exception as e:
+            out["errors"]["constraints"] = str(e)
+
+        # ── Foreign keys ───────────────────────────────────────────────────────
+        try:
+            out["foreign_keys"] = [dict(r) for r in c.execute(text(f"""
+                SELECT fk.name AS name, pc.name AS [column],
+                    rs.name AS ref_schema, rt.name AS ref_table, rc.name AS ref_column,
+                    fk.update_referential_action_desc AS on_update,
+                    fk.delete_referential_action_desc AS on_delete
+                FROM [{D}].sys.foreign_keys fk
+                JOIN [{D}].sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+                JOIN [{D}].sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id
+                JOIN [{D}].sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id
+                JOIN [{D}].sys.tables rt ON fkc.referenced_object_id = rt.object_id
+                JOIN [{D}].sys.schemas rs ON rt.schema_id = rs.schema_id
+                WHERE fk.parent_object_id = OBJECT_ID('{obj}')
+                ORDER BY fk.name, fkc.constraint_column_id""")).mappings().all()]
+        except Exception as e:
+            out["errors"]["foreign_keys"] = str(e)
+
+        # ── Triggers (event names joined with '/', body via OBJECT_DEFINITION) ──
+        try:
+            trig_rows = [dict(r) for r in c.execute(text(f"""
+                SELECT t.name AS name, t.is_instead_of_trigger,
+                    STUFF((SELECT '/' + te.type_desc FROM [{D}].sys.trigger_events te
+                           WHERE te.object_id = t.object_id
+                           ORDER BY CASE te.type_desc WHEN 'INSERT' THEN 1 WHEN 'UPDATE' THEN 2 WHEN 'DELETE' THEN 3 ELSE 4 END
+                           FOR XML PATH('')), 1, 1, '') AS events,
+                    OBJECT_DEFINITION(t.object_id) AS body
+                FROM [{D}].sys.triggers t
+                WHERE t.parent_id = OBJECT_ID('{obj}') AND t.parent_class = 1""")).mappings().all()]
+            out["triggers"] = [{
+                "name": r["name"],
+                "timing": "INSTEAD OF" if r.get("is_instead_of_trigger") else "AFTER",
+                "event": r.get("events") or "",
+                "definer": None,
+                "body": r.get("body"),
+            } for r in trig_rows]
+        except Exception as e:
+            out["errors"]["triggers"] = str(e)
+
+        # ── Sample data (TOP 100) ────────────────────────────────────────────
+        try:
+            res = c.execute(text(f"SELECT TOP 100 * FROM {obj}"))
+            sample_cols = list(res.keys())
+            raw_rows = res.mappings().all()
+            safe_rows = []
+            for row in raw_rows:
+                safe = {}
+                for k, v in row.items():
+                    if v is None or isinstance(v, (int, float, str, bool)):
+                        safe[k] = v
+                    else:
+                        safe[k] = str(v)   # datetime/Decimal/bytes/etc. → string
+                safe_rows.append(safe)
+            out["sample_columns"] = sample_cols
+            out["sample_rows"] = safe_rows
+            out["sample_returned"] = len(safe_rows)
+        except Exception as e:
+            out["errors"]["sample_data"] = str(e)
+
+    # ── DDL: synthesized CREATE TABLE from columns already fetched above + PK ──
+    # NOTE: This is a best-effort reconstruction, not an exhaustive DDL extract.
+    # SQL Server has no single simple T-SQL/DMV equivalent of MySQL's
+    # `SHOW CREATE TABLE` — a byte-for-byte definition needs SMO/dbatools. This
+    # covers columns, types, nullability, identity and defaults, plus the PK,
+    # which is enough for the UI's DDL tab; it intentionally omits FKs, checks,
+    # and other constraints already shown in their own tabs above.
+    try:
+        _char_types = {"varchar", "nvarchar", "char", "nchar", "varbinary", "binary"}
+        col_lines = []
+        for col in out["columns"]:
+            dt = col.get("data_type") or ""
+            length = col.get("length")
+            type_sql = dt
+            if dt.lower() in _char_types and length is not None:
+                type_sql += "(MAX)" if length in (-1, 0) else f"({length})"
+            line = f"  [{col.get('name')}] {type_sql}"
+            if col.get("is_identity"):
+                line += " IDENTITY"
+            line += " NULL" if col.get("is_nullable") else " NOT NULL"
+            if col.get("default_def"):
+                line += f" DEFAULT {col['default_def']}"
+            col_lines.append(line)
+        pk = next((cn for cn in out["constraints"] if cn.get("type") == "PRIMARY KEY"), None)
+        if pk and pk.get("columns"):
+            pk_cols = ", ".join(f"[{x.strip()}]" for x in pk["columns"].split(",") if x.strip())
+            col_lines.append(f"  CONSTRAINT [{pk['name']}] PRIMARY KEY ({pk_cols})")
+        if col_lines:
+            out["ddl"] = f"CREATE TABLE [{schema}].[{table}] (\n" + ",\n".join(col_lines) + "\n);"
+    except Exception as e:
+        out["errors"]["ddl"] = str(e)
 
     def _cols(s):
         return [x.strip().strip("[]") for x in (s or "").split(",") if x.strip()]
@@ -1058,13 +1196,15 @@ def _mssql_groq_rca(evidence, is_db, resource, severity, host_util) -> dict:
 
 def host_metrics(tech: str, conn_id: int, db: Session) -> dict:
     conn = _get_conn(conn_id, db, tech)
+    link = _os_server_link(conn_id, db)
+    with_link = (lambda m: {**m, **link} if m and link else m)
     if tech == "mssql":
         # DMV-based metrics need a direct connection; on agent-hosted SQL Servers that
         # fails — fall through to the agent-pushed host snapshot instead of erroring.
         try:
             m = _mssql_host_metrics(conn)
             if m and (m.get("cpu_pct") is not None or m.get("ram_pct") is not None):
-                return m
+                return with_link(m)
         except Exception:
             pass
     if tech == "oracle":
@@ -1072,7 +1212,7 @@ def host_metrics(tech: str, conn_id: int, db: Session) -> dict:
         try:
             m = _oracle_host_metrics(conn)
             if m.get("cpu_pct") is not None or m.get("ram_pct") is not None or m.get("cpu_cores"):
-                return m
+                return with_link(m)
         except Exception:
             pass
     # Host monitored by an ActMon agent → use the metrics the agent pushed. This MUST
@@ -1081,12 +1221,12 @@ def host_metrics(tech: str, conn_id: int, db: Session) -> dict:
     # report the wrong host.
     am = _agent_host_metrics(conn_id, db)
     if am:
-        return am
+        return with_link(am)
     # DB running on this same machine → read the real host directly with psutil (no SSH needed).
     if _is_local_host(conn.host):
         m = _local_host_metrics()
         if m:
-            return m
+            return with_link(m)
     ssh = _ssh_connect(conn, db)
     try:
         cpu = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
@@ -1097,9 +1237,9 @@ def host_metrics(tech: str, conn_id: int, db: Session) -> dict:
         cores = _num(_run(ssh, "nproc"), int)
     finally:
         ssh.close()
-    return {"cpu_pct": cpu, "ram_pct": round(ram_u / ram_t * 100, 1) if ram_u and ram_t else None,
+    return with_link({"cpu_pct": cpu, "ram_pct": round(ram_u / ram_t * 100, 1) if ram_u and ram_t else None,
             "ram_used_mb": ram_u, "ram_total_mb": ram_t, "disk_pct": disk,
-            "load_avg": load, "cpu_cores": cores}
+            "load_avg": load, "cpu_cores": cores})
 
 
 def processes(tech: str, conn_id: int, db: Session, sort: str = "cpu", limit: int = 25) -> dict:

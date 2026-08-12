@@ -6,7 +6,7 @@ routers coexist on the same prefix.
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -64,7 +64,45 @@ def route_enroll(req: EnrollRequest, db: Session = Depends(get_db)):
 
 @router.post("/infra", summary="Agent full host snapshot ingest (Infrastructure)")
 def route_ingest_infra(req: AgentInfraIngest, db: Session = Depends(get_db)):
-    return svc_ingest_agent_infra(req, db)
+    res = svc_ingest_agent_infra(req, db)
+    # Every push doubles as a version report — this is what closes an open
+    # upgrade in the ledger. Best-effort: never let it affect the ingest result.
+    if req.agent_version:
+        try:
+            from app.services.agent import agent_update_ledger_service as ledger
+            name = (res or {}).get("agent_name")
+            if name:
+                ledger.record_version(db, name, req.agent_version)
+        except Exception:  # noqa: BLE001
+            pass
+    return res
+
+
+class StartupPing(BaseModel):
+    """Sent once by the agent as soon as it comes up. For a host that was just
+    upgraded this is the FIRST thing the new build does, so it is the fastest
+    and most reliable confirmation that the new version is really running."""
+    token: str
+    hostname: Optional[str] = None
+    os_type: Optional[str] = None
+    agent_version: Optional[str] = None
+
+
+@router.post("/startup-ping", summary="Agent boot ping (reports the running version)")
+def route_startup_ping(req: StartupPing, db: Session = Depends(get_db)):
+    from app.services.agent import agent_update_ledger_service as ledger
+    from app.models.agent_model import AgentToken
+    # Resolve identity from the enrollment token, never from the self-reported
+    # hostname — the token is what actually authorises this host.
+    tok = db.query(AgentToken).filter(AgentToken.token == req.token).first()
+    if not tok:
+        raise HTTPException(status_code=401, detail="Unknown agent token.")
+    name = tok.agent_name or req.hostname
+    if not name:
+        return {"status": "ignored", "reason": "token has no agent identity yet"}
+    ledger.record_version(db, name, req.agent_version)
+    return {"status": "success", "agent_name": name,
+            "update": ledger.status_for(db, name)}
 
 
 @router.post("/db-config", summary="Save a DB for the agent to monitor (by token)")
@@ -237,9 +275,32 @@ def route_host_ips():
 @router.get("/download/{os_name}", summary="Download the host agent installer")
 def route_download(os_name: str, fmt: str = Query("deb")):
     is_win = os_name.lower().startswith("win")
+
     # Windows → raw .exe when explicitly requested, else the built MSI installer.
-    if is_win and fmt == "exe" and exe_available():
-        return FileResponse(EXE_PATH, media_type="application/vnd.microsoft.portable-executable", filename="actmon-agent.exe")
+    #
+    # An explicit fmt=exe must NEVER fall through to another format. The install
+    # script saves whatever comes back as actmon-agent.exe and only checks that it
+    # is over 1 MB, so handing it the 20 MB MSI produced a file Windows refuses to
+    # load ("This version of %1 is not compatible…"). The scheduled task then
+    # registered and "started" it, the process died in the loader before it could
+    # log anything, and the installer still printed SUCCESS — every agent went
+    # offline with nothing anywhere saying why. Failing loudly here is the only
+    # place that mismatch can still be caught.
+    if is_win and fmt == "exe":
+        if exe_available():
+            return FileResponse(
+                EXE_PATH,
+                media_type="application/vnd.microsoft.portable-executable",
+                filename="actmon-agent.exe",
+            )
+        raise HTTPException(
+            status_code=503,
+            detail="The Windows agent executable has not been built on this server "
+                   f"({EXE_PATH} is missing). Build it with Backend/agent/build_agent.sh "
+                   "(PyInstaller, on a Windows host), then retry. Refusing to serve a "
+                   "different format, because the installer would save it as .exe and "
+                   "Windows could not run it.",
+        )
     if is_win and msi_available():
         return FileResponse(MSI_PATH, media_type="application/x-msi", filename="actmon-agent.msi")
     # Linux → serve the requested package format when available (fmt=rpm|deb).
@@ -269,6 +330,45 @@ def _agent_source_text():
         # LF-normalise so the sha matches what the deb/rpm installed (their build
         # strips CR) and what the agent writes back to disk.
         return f.read().replace("\r\n", "\n").replace("\r", "\n")
+
+
+def current_agent_version() -> str:
+    """The version the shipped agent source declares — parsed from the agent file
+    itself so there is exactly ONE source of truth. Reading it here (rather than
+    keeping a copy in a server constant or a version.txt) means the two can never
+    disagree about what an upgrade is supposed to produce."""
+    import re
+    try:
+        m = re.search(r'^AGENT_VERSION\s*=\s*["\']([^"\']+)["\']',
+                      _agent_source_text(), re.MULTILINE)
+        return m.group(1) if m else ""
+    except Exception:  # noqa: BLE001 — version reporting must never break a download
+        return ""
+
+
+@router.get("/install/actmon-agent.msi/sha", summary="SHA-256 + version of the token-baked MSI (Windows self-update verify)")
+def route_configured_msi_sha(token: str = Query(...), url: str = Query(...)):
+    """Integrity companion to /install/actmon-agent.msi.
+
+    The Linux self-update path has verified a SHA-256 since it shipped
+    (/agents/agent-source/sha); the Windows MSI path only ever checked that the
+    download was larger than 100 KB, which catches a truncated transfer but not
+    a corrupted or substituted one. This gives the Windows updater the same
+    guarantee. Hashing the exact bytes we would serve, so a per-token rebuild
+    can't drift from the hash.
+    """
+    import hashlib
+    import os as _o
+    try:
+        path = build_token_msi(token, url)
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return {"sha256": h.hexdigest(), "size": _o.path.getsize(path),
+                "agent_version": current_agent_version()}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not hash the MSI: {e}")
 
 
 @router.get("/agent-source/sha", summary="SHA-256 of the current agent source (self-update check)")

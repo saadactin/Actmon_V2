@@ -22,6 +22,8 @@ from app.models.smtp_config_model import SmtpConfig                       # noqa
 from app.models.alert_rule_model import AlertRule                         # noqa: F401
 from app.models.monitoring_settings_model import MonitoringSettings       # noqa: F401
 from app.models.dashboard_appearance_model import DashboardAppearanceSettings  # noqa: F401
+from app.models.diagnosis_run_model import DiagnosisRun                   # noqa: F401
+from app.models.db_check_run_model import DbCheckRun                       # noqa: F401
 # Access-Control / Administration (RBAC) schema — organization, employee, role,
 # module, page, permission, user, sessions, audit, etc.
 from app.models.admin_models import (                                # noqa: F401
@@ -66,6 +68,7 @@ from app.routes.mysql.mysql_report_email_routes import router as mysql_report_em
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
 from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
 from app.routes.smtp.smtp_config_routes import router as smtp_config_router
+from app.routes.notifications.notification_routes import router as notification_router
 from app.routes.settings.monitoring_settings_routes import router as monitoring_settings_router
 from app.routes.settings.dashboard_appearance_routes import router as dashboard_appearance_router
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
@@ -78,10 +81,12 @@ from app.routes.os_server.os_server_routes import router as os_server_router
 from app.routes.os_server.terminal_routes import router as terminal_router
 from app.routes.os_server.test_connection_routes import router as test_connection_router
 from app.routes.digital_experience.external_check_routes import router as external_check_router
+from app.routes.settings.report_schedule_admin_routes import router as report_schedule_admin_router
 from app.routes.auth.auth_routes import router as auth_router
 from app.routes.setup.setup_routes import router as setup_router
 from app.routes.admin.admin_crud_routes import admin_crud_routers
 from app.routes.agent.agent_routes import router as agent_router
+from app.routes.agent.db_agent_routes import router as db_agent_router
 from app.routes.agent.agent_install_routes import router as agent_install_router
 from app.routes.chatbot.chatbot_routes import router as chatbot_router
 from app.routes.alerts.alert_routes import router as alerts_router
@@ -148,12 +153,30 @@ async def lifespan(app_instance):
     # Start SQL Server report email scheduler
     from app.services.mssql.mssql_report_email_service import start_mssql_report_scheduler
     start_mssql_report_scheduler()
+    # Enterprise Alert Notification System: the evaluator tracks sustained
+    # breaches/cooldown and enqueues notifications; the dispatcher sends them
+    # (with retry) so the evaluator never waits on a channel to respond.
+    from app.services.alerts.alert_evaluator_service import start_alert_evaluator
+    start_alert_evaluator()
+    from app.services.notifications.notification_queue_service import start_notification_dispatcher
+    start_notification_dispatcher()
+    # Keeps DatabaseInstance.status current for SSH-polled hosts — without
+    # this, "Database Service Down" alerts could keep firing on a status that
+    # was only ever checked once, whenever someone last clicked Refresh.
+    from app.services.os_server.os_server_refresh_scheduler import start_os_server_refresh_scheduler
+    start_os_server_refresh_scheduler()
     yield
     # Graceful shutdown
     from app.services.agent.agent_collector_service import stop_agent_collector
     stop_agent_collector()
     from app.services.agent.agent_reaper_service import stop_agent_reaper
     stop_agent_reaper()
+    from app.services.alerts.alert_evaluator_service import stop_alert_evaluator
+    stop_alert_evaluator()
+    from app.services.notifications.notification_queue_service import stop_notification_dispatcher
+    stop_notification_dispatcher()
+    from app.services.os_server.os_server_refresh_scheduler import stop_os_server_refresh_scheduler
+    stop_os_server_refresh_scheduler()
 
 app = FastAPI(
     title="ACTMON API",
@@ -224,6 +247,7 @@ app.include_router(os_server_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
 app.include_router(external_check_router)
+app.include_router(report_schedule_admin_router)
 from app.routes.onboarding_routes import router as onboarding_router
 app.include_router(onboarding_router)
 
@@ -242,11 +266,13 @@ for _admin_router in admin_crud_routers:
 
 # Centralized Agent routes
 app.include_router(agent_router)
+app.include_router(db_agent_router)
 app.include_router(agent_install_router)
 
 # ActMon AI Chatbot
 app.include_router(chatbot_router)
 app.include_router(alerts_router)
+app.include_router(notification_router)
 app.include_router(logs_router)
 app.include_router(download_router)
 

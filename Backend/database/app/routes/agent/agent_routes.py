@@ -86,6 +86,22 @@ def route_mark_notifications_read(
     return svc_mark_notifications_read(payload, db)
 
 
+@router.get("/{agent_name}/update-status", summary="State of this agent's last pushed upgrade")
+def route_get_agent_update_status(agent_name: str, db: Session = Depends(get_db)):
+    """Proof-of-landing for the last update push: expected vs confirmed version,
+    and whether it completed, came back on the wrong build, or never reported."""
+    from app.services.agent import agent_update_ledger_service as ledger
+    return ledger.status_for(db, agent_name)
+
+
+@router.get("/{agent_name}/service-state", summary="Is this host's ActMon agent service running?")
+def route_get_agent_service_state(agent_name: str, db: Session = Depends(get_db)):
+    """Asks the agent's own service manager over the agent channel (no SSH).
+    A non-answer is itself conclusive — only a running service can reply."""
+    from app.services.agent import agent_service_state_service
+    return agent_service_state_service.probe(agent_name, db)
+
+
 @router.get("/{agent_name}/dashboard", summary="Single-agent dashboard data")
 def route_get_agent_dashboard(
     agent_name: str,
@@ -218,7 +234,11 @@ def host_overview(agent_name: str, db: Session = Depends(get_db)):
         from app.services.clickhouse import metrics_history_service as _mh
         cli = _mh.get_client()
         if cli:
-            r = cli.query("SELECT count(), max(ts) FROM actmon.metrics_infra "
+            # A database-type agent's samples land in metrics_db_<tech>, never
+            # metrics_infra — reading the wrong table always returned 0 rows
+            # for these ("Stored 24h" showed offline even with history flowing).
+            table = _mh.table_for("database" if agent.db_connection_id else "infra", agent.db_type)
+            r = cli.query(f"SELECT count(), max(ts) FROM actmon.{table} "
                           "WHERE agent = %(a)s AND ts > now() - INTERVAL 1 DAY",
                           parameters={"a": agent_name})
             if r.result_rows:

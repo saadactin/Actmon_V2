@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- data-header-scroll mirrors the shipped default (off = header pinned) so the
+     header is drawn pinned on the very first paint, before React applies the
+     stored appearance. Keep in sync with DEFAULT_APPEARANCE.headerScroll. -->
+<html lang="en" data-theme="light" data-header-scroll="off">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>ActMon</title>
+    <script>
+      // Paint the correct theme before React mounts — kills the white flash on
+      // reload for dark-theme users. Mirrors themeStore's persistence key.
+      (function () {
+        try {
+          var s = JSON.parse(localStorage.getItem('actmon.appearance') || '{}');
+          var t = s.theme || 'light';
+          if (t === 'system') {
+            t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          var r = document.documentElement;
+          r.setAttribute('data-theme', t);
+          if (s.accent) r.style.setProperty('--accent', s.accent);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

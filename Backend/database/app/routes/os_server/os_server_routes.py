@@ -178,6 +178,19 @@ class HostActionBody(BaseModel):
     pid: str | None = None      # for kill-process
 
 
+def _audit_service_action(db: Session, server_id: int, user_id, action_type: str, new_data: dict):
+    from app.models.admin_models import AuditLog
+    from app.services.os_server.os_server_service import svc_get_os_server
+    try:
+        srv = svc_get_os_server(server_id, db)
+        org_id = getattr(srv, "org_id", None)
+        db.add(AuditLog(org_id=org_id, user_id=user_id, table_name="os_server_service",
+                         record_id=server_id, action_type=action_type, new_data=new_data))
+        db.commit()
+    except Exception:  # noqa: BLE001 — the action already ran; audit failure must not mask its result
+        db.rollback()
+
+
 @router.post("/{server_id}/service-action")
 def route_service_action(server_id: int, body: HostActionBody,
                          claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
@@ -187,7 +200,10 @@ def route_service_action(server_id: int, body: HostActionBody,
         raise HTTPException(status_code=401, detail="Password verification failed.")
     if not body.unit:
         raise HTTPException(status_code=400, detail="Service name is required.")
-    return svc_service_action(server_id, body.unit, (body.action or "restart").lower(), db)
+    action = (body.action or "restart").lower()
+    result = svc_service_action(server_id, body.unit, action, db)
+    _audit_service_action(db, server_id, claims.get("user_id"), f"{action}_service", {"unit": body.unit, "result": result})
+    return result
 
 
 @router.post("/{server_id}/restart-service")
@@ -199,7 +215,9 @@ def route_restart_service(server_id: int, body: HostActionBody,
         raise HTTPException(status_code=401, detail="Password verification failed.")
     if not body.unit:
         raise HTTPException(status_code=400, detail="Service unit is required.")
-    return svc_restart_service(server_id, body.unit, db)
+    result = svc_restart_service(server_id, body.unit, db)
+    _audit_service_action(db, server_id, claims.get("user_id"), "restart_service", {"unit": body.unit, "result": result})
+    return result
 
 
 @router.post("/{server_id}/kill-process")

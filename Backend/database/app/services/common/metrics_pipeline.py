@@ -125,8 +125,17 @@ def browse(kind=None, tech=None):
     return redis_store.browse(kind, tech)
 
 
-def history(agent_name=None, minutes=60, kind=None, tech=None, conn_id=None):
-    """History from the per-module/tech ClickHouse tables (newest first)."""
+def history(agent_name=None, minutes=60, kind=None, tech=None, conn_id=None, bucket_seconds=None):
+    """History from the per-module/tech ClickHouse tables (newest first).
+
+    `bucket_seconds` (a range-picker's granularity choice) switches to
+    server-side averaged buckets instead of raw rows — see history_bucketed's
+    own docstring for why a long window needs this, not just a bigger LIMIT.
+    """
+    if bucket_seconds:
+        return metrics_history.history_bucketed(agent_name=agent_name, minutes=minutes,
+                                                 bucket_seconds=bucket_seconds,
+                                                 kind=kind, tech=tech, conn_id=conn_id)
     return metrics_history.history(agent_name=agent_name, minutes=minutes,
                                    kind=kind, tech=tech, conn_id=conn_id)
 
@@ -377,7 +386,11 @@ def register_hooks():
 
         @event.listens_for(AgentMetric, "after_insert")
         def _on_metric_insert(mapper, connection, target):  # noqa: ANN001
-            record(target.agent_name, target, _connection=connection)
+            # Trust the row's OWN classification when the inserting code set one —
+            # only fall back to the ambiguous by-agent_name lookup for rows that
+            # predate this column (or a caller that hasn't been updated yet).
+            record(target.agent_name, target, kind=target.kind, tech=target.tech,
+                   conn_id=target.conn_id, _connection=connection)
 
         # Transactional telemetry (top SQL, wait events) → lossless queue → ClickHouse.
         # PostgreSQL keeps only a short in-flight buffer of these (reaper prunes it);

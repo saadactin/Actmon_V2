@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from app.database.base import Base
 from datetime import datetime
 
@@ -30,5 +31,17 @@ class AlertRule(Base):
     cooldown_seconds = Column(Integer,    default=600)          # re-notify cooldown
 
     enabled         = Column(Boolean, default=True)
+    # Which notification channels this rule notifies on firing — e.g.
+    # ["email", "teams", "slack"]. Empty means "use the org's severity-based
+    # default routing" (see notification_channels/severity_channel_routing).
+    notification_channel_types = Column(JSONB, nullable=False, default=list)
+    # Who receives THIS rule's email — there is no org-wide default recipient
+    # any more (that was a hardcoded fallback to the SMTP sender's own
+    # address). A rule with the "email" channel selected must set at least
+    # one address in notification_recipients or its emails fail loudly with
+    # a clear "no recipient configured" error instead of guessing.
+    notification_recipients = Column(JSONB, nullable=False, default=list)
+    notification_cc = Column(JSONB, nullable=False, default=list)
+    notification_bcc = Column(JSONB, nullable=False, default=list)
     created_at      = Column(DateTime, default=datetime.utcnow)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

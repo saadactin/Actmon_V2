@@ -66,7 +66,15 @@ def svc_list_services(server_id: int, db: Session) -> dict:
     srv = _get(server_id, db)
     ssh = ("systemctl list-units --type=service --all --no-legend --no-pager | "
            "awk '{name=$1; st=$3; desc=\"\"; for(i=5;i<=NF;i++) desc=desc $i \" \"; print name\"|\"st\"|\"desc}' | head -400")
-    raw = _run(srv, db, "services", "services", ssh)
+    # The agent's job dispatcher only recognises op "svcctl" for service control
+    # AND listing (see actmon_agent.py's _handle_job / _win_svcctl, which already
+    # runs `Get-Service | ... "$($_.Name)|$($_.Status)|$($_.DisplayName)"` for a
+    # bare "services" arg) — op "services" isn't a case it handles at all, so it
+    # fell through to the dispatcher's else branch and returned the literal
+    # string "unsupported op: services". That string has no "|" in it, so the
+    # parse loop below silently produced zero rows instead of erroring — the tab
+    # just looked permanently empty on every Windows agent host.
+    raw = _run(srv, db, "svcctl", "services", ssh)
     services = []
     for ln in raw.splitlines():
         parts = ln.split("|")
@@ -211,9 +219,32 @@ def svc_update_agent(server_id: int, db: Session) -> dict:
         raise HTTPException(status_code=504, detail="The agent didn't respond — it may be offline. Check that the ActMon service is running on the host.")
     out = raw.decode("utf-8", errors="replace").strip()
     if out.startswith("OK"):
+        # Record the intent so a silently-failed upgrade can't masquerade as
+        # success: the ledger stays open until the agent reports back on the
+        # version we expected (see agent_update_ledger_service).
+        try:
+            from app.routes.agent.agent_install_routes import current_agent_version
+            from app.services.agent import agent_update_ledger_service as ledger
+            agent_row = db.execute(text(
+                "SELECT agent_name, agent_version FROM agents WHERE agent_name = :n"),
+                {"n": srv.hostname}).first()
+            name = agent_row[0] if agent_row else srv.hostname
+            ledger.issue(db, name, current_agent_version(),
+                         from_version=(agent_row[1] if agent_row else None))
+            ledger.mark_delivered(db, name, detail=out.replace("OK:", "").strip() or None)
+        except Exception as e:  # noqa: BLE001 — tracking must not fail the upgrade itself
+            import logging
+            logging.getLogger("host_action").warning("update ledger not recorded: %s", e)
         return {"status": "success", "message": out.replace("OK:", "").strip() or "Update scheduled — the agent will upgrade and reconnect shortly."}
     if "unsupported op" in out.lower():
         raise HTTPException(status_code=400, detail="This host is running an older agent that can't self-update yet. Reinstall the MSI once (Download ActMon Agent → run it) — after that, this button handles all future updates automatically.")
+    # The agent tried and refused/failed (e.g. our new checksum mismatch guard) —
+    # keep that reason instead of letting the attempt look merely "not started".
+    try:
+        from app.services.agent import agent_update_ledger_service as ledger
+        ledger.mark_failed(db, srv.hostname, out.replace("ERR:", "").strip())
+    except Exception:  # noqa: BLE001
+        pass
     raise HTTPException(status_code=400, detail=out.replace("ERR:", "").strip() or "Agent update failed to start.")
 
 

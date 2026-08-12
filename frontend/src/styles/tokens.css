@@ -1,0 +1,656 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   ACTMON — DESIGN TOKEN CONTRACT
+   ══════════════════════════════════════════════════════════════════════════
+   This file is the ONLY place raw colour/size values are allowed to live.
+   Every component styles itself through these tokens (via the Tailwind
+   aliases in index.css), never with hard-coded values like `bg-white` or
+   `text-slate-900`. That is what makes theme / accent / font / radius /
+   density switchable at runtime with zero per-page work.
+
+   Three layers:
+     1. THEME layer   — neutral surfaces + text, swapped by [data-theme]
+     2. RUNTIME layer  — accent, sidebar, topbar, fonts, radius, density.
+                         Written as inline vars on <html> by themeStore.js
+                         (the values here are the fallback defaults).
+     3. DERIVED layer  — things computed from the two above.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ───────────────────────── 1. THEME: light (default) ───────────────────── */
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* surfaces — bg is the page, surface is a card, raised is hover/nested */
+  --bg: #f2f5f8; /* Figma spec: rgba(242,245,248,1) */
+  --bg-subtle: #eef1f6;
+  --surface: #ffffff;
+  --surface-raised: #f7f9fc;
+  --surface-sunken: #eef1f6;
+  --surface-inverse: #12182a;
+
+  /* text */
+  --fg: #10192b;
+  --fg-muted: #5a6478;
+  --fg-subtle: #8b94a6;
+  --fg-onInverse: #f2f5fa;
+
+  /* lines */
+  --border: #e9edf7;
+  --border-strong: #cbd3e1;
+
+  /* elevation — tuned per theme so dark themes don't get invisible shadows */
+  --shadow-xs: 0 1px 2px rgb(16 25 43 / 0.05);
+  --shadow-sm: 0 1px 3px rgb(16 25 43 / 0.07), 0 1px 2px rgb(16 25 43 / 0.04);
+  --shadow-md: 0 4px 12px rgb(16 25 43 / 0.08), 0 1px 3px rgb(16 25 43 / 0.05);
+  --shadow-lg: 0 12px 32px rgb(16 25 43 / 0.12), 0 2px 8px rgb(16 25 43 / 0.06);
+  --shadow-xl: 0 24px 56px rgb(16 25 43 / 0.16);
+
+  /* status hues (base + soft background + readable-on-soft foreground) */
+  --success: #12805c;
+  --success-soft: #e7f6f0;
+  --success-fg: #0b5d43;
+  --warning: #b06a00;
+  --warning-soft: #fdf3e2;
+  --warning-fg: #8a5200;
+  --danger: #c8323c;
+  --danger-soft: #fdedee;
+  --danger-fg: #a02128;
+  --info: #1f6fd0;
+  --info-soft: #e8f1fd;
+  --info-fg: #17559f;
+  --neutral-soft: #eef1f6;
+
+  /* chart gridline — per THEME, not in the runtime block below: that block comes
+     later in the file at the same specificity, so a value there would beat every
+     dark theme's override and paint near-white lines on a dark card. */
+  --chart-grid: #e5e7eb;
+
+  /* Agents list — status pill + row + muted-text colours (see the full note
+     down in the runtime layer). Light theme is pinned to the exact Figma
+     values; every other theme aliases to its own already-tuned status/text
+     tokens instead of inventing new hex per theme. */
+  --agent-gray: #6b7280;
+  --agent-row-bg: #ffffff;
+  --agent-input-bg: #f8fafc;
+  --agent-border: rgba(181, 183, 189, 1);
+  --agent-green-soft: #dcfce7;
+  --agent-green-fg: #15803d;
+  --agent-red-soft: #fee2e2;
+  --agent-red-fg: #991b1b;
+  --agent-yellow-soft: #fef48b;
+  --agent-yellow-fg: #854d0e;
+}
+
+/* ───────────────────────── THEME: dim (soft slate dark) ────────────────── */
+[data-theme='dim'] {
+  color-scheme: dark;
+  --chart-grid: #33405a;
+
+  --bg: #1a2130;
+  --bg-subtle: #151b28;
+  --surface: #222b3c;
+  --surface-raised: #2b3648;
+  --surface-sunken: #172030;
+  --surface-inverse: #f2f5fa;
+
+  --fg: #e6ebf4;
+  --fg-muted: #a3aec1;
+  --fg-subtle: #7a8699;
+  --fg-onInverse: #10192b;
+
+  --border: #33405a;
+  --border-strong: #475774;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.35), 0 1px 2px rgb(0 0 0 / 0.25);
+  --shadow-md: 0 4px 14px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 14px 36px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.35);
+  --shadow-xl: 0 26px 60px rgb(0 0 0 / 0.6);
+
+  --success: #34d399;
+  --success-soft: #10352c;
+  --success-fg: #6ee7b7;
+  --warning: #fbbf24;
+  --warning-soft: #3a2d10;
+  --warning-fg: #fcd34d;
+  --danger: #f87171;
+  --danger-soft: #3d1a1e;
+  --danger-fg: #fca5a5;
+  --info: #60a5fa;
+  --info-soft: #16294a;
+  --info-fg: #93c5fd;
+  --neutral-soft: #2b3648;
+
+  --agent-gray: var(--fg-muted);
+  --agent-row-bg: var(--surface);
+  --agent-input-bg: var(--surface-sunken);
+  --agent-border: var(--border);
+  --agent-green-soft: var(--success-soft);
+  --agent-green-fg: var(--success-fg);
+  --agent-red-soft: var(--danger-soft);
+  --agent-red-fg: var(--danger-fg);
+  --agent-yellow-soft: var(--warning-soft);
+  --agent-yellow-fg: var(--warning-fg);
+}
+
+/* ───────────────────────── THEME: dark (deep navy) ─────────────────────── */
+[data-theme='dark'] {
+  color-scheme: dark;
+  --chart-grid: #223052;
+
+  --bg: #0b1020;
+  --bg-subtle: #070c18;
+  --surface: #121a2e;
+  --surface-raised: #1a243c;
+  --surface-sunken: #0d1424;
+  --surface-inverse: #f2f5fa;
+
+  --fg: #e8eefb;
+  --fg-muted: #9aa7c0;
+  --fg-subtle: #6e7d99;
+  --fg-onInverse: #0b1020;
+
+  --border: #223052;
+  --border-strong: #33456e;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.45), 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 14px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 14px 36px rgb(0 0 0 / 0.6), 0 2px 8px rgb(0 0 0 / 0.4);
+  --shadow-xl: 0 26px 60px rgb(0 0 0 / 0.7);
+
+  --success: #2ee6a8;
+  --success-soft: #0a3328;
+  --success-fg: #6ff0c4;
+  --warning: #fcbf3f;
+  --warning-soft: #38290c;
+  --warning-fg: #fdd475;
+  --danger: #fc6a72;
+  --danger-soft: #3d151b;
+  --danger-fg: #ff9ba1;
+  --info: #58a6ff;
+  --info-soft: #10254a;
+  --info-fg: #8ec2ff;
+  --neutral-soft: #1a243c;
+
+  --agent-gray: var(--fg-muted);
+  --agent-row-bg: var(--surface);
+  --agent-input-bg: var(--surface-sunken);
+  --agent-border: var(--border);
+  --agent-green-soft: var(--success-soft);
+  --agent-green-fg: var(--success-fg);
+  --agent-red-soft: var(--danger-soft);
+  --agent-red-fg: var(--danger-fg);
+  --agent-yellow-soft: var(--warning-soft);
+  --agent-yellow-fg: var(--warning-fg);
+}
+
+/* ───────────────────────── THEME: midnight (OLED black) ────────────────── */
+[data-theme='midnight'] {
+  color-scheme: dark;
+  --chart-grid: #22222a;
+
+  --bg: #000000;
+  --bg-subtle: #000000;
+  --surface: #0c0c0f;
+  --surface-raised: #16161b;
+  --surface-sunken: #060608;
+  --surface-inverse: #fafafa;
+
+  --fg: #f2f2f5;
+  --fg-muted: #9d9da8;
+  --fg-subtle: #6e6e79;
+  --fg-onInverse: #0c0c0f;
+
+  --border: #22222a;
+  --border-strong: #35353f;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.6);
+  --shadow-sm: 0 1px 3px rgb(0 0 0 / 0.7);
+  --shadow-md: 0 4px 14px rgb(0 0 0 / 0.8);
+  --shadow-lg: 0 14px 36px rgb(0 0 0 / 0.9);
+  --shadow-xl: 0 26px 60px rgb(0 0 0 / 0.95);
+
+  --success: #2ee6a8;
+  --success-soft: #082a20;
+  --success-fg: #6ff0c4;
+  --warning: #fcbf3f;
+  --warning-soft: #2e2209;
+  --warning-fg: #fdd475;
+  --danger: #fc6a72;
+  --danger-soft: #331116;
+  --danger-fg: #ff9ba1;
+  --info: #58a6ff;
+  --info-soft: #0c1c38;
+  --info-fg: #8ec2ff;
+  --neutral-soft: #16161b;
+
+  --agent-gray: var(--fg-muted);
+  --agent-row-bg: var(--surface);
+  --agent-input-bg: var(--surface-sunken);
+  --agent-border: var(--border);
+  --agent-green-soft: var(--success-soft);
+  --agent-green-fg: var(--success-fg);
+  --agent-red-soft: var(--danger-soft);
+  --agent-red-fg: var(--danger-fg);
+  --agent-yellow-soft: var(--warning-soft);
+  --agent-yellow-fg: var(--warning-fg);
+}
+
+/* ───────────────────────── THEME: paper (warm light) ───────────────────── */
+[data-theme='paper'] {
+  color-scheme: light;
+  --chart-grid: #e6ded1;
+
+  --bg: #f6f3ee;
+  --bg-subtle: #efeae1;
+  --surface: #fffdf9;
+  --surface-raised: #f8f5ef;
+  --surface-sunken: #efeae1;
+  --surface-inverse: #221e18;
+
+  --fg: #221e18;
+  --fg-muted: #665e51;
+  --fg-subtle: #948a7a;
+  --fg-onInverse: #fffdf9;
+
+  --border: #e6ded1;
+  --border-strong: #cec3b1;
+
+  --shadow-xs: 0 1px 2px rgb(60 48 30 / 0.06);
+  --shadow-sm: 0 1px 3px rgb(60 48 30 / 0.08), 0 1px 2px rgb(60 48 30 / 0.05);
+  --shadow-md: 0 4px 12px rgb(60 48 30 / 0.1), 0 1px 3px rgb(60 48 30 / 0.06);
+  --shadow-lg: 0 12px 32px rgb(60 48 30 / 0.14);
+  --shadow-xl: 0 24px 56px rgb(60 48 30 / 0.18);
+
+  --success: #1a7a52;
+  --success-soft: #e6f2ea;
+  --success-fg: #145a3d;
+  --warning: #a86610;
+  --warning-soft: #fbf0dd;
+  --warning-fg: #82500c;
+  --danger: #bb3a34;
+  --danger-soft: #fbeae7;
+  --danger-fg: #952c27;
+  --info: #2a6aad;
+  --info-soft: #e8f0f8;
+  --info-fg: #1f5387;
+  --neutral-soft: #efeae1;
+
+  --agent-gray: var(--fg-muted);
+  --agent-row-bg: var(--surface);
+  --agent-input-bg: var(--surface-sunken);
+  --agent-border: var(--border);
+  --agent-green-soft: var(--success-soft);
+  --agent-green-fg: var(--success-fg);
+  --agent-red-soft: var(--danger-soft);
+  --agent-red-fg: var(--danger-fg);
+  --agent-yellow-soft: var(--warning-soft);
+  --agent-yellow-fg: var(--warning-fg);
+}
+
+/* ══════════════════════ 2. RUNTIME LAYER — defaults ═══════════════════════
+   themeStore.js overwrites these as inline styles on <html>. Keeping real
+   defaults here means the app renders correctly even before JS boots. */
+:root {
+  /* ── accent (brand colour) ── */
+  --accent: #3b6ef5;
+  --accent-hover: #2f5bd4;
+  --accent-active: #2749ad;
+  --accent-soft: rgb(59 110 245 / 0.12);
+  --accent-softer: rgb(59 110 245 / 0.06);
+  --accent-border: rgb(59 110 245 / 0.28);
+  --accent-fg: #ffffff; /* readable text ON the accent */
+  --accent-text: var(--accent); /* accent used AS text — contrast-corrected */
+
+  /* Brand gradient — one definition for every gradient surface (dialog headers,
+     the sidebar mark, avatars, primary gradient buttons). Change it here and all
+     of them follow. Swap in a second hue for the old indigo→violet look:
+       linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) */
+  --gradient-accent: linear-gradient(135deg, var(--accent) 0%, var(--accent-active) 100%);
+
+  /* ── typography ── */
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, 'Inter',
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --font-size-root: 16px; /* interface scale lives here */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --letter-spacing-tight: -0.011em;
+  --line-height-base: 1.5;
+
+  /* ── geometry ── */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 22px;
+  --radius-full: 9999px;
+  /* 20px is the design's card corner — deliberately not one of the generic
+     steps above, because every card in the app is drawn with it. */
+  --radius-card: 20px;
+  --radius-control: var(--radius-md);
+
+  /* ── density (drives control heights + paddings everywhere) ── */
+  --density: 1;
+  --control-h: 36px;
+  --control-h-sm: 30px;
+  --control-h-lg: 44px;
+  --row-h: 44px;
+  --card-pad: 16px;
+  --gap: 16px;
+  --gap-sm: 10px;
+  --gap-lg: 24px;
+
+  /* ── layout chrome ── */
+  --sidebar-w: 260px;
+  --sidebar-w-collapsed: 68px;
+  --topbar-h: 56px;
+  --content-max: 100%;
+  --content-pad-x: 20px;
+
+  /* ── sidebar skin (variant-driven; see themeStore SIDEBAR_VARIANTS) ── */
+  --sidebar-bg: #12182a;
+  --sidebar-fg: #e7ecf6;
+  --sidebar-fg-muted: #93a0ba;
+  --sidebar-hover: rgb(255 255 255 / 0.07);
+  --sidebar-active-bg: rgb(59 110 245 / 0.18);
+  --sidebar-active-fg: #ffffff;
+  --sidebar-active-marker: var(--accent);
+  --sidebar-border: rgb(255 255 255 / 0.08);
+  --sidebar-section-fg: #6c7a94;
+
+  /* ── top navigation bar skin ───────────────────────────────────────────
+     The horizontal module bar. Every measurement the design specifies lives
+     here, so height, ink, icon size and label size are changed in one place
+     rather than in the component. Deliberately its own scale (not --topbar-*):
+     this bar is 100px of chrome carrying stacked icon+label items, where the
+     old top bar was a 56px utility strip. Matches the Figma spec exactly:
+     100px fixed height, 20px inline padding, 16px block padding. */
+  --topnav-h: 100px;
+  --topnav-pad-x: 20px;
+  --topnav-pad-y: 16px;
+  --topnav-bg: #0f172a;
+  --topnav-fg: #ffffff;
+  --topnav-fg-muted: #64748b;
+  --topnav-hover: rgb(255 255 255 / 0.06);
+  --topnav-active-bg: transparent;
+  --topnav-border: rgb(255 255 255 / 0.07);
+  --topnav-icon: 26px;
+  --topnav-label: 13px;
+  --topnav-stack-gap: 7px;
+  --topnav-item-gap: 2px;
+  --topnav-item-pad-x: 12px;
+  --topnav-brand: 56px;
+  --topnav-avatar: 38px;
+
+  /* ── topbar skin ── */
+  --topbar-bg: var(--surface);
+  --topbar-fg: var(--fg);
+  --topbar-fg-muted: var(--fg-muted);
+  --topbar-border: var(--border);
+  --topbar-blur: 0px;
+
+  /* ── focus ring ── */
+  --ring: var(--accent);
+  --ring-offset: var(--surface);
+  --ring-width: 2px;
+
+  /* ── motion ── */
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-normal: 220ms;
+  --dur-slow: 360ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* ── chart series palette ────────────────────────────────────────────────
+     Categorical slots, assigned in order and never cycled. themeStore swaps
+     these for the active palette's light or dark steps. Defaults here are the
+     validated `default` palette's light steps. */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-7: #4a3aa7;
+  --chart-8: #e34948;
+
+  /* chart chrome — recessive by design: hairline grid, muted axis ink.
+     The gridline is a real dash pattern, not `border: dashed`: CSS gives no
+     control over dash length, and the design specifies 10 on 10. See the
+     .grid-dash-* utilities in index.css. The colour itself is set per theme
+     above; only its geometry is theme-independent. */
+  --chart-grid-w: 3px;
+  --chart-grid-dash: 10px;
+  --chart-grid-gap: 10px;
+  --chart-axis: var(--fg-subtle);
+  --chart-track: var(--surface-sunken);
+
+  /* ── status scale (FIXED — deliberately not themed) ──────────────────────
+     These mean good → critical, so they must not drift with the accent or the
+     theme; a reader learns them once. They are also stepped to stay clear of
+     the categorical slots so a status colour never impersonates a series.
+
+     Measured contrast on this app's surfaces:
+       light #ffffff   good 3.35  warning 1.83  serious 2.64  critical 4.80
+       dim   #222b3c   good 4.23  warning 7.74  serious 5.38  critical 2.96
+     Sub-3:1 cases (light warning/serious, dim critical) are expected for this
+     scale; the mitigation is that status is never colour-alone — every use is
+     paired with an icon and a text label. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --status-unknown: #898781;
+
+  /* ── Agents module reference palette ─────────────────────────────────────
+     The Agents list's filter pills, engine badges and KPI accents are
+     specced to match a fixed reference design exactly — pinned hue, not the
+     theme-adaptive --chart-N / --status-* scales the rest of the app uses,
+     because "match this design" and "shift with the active theme" are two
+     different asks. --agent-slate-900 (the table header) stays fixed dark
+     too, same as --sidebar-bg/--topnav-bg above — chrome that stays put
+     across themes, not content.
+     --agent-gray, --agent-row-bg and the status pill soft/fg pairs are
+     DIFFERENT: those are content-surface colours (row background, body
+     text, status fill), so they DO need to shift with the theme — they're
+     set per [data-theme] block up top instead of here, light theme pinned
+     to the exact Figma hex and every other theme aliased to its own
+     already-tuned --surface/--fg-muted/--success-soft/etc. */
+  --agent-slate-400: #94a3b8;
+  --agent-blue: #3b82f6;
+  --agent-green: #22c55e;
+  --agent-red: #ef4444;
+  --agent-yellow: #eab308;
+  --agent-amber: #f59e0b;
+  --agent-orange: #f97316;
+  --agent-purple: #a855f7;
+  --agent-slate-900: #0f172a;
+  --agent-orange-soft: #ffedd5;
+  --agent-slate-soft: #f1f5f9;
+  --agent-slate-border: #cbd5e1;
+}
+
+/* ══════════════════════ 3. GLOBAL MODIFIERS ═══════════════════════════════
+   Toggles that adjust the token layer rather than patching components. */
+
+/* High contrast — pushes muted text and borders toward the extremes */
+[data-contrast='high'] {
+  --fg-muted: var(--fg);
+  --fg-subtle: var(--fg-muted);
+  --border: var(--border-strong);
+  --ring-width: 3px;
+}
+[data-contrast='high'][data-theme='light'],
+[data-contrast='high'][data-theme='paper'] {
+  --fg-subtle: #3d4658;
+  --border-strong: #8d97a8;
+}
+
+/* ══════════════════════ PAGE HEADER SURFACE ══════════════════════════════
+   A coloured or gradient page header can't only paint a background: the title,
+   badges and buttons inside it are styled with the ordinary token utilities,
+   which assume the page surface underneath.
+
+   So the header REDEFINES those tokens on its own subtree. Because every utility
+   in this app resolves through var(), overriding the variables here restyles
+   everything inside automatically — no component needs to know it is sitting on
+   a dark band, and no !important overrides are involved.
+
+   Only engaged when the header actually has a surface (solid / gradient); the
+   default `plain` header leaves the page tokens untouched.
+
+   The hook is `.header-surface`, which is deliberately NOT the same as
+   `.page-header`: anything may borrow the look (the Settings preview does),
+   but only the real page header is pinned. */
+html[data-header='solid'] .header-surface,
+html[data-header='gradient'] .header-surface {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--header-bg);
+  background-image: var(--header-bg-image);
+  border-radius: var(--radius-card);
+  padding: var(--header-pad);
+  color: var(--header-fg);
+
+  /* the subtree remap */
+  --fg: var(--header-fg);
+  --fg-muted: var(--header-fg-muted);
+  --fg-subtle: var(--header-fg-subtle);
+  --border: var(--header-border);
+  --border-strong: var(--header-fg-subtle);
+  --surface: var(--header-surface);
+  --surface-raised: var(--header-surface);
+  --surface-sunken: var(--header-sunken);
+  --accent-text: var(--header-fg);
+  --accent-soft: var(--header-sunken);
+  --accent-softer: var(--header-surface);
+  --accent-border: var(--header-border);
+}
+
+/* Texture overlay. `currentColor` is the header foreground, so one pattern
+   definition works on a dark or a light header. */
+html[data-header='solid'] .header-surface::before,
+html[data-header='gradient'] .header-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: var(--header-texture);
+  background-size: var(--header-texture-size);
+  opacity: var(--header-texture-opacity);
+  color: var(--header-fg);
+}
+
+/* Keep the actual content above the texture. */
+html[data-header='solid'] .header-surface > *,
+html[data-header='gradient'] .header-surface > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ══════════════════════ PAGE HEADER PINNING ══════════════════════════════
+   "Header scrolls" off — the default — pins the page header to the top of the
+   scrolling content, so the page title and, on the engine dashboards, the tab
+   strip stay reachable however far a long page scrolls.
+
+   The scroll container is <main> in AppShell, so `top: 0` parks the header right
+   beneath the top bar. One attribute drives every page that renders <PageHeader>;
+   there is nothing per-page to set and nothing for a page to get wrong. */
+html[data-header-scroll='off'] .page-header {
+  position: sticky;
+  top: 0;
+  /* above page content, below the top bar (30), the drawer (80) and dialogs (90) */
+  z-index: 20;
+}
+
+/* The scrollport's top padding lives on .content-shell, ABOVE the header. Left
+   there it stays partly on screen until the page has scrolled past it, reading as
+   a gap between the top bar and a header that is supposed to be fixed. So a page
+   that pins a header takes that space INSIDE the header instead: the band then
+   begins flush under the top bar and never separates from it.
+
+   Scoped with :has() so pages that render no header keep their padding. Where
+   :has() is unsupported the rule is simply ignored — the header still pins, it
+   just sits a gutter lower, which is today's behaviour rather than a broken one. */
+.content-shell {
+  padding-top: var(--gap-lg);
+}
+
+html[data-header-scroll='off'] .content-shell:has(.page-header) {
+  padding-top: 0;
+}
+
+/* Full width while pinned. An inset, rounded header leaves gutters either side
+   for content to scroll through, which looks like a rendering fault; cancelling
+   the container's inline padding and re-applying it inside makes the header a
+   bar the width of the top bar above it. Inline margins do not affect vertical
+   sticky behaviour, so this is purely geometric. */
+html[data-header-scroll='off'] .content-shell .page-header {
+  margin-inline: calc(-1 * var(--content-pad-x));
+  padding-inline: var(--content-pad-x);
+  padding-top: var(--gap-lg);
+  border-radius: 0;
+}
+
+/* A pinned header has to be opaque or the page scrolls through it. The solid and
+   gradient styles already paint a background of their own; `plain` has none, so
+   it borrows the page's and takes a divider to separate itself from whatever
+   passes underneath. */
+html[data-header-scroll='off'][data-header='plain'] .page-header {
+  background-color: var(--bg);
+  padding-bottom: var(--gap-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Surface style — one switch changes how every card in the app is drawn.
+   These sit outside @layer on purpose, so they beat the .card component rule. */
+[data-surface='outlined'] .card {
+  box-shadow: none;
+}
+[data-surface='flat'] .card,
+[data-surface='flat'] .card-flat {
+  box-shadow: none;
+  border-color: transparent;
+  background-color: var(--surface);
+}
+[data-surface='flat'] {
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow-md: none;
+}
+[data-surface='outlined'] {
+  --shadow-xs: none;
+  --shadow-sm: none;
+}
+
+/* Reduce motion — user toggle, plus honour the OS preference */
+[data-motion='reduced'] {
+  --dur-instant: 0.01ms;
+  --dur-fast: 0.01ms;
+  --dur-normal: 0.01ms;
+  --dur-slow: 0.01ms;
+}
+[data-motion='reduced'] *,
+[data-motion='reduced'] *::before,
+[data-motion='reduced'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-motion='system'] *,
+  [data-motion='system'] *::before,
+  [data-motion='system'] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,5 +1,6 @@
 import concurrent.futures
 import socket
+from datetime import datetime
 from typing import List, Optional
 
 import paramiko
@@ -117,8 +118,19 @@ def svc_get_live_status(db: Session, org_id: Optional[int] = None):
         for cid, st in db.execute(text(
             "SELECT db_connection_id, status FROM agents WHERE db_connection_id IS NOT NULL"
         )).all():
-            if cid is not None:
-                conn_status[int(cid)] = (st or "").lower()
+            if cid is None:
+                continue
+            cid = int(cid)
+            st = (st or "").lower()
+            # db_connection_id has no unique constraint, so a stale/duplicate agent
+            # row (e.g. a leftover row re-pointed at a connection another agent
+            # already owns) can share a connection with a live, online one. Which
+            # row this unordered scan sees last is arbitrary, so an "online" must
+            # never be clobbered by an "offline"/"error" from a different row —
+            # that clobbering is exactly what made the Databases page show a
+            # connection as Stopped while its real agent was Online.
+            if conn_status.get(cid) != "online":
+                conn_status[cid] = st
     except Exception:  # noqa: BLE001
         pass
 
@@ -527,6 +539,30 @@ def svc_test_ssh(request: SshTestRequest):
         raise HTTPException(status_code=400, detail=f"SSH Connection Failed: {str(e)}")
 
 
+def _apply_instance_status(server: OsServer, running_dbs: dict, status_detail: dict, default_detail: str = None):
+    """Update each DatabaseInstance's status, stamping `status_changed_at`
+    only on an actual transition (not every re-check) and `status_detail`
+    with the latest diagnostic text while Stopped (falling back to
+    `default_detail` — e.g. "SSH failed" — when there's no per-service
+    detail to give). This is what a "Database Service Down" alert reads to
+    say WHEN and WHY, instead of guessing from its own poll tick or staying
+    silent on the cause."""
+    now = datetime.utcnow()
+    for inst in server.db_instances:
+        if inst.db_type in running_dbs:
+            is_up = running_dbs[inst.db_type]
+        elif inst.port:
+            is_up = _tcp_check(server.ip_address, inst.port)
+            running_dbs[inst.db_type] = is_up
+        else:
+            continue
+        new_status = "Running" if is_up else "Stopped"
+        if inst.status != new_status:
+            inst.status_changed_at = now
+        inst.status = new_status
+        inst.status_detail = status_detail.get(inst.db_type, default_detail) if new_status == "Stopped" else None
+
+
 def svc_refresh_server(server_id: int, db: Session):
     server = db.query(OsServer).filter(OsServer.id == server_id).first()
 
@@ -591,9 +627,24 @@ def svc_refresh_server(server_id: int, db: Session):
             "MSSQL":      "systemctl is-active mssql-server 2>/dev/null || echo inactive",
             "ClickHouse": "systemctl is-active clickhouse-server 2>/dev/null || echo inactive",
         }
+        # Candidate unit names per service, for the fuller diagnostic below —
+        # `systemctl status` accepts several unit names at once and reports on
+        # whichever exist, so this doesn't need to know which one matched.
+        db_status_units = {
+            "MySQL": "mariadb mysql mysqld", "MariaDB": "mariadb mysql",
+            "PostgreSQL": "postgresql", "MongoDB": "mongod mongodb",
+            "MSSQL": "mssql-server", "ClickHouse": "clickhouse-server",
+        }
+        status_detail = {}
         for db_svc, cmd in db_check_cmds.items():
             res = run(cmd)
             running_dbs[db_svc] = "active" in res.lower()
+            if not running_dbs[db_svc]:
+                # Only spend the extra round-trip on services that are
+                # actually down — this is what "Database Service Down"
+                # alerts surface as their Error detail.
+                units = db_status_units.get(db_svc, "")
+                status_detail[db_svc] = run(f"systemctl status {units} --no-pager -l 2>&1 | head -n 10")
 
         for svc, port in svc_ports.items():
             if svc not in running_dbs:
@@ -601,13 +652,7 @@ def svc_refresh_server(server_id: int, db: Session):
 
         ssh.close()
 
-        for inst in server.db_instances:
-            if inst.db_type in running_dbs:
-                inst.status = "Running" if running_dbs[inst.db_type] else "Stopped"
-            elif inst.port:
-                is_up = _tcp_check(server.ip_address, inst.port)
-                inst.status = "Running" if is_up else "Stopped"
-                running_dbs[inst.db_type] = is_up
+        _apply_instance_status(server, running_dbs, status_detail)
 
         server.status = "Connected"
         server.cpu_usage = metrics.get("cpu_usage")
@@ -626,13 +671,7 @@ def svc_refresh_server(server_id: int, db: Session):
     except Exception as e:
         for svc, port in svc_ports.items():
             running_dbs[svc] = _tcp_check(server.ip_address, port)
-        for inst in server.db_instances:
-            if inst.db_type in running_dbs:
-                inst.status = "Running" if running_dbs[inst.db_type] else "Stopped"
-            elif inst.port:
-                is_up = _tcp_check(server.ip_address, inst.port)
-                inst.status = "Running" if is_up else "Stopped"
-                running_dbs[inst.db_type] = is_up
+        _apply_instance_status(server, running_dbs, {}, default_detail=f"SSH connection to the host failed: {e}")
 
         server.status = "Disconnected"
         db.commit()

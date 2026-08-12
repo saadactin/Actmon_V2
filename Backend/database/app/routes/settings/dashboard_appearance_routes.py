@@ -31,7 +31,7 @@ def get_db():
 
 
 class DashboardAppearanceUpdate(BaseModel):
-    indicator_style: Literal["ring", "stat", "donut", "minimal"]
+    indicator_style: Literal["ring", "stat", "donut", "minimal", "dial"]
     chart_style: Literal["area", "line", "bar", "barh", "spark", "pie", "donut", "scatter", "gauge", "bubble", "gantt"]
     display_mode: Literal["gauge", "graph"] = "gauge"
 

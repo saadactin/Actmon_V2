@@ -37,9 +37,18 @@ def metrics_browse(kind: Optional[str] = None, tech: Optional[str] = None):
 
 
 @router.get("/history/{agent_name}")
-def metrics_history_agent(agent_name: str, minutes: int = 60, conn_id: Optional[int] = None):
+def metrics_history_agent(agent_name: str, minutes: int = 60, conn_id: Optional[int] = None,
+                          bucket_seconds: Optional[int] = None, kind: Optional[str] = None,
+                          tech: Optional[str] = None):
+    # Without kind/tech this falls back to merge('actmon','^metrics_'), which
+    # spans EVERY table — including a multi-engine host agent's own database_*
+    # tables sharing this same agent_name. A caller asking for the HOST's own
+    # trend (kind=infra&tech=host) must say so explicitly, or the host's real
+    # CPU/Memory gets averaged together with its database engines' rows (whose
+    # host_cpu/host_memory are always 0), silently diluting the result.
     return {"agent": agent_name, "source": "clickhouse",
-            "samples": metrics_pipeline.history(agent_name=agent_name, minutes=minutes, conn_id=conn_id)}
+            "samples": metrics_pipeline.history(agent_name=agent_name, minutes=minutes, conn_id=conn_id,
+                                                bucket_seconds=bucket_seconds, kind=kind, tech=tech)}
 
 
 @router.get("/history")

@@ -1,10 +1,13 @@
 import datetime
+import json
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.services.mongo.mongodb_ai_analysis import analyze_mongodb_error
+
+_SEV_MAP = {"F": "FATAL", "E": "ERROR", "W": "WARNING", "I": "INFO", "D": "INFO"}
 
 
 def _get_conn_or_404(connection_id: int, db: Session):
@@ -37,11 +40,39 @@ def analyze_error(connection_id: int, error_data: dict, db: Session):
 
 
 def get_error_logs(connection_id: int, limit: int, db: Session):
-    _get_conn_or_404(connection_id, db)
+    conn = _get_conn_or_404(connection_id, db)
+    n = int(limit) if limit else 20
     try:
-        return {"status": "success", "data": []}
+        from app.services.mongo.mongo_monitoring_service import _mongo_client
+
+        mc = _mongo_client(conn)
+        # MongoDB's own ring buffer of its recent log lines — no file/SSH access
+        # needed, and it's what `mongod --logpath` would have written. Requires
+        # clusterMonitor (or broader) on the connecting user.
+        raw = mc.admin.command("getLog", "global")
+        lines = raw.get("log") or []
+        entries = []
+        for line in lines:
+            try:
+                rec = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            sev = _SEV_MAP.get(rec.get("s"), "INFO")
+            if sev not in ("FATAL", "ERROR", "WARNING"):
+                continue
+            msg = rec.get("msg") or ""
+            attr = rec.get("attr")
+            if attr:
+                msg = f"{msg} {attr}" if msg else str(attr)
+            entries.append({
+                "timestamp": (rec.get("t") or {}).get("$date"),
+                "severity": sev,
+                "message": msg,
+            })
+        entries.reverse()  # getLog returns oldest-first; most recent matters most
+        return {"status": "success", "data": entries[:n], "source": "mongodb getLog"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "success", "data": [], "note": f"Could not read MongoDB log: {e}"}
 
 
 def get_metrics(connection_id: int, db: Session):

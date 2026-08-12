@@ -262,8 +262,11 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
 
     process_rows, err = _safe_query(
         conn,
+        # No result_rows here: that column belongs to system.query_log. A query
+        # still running has no result set to count, so asking for it made the
+        # whole overview fail with "Unknown expression identifier".
         "SELECT query_id, user, elapsed, read_rows, read_bytes, "
-        "result_rows, memory_usage, LEFT(query, 200) AS query "
+        "total_rows_approx, memory_usage, LEFT(query, 200) AS query "
         "FROM system.processes ORDER BY elapsed DESC",
     )
     results["active_processes"] = process_rows
@@ -271,7 +274,9 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
 
     error_rows, err = _safe_query(
         conn,
-        "SELECT event_time, type, error_code_id, "
+        # exception_code is the real column; aliased so the response key and
+        # everything reading it downstream stay unchanged
+        "SELECT event_time, type, exception_code AS error_code_id, "
         "LEFT(exception, 300) AS message, user "
         "FROM system.query_log "
         "WHERE type IN ('ExceptionBeforeStart','ExceptionWhileProcessing') "
@@ -302,18 +307,18 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
             "used_human": _fmt_bytes(used),
         }
 
+    # SELECT * — see get_merges()/get_replicas()'s own note: system.merges and
+    # system.replicas' column sets vary by ClickHouse version (this dashboard
+    # had its OWN separate hardcoded copy of the same fragile column list,
+    # which kept failing with "Unknown expression identifier" on every Server
+    # Health check even after the standalone get_merges/get_replicas were
+    # fixed — every consumer below only reads len()/passes rows through, so
+    # whatever columns this version actually has is enough).
     merges_rows, _ = _safe_query(
-        conn,
-        "SELECT database, \"table\", elapsed, progress, num_parts, "
-        "result_part_name, rows_read, bytes_read_uncompressed "
-        "FROM system.merges ORDER BY elapsed DESC",
+        conn, "SELECT * FROM system.merges ORDER BY elapsed DESC",
     )
     replicas_rows, _ = _safe_query(
-        conn,
-        "SELECT database, \"table\", is_leader, is_readonly, "
-        "absolute_delay, queue_size, inserts_in_queue, merges_in_queue, "
-        "log_max_index, log_pointer, last_queue_update, last_queue_exception "
-        "FROM system.replicas LIMIT 50",
+        conn, "SELECT * FROM system.replicas LIMIT 50",
     )
     settings_rows, _ = _safe_query(
         conn,
@@ -407,7 +412,8 @@ def get_queries(conn_id: int, db: Session) -> dict:
     conn    = _get_connection_or_404(conn_id, db)
     queries, _src, error = _query(
         conn,
-        "SELECT query_id, user, elapsed, read_rows, read_bytes, result_rows, "
+        # see above — system.processes exposes progress, not a result count
+        "SELECT query_id, user, elapsed, read_rows, read_bytes, total_rows_approx, "
         "memory_usage, LEFT(query, 400) AS query, is_initial_query, current_database "
         "FROM system.processes ORDER BY elapsed DESC",
     )
@@ -525,13 +531,14 @@ def get_partitions(conn_id: int, db: Session) -> dict:
 
 def get_merges(conn_id: int, db: Session) -> dict:
     conn = _get_connection_or_404(conn_id, db)
+    # SELECT * rather than a fixed column list: system.merges' columns vary by
+    # ClickHouse version (e.g. source_parts_size doesn't exist on every build),
+    # and a column that doesn't exist fails the WHOLE query with a real SQL
+    # error rather than just that one field being absent. Every consumer below
+    # already reads through .get(...), so whatever columns this version
+    # actually has is enough.
     merges, _src, error = _query(
-        conn,
-        "SELECT database, \"table\", elapsed, progress, num_parts, "
-        "source_part_names, source_parts_size, result_part_name, "
-        "rows_read, rows_written, bytes_read_uncompressed, "
-        "bytes_written_uncompressed, memory_usage "
-        "FROM system.merges ORDER BY elapsed DESC",
+        conn, "SELECT * FROM system.merges ORDER BY elapsed DESC",
     )
     merge_rate_rows, _ = _safe_query(conn, "SELECT value FROM system.events WHERE event = 'MergedRows'")
     merge_rate = merge_rate_rows[0].get("value", 0) if merge_rate_rows else 0
@@ -542,15 +549,13 @@ def get_merges(conn_id: int, db: Session) -> dict:
 
 def get_replicas(conn_id: int, db: Session) -> dict:
     conn = _get_connection_or_404(conn_id, db)
+    # SELECT * — see get_merges' note above; system.replicas' column set (e.g.
+    # zookeeper_session_expired) also varies by ClickHouse version, and every
+    # consumer below reads through .get(...) so a missing column just reads
+    # as absent instead of failing the whole query.
     replicas, _src, error = _query(
         conn,
-        "SELECT database, \"table\", zookeeper_path, is_leader, can_become_leader, "
-        "is_readonly, is_session_expired, future_parts, parts_to_check, "
-        "zookeeper_name, zookeeper_session_expired, queue_size, inserts_in_queue, "
-        "merges_in_queue, part_mutations_in_queue, queue_oldest_time, inserts_oldest_time, "
-        "merges_oldest_time, log_max_index, log_pointer, last_queue_update, absolute_delay, "
-        "total_replicas, active_replicas, last_queue_exception "
-        "FROM system.replicas ORDER BY absolute_delay DESC, queue_size DESC LIMIT 100",
+        "SELECT * FROM system.replicas ORDER BY absolute_delay DESC, queue_size DESC LIMIT 100",
     )
     total      = len(replicas)
     leaders    = sum(1 for r in replicas if r.get("is_leader"))
@@ -744,7 +749,7 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
 
     query_log_rows, err = _safe_query(
         conn,
-        "SELECT event_time, type, error_code_id, LEFT(exception, 500) AS message, "
+        "SELECT event_time, type, exception_code AS error_code_id, LEFT(exception, 500) AS message, "
         "LEFT(query, 300) AS query, user, query_duration_ms "
         "FROM system.query_log "
         "WHERE type IN ('ExceptionBeforeStart','ExceptionWhileProcessing') "

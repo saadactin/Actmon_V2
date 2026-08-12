@@ -964,6 +964,366 @@ def oracle_schema_tables(conn_id: int, db: Session, owner: str = ""):
     return {"status": "success", "schemas": schemas, "owner": target_owner, "tables": tables, "total": len(tables)}
 
 
+def _oracle_col_type(data_type, data_length, data_precision, data_scale):
+    """Build a human-readable Oracle column type string, e.g. VARCHAR2(100), NUMBER(10,2)."""
+    dt = (data_type or "").upper()
+    if dt in ("VARCHAR2", "NVARCHAR2", "CHAR", "NCHAR", "RAW"):
+        return f"{dt}({_safe_int(data_length)})" if data_length else dt
+    if dt == "NUMBER":
+        if data_precision is not None:
+            scale = _safe_int(data_scale, 0)
+            return f"NUMBER({_safe_int(data_precision)},{scale})" if scale else f"NUMBER({_safe_int(data_precision)})"
+        return "NUMBER"
+    return dt
+
+
+def _clob_to_str(val):
+    """python-oracledb hands CLOB columns back as LOB objects (needing .read()) rather
+    than plain str. Handle both shapes; NULL stays NULL."""
+    if val is None:
+        return None
+    if hasattr(val, "read"):
+        try:
+            return val.read()
+        except Exception:
+            return str(val)
+    return str(val)
+
+
+# ──────────────────────────────────────────────────────────────
+#  9b. TABLE DETAIL
+# ──────────────────────────────────────────────────────────────
+
+def oracle_table_detail(conn_id: int, db: Session, owner: str, table: str) -> dict:
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+
+    target_owner = (owner or "").upper()
+    target_table = (table or "").upper()
+    p = {"ow": target_owner, "tbl": target_table}
+
+    result = {
+        "status": "success",
+        "summary": {"row_count": None, "total_bytes": None, "index_bytes": None, "column_count": 0, "index_count": 0},
+        "columns": [], "indexes": [], "constraints": [], "foreign_keys": [], "triggers": [],
+        "ddl": None,
+        "sample_columns": [], "sample_rows": [], "sample_returned": 0,
+        "errors": {},
+    }
+
+    # ── summary: row count / avg row len ────────────────────────────────────
+    row_count = None
+    try:
+        rows = _obj_query_with_fallback(
+            engine,
+            "SELECT num_rows, avg_row_len FROM dba_tables WHERE owner = :ow AND table_name = :tbl",
+            "SELECT num_rows, avg_row_len FROM all_tables WHERE owner = :ow AND table_name = :tbl",
+            p,
+        )
+        if rows:
+            row_count = _safe_int(rows[0].get("NUM_ROWS")) if rows[0].get("NUM_ROWS") is not None else None
+    except Exception as exc:
+        result["errors"]["summary_rows"] = str(exc)
+
+    # ── summary: total table size (DBA_SEGMENTS only — there is no ALL_SEGMENTS
+    #    view in Oracle's data dictionary, so the "ALL" fallback simply yields no
+    #    size rather than erroring, matching oracle_schema_tables' own pattern) ──
+    total_bytes = None
+    try:
+        rows = _obj_query_with_fallback(
+            engine,
+            """SELECT SUM(bytes) AS total_bytes FROM dba_segments
+               WHERE owner = :ow AND segment_name = :tbl AND segment_type IN ('TABLE','TABLE PARTITION')""",
+            "SELECT NULL AS total_bytes FROM dual",
+            p,
+        )
+        if rows and rows[0].get("TOTAL_BYTES") is not None:
+            total_bytes = _safe_int(rows[0].get("TOTAL_BYTES"))
+    except Exception as exc:
+        result["errors"]["summary_table_size"] = str(exc)
+
+    # ── summary: total index size ────────────────────────────────────────────
+    index_bytes = None
+    try:
+        rows = _obj_query_with_fallback(
+            engine,
+            """SELECT SUM(s.bytes) AS total_bytes
+               FROM dba_segments s
+               JOIN dba_indexes i ON i.owner = s.owner AND i.index_name = s.segment_name
+               WHERE i.table_owner = :ow AND i.table_name = :tbl AND s.segment_type LIKE 'INDEX%'""",
+            "SELECT NULL AS total_bytes FROM dual",
+            p,
+        )
+        if rows and rows[0].get("TOTAL_BYTES") is not None:
+            index_bytes = _safe_int(rows[0].get("TOTAL_BYTES"))
+    except Exception as exc:
+        result["errors"]["summary_index_size"] = str(exc)
+
+    # ── columns (+ PK marker) ─────────────────────────────────────────────────
+    columns = []
+    try:
+        raw = _obj_query_with_fallback(
+            engine,
+            """SELECT column_name, data_type, data_length, data_precision, data_scale,
+                      nullable, data_default, column_id
+               FROM dba_tab_columns WHERE owner = :ow AND table_name = :tbl ORDER BY column_id""",
+            """SELECT column_name, data_type, data_length, data_precision, data_scale,
+                      nullable, data_default, column_id
+               FROM all_tab_columns WHERE owner = :ow AND table_name = :tbl ORDER BY column_id""",
+            p,
+        )
+
+        pk_cols = set()
+        try:
+            pk_raw = _obj_query_with_fallback(
+                engine,
+                """SELECT cc.column_name FROM dba_constraints c
+                   JOIN dba_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+                   WHERE c.owner = :ow AND c.table_name = :tbl AND c.constraint_type = 'P'""",
+                """SELECT cc.column_name FROM all_constraints c
+                   JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+                   WHERE c.owner = :ow AND c.table_name = :tbl AND c.constraint_type = 'P'""",
+                p,
+            )
+            pk_cols = {_safe_str(r.get("COLUMN_NAME")).upper() for r in pk_raw}
+        except Exception as exc:
+            result["errors"]["columns_pk"] = str(exc)
+
+        for r in raw:
+            name = _safe_str(r.get("COLUMN_NAME"))
+            columns.append({
+                "position": _safe_int(r.get("COLUMN_ID")),
+                "name":     name,
+                "type":     _oracle_col_type(r.get("DATA_TYPE"), r.get("DATA_LENGTH"), r.get("DATA_PRECISION"), r.get("DATA_SCALE")),
+                "nullable": _safe_str(r.get("NULLABLE")) != "N",
+                "default":  _safe_str(r.get("DATA_DEFAULT")) if r.get("DATA_DEFAULT") is not None else None,
+                "key":      "PRIMARY" if name.upper() in pk_cols else None,
+                "comment":  None,
+            })
+        result["columns"] = columns
+    except Exception as exc:
+        result["errors"]["columns"] = str(exc)
+
+    # ── indexes ───────────────────────────────────────────────────────────────
+    try:
+        raw = _obj_query_with_fallback(
+            engine,
+            """SELECT i.index_name, i.index_type, i.uniqueness, i.num_rows,
+                      LISTAGG(ic.column_name, ', ') WITHIN GROUP (ORDER BY ic.column_position) AS cols
+               FROM dba_indexes i
+               JOIN dba_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name
+               WHERE i.table_owner = :ow AND i.table_name = :tbl
+               GROUP BY i.index_name, i.index_type, i.uniqueness, i.num_rows
+               ORDER BY i.index_name""",
+            """SELECT i.index_name, i.index_type, i.uniqueness, i.num_rows,
+                      LISTAGG(ic.column_name, ', ') WITHIN GROUP (ORDER BY ic.column_position) AS cols
+               FROM all_indexes i
+               JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name
+               WHERE i.table_owner = :ow AND i.table_name = :tbl
+               GROUP BY i.index_name, i.index_type, i.uniqueness, i.num_rows
+               ORDER BY i.index_name""",
+            p,
+        )
+
+        size_by_index = {}
+        try:
+            size_rows = _obj_query_with_fallback(
+                engine,
+                """SELECT i.index_name, s.bytes
+                   FROM dba_indexes i
+                   JOIN dba_segments s ON s.owner = i.owner AND s.segment_name = i.index_name AND s.segment_type LIKE 'INDEX%'
+                   WHERE i.table_owner = :ow AND i.table_name = :tbl""",
+                "SELECT NULL AS index_name, NULL AS bytes FROM dual WHERE 1=0",
+                p,
+            )
+            size_by_index = {_safe_str(r.get("INDEX_NAME")): _safe_int(r.get("BYTES")) for r in size_rows}
+        except Exception as exc:
+            result["errors"]["indexes_size"] = str(exc)
+
+        result["indexes"] = [
+            {
+                "name":       _safe_str(r.get("INDEX_NAME")),
+                "type":       _safe_str(r.get("INDEX_TYPE")),
+                "unique":     _safe_str(r.get("UNIQUENESS")) == "UNIQUE",
+                "columns":    _safe_str(r.get("COLS")),
+                "size_bytes": size_by_index.get(_safe_str(r.get("INDEX_NAME"))),
+                "uses":       _safe_int(r.get("NUM_ROWS")) if r.get("NUM_ROWS") is not None else None,
+            }
+            for r in raw
+        ]
+    except Exception as exc:
+        result["errors"]["indexes"] = str(exc)
+
+    # ── constraints (P / U / C) ───────────────────────────────────────────────
+    # search_condition is a LONG column — LONG cannot appear in GROUP BY/DISTINCT/
+    # ORDER BY, so its header (incl. search_condition) is fetched separately from
+    # the LISTAGG'd column list and the two are merged in Python.
+    _CONS_TYPE_WORDS = {"P": "PRIMARY KEY", "U": "UNIQUE", "C": "CHECK"}
+    try:
+        headers = _obj_query_with_fallback(
+            engine,
+            """SELECT constraint_name, constraint_type, search_condition
+               FROM dba_constraints WHERE owner = :ow AND table_name = :tbl AND constraint_type IN ('P','U','C')""",
+            """SELECT constraint_name, constraint_type, search_condition
+               FROM all_constraints WHERE owner = :ow AND table_name = :tbl AND constraint_type IN ('P','U','C')""",
+            p,
+        )
+
+        cols_by_cons = {}
+        try:
+            col_rows = _obj_query_with_fallback(
+                engine,
+                """SELECT cc.constraint_name,
+                          LISTAGG(cc.column_name, ', ') WITHIN GROUP (ORDER BY cc.position) AS cols
+                   FROM dba_cons_columns cc
+                   JOIN dba_constraints c ON c.owner = cc.owner AND c.constraint_name = cc.constraint_name
+                   WHERE c.owner = :ow AND c.table_name = :tbl AND c.constraint_type IN ('P','U')
+                   GROUP BY cc.constraint_name""",
+                """SELECT cc.constraint_name,
+                          LISTAGG(cc.column_name, ', ') WITHIN GROUP (ORDER BY cc.position) AS cols
+                   FROM all_cons_columns cc
+                   JOIN all_constraints c ON c.owner = cc.owner AND c.constraint_name = cc.constraint_name
+                   WHERE c.owner = :ow AND c.table_name = :tbl AND c.constraint_type IN ('P','U')
+                   GROUP BY cc.constraint_name""",
+                p,
+            )
+            cols_by_cons = {_safe_str(r.get("CONSTRAINT_NAME")): _safe_str(r.get("COLS")) for r in col_rows}
+        except Exception as exc:
+            result["errors"]["constraints_columns"] = str(exc)
+
+        constraints = []
+        for r in headers:
+            ctype = _safe_str(r.get("CONSTRAINT_TYPE"))
+            name = _safe_str(r.get("CONSTRAINT_NAME"))
+            if ctype == "C":
+                columns_str = None
+                definition = _clob_to_str(r.get("SEARCH_CONDITION"))
+            else:
+                columns_str = cols_by_cons.get(name)
+                definition = None
+            constraints.append({
+                "type":       _CONS_TYPE_WORDS.get(ctype, ctype),
+                "name":       name,
+                "columns":    columns_str,
+                "definition": definition,
+            })
+        result["constraints"] = constraints
+    except Exception as exc:
+        result["errors"]["constraints"] = str(exc)
+
+    # ── foreign keys ──────────────────────────────────────────────────────────
+    try:
+        raw = _obj_query_with_fallback(
+            engine,
+            """SELECT c.constraint_name, c.delete_rule, rc.owner AS ref_schema, rc.table_name AS ref_table,
+                      LISTAGG(cc.column_name, ', ') WITHIN GROUP (ORDER BY cc.position) AS fk_columns,
+                      LISTAGG(rcc.column_name, ', ') WITHIN GROUP (ORDER BY rcc.position) AS ref_columns
+               FROM dba_constraints c
+               JOIN dba_cons_columns cc  ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+               JOIN dba_constraints rc   ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name
+               JOIN dba_cons_columns rcc ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name
+                                         AND rcc.position = cc.position
+               WHERE c.owner = :ow AND c.table_name = :tbl AND c.constraint_type = 'R'
+               GROUP BY c.constraint_name, c.delete_rule, rc.owner, rc.table_name
+               ORDER BY c.constraint_name""",
+            """SELECT c.constraint_name, c.delete_rule, rc.owner AS ref_schema, rc.table_name AS ref_table,
+                      LISTAGG(cc.column_name, ', ') WITHIN GROUP (ORDER BY cc.position) AS fk_columns,
+                      LISTAGG(rcc.column_name, ', ') WITHIN GROUP (ORDER BY rcc.position) AS ref_columns
+               FROM all_constraints c
+               JOIN all_cons_columns cc  ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+               JOIN all_constraints rc   ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name
+               JOIN all_cons_columns rcc ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name
+                                         AND rcc.position = cc.position
+               WHERE c.owner = :ow AND c.table_name = :tbl AND c.constraint_type = 'R'
+               GROUP BY c.constraint_name, c.delete_rule, rc.owner, rc.table_name
+               ORDER BY c.constraint_name""",
+            p,
+        )
+        result["foreign_keys"] = [
+            {
+                "name":       _safe_str(r.get("CONSTRAINT_NAME")),
+                "column":     _safe_str(r.get("FK_COLUMNS")),
+                "ref_schema": _safe_str(r.get("REF_SCHEMA")),
+                "ref_table":  _safe_str(r.get("REF_TABLE")),
+                "ref_column": _safe_str(r.get("REF_COLUMNS")),
+                # Oracle foreign keys have no ON UPDATE action (unlike MySQL/Postgres) —
+                # always null here, deliberately.
+                "on_update":  None,
+                "on_delete":  _safe_str(r.get("DELETE_RULE")) if r.get("DELETE_RULE") is not None else None,
+            }
+            for r in raw
+        ]
+    except Exception as exc:
+        result["errors"]["foreign_keys"] = str(exc)
+
+    # ── triggers ──────────────────────────────────────────────────────────────
+    try:
+        raw = _obj_query_with_fallback(
+            engine,
+            """SELECT trigger_name, trigger_type, triggering_event, trigger_body
+               FROM dba_triggers WHERE table_owner = :ow AND table_name = :tbl""",
+            """SELECT trigger_name, trigger_type, triggering_event, trigger_body
+               FROM all_triggers WHERE table_owner = :ow AND table_name = :tbl""",
+            p,
+        )
+        result["triggers"] = [
+            {
+                "name":    _safe_str(r.get("TRIGGER_NAME")),
+                "timing":  _safe_str(r.get("TRIGGER_TYPE")),
+                "event":   _safe_str(r.get("TRIGGERING_EVENT")),
+                "definer": None,
+                "body":    _clob_to_str(r.get("TRIGGER_BODY")),
+            }
+            for r in raw
+        ]
+    except Exception as exc:
+        result["errors"]["triggers"] = str(exc)
+
+    # ── ddl (DBMS_METADATA.GET_DDL — needs SELECT_CATALOG_ROLE or equivalent) ──
+    try:
+        rows = _rows(
+            engine,
+            "SELECT DBMS_METADATA.GET_DDL('TABLE', :tbl, :ow) AS ddl FROM dual",
+            p,
+        )
+        result["ddl"] = _clob_to_str(rows[0].get("DDL")) if rows else None
+    except Exception as exc:
+        result["ddl"] = None
+        result["errors"]["ddl"] = str(exc)
+
+    # ── sample data ───────────────────────────────────────────────────────────
+    try:
+        sample_rows = _rows(
+            engine,
+            f'SELECT * FROM "{target_owner}"."{target_table}" WHERE ROWNUM <= 100',
+        )
+        sample_columns = list(sample_rows[0].keys()) if sample_rows else []
+        safe_rows = []
+        for row in sample_rows:
+            safe = {}
+            for k, v in row.items():
+                if v is None or isinstance(v, (int, float, str, bool)):
+                    safe[k] = v
+                else:
+                    safe[k] = _clob_to_str(v)
+            safe_rows.append(safe)
+        result["sample_columns"] = sample_columns
+        result["sample_rows"] = safe_rows
+        result["sample_returned"] = len(safe_rows)
+    except Exception as exc:
+        result["errors"]["sample_data"] = str(exc)
+
+    result["summary"] = {
+        "row_count":    row_count,
+        "total_bytes":  total_bytes,
+        "index_bytes":  index_bytes,
+        "column_count": len(result["columns"]),
+        "index_count":  len(result["indexes"]),
+    }
+
+    return result
+
+
 # ──────────────────────────────────────────────────────────────
 #  10. USERS
 # ──────────────────────────────────────────────────────────────

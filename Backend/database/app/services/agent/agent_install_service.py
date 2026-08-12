@@ -127,6 +127,7 @@ class AgentInfraIngest(BaseModel):
     os_type: Optional[str] = None
     raw: str = ""
     raw_b64: Optional[str] = None
+    agent_version: Optional[str] = None   # which build is reporting (None = pre-1.1.0 agent)
 
 
 # ── Services ──────────────────────────────────────────────────────────────────
@@ -262,18 +263,65 @@ def svc_save_db_target(req: DbConfigRequest, db: Session):
                                     status="Running", org_id=getattr(server, "org_id", 1) or 1)
             db.add(inst)
         inst.connection_id = tgt.connection_id
+    _ensure_connection_agent(tgt.connection_id, tgt.connection_name, tgt.host, tgt.environment, dbt, db)
     db.commit()
     return {"status": "success", "db_type": dbt, "connection_id": tgt.connection_id}
 
 
+def _ensure_connection_agent(connection_id: int, name: str, host: str, environment: str, display_db_type: str, db: Session):
+    """Create the per-connection `agents` row (db_connection_id set) that
+    agent_collector_service.py's `_sync_agent_threads` requires to ever start
+    polling this database's real status. Without this row, database_instances.
+    status is set once (at row-creation, always "Running") and never updated
+    again — a real bug found in production: DatabaseInstance rows are created
+    here and by infra_detail_service.py's infra-push handler, but neither used
+    to also create this row, and the only place that did
+    (svc_sync_connections_to_agents) deliberately SKIPS creating one whenever
+    a host-level agent with the same server name already exists — exactly the
+    normal case for an agent-monitored host — so newly-added databases (or
+    ones recreated after a reset) silently never got their status polled.
+    A host-level agent row (db_connection_id=NULL) and this per-connection row
+    coexisting is the correct, required shape, not duplication: the collector
+    keys threads off `db_connection_id`, which the host row never has."""
+    from app.models.agent_model import Agent
+    if db.query(Agent).filter(Agent.db_connection_id == connection_id).first():
+        return
+    existing_name = db.query(Agent).filter(Agent.agent_name == name).first()
+    agent_name = name if not existing_name else f"{name}-{connection_id}"
+    db.add(Agent(
+        agent_name=agent_name, db_connection_id=connection_id, db_type=display_db_type,
+        hostname=host, ip_address=host, environment=environment or "Production", status="offline",
+    ))
+
+
 def svc_get_db_targets(token: str, db: Session):
-    from app.models.agent_model import AgentDbTarget
+    """The DBs this agent should collect, keyed by token.
+
+    Each target now also carries its own `agent_name` — the SAME name as the
+    per-connection `agents` row `_ensure_connection_agent()` creates
+    (db_connection_id set). Without this, the physical agent had no way to
+    know a per-connection identity exists at all, so `_db_engine_loop` pushed
+    every engine's metrics under the shared HOST identity instead (see
+    actmon_agent.py) — every DB engine's telemetry silently landed on the
+    host's own agent row as kind=database/tech=unclassified, and the real
+    per-connection agent rows ("ClickHouse", "MySQL", …) never received a
+    single AgentMetric row: zero Redis ring samples, zero ClickHouse history,
+    zero Delivery stats, forever "Waiting for samples" on their own pages."""
+    from app.models.agent_model import Agent, AgentDbTarget
     rows = db.query(AgentDbTarget).filter(
         AgentDbTarget.token == token, AgentDbTarget.enabled.is_(True)).all()
+    conn_ids = [r.connection_id for r in rows if r.connection_id]
+    agent_by_conn = {}
+    if conn_ids:
+        agent_by_conn = {
+            a.db_connection_id: a.agent_name
+            for a in db.query(Agent).filter(Agent.db_connection_id.in_(conn_ids)).all()
+        }
     return [{
         "db_type": r.db_type, "host": r.host or "localhost", "port": r.port,
         "username": r.username, "password": r.password, "database": r.database_name,
         "connection_name": r.connection_name,
+        "agent_name": agent_by_conn.get(r.connection_id) or r.connection_name,
     } for r in rows]
 
 
@@ -429,23 +477,37 @@ def _to_ascii(s: str) -> str:
 
 
 def build_windows_install_bat(token: str, url: str) -> str:
-    """A double-clickable installer (.bat) with token+URL baked in. It self-elevates
-    (UAC) and runs the exe-based setup — so the user can just download and run it,
-    no PowerShell copy-paste needed.
+    """A double-clickable installer (.bat) with token+URL baked in — self-elevates
+    (UAC), downloads a per-request MSI with the token/URL already configured, and
+    installs it silently. No PowerShell copy-paste, no properties to type.
 
-    Downloads the setup script to a file and runs it with -File, in two separate
-    steps — NOT `iex ((New-Object Net.WebClient).DownloadString(...)))`. That
-    in-memory download-and-eval one-liner is the textbook "fileless" pattern
-    Microsoft Defender's Attack Surface Reduction rules (and most enterprise EDR)
-    specifically detect and block, regardless of what the script actually does —
-    confirmed live: a real install hit an instant "Access is denied" the moment
-    that exact command ran, before the script's own logging even started. Saving
-    to disk first and executing with -File is the ordinary, unflagged way
-    legitimate installers fetch and run a script."""
+    Installs via the SELF-CONFIGURING MSI (/install/actmon-agent.msi), NOT the
+    scheduled-task setup script this used to run. A Windows SERVICE is what every
+    other always-on application on Windows already uses — antivirus, backup
+    agents, Docker Desktop's engine — specifically because Service Control
+    Manager's restart-on-failure is a mature, battle-tested primitive with no
+    retry cap: it restarts the process indefinitely, not a fixed number of times.
+    product.wxs already configures exactly that (restart on the 1st, 2nd and
+    every failure after, 30s apart).
+
+    The scheduled-task path this replaced needed a hand-rolled recurring
+    "recheck and relaunch" trigger to approximate the same guarantee — and that
+    trigger had a real bug (an out-of-range duration) that meant it was never
+    actually registered on any host, so every agent installed that way was
+    silently running on a 3-attempts-then-permanently-dead policy. A live host
+    went dark for 46 minutes, then again overnight, before that was caught. The
+    Service path doesn't need a home-grown equivalent at all — SCM already does
+    this, correctly, for every service on the machine, and has for decades.
+
+    Downloads the MSI to a file and runs it via msiexec, not an in-memory
+    download-and-eval — the same fileless-pattern lesson as before still applies,
+    and msiexec installing a downloaded .msi is about as ordinary a Windows
+    operation as exists, which also makes it less likely to draw EDR attention
+    than a PowerShell-driven exe-and-scheduled-task setup ever was."""
     from urllib.parse import quote
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
     safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
-    setup_url = f"{safe_url}/agents/install/actmon-setup.ps1?token={safe_token}&url={quote(safe_url, safe='')}"
+    msi_url = f"{safe_url}/agents/install/actmon-agent.msi?token={safe_token}&url={quote(safe_url, safe='')}"
     # cmd.exe's batch parser expands ANY %N (digit) or %VAR% pattern it finds in a
     # .bat file's text BEFORE the line ever reaches the program it's quoted for —
     # including inside a quoted -Command argument. A percent-encoded URL (%3A,
@@ -454,7 +516,7 @@ def build_windows_install_bat(token: str, url: str) -> str:
     # behind — confirmed live, this turned a valid URL into an unresolvable
     # hostname. Doubling every % to %% is the standard batch-file escape that
     # survives that pass intact and comes out as a single % on the other side.
-    setup_url_bat = setup_url.replace("%", "%%")
+    msi_url_bat = msi_url.replace("%", "%%")
     # CRLF line endings — it's a Windows batch file.
     lines = [
         "@echo off",
@@ -466,15 +528,44 @@ def build_windows_install_bat(token: str, url: str) -> str:
         "  exit /b",
         ")",
         "echo Installing ActMon Agent...",
-        "set \"ACTMON_SETUP_PS1=%TEMP%\\actmon-setup.ps1\"",
-        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{setup_url_bat}' -OutFile '%ACTMON_SETUP_PS1%' -UseBasicParsing\"",
-        "if not exist \"%ACTMON_SETUP_PS1%\" (",
-        "  echo Failed to download the installer script - check your network and the ActMon server URL.",
+        "set \"ACTMON_MSI=%TEMP%\\actmon-agent.msi\"",
+        "set \"ACTMON_MSILOG=%TEMP%\\actmon-agent-install.log\"",
+        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{msi_url_bat}' -OutFile '%ACTMON_MSI%' -UseBasicParsing\"",
+        "if not exist \"%ACTMON_MSI%\" (",
+        "  echo Failed to download the installer - check your network and the ActMon server URL.",
         "  pause",
         "  exit /b 1",
         ")",
-        "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ACTMON_SETUP_PS1%\"",
-        "del /f /q \"%ACTMON_SETUP_PS1%\" >nul 2>&1",
+        "echo Running the installer ^(this installs and starts the ActMon Agent service^)...",
+        "msiexec /i \"%ACTMON_MSI%\" /qn /norestart /l*v \"%ACTMON_MSILOG%\"",
+        "set \"ACTMON_MSIEXIT=%errorlevel%\"",
+        "del /f /q \"%ACTMON_MSI%\" >nul 2>&1",
+        # 0 = success, 3010 = success but a reboot is recommended (never required
+        # for this MSI — it installs a service, it does not touch anything that
+        # needs a restart to take effect).
+        "if %ACTMON_MSIEXIT% neq 0 if %ACTMON_MSIEXIT% neq 3010 (",
+        "  echo Install failed ^(msiexec exit code %ACTMON_MSIEXIT%^). Full log: %ACTMON_MSILOG%",
+        "  pause",
+        "  exit /b 1",
+        ")",
+        # msiexec returning is not proof the service actually started — same
+        # standard applied to the old script's process/log checks, just aimed at
+        # the service manager instead of a bare process list.
+        "set \"ACTMON_RUNNING=0\"",
+        "for /l %%i in (1,1,20) do (",
+        "  sc query ActMonAgent | find \"RUNNING\" >nul 2>&1",
+        "  if not errorlevel 1 (set \"ACTMON_RUNNING=1\" & goto :checked)",
+        "  powershell -NoProfile -Command \"Start-Sleep -Milliseconds 500\" >nul",
+        ")",
+        ":checked",
+        "if \"%ACTMON_RUNNING%\"==\"1\" (",
+        "  echo SUCCESS - ActMon Agent installed and running as a Windows service.",
+        "  echo It starts automatically on every boot and restarts itself if it ever stops.",
+        ") else (",
+        "  echo Installed, but the service has not reported RUNNING yet.",
+        "  echo Check with: sc query ActMonAgent",
+        "  echo And the install log: %ACTMON_MSILOG%",
+        ")",
         "echo.",
         "pause",
     ]
@@ -482,20 +573,40 @@ def build_windows_install_bat(token: str, url: str) -> str:
 
 
 def build_windows_setup_ps1(token: str, url: str) -> str:
-    """One-shot elevated installer (STRICT ASCII — PS 5.1 safe). Validates admin +
-    connectivity + download integrity, downloads the agent exe to C:\\ProgramData\\ActMon,
-    writes token/URL to the registry, and registers + starts a boot-time SYSTEM task.
-    Every step is logged to install.log; failures produce plain messages, not stack traces."""
+    """One-shot elevated installer (STRICT ASCII — PS 5.1 safe), reached via the
+    copy-paste one-liner (`Start-Process powershell -Verb RunAs ...`, built in
+    SetupWizard.jsx) — so by the time this script body runs, it is already
+    elevated; it only re-checks, never re-elevates.
+
+    Installs via the SAME self-configuring MSI as the Deploy Agent wizard's
+    .bat (build_windows_install_bat): downloads /install/actmon-agent.msi with
+    the token/URL baked in, runs it with msiexec /qn, and verifies a Windows
+    SERVICE — not the Scheduled Task this route used to register directly.
+
+    That Scheduled Task path is gone for good reason: its own recovery trigger
+    had a real, once-live bug (an out-of-range Task Scheduler duration) that
+    meant the recheck-every-5-minutes safety net was never actually registered
+    on any host — every agent installed that way was silently running on a
+    3-attempts-then-permanently-dead policy. A host went dark for 46 minutes,
+    then again overnight, before that was caught. Routing this endpoint through
+    the MSI/Service instead — rather than just patching the scheduled-task bug —
+    means every Windows install surface in the app (this one-liner, the Deploy
+    wizard's .bat, and a direct .msi double-click) now produces the exact same
+    outcome: one Service, SCM's own indefinite restart-on-failure, nothing
+    home-grown to keep in sync across three different code paths.
+    """
+    from urllib.parse import quote
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
-    safe_url = (url or "").strip().replace("'", "").rstrip("/")
+    safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
     if not safe_url.lower().startswith("http"):
         safe_url = ""
+    msi_url = f"{safe_url}/agents/install/actmon-agent.msi?token={quote(safe_token)}&url={quote(safe_url, safe='')}"
     script = f"""$ErrorActionPreference = 'Stop'
-$token = '{safe_token}'
-$url   = '{safe_url}'
-$dir   = 'C:\\ProgramData\\ActMon'
-$exe   = "$dir\\actmon-agent.exe"
-$log   = "$dir\\install.log"
+$url    = '{safe_url}'
+$dir    = 'C:\\ProgramData\\ActMon'
+$log    = "$dir\\install.log"
+$msi    = "$env:TEMP\\actmon-agent.msi"
+$msiLog = "$dir\\msiexec.log"
 function Log($m) {{
   $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m"
   Write-Host $line
@@ -507,65 +618,51 @@ try {{
   if (-not $admin) {{ throw "This installer must run as Administrator." }}
   if (-not $url)   {{ throw "No ActMon server URL was provided." }}
 
-  New-Item -ItemType Directory -Force -Path $dir | Out-Null
   Log "ActMon Agent install starting. Server: $url"
-
-  # Best-effort pre-clean of any prior install. On a FRESH host neither the task nor
-  # the process exists, so schtasks writes "cannot find the file specified" to stderr.
-  # In PS 5.1, redirecting a NATIVE command's stderr (2>) while EAP=Stop turns that
-  # stderr line into a TERMINATING error -- which would abort the whole install before
-  # we ever download the agent. Relax EAP for the cleanup and route the redirect
-  # through cmd so PowerShell never sees the stderr, then restore Stop.
-  $ErrorActionPreference = 'SilentlyContinue'
-  cmd /c "schtasks /End /TN ActMonAgent >nul 2>&1"
-  Get-Process actmon-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-  Start-Sleep -Milliseconds 600
-  $ErrorActionPreference = 'Stop'
-
-  # Download to a TEMP name first — the old agent may still hold a lock on the real
-  # exe for a few seconds after being killed; writing straight over it races and fails.
-  $exeNew = "$dir\\actmon-agent.new.exe"
-  Log "Downloading agent from $url/agents/download/windows?fmt=exe"
+  Log "Downloading self-configured installer from $url/agents/install/actmon-agent.msi"
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  Invoke-WebRequest -Uri "$url/agents/download/windows?fmt=exe" -OutFile $exeNew -UseBasicParsing
-  $size = (Get-Item $exeNew).Length
-  if ($size -lt 1000000) {{ throw "Downloaded file is too small ($size bytes). Is the ActMon server URL reachable from THIS machine?" }}
-  Log ("Downloaded {{0:N1}} MB" -f ($size / 1MB))
+  Invoke-WebRequest -Uri "{msi_url}" -OutFile $msi -UseBasicParsing
+  $size = (Get-Item $msi).Length
+  if ($size -lt 1000000) {{ throw "Downloaded installer is too small ($size bytes). Is the ActMon server URL reachable from THIS machine?" }}
+  Log ("Downloaded {{0:N1}} MB." -f ($size / 1MB))
 
-  # Swap into place, retrying while the old process finishes releasing its lock.
-  $swapped = $false
-  for ($i = 0; $i -lt 20; $i++) {{
-    try {{
-      Get-Process actmon-agent -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-      if (Test-Path $exe) {{ Remove-Item $exe -Force -ErrorAction Stop }}
-      Move-Item $exeNew $exe -Force -ErrorAction Stop
-      $swapped = $true; break
-    }} catch {{ Start-Sleep -Milliseconds 700 }}
+  $proc = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$msiLog`"") -Wait -PassThru
+  Remove-Item $msi -Force -ErrorAction SilentlyContinue
+  if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {{
+    throw "msiexec failed with exit code $($proc.ExitCode). Full log: $msiLog"
   }}
-  if (-not $swapped) {{ throw "Could not replace $exe - the old agent would not release it. Reboot or stop it manually, then retry." }}
-  Log "Agent binary swapped into place."
+  Log "MSI installed (msiexec exit code $($proc.ExitCode))."
 
-  New-Item -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Force | Out-Null
-  Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Name Token -Value $token
-  Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\ActMon\\Agent' -Name Url   -Value $url
-  Log "Token and URL written to registry."
+  # msiexec returning success is not proof the service actually started — wait
+  # for SCM to report it Running before declaring victory.
+  $running = $false
+  for ($i = 0; $i -lt 20; $i++) {{
+    Start-Sleep -Milliseconds 500
+    $svc = Get-Service -Name ActMonAgent -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {{ $running = $true; break }}
+  }}
+  if (-not $running) {{
+    throw "The agent was installed but the ActMonAgent service has not reported Running yet. Check: sc query ActMonAgent  and $msiLog"
+  }}
+  Log "ActMonAgent service is Running."
 
-  $action    = New-ScheduledTaskAction -Execute $exe
-  $trigger   = New-ScheduledTaskTrigger -AtStartup
-  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-  # MultipleInstances IgnoreNew: without this, re-running this installer on a host
-  # whose task was still finishing its own shutdown (schtasks /End above isn't
-  # synchronous) can race Register-ScheduledTask/Start-ScheduledTask into launching
-  # a SECOND overlapping instance alongside the one still stopping — confirmed live
-  # (4 actmon-agent.exe processes = 2 independent launches after one install run).
-  # This tells Task Scheduler to refuse a new launch while one is already active,
-  # so at most one instance ever runs regardless of that race.
-  $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
-  Register-ScheduledTask -TaskName 'ActMonAgent' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-  Start-ScheduledTask -TaskName 'ActMonAgent'
-  Log "Scheduled task ActMonAgent registered and started."
-  Log "SUCCESS - ActMon Agent installed and reporting. It also starts on every boot."
-  Start-Sleep -Seconds 3
+  # It is up; now confirm it is actually collecting, not just started. A service
+  # that starts and then fails to reach the server is a different fault from one
+  # that never starts, and the operator needs to be told which they have.
+  $agentLog = "$dir\\agent.log"
+  $before = 0
+  if (Test-Path $agentLog) {{ $before = (Get-Item $agentLog).Length }}
+  $logged = $false
+  for ($i = 0; $i -lt 40; $i++) {{
+    Start-Sleep -Milliseconds 750
+    if ((Test-Path $agentLog) -and (Get-Item $agentLog).Length -gt $before) {{ $logged = $true; break }}
+  }}
+  if ($logged) {{
+    Log "SUCCESS - ActMon Agent installed and reporting, as a Windows service. It starts automatically on every boot and restarts itself if it ever stops."
+  }} else {{
+    Log ("PARTIAL - the service is running but has not logged anything within 30s. It still starts on every " +
+         "boot and restarts on failure regardless, but check that $url is reachable from this machine and see $agentLog.")
+  }}
 }} catch {{
   Log ("FAILED: " + $_.Exception.Message)
   Write-Host ""

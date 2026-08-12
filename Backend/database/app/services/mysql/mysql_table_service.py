@@ -56,40 +56,164 @@ def _human_size(b: float) -> str:
     return f"{b:.1f} PB"
 
 
+def _iso(v):
+    """A `datetime`/`date`, OR — when this query was routed through a host agent —
+    a string already, since the agent's own JSON encoder (`json.dumps(..., default=str)`
+    in actmon_agent.py's _dbquery) stringifies anything it can't serialize natively
+    before this ever reaches the backend. A direct connection hands back the real
+    object here; an agent-routed one hands back its str() already. Calling
+    .isoformat() unconditionally crashed the WHOLE database list (one bad row
+    aborts the loop) the moment any schema's CREATE_TIME/UPDATE_TIME was non-null
+    on an agent-linked connection."""
+    if v is None:
+        return None
+    return v.isoformat() if hasattr(v, "isoformat") else str(v)
+
+
+def _norm_user(v: str) -> str:
+    """GRANTEE arrives as `'root'@'localhost'`, DEFINER as `root@localhost`."""
+    return (v or "").replace("'", "").replace("`", "")
+
+
+def _schema_owners(engine) -> dict:
+    """
+    Best available "owner" per schema, and where it came from.
+
+    MySQL has no schema owner (PostgreSQL's pg_database.datdba has no counterpart),
+    so this derives one from two sources, in order of how directly each implies
+    ownership:
+
+      schema_privileges  a user holding privileges granted ON that schema
+      object_definer     the user who DEFINERs the most views/routines/triggers/
+                         events inside it
+
+    Neither exists for a schema of plain tables whose users hold only GLOBAL
+    grants, which is the common case for a root-only server — the owner is then
+    genuinely unknown and reported as None rather than guessed.
+    """
+    owners: dict = {}
+
+    try:
+        for r in _rows(engine, """
+            SELECT TABLE_SCHEMA AS db, GRANTEE AS who, COUNT(*) AS n
+            FROM information_schema.SCHEMA_PRIVILEGES
+            GROUP BY TABLE_SCHEMA, GRANTEE
+            ORDER BY TABLE_SCHEMA, n DESC, GRANTEE
+        """):
+            owners.setdefault(r["db"], {
+                "name": _norm_user(r["who"]), "source": "schema_privileges",
+            })
+    except Exception:
+        pass  # reading SCHEMA_PRIVILEGES needs privileges of its own
+
+    try:
+        tally: dict = {}
+        for r in _rows(engine, """
+            SELECT TABLE_SCHEMA AS db, DEFINER AS who, COUNT(*) AS n
+              FROM information_schema.VIEWS      GROUP BY 1, 2
+            UNION ALL
+            SELECT ROUTINE_SCHEMA, DEFINER, COUNT(*)
+              FROM information_schema.ROUTINES   GROUP BY 1, 2
+            UNION ALL
+            SELECT TRIGGER_SCHEMA, DEFINER, COUNT(*)
+              FROM information_schema.TRIGGERS   GROUP BY 1, 2
+            UNION ALL
+            SELECT EVENT_SCHEMA, DEFINER, COUNT(*)
+              FROM information_schema.EVENTS     GROUP BY 1, 2
+        """):
+            by_user = tally.setdefault(r["db"], {})
+            who = _norm_user(r["who"])
+            by_user[who] = by_user.get(who, 0) + int(r["n"] or 0)
+        for db_name, by_user in tally.items():
+            if db_name in owners or not by_user:
+                continue  # an explicit grant always outranks a definer
+            # most objects wins; alphabetical tie-break keeps the answer stable
+            top = sorted(by_user.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+            owners[db_name] = {"name": top, "source": "object_definer"}
+    except Exception:
+        pass
+
+    return owners
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Service functions
 # ═════════════════════════════════════════════════════════════════════════════
 
 def get_databases(conn_id: int, db: Session) -> dict:
+    """
+    Full per-schema metadata for the Databases list.
+
+    Two caveats are inherent to MySQL rather than to this code, so each derived
+    field ships with the source it was derived from and the UI labels it:
+
+      created_on  MySQL does not record when a schema was created. The oldest
+                  table's CREATE_TIME is the closest available proxy, so
+                  `created_on_source` is "oldest_table" (or None when the schema
+                  has no tables and the date is simply unknown).
+      owner       MySQL has no schema owner (unlike PostgreSQL's pg_database.datdba).
+                  The grantee holding the most schema-level privileges is the
+                  nearest equivalent; users who reach the schema through GLOBAL
+                  grants (typically root) hold no schema-level rows and so cannot
+                  be seen here — the owner is then reported as unknown.
+
+    `status` is derived from what is actually knowable: a schema is "empty" when
+    no BASE TABLE is visible to this connection's user, "active" otherwise.
+    """
     conn = _get_conn(conn_id, db)
     try:
-        engine    = _engine(conn)
-        raw       = _rows(engine, "SHOW DATABASES")
+        engine = _engine(conn)
+
+        # One pass over SCHEMATA + TABLES. LEFT JOIN so an empty schema still
+        # appears (an INNER JOIN would silently drop it from the list).
+        rows = _rows(engine, """
+            SELECT s.SCHEMA_NAME                                  AS name,
+                   s.DEFAULT_CHARACTER_SET_NAME                   AS charset,
+                   s.DEFAULT_COLLATION_NAME                       AS collation,
+                   COUNT(t.TABLE_NAME)                            AS tables,
+                   COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0) AS size_bytes,
+                   COALESCE(SUM(t.DATA_LENGTH), 0)                AS data_bytes,
+                   COALESCE(SUM(t.INDEX_LENGTH), 0)               AS index_bytes,
+                   COALESCE(SUM(t.TABLE_ROWS), 0)                 AS row_estimate,
+                   MIN(t.CREATE_TIME)                             AS created_on,
+                   MAX(t.UPDATE_TIME)                             AS updated_on
+            FROM information_schema.SCHEMATA s
+            LEFT JOIN information_schema.TABLES t
+                   ON t.TABLE_SCHEMA = s.SCHEMA_NAME
+                  AND t.TABLE_TYPE   = 'BASE TABLE'
+            GROUP BY s.SCHEMA_NAME, s.DEFAULT_CHARACTER_SET_NAME, s.DEFAULT_COLLATION_NAME
+            ORDER BY s.SCHEMA_NAME
+        """)
+
+        owners = _schema_owners(engine)
+
         databases = []
-        for r in raw:
-            name = list(r.values())[0]
-            if name.lower() in _SKIP_DBS:
+        for r in rows:
+            name = r["name"]
+            if (name or "").lower() in _SKIP_DBS:
                 continue
-            try:
-                tbl_count = _scalar(
-                    engine,
-                    "SELECT COUNT(*) FROM information_schema.TABLES "
-                    "WHERE TABLE_SCHEMA = :db AND TABLE_TYPE = 'BASE TABLE'",
-                    {"db": name},
-                ) or 0
-                size_mb = _scalar(
-                    engine,
-                    "SELECT ROUND(SUM(DATA_LENGTH + INDEX_LENGTH)/1048576, 2) "
-                    "FROM information_schema.TABLES WHERE TABLE_SCHEMA = :db",
-                    {"db": name},
-                ) or 0
-            except Exception:
-                tbl_count, size_mb = 0, 0
+            size_bytes = int(r["size_bytes"] or 0)
+            tables     = int(r["tables"] or 0)
+            created    = r["created_on"]
+            owner      = owners.get(name)
             databases.append({
-                "name":       name,
-                "tables":     int(tbl_count),
-                "size_mb":    float(size_mb),
-                "size_human": _human_size(float(size_mb) * 1048576),
+                "name":               name,
+                "status":             "active" if tables else "empty",
+                # keys below stay in sync with the frontend's DATABASE_COLUMNS
+                "tables":             tables,
+                "size_bytes":         size_bytes,
+                "size_mb":            round(size_bytes / 1048576, 2),
+                "size_human":         _human_size(size_bytes),
+                "data_bytes":         int(r["data_bytes"] or 0),
+                "index_bytes":        int(r["index_bytes"] or 0),
+                "row_estimate":       int(r["row_estimate"] or 0),
+                "created_on":         _iso(created),
+                "created_on_source":  "oldest_table" if created else None,
+                "updated_on":         _iso(r["updated_on"]),
+                "owner":              owner["name"] if owner else None,
+                "owner_source":       owner["source"] if owner else None,
+                "charset":            r["charset"],
+                "collation":          r["collation"],
             })
         return {"status": "success", "data": databases}
     except Exception as e:
@@ -371,7 +495,7 @@ def get_table_sample_data(conn_id: int, db_name: str, table_name: str, db: Sessi
     try:
         engine    = _engine(conn)
         cols      = _rows(engine, """
-            SELECT COLUMN_NAME AS name, DATA_TYPE AS type, COLUMN_KEY AS key
+            SELECT COLUMN_NAME AS name, DATA_TYPE AS type, COLUMN_KEY AS `key`
             FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :tbl
             ORDER BY ORDINAL_POSITION

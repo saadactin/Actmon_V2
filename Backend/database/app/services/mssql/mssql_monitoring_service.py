@@ -183,12 +183,26 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
         databases = []
         total_databases = 0
         try:
+            # size_mb is DATA files only, with the log reported separately — summing
+            # both into one number made "Size" and "Log Size" overlap, so the UI's
+            # size column double-counted the log.
+            # owner / collation / compatibility_level / create_date are selected
+            # because the dashboard has always had columns for them; without them
+            # those columns could only ever render "—".
             databases = _rows(engine, """
                 SELECT d.name, d.state_desc, d.recovery_model_desc,
-                    CAST(SUM(CAST(f.size AS BIGINT)) * 8.0 / 1024 AS DECIMAL(10,2)) AS size_mb
+                    d.compatibility_level,
+                    d.collation_name,
+                    SUSER_SNAME(d.owner_sid) AS owner,
+                    CAST(d.create_date AS VARCHAR(30)) AS create_date,
+                    CAST(d.is_read_only AS INT) AS is_read_only,
+                    CAST(SUM(CASE WHEN f.type = 0 THEN CAST(f.size AS BIGINT) ELSE 0 END) * 8.0 / 1024 AS DECIMAL(12,2)) AS size_mb,
+                    CAST(SUM(CASE WHEN f.type = 1 THEN CAST(f.size AS BIGINT) ELSE 0 END) * 8.0 / 1024 AS DECIMAL(12,2)) AS log_size_mb
                 FROM sys.databases d
                 LEFT JOIN sys.master_files f ON d.database_id = f.database_id
-                GROUP BY d.name, d.state_desc, d.recovery_model_desc, d.database_id
+                GROUP BY d.name, d.state_desc, d.recovery_model_desc, d.database_id,
+                         d.compatibility_level, d.collation_name, d.owner_sid,
+                         d.create_date, d.is_read_only
                 ORDER BY size_mb DESC
             """)
             total_databases = len(databases)
@@ -533,7 +547,12 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
         full_version = str(server_info.get("version", "") or "")
         version_str = product_version or (full_version.split("\n")[0].strip() if full_version else "N/A")
 
-        total_size_mb = round(sum(_to_float(d.get("size_mb", 0)) for d in databases if not d.get("error")), 1)
+        # Disk footprint = data + log. size_mb alone is data files only (see the
+        # databases query), so summing just that would understate the total.
+        total_size_mb = round(sum(
+            _to_float(d.get("size_mb", 0)) + _to_float(d.get("log_size_mb", 0))
+            for d in databases if not d.get("error")
+        ), 1)
 
         _res = {
             "status": "success",

@@ -92,6 +92,22 @@ def _infer_bson_type(val) -> str:
     return type(val).__name__
 
 
+def _json_safe_doc(val):
+    """Recursively convert a raw pymongo document (ObjectId, datetime,
+    Decimal128, bytes, …) into something `json.dumps`/FastAPI's JSONResponse
+    can serialize, for the Sample Data tab of the shared Table Details view."""
+    import datetime as _dt
+    if isinstance(val, dict):
+        return {str(k): _json_safe_doc(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_json_safe_doc(v) for v in val]
+    if val is None or isinstance(val, (bool, int, float, str)):
+        return val
+    if isinstance(val, _dt.datetime):
+        return val.isoformat()
+    return str(val)
+
+
 def _flatten_doc(doc, prefix="", max_depth=3) -> dict:
     out = {}
     if not isinstance(doc, dict) or max_depth <= 0:
@@ -1786,6 +1802,15 @@ def get_collection_detail(conn_id: int, db_name: str, coll_name: str, db: Sessio
         except Exception:
             pass
 
+        # `sample_docs` above was already fetched to infer the schema — reuse
+        # it here rather than issuing a second $sample, capped tighter since
+        # this copy is for on-screen display, not aggregate field counting.
+        sample_documents = []
+        try:
+            sample_documents = [_json_safe_doc(d) for d in sample_docs[:20]]
+        except Exception:
+            pass
+
         return {
             "status":       "success",
             "db":           db_name,
@@ -1807,6 +1832,7 @@ def get_collection_detail(conn_id: int, db_name: str, coll_name: str, db: Sessio
             "indexes":       indexes,
             "schema_fields": schema_fields,
             "sample_count":  sample_count,
+            "sample_documents": sample_documents,
             "validator":     validator,
         }
 

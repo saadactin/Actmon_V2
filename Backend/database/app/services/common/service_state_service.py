@@ -31,9 +31,20 @@ from app.services.common.db_proxy_service import agent_host_for_conn
 logger = logging.getLogger("service_state")
 
 # ── Linux / systemd ─────────────────────────────────────────────────────────
+# No wildcard candidates here (unlike the Windows list below): `systemctl
+# is-active` takes one resolvable unit name, not a shell/systemd glob — a
+# literal "postgresql@*" entry would either get bash-glob-expanded against
+# files in the agent's working directory (almost never what's intended) or,
+# if nothing matches, passed through unexpanded, where systemd reports a
+# nonexistent unit's state as "inactive" rather than erroring. That "inactive"
+# satisfies _LINUX_KNOWN_STATES, so it used to look like a real (negative)
+# answer — a false "DOWN" — and, same bug as the Windows side once had, would
+# leak the literal '*' out as `service_name` for any later start/restart. The
+# "postgresql" meta-unit candidate already covers the common case (Debian/
+# Ubuntu wrap all clusters under it); per-version fallbacks stay concrete.
 _LINUX_SERVICE_CANDIDATES = {
-    "postgresql": ["postgresql", "postgresql@*", "postgresql-16", "postgresql-15", "postgresql-14"],
-    "postgres":   ["postgresql", "postgresql@*"],
+    "postgresql": ["postgresql", "postgresql-16", "postgresql-15", "postgresql-14"],
+    "postgres":   ["postgresql"],
     "mysql":      ["mysql", "mysqld", "mariadb"],
     "mariadb":    ["mariadb", "mysql", "mysqld"],
     "mssql":      ["mssql-server"],
@@ -106,13 +117,24 @@ def _ps_encoded(script):
 
 
 def _win_probe_cmd(cand):
-    """State AND display name in one call — one round trip through the agent's
-    single-threaded job channel, whether the service turns out to be up or down
-    (see _classify_windows; a host running several DB engines serializes all of
-    their checks, so halving round trips here directly cuts cross-agent contention)."""
+    """State, display name AND the real resolved service name in one call — one
+    round trip through the agent's single-threaded job channel, whether the
+    service turns out to be up or down (see _classify_windows; a host running
+    several DB engines serializes all of their checks, so halving round trips
+    here directly cuts cross-agent contention).
+
+    `$s.Name` matters even though `cand` looks like a name already: candidates
+    are WILDCARD patterns ("OracleService*", "MySQL*", "postgresql-x64-*") so
+    Get-Service can match an installation without knowing its exact suffixed
+    name. Only `$s.Name` is the concrete, literal name Windows resolved that
+    wildcard to — passing the wildcard pattern itself back out (as this used
+    to) works for *reading* state via Get-Service, but Start/Stop/Restart-
+    Service and this app's own service-name validation both reject a literal
+    '*', so any caller trying to actually control the service off of this
+    result needs the resolved name, not the pattern that found it."""
     return _ps_encoded(
         "$s = Get-Service -Name '%s' -ErrorAction SilentlyContinue | Select-Object -First 1; "
-        "if ($s) { \"$($s.Status.ToString())|$($s.DisplayName)\" } else { 'notfound' }" % cand
+        "if ($s) { \"$($s.Status.ToString())|$($s.DisplayName)|$($s.Name)\" } else { 'notfound' }" % cand
     )
 
 
@@ -253,13 +275,18 @@ def _classify_windows(run, candidates):
         line = (txt or "").strip().splitlines()[0].strip() if txt else ""
         if not line or line.lower() == "notfound":
             continue   # this candidate name isn't installed here — try the next one
-        state_raw, _, display = line.partition("|")
-        state_raw = state_raw.strip()
+        parts = line.split("|")
+        state_raw = parts[0].strip() if len(parts) > 0 else ""
+        display = parts[1].strip() if len(parts) > 1 else ""
+        # The literal, wildcard-resolved name (e.g. "OracleServiceORCL", not the
+        # "OracleService*" pattern that found it) — falls back to the pattern
+        # defensively in case the probe ever returns fewer than 3 fields.
+        resolved_name = parts[2].strip() if len(parts) > 2 and parts[2].strip() else cand
         state = state_raw.lower()
         if state in _WIN_KNOWN_STATES:
-            detail = state_raw if state in _WIN_UP_STATES else f"{state_raw}: {display.strip()}"
+            detail = state_raw if state in _WIN_UP_STATES else f"{state_raw}: {display}"
             return {"checked": True, "active": state in _WIN_UP_STATES, "state": state_raw,
-                    "detail": detail, "service_name": cand}
+                    "detail": detail, "service_name": resolved_name}
     return {"checked": False}
 
 

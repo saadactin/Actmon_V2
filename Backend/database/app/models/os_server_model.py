@@ -56,6 +56,13 @@ class DatabaseInstance(Base):
     db_version = Column(String(100))
     port = Column(Integer)
     status = Column(String(50), default="Unknown")
+    # When `status` last actually changed (not merely re-checked) — this is
+    # what an alert's "since when" should read, not the send time.
+    status_changed_at = Column(DateTime, nullable=True)
+    # Raw diagnostic text from the last check while Stopped (e.g. systemctl
+    # status output) — surfaced in the "Database Service Down" alert's Error
+    # field so the recipient doesn't have to SSH in just to see why.
+    status_detail = Column(Text, nullable=True)
     connection_id = Column(Integer, nullable=True)   # references connection_master.id
     created_at = Column(DateTime, default=datetime.utcnow)
 

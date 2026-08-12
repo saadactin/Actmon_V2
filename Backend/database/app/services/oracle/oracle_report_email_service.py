@@ -821,9 +821,33 @@ def _next_run(sched: OracleReportSchedule) -> datetime:
     return candidate
 
 
+def _finish_schedule(sched, db_session, result=None, error=None):
+    """Record the outcome and ALWAYS move next_run_at forward.
+
+    The scheduler re-picks any row whose next_run_at is still in the past, so a
+    row that fails to advance re-fires every 60s indefinitely. Advancing here
+    unconditionally means a broken schedule retries at its next *scheduled*
+    time instead of hammering (and, if the send half-succeeded, stops it
+    emailing on every tick).
+    """
+    sched.last_sent_at = datetime.utcnow()
+    if error is not None:
+        sched.last_status = "error"
+    elif isinstance(result, dict):
+        sched.last_status = result.get("status") or "unknown"
+    sched.next_run_at = _next_run(sched)
+    db_session.commit()
+
 def _run_schedule(sched: OracleReportSchedule, db_session):
     recipients = json.loads(sched.recipient_emails or "[]")
     if not recipients:
+        # Reschedule even though there is nothing to send. Returning here
+        # WITHOUT advancing next_run_at left the row permanently due, so the
+        # 60s scheduler tick re-picked it forever — a hot loop burning a DB
+        # query every minute for a schedule that can never deliver.
+        sched.last_status = "no recipients"
+        sched.next_run_at = _next_run(sched)
+        db_session.commit()
         return
 
     smtp_host     = sched.smtp_host
@@ -873,10 +897,7 @@ def _run_schedule(sched: OracleReportSchedule, db_session):
         conn_host=conn_host, conn_service=conn_service,
         app_url=base_url,
     )
-    sched.last_sent_at = datetime.utcnow()
-    sched.last_status  = result["status"]
-    sched.next_run_at  = _next_run(sched)
-    db_session.commit()
+    _finish_schedule(sched, db_session, result)
 
 
 def _scheduler_loop():
@@ -893,7 +914,18 @@ def _scheduler_loop():
                     try:
                         _run_schedule(sched, session)
                     except Exception as exc:
+                        # An exception here means _run_schedule did not reach
+                        # _finish_schedule, so next_run_at is still in the past
+                        # and this row would re-fire on every 60s tick. Force it
+                        # forward and record why, so a broken schedule degrades
+                        # to "retries next cycle" instead of a mail storm.
                         log.error("Schedule %s error: %s", sched.id, exc)
+                        try:
+                            session.rollback()
+                            _finish_schedule(sched, session, error=exc)
+                        except Exception as exc2:
+                            log.error("Schedule %s could not be rescheduled: %s", sched.id, exc2)
+                            session.rollback()
         except Exception as exc:
             log.error("Scheduler tick error: %s", exc)
         _sched_stop.wait(60)

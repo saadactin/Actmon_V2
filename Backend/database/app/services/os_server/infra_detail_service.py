@@ -22,7 +22,19 @@ from app.models.os_server_model import OsServer
 _WIN_PS = r"""
 $ErrorActionPreference='SilentlyContinue'
 $os = Get-CimInstance Win32_OperatingSystem
-$cpu = [int][math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average)
+# Win32_Processor.LoadPercentage is a stale/cached WMI counter and routinely
+# disagrees with the real instantaneous load by a wide margin; the perf-counter
+# reading below is what Task Manager itself is backed by, so it's the one that
+# actually matches what's happening on the box. LoadPercentage is kept as a
+# fallback only for the rare locked-down host where performance counters are
+# disabled.
+$cpu = (Get-Counter '\Processor(_Total)\% Processor Time' -ErrorAction SilentlyContinue).CounterSamples.CookedValue
+if ($cpu) { $cpu = [math]::Round($cpu, 1) } else { $cpu = [int][math]::Round((Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average) }
+# Windows has no Unix-style load average — Processor Queue Length (threads
+# ready to run but waiting for a core) is the closest native equivalent, so
+# the UI can show something real instead of a bare "not reported on this OS".
+$queueLen = (Get-Counter '\System\Processor Queue Length' -ErrorAction SilentlyContinue).CounterSamples.CookedValue
+if ($null -eq $queueLen) { $queueLen = $null } else { $queueLen = [int]$queueLen }
 $totalMB = [int]($os.TotalVisibleMemorySize/1024)
 $freeMB = [int]($os.FreePhysicalMemory/1024)
 $usedMB = $totalMB - $freeMB
@@ -33,22 +45,49 @@ $ncpu=[int]$env:NUMBER_OF_PROCESSORS; if($ncpu -lt 1){$ncpu=1}
 # Two CPU-time samples ~0.4s apart → instantaneous per-process CPU% (normalised across cores).
 $sw=[Diagnostics.Stopwatch]::StartNew()
 $pm=@{}; $cpu0=@{}; Get-Process | ForEach-Object { $pm[$_.Id]=$_.ProcessName; $cpu0[$_.Id]=[double]$_.CPU }
-$ports = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Sort-Object LocalPort -Unique | ForEach-Object { [pscustomobject]@{ port=[int]$_.LocalPort; address="$($_.LocalAddress)"; process=$pm[[int]$_.OwningProcess]; pid=[string]$_.OwningProcess } })
+# TCP connection table via netstat, NOT Get-NetTCPConnection. On a host with many
+# thousands of live connections (routine on a box running several database
+# engines at once) Get-NetTCPConnection took 15-20+ SECONDS per call in testing —
+# and this script used to call it three separate times (listeners / established /
+# all-states-grouped), reliably exceeding the agent's own infra-push timeout and
+# leaving the host stuck permanently offline even though the box and every
+# database on it were completely healthy. netstat -ano returns the identical
+# information in well under a second regardless of connection count, because it
+# doesn't pay Get-NetTCPConnection's internal WMI-correlation cost.
+$stateMap=@{LISTENING='Listen';ESTABLISHED='Established';TIME_WAIT='TimeWait';CLOSE_WAIT='CloseWait';SYN_SENT='SynSent';SYN_RECEIVED='SynReceived';FIN_WAIT_1='FinWait1';FIN_WAIT_2='FinWait2';CLOSING='Closing';LAST_ACK='LastAck';CLOSED='Closed';DELETE_TCB='DeleteTcb'}
+$tcpRows = @(netstat -ano | Where-Object { $_ -match '^\s*TCP\s' } | ForEach-Object {
+  $f = ($_.Trim() -split '\s+')
+  if ($f.Length -ge 5) {
+    $lp = $f[1]; $ix = $lp.LastIndexOf(':')
+    if ($ix -ge 0) { [pscustomobject]@{ LocalAddress=$lp.Substring(0,$ix); LocalPort=$lp.Substring($ix+1); State=$f[3]; OwningProcess=$f[4] } }
+  }
+})
+$ports = @($tcpRows | Where-Object { $_.State -eq 'LISTENING' } | Sort-Object { [int]$_.LocalPort } -Unique | ForEach-Object { [pscustomobject]@{ port=[int]$_.LocalPort; address=$_.LocalAddress; process=$pm[[int]$_.OwningProcess]; pid=[string]$_.OwningProcess } })
 Start-Sleep -Milliseconds 400
 $sw.Stop(); $el=$sw.Elapsed.TotalSeconds; if($el -le 0){$el=0.4}
 $procs = @(Get-Process | ForEach-Object { $d=[double]$_.CPU - $(if($cpu0.ContainsKey($_.Id)){$cpu0[$_.Id]}else{[double]$_.CPU}); $cp=[math]::Round(($d/$el)/$ncpu*100,1); if($cp -lt 0){$cp=0}; if($cp -gt 100){$cp=100}; $mp=$(if($totalBytes -gt 0){[math]::Round($_.WorkingSet64*100/$totalBytes,1)}else{0}); [pscustomobject]@{ pid=[string]$_.Id; user=''; cpu=$cp; mem=$mp; command=$_.ProcessName } } | Sort-Object cpu -Descending | Select-Object -First 15)
 $ifaces = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '127.0.0.1' } | ForEach-Object { [pscustomobject]@{ iface="$($_.InterfaceAlias)"; state='UP'; addresses=@("$($_.IPAddress)/$($_.PrefixLength)") } })
 $neigh = @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Reachable' -or $_.State -eq 'Stale' } | Select-Object -First 40 | ForEach-Object { [pscustomobject]@{ ip="$($_.IPAddress)"; mac="$($_.LinkLayerAddress)"; dev="$($_.InterfaceAlias)"; state="$($_.State)" } })
-$conn = @(Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue)
+$conn = @($tcpRows | Where-Object { $_.State -eq 'ESTABLISHED' })
 $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1).NextHop
 $dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | ForEach-Object { $_.ServerAddresses } | Where-Object { $_ -and $_ -ne '' } | Select-Object -Unique)
 $routes = @(Get-NetRoute -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix } | Sort-Object RouteMetric | Select-Object -First 40 | ForEach-Object { ("{0} via {1} dev {2} metric {3}" -f $_.DestinationPrefix, $_.NextHop, $_.InterfaceAlias, $_.RouteMetric) })
 $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ name="$($_.Name)"; desc="$($_.InterfaceDescription)"; status="$($_.Status)"; mac="$($_.MacAddress)"; speed_mbps=$(if($_.Speed){[int64]($_.Speed/1000000)}else{$null}); mtu=$_.MtuSize; index=$_.ifIndex; type="$($_.MediaType)"; driver="$($_.DriverVersion)" } })
 $ifstat = @(Get-NetAdapterStatistics -ErrorAction SilentlyContinue | ForEach-Object { [pscustomobject]@{ name="$($_.Name)"; rx_bytes=[int64]$_.ReceivedBytes; tx_bytes=[int64]$_.SentBytes; rx_packets=[int64]$_.ReceivedUnicastPackets; tx_packets=[int64]$_.SentUnicastPackets; rx_dropped=[int64]$_.ReceivedDiscardedPackets; tx_dropped=[int64]$_.OutboundDiscardedPackets; rx_errors=[int64]$_.ReceivedPacketErrors; tx_errors=[int64]$_.OutboundPacketErrors } })
-$cstates = @{}; Get-NetTCPConnection -ErrorAction SilentlyContinue | Group-Object State | ForEach-Object { $cstates["$($_.Name)"] = $_.Count }
+$cstates = @{}; $tcpRows | Group-Object { if($stateMap.ContainsKey($_.State)){$stateMap[$_.State]}else{$_.State} } | ForEach-Object { $cstates["$($_.Name)"] = $_.Count }
 $udp = @(Get-NetUDPEndpoint -ErrorAction SilentlyContinue).Count
 $wifiRaw = ""; try { $wifiRaw = (netsh wlan show interfaces 2>$null | Out-String) } catch {}
-[pscustomobject]@{ system=[pscustomobject]@{ os=$os.Caption; kernel=[string]$os.Version; hostname=$env:COMPUTERNAME }; uptime=("up {0}d {1}h {2}m" -f $up.Days,$up.Hours,$up.Minutes); load=$null; cpu_pct=$cpu; memory=[pscustomobject]@{ total_mb=$totalMB; used_mb=$usedMB; free_mb=$freeMB; available_mb=$freeMB; used_pct=$(if($totalMB){[int]($usedMB*100/$totalMB)}else{0}) }; filesystems=$disks; ports=$ports; processes=$procs; interfaces=$ifaces; neighbors=$neigh; connections=[pscustomobject]@{ count=$conn.Count; peers=@() }; gateway=$gw; dns=[pscustomobject]@{ nameservers=$dns; search=$null }; routes=$routes; adapters=$adapters; ifstat=$ifstat; conn_states=$cstates; udp_count=$udp; wifi_raw=$wifiRaw } | ConvertTo-Json -Depth 6 -Compress
+# Hardware identity — the same facts `systeminfo` reports (System Manufacturer /
+# System Model / BIOS Version), via CIM instead of parsing systeminfo's text
+# output. The Linux collector fills these same field names from hostnamectl;
+# Windows never did, so System Information's Hardware Vendor/Model/Firmware
+# rows were always blank on a Windows host.
+$cs = Get-CimInstance Win32_ComputerSystem
+$bios = Get-CimInstance Win32_BIOS
+$pcTypeNames = @{1="Desktop";2="Laptop";3="Workstation";4="Server";5="Server";6="Appliance";7="Server";8="Tablet"}
+$chassis = $pcTypeNames[[int]$cs.PCSystemType]
+$biosDate = $(if($bios.ReleaseDate){$bios.ReleaseDate.ToString('yyyy-MM-dd')}else{$null})
+[pscustomobject]@{ system=[pscustomobject]@{ os=$os.Caption; kernel=[string]$os.Version; hostname=$env:COMPUTERNAME; architecture=$os.OSArchitecture; hardware_vendor=$cs.Manufacturer; hardware_model=$cs.Model; chassis=$chassis; firmware_version=$bios.SMBIOSBIOSVersion; firmware_date=$biosDate }; uptime=("up {0}d {1}h {2}m" -f $up.Days,$up.Hours,$up.Minutes); load=$null; queue_length=$queueLen; cpu_pct=$cpu; memory=[pscustomobject]@{ total_mb=$totalMB; used_mb=$usedMB; free_mb=$freeMB; available_mb=$freeMB; used_pct=$(if($totalMB){[int]($usedMB*100/$totalMB)}else{0}) }; filesystems=$disks; ports=$ports; processes=$procs; interfaces=$ifaces; neighbors=$neigh; connections=[pscustomobject]@{ count=$conn.Count; peers=@() }; gateway=$gw; dns=[pscustomobject]@{ nameservers=$dns; search=$null }; routes=$routes; adapters=$adapters; ifstat=$ifstat; conn_states=$cstates; udp_count=$udp; wifi_raw=$wifiRaw } | ConvertTo-Json -Depth 6 -Compress
 """
 
 
@@ -563,7 +602,7 @@ def svc_ingest_agent_infra(payload, db) -> dict:
     it on the matching OsServer so the detail UI renders identically. Also mirrors
     CPU/mem to the Agents page so both surfaces stay in sync."""
     from datetime import datetime
-    from sqlalchemy import func
+    from sqlalchemy import func, text
     from app.models.agent_model import Agent, AgentMetric, AgentToken
 
     server = db.query(OsServer).filter(OsServer.agent_token == payload.token).first()
@@ -600,7 +639,32 @@ def svc_ingest_agent_infra(payload, db) -> dict:
             server = (db.query(OsServer)
                         .filter(OsServer.collector == "agent", OsServer.hostname == hn).first())
         if server:
-            server.agent_token = payload.token          # rebind to the latest installer's token
+            # Only take over the hostname match if its CURRENT binding looks
+            # abandoned (never reported, or gone quiet for a while) — not if it's
+            # actively reporting. A second wizard run on the SAME machine (e.g.
+            # "Add Database" → Oracle, minting its own fresh token, run on a host
+            # that already has a live MySQL-integration agent) used to silently
+            # steal that live host's identity: this OsServer row's agent_token
+            # got overwritten mid-stream, orphaning every AgentDbTarget still
+            # keyed to the old token — confirmed live (a MySQL connection's
+            # queries stopped resolving to this host the moment Oracle's
+            # installer ran here). Genuine reinstalls (the old agent really is
+            # gone) still take over normally once it's been quiet this long.
+            abandoned = db.execute(
+                text("SELECT :at IS NULL OR :at < now() - interval '3 minutes'"),
+                {"at": server.last_infra_at},
+            ).scalar()
+            if abandoned:
+                server.agent_token = payload.token
+            elif server.agent_token != payload.token:
+                return {
+                    "status": "error",
+                    "message": (
+                        f"Host '{hn}' already has an active agent (a different token is "
+                        "reporting from it right now). Attach this database to that existing "
+                        "agent instead of deploying a new one — see the Agents page."
+                    ),
+                }
         else:
             name = hn if (hn and hn != "—") else (tok.agent_name or tok.token_name or "host-agent")
             server = OsServer(
@@ -662,6 +726,12 @@ def svc_ingest_agent_infra(payload, db) -> dict:
                                     status="Running", org_id=getattr(server, "org_id", 1) or 1)
             db.add(inst)
         inst.connection_id = t.connection_id   # link the DB dashboard
+        if t.connection_id:
+            # Same fix as agent_install_service.svc_save_db_target: without this,
+            # the collector never starts a per-connection thread for this database,
+            # and database_instances.status is set once here and never updated again.
+            from app.services.agent.agent_install_service import _ensure_connection_agent
+            _ensure_connection_agent(t.connection_id, t.connection_name, t.host, t.environment, t.db_type, db)
 
     # Mirror to the Agents page (Agent row + latest metric) so both surfaces agree.
     agent_name = server.server_name
@@ -675,7 +745,15 @@ def svc_ingest_agent_infra(payload, db) -> dict:
     agent.last_heartbeat = func.now()   # DB clock — MUST match the reaper's now() (avoids tz drift → flapping)
     cpu = parsed.get("cpu_pct") or 0.0
     mem = (parsed.get("memory") or {}).get("used_pct") or 0.0
-    db.add(AgentMetric(agent_name=agent_name, host_cpu=float(cpu), host_memory=float(mem)))
+    # Same "worst filesystem" figure _live_cols_from_snapshot already derives for
+    # OsServer.disk_usage — recomputed here as a raw float (that one returns a
+    # formatted "NN%" string) so it can go straight into a Float column.
+    disk = max((f.get("use_pct", 0) for f in (parsed.get("filesystems") or [])), default=0.0)
+    # Explicit kind/tech so this row is never mistaken for one of this agent's
+    # own DB-engine pushes (see metrics_pipeline.py's after_insert hook) —
+    # this IS the host reading, unambiguously, every time.
+    db.add(AgentMetric(agent_name=agent_name, host_cpu=float(cpu), host_memory=float(mem), host_disk=float(disk),
+                       kind="infra", tech="host", conn_id=0))
 
     db.commit()
     return {"status": "success", "server_id": server.id, "agent_name": agent_name}

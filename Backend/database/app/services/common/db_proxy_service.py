@@ -221,12 +221,23 @@ class _AgentRow(tuple):
 
 
 class _AgentMappings:
+    """Quacks like SQLAlchemy's MappingResult (the object `.mappings()` returns) —
+    dashboard/service code routed through the agent proxy calls `.fetchall()` /
+    `.fetchone()` / `.fetchmany()` on it exactly like a direct connection's
+    result, so this must support the same surface, not just `.all()`/`.first()`."""
     def __init__(self, rows):
         self._rows = rows
     def all(self):
         return [r._mapping for r in self._rows]
     def first(self):
         return self._rows[0]._mapping if self._rows else None
+    def fetchall(self):
+        return self.all()
+    def fetchone(self):
+        return self.first()
+    def fetchmany(self, size=None):
+        n = len(self._rows) if size is None else size
+        return [r._mapping for r in self._rows[:n]]
     def __iter__(self):
         return (r._mapping for r in self._rows)
 
@@ -240,6 +251,9 @@ class _AgentResult:
         return self._rows
     def fetchone(self):
         return self._rows[0] if self._rows else None
+    def fetchmany(self, size=None):
+        n = len(self._rows) if size is None else size
+        return self._rows[:n]
     def first(self):
         return self._rows[0] if self._rows else None
     def scalar(self):

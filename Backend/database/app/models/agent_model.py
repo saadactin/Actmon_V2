@@ -20,6 +20,41 @@ class Agent(Base):
     last_heartbeat = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     collection_interval_sec = Column(Integer, default=60)
+    # Which build of the agent this host is actually running — reported on every
+    # infra push and on the boot ping. Without it there is no way to tell a
+    # successful upgrade from a silently-failed one, or to find hosts still on an
+    # old build. NULL means the host predates version reporting.
+    agent_version = Column(String(40), nullable=True)
+    agent_version_seen_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AgentPendingUpdate(Base):
+    """Ledger for one in-flight agent upgrade — turns "we sent the command" into
+    "the new build actually came up and told us its version".
+
+    Lifecycle:
+      pending    — command queued, agent hasn't picked it up yet
+      installing — agent accepted the job (MSI scheduled / source swapped)
+      completed  — a heartbeat/boot-ping arrived reporting expected_version
+      version_mismatch — the agent came back, but on a DIFFERENT version than
+                   expected (upgrade ran and silently produced the wrong build)
+      timed_out  — nothing reported back within the timeout window
+      failed     — the agent itself reported the attempt failed (e.g. checksum
+                   mismatch, msiexec error), with the reason in `detail`
+    """
+    __tablename__ = "agent_pending_update"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_name = Column(String(255), index=True, nullable=False)
+    expected_version = Column(String(40), nullable=True)
+    from_version = Column(String(40), nullable=True)
+    status = Column(String(30), nullable=False, default="pending")
+    detail = Column(Text, nullable=True)
+    issued_at = Column(DateTime(timezone=True), server_default=func.now())
+    issued_by = Column(Integer, nullable=True)      # user_id who pushed it
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    confirmed_version = Column(String(40), nullable=True)
 
 
 class AgentToken(Base):
@@ -79,8 +114,17 @@ class AgentMetric(Base):
     id = Column(Integer, primary_key=True, index=True)
     agent_name = Column(String(255), index=True, nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    # Explicit classification the INSERTING code sets, so the metrics_pipeline
+    # hook doesn't have to guess it from agent_name alone — that guess is wrong
+    # whenever one physical agent pushes both host telemetry and several DB
+    # engines' metrics under the SAME shared agent_name (see metrics_pipeline.py's
+    # after_insert hook for the full story). NULL falls back to the old lookup.
+    kind = Column(String(32), nullable=True)
+    tech = Column(String(64), nullable=True)
+    conn_id = Column(Integer, nullable=True)
     host_cpu = Column(Float, default=0.0)
     host_memory = Column(Float, default=0.0)
+    host_disk = Column(Float, default=0.0)
     db_cpu = Column(Float, default=0.0)
     active_sessions = Column(Integer, default=0)
     connections_used = Column(Integer, default=0)

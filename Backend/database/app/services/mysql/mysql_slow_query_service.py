@@ -16,6 +16,93 @@ from sqlalchemy.orm import Session
 from app.models.connection_model import ConnectionMaster
 
 
+# ── ActMon-internal query classification ──────────────────────────────────────
+#
+# `performance_schema.events_statements_summary_by_digest` (and the raw slow
+# query log) record EVERY statement the server sees, from EVERY connection —
+# including ActMon's own. ActMon polls the server it's monitoring every few
+# seconds for dashboard data (SHOW GLOBAL STATUS/VARIABLES, information_schema
+# introspection, table previews, …), and because those digests accumulate the
+# same way a real query would, they used to crowd out — or outright dominate —
+# the "Slow Queries" list with ActMon's own housekeeping instead of the
+# monitored application's actual workload.
+#
+# Filtering by the CONNECTING USER is deliberately NOT used here: the same
+# credential ActMon uses to monitor a database may be the exact same one an
+# application uses to run its own queries (shared service accounts are
+# common), so a user-based filter would silently swallow real slow queries
+# too. Instead this classifies by WHAT the statement is and WHERE it points —
+# signals that hold regardless of which connection/user issued it:
+#
+#   1. Target schema: no application's real workload optimizes queries
+#      against `information_schema` / `performance_schema` / `mysql` / `sys`
+#      — those are catalog/introspection views, not business data.
+#   2. Statement shape: SHOW / EXPLAIN / DESCRIBE / ANALYZE TABLE /
+#      OPTIMIZE TABLE / CHECK TABLE / FLUSH / KILL are administrative or
+#      introspection commands, never "workload" a slow-query optimizer would
+#      act on — regardless of which schema they're run against.
+#   3. ActMon's own literal signature queries: the dashboard issues a small,
+#      fixed set of fully-qualified `` `db`.`table` `` statements (table
+#      preview / row count) that a real application essentially never writes
+#      in that exact shape, since an app is already `USE`'d into its schema
+#      and reads unqualified table names.
+#
+# Keeping this in one place (rather than scattered filters) means the rule
+# set stays auditable and is easy to extend as ActMon's own query surface
+# grows — see mysql_table_service.py / mysql_index_service.py for the
+# concrete queries layer 3 matches.
+ACTMON_SYSTEM_SCHEMAS = {"information_schema", "performance_schema", "mysql", "sys"}
+
+# performance_schema's digest SCHEMA_NAME reflects the connection's DEFAULT
+# schema at execution time — NOT which schema the statement's FROM clause
+# actually reads. ActMon's own introspection connections often carry no
+# default schema at all (SCHEMA_NAME comes back NULL → "(all)"), even though
+# the query explicitly reads `information_schema` / `performance_schema` /
+# `mysql` / `sys` in its FROM/JOIN. So the schema check must also look inside
+# the statement text itself, not just trust SCHEMA_NAME.
+_SYSTEM_SCHEMA_REF_RE = re.compile(
+    r"`?\b(information_schema|performance_schema|mysql|sys)\b`?\s*\.", re.IGNORECASE
+)
+
+_ADMIN_VERB_RE = re.compile(
+    r"^\s*(SHOW|EXPLAIN|DESC|DESCRIBE|ANALYZE\s+TABLE|OPTIMIZE\s+TABLE|CHECK\s+TABLE|FLUSH|KILL)\b",
+    re.IGNORECASE,
+)
+
+# `db`.`table` (backtick-qualified two-part name) is the tell — ActMon always
+# qualifies this way because it targets a caller-specified database; an
+# application already connected to its own schema virtually never does.
+_QUALIFIED_TABLE = r"`?[A-Za-z0-9_$]+`?\s*\.\s*`?[A-Za-z0-9_$]+`?"
+_ACTMON_SIGNATURE_RES = [
+    re.compile(rf"^\s*SELECT\s+\*\s+FROM\s+{_QUALIFIED_TABLE}\s+LIMIT\b", re.IGNORECASE),
+    re.compile(rf"^\s*SELECT\s+COUNT\s*\(\s*\*\s*\)\s+FROM\s+{_QUALIFIED_TABLE}\s*$", re.IGNORECASE),
+]
+
+
+def is_actmon_internal_query(db_name: str, sql_text: str) -> bool:
+    """True if this statement is ActMon's own monitoring/introspection traffic
+    rather than the monitored database's application workload — see the
+    module docstring above for the classification rules."""
+    if (db_name or "").strip().lower() in ACTMON_SYSTEM_SCHEMAS:
+        return True
+    text_ = (sql_text or "").strip()
+    if not text_:
+        return False
+    if _SYSTEM_SCHEMA_REF_RE.search(text_):
+        return True
+    if _ADMIN_VERB_RE.match(text_):
+        return True
+    return any(p.match(text_) for p in _ACTMON_SIGNATURE_RES)
+
+
+def _split_internal(queries: list) -> tuple:
+    """Partition a query list into (application_workload, actmon_internal)."""
+    app_q, internal_q = [], []
+    for q in queries:
+        (internal_q if is_actmon_internal_query(q.get("db_name"), q.get("sql_text")) else app_q).append(q)
+    return app_q, internal_q
+
+
 # ── Private helpers ───────────────────────────────────────────────────────────
 
 def _mysql_url(conn: ConnectionMaster) -> str:
@@ -306,6 +393,15 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
                     else:
                         file_error = (file_error or "") + f" | SSH error: {ssh_err}"
 
+        # Split out ActMon's own monitoring/introspection traffic — the Slow
+        # Queries page's job is to surface the MONITORED database's workload,
+        # not the noise generated by monitoring it. The excluded side isn't
+        # thrown away: it's returned separately (capped) so the UI can still
+        # show "N ActMon queries hidden" rather than filtering silently.
+        perf_queries, perf_internal   = _split_internal(perf_queries)
+        file_queries, file_internal   = _split_internal(file_queries)
+        internal_queries = perf_internal + file_internal
+
         all_queries = perf_queries if perf_queries else file_queries
         # Agent-connected DBs don't need SSH: the agent already delivers query
         # internals via performance_schema. The UI uses this to hide the SSH nag.
@@ -333,6 +429,10 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             "file_queries":            file_queries,
             "file_error":              file_error,
             "total":                   len(all_queries),
+            "actmon_internal_count":   len(internal_queries),
+            "actmon_internal_queries": sorted(
+                internal_queries, key=lambda q: q.get("total_exec_sec", 0), reverse=True
+            )[:20],
             "ssh_configured":          bool(rec.ssh_user and rec.ssh_password),
             "agent_connected":         agent_connected,
             "ssh_user":                rec.ssh_user or "",
@@ -687,6 +787,10 @@ def build_export_csv(conn_id: int, period: str, db: Session) -> dict:
                     pass
     except Exception as e:
         raise HTTPException(500, str(e))
+
+    # Mirror the UI's primary view: the export is a "slow query" report for
+    # the monitored workload, not a dump of ActMon's own polling traffic.
+    queries, _dropped = _split_internal(queries)
 
     fields = ["db_name", "sql_text", "count_calls", "avg_exec_sec",
               "max_exec_sec", "total_exec_sec", "rows_examined",

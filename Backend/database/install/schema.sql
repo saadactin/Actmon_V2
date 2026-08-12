@@ -1613,8 +1613,142 @@ CREATE TABLE public.alert_rules (
     cooldown_seconds integer,
     enabled boolean,
     created_at timestamp without time zone,
+    updated_at timestamp without time zone,
+    notification_channel_types jsonb DEFAULT '[]'::jsonb NOT NULL,
+    notification_recipients jsonb DEFAULT '[]'::jsonb NOT NULL,
+    notification_cc jsonb DEFAULT '[]'::jsonb NOT NULL,
+    notification_bcc jsonb DEFAULT '[]'::jsonb NOT NULL
+);
+
+--
+-- Enterprise Alert Notification System — channel configs, severity-based
+-- default routing, persistent firing state (sustain/cooldown enforcement),
+-- the dispatch/retry queue, delivery history, and template overrides. Kept
+-- in sync with the idempotent patches in install/db_setup.py's
+-- _SCHEMA_PATCHES for existing installs.
+--
+
+CREATE TABLE public.notification_channels (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    channel_type character varying(30) NOT NULL,
+    enabled boolean NOT NULL DEFAULT false,
+    config jsonb NOT NULL DEFAULT '{}'::jsonb,
+    secrets_enc text,
+    last_test_at timestamp without time zone,
+    last_test_ok boolean,
+    last_test_msg character varying(500),
+    last_success_at timestamp without time zone,
+    last_failure_at timestamp without time zone,
+    last_error text,
+    created_at timestamp without time zone DEFAULT now(),
+    updated_at timestamp without time zone,
+    UNIQUE (org_id, channel_type)
+);
+
+CREATE TABLE public.severity_channel_routing (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    severity character varying(20) NOT NULL,
+    channel_type character varying(30) NOT NULL,
+    enabled boolean NOT NULL DEFAULT true,
+    UNIQUE (org_id, severity, channel_type)
+);
+
+CREATE TABLE public.alert_fired_state (
+    id SERIAL PRIMARY KEY,
+    alert_rule_id integer NOT NULL REFERENCES public.alert_rules(id) ON DELETE CASCADE,
+    scope_key character varying(300) NOT NULL,
+    first_breach_at timestamp without time zone NOT NULL,
+    last_breach_at timestamp without time zone NOT NULL,
+    last_notified_at timestamp without time zone,
+    is_firing boolean NOT NULL DEFAULT false,
+    UNIQUE (alert_rule_id, scope_key)
+);
+
+CREATE TABLE public.notification_queue (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    alert_rule_id integer REFERENCES public.alert_rules(id) ON DELETE SET NULL,
+    channel_type character varying(30) NOT NULL,
+    payload jsonb NOT NULL,
+    status character varying(20) NOT NULL DEFAULT 'pending',
+    attempt_count integer NOT NULL DEFAULT 0,
+    max_attempts integer NOT NULL DEFAULT 3,
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT now(),
+    timeout_seconds integer NOT NULL DEFAULT 15,
+    last_error text,
+    created_at timestamp without time zone DEFAULT now(),
+    sent_at timestamp without time zone
+);
+
+CREATE INDEX idx_notification_queue_due ON public.notification_queue (status, next_attempt_at);
+
+CREATE TABLE public.notification_history (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    sent_at timestamp without time zone DEFAULT now(),
+    alert_rule_id integer REFERENCES public.alert_rules(id) ON DELETE SET NULL,
+    alert_name character varying(200),
+    server_name character varying(255),
+    database_name character varying(255),
+    severity character varying(20),
+    channel_type character varying(30) NOT NULL,
+    recipient character varying(500),
+    status character varying(20) NOT NULL,
+    response_code character varying(20),
+    response_time_ms double precision,
+    retry_count integer NOT NULL DEFAULT 0,
+    error_message text
+);
+
+CREATE INDEX idx_notification_history_org_sent ON public.notification_history (org_id, sent_at DESC);
+
+CREATE TABLE public.notification_templates (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    channel_type character varying(30) NOT NULL,
+    subject_template text,
+    body_template text,
+    UNIQUE (org_id, channel_type)
+);
+
+CREATE TABLE public.notification_settings (
+    org_id integer PRIMARY KEY DEFAULT 1,
+    timezone character varying(64) NOT NULL DEFAULT 'Asia/Kolkata',
     updated_at timestamp without time zone
 );
+
+CREATE TABLE public.diagnosis_runs (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    connection_id integer NOT NULL REFERENCES public.connection_master(id) ON DELETE CASCADE,
+    started_at timestamp without time zone NOT NULL DEFAULT now(),
+    finished_at timestamp without time zone,
+    status character varying(30),
+    severity character varying(20),
+    checks_run jsonb NOT NULL DEFAULT '[]',
+    root_cause text,
+    confidence integer,
+    ai_summary jsonb,
+    actions_performed jsonb NOT NULL DEFAULT '[]'
+);
+
+CREATE INDEX idx_diagnosis_runs_conn_started ON public.diagnosis_runs (connection_id, started_at DESC);
+
+CREATE TABLE public.db_check_runs (
+    id SERIAL PRIMARY KEY,
+    org_id integer NOT NULL DEFAULT 1,
+    connection_id integer NOT NULL REFERENCES public.connection_master(id) ON DELETE CASCADE,
+    check_id character varying(50) NOT NULL,
+    checked_at timestamp without time zone DEFAULT now(),
+    status character varying(20) NOT NULL,
+    duration_ms double precision,
+    output text,
+    error text
+);
+
+CREATE INDEX idx_db_check_runs_conn_check ON public.db_check_runs (connection_id, check_id, checked_at DESC);
 
 
 --
@@ -1886,6 +2020,8 @@ CREATE TABLE public.database_instances (
     db_version character varying(100),
     port integer,
     status character varying(50),
+    status_changed_at timestamp without time zone,
+    status_detail text,
     connection_id integer,
     created_at timestamp without time zone,
     org_id integer DEFAULT 1 NOT NULL
@@ -2652,7 +2788,8 @@ CREATE TABLE public.smtp_configs (
     last_test_at timestamp without time zone,
     last_test_ok boolean,
     last_test_msg character varying(500),
-    org_id integer DEFAULT 1 NOT NULL
+    org_id integer DEFAULT 1 NOT NULL,
+    smtp_password_enc text
 );
 
 
@@ -4734,6 +4871,33 @@ CREATE TABLE IF NOT EXISTS public.external_check_result (
 );
 CREATE INDEX IF NOT EXISTS idx_external_check_result_check_ts
     ON public.external_check_result (check_id, checked_at DESC);
+
+
+--
+-- Agent version reporting + upgrade ledger. `agents.agent_version` records which
+-- build each host actually runs; agent_pending_update proves an upgrade landed
+-- (expected vs confirmed version) instead of assuming the command succeeded.
+--
+
+ALTER TABLE public.agents
+    ADD COLUMN IF NOT EXISTS agent_version         VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS agent_version_seen_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS public.agent_pending_update (
+    id                 SERIAL PRIMARY KEY,
+    agent_name         VARCHAR(255) NOT NULL,
+    expected_version   VARCHAR(40),
+    from_version       VARCHAR(40),
+    status             VARCHAR(30)  NOT NULL DEFAULT 'pending',
+    detail             TEXT,
+    issued_at          TIMESTAMPTZ  DEFAULT now(),
+    issued_by          INTEGER,
+    delivered_at       TIMESTAMPTZ,
+    confirmed_at       TIMESTAMPTZ,
+    confirmed_version  VARCHAR(40)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_pending_update_agent
+    ON public.agent_pending_update (agent_name, issued_at DESC);
 
 
 --

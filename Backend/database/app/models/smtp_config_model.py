@@ -21,3 +21,8 @@ class SmtpConfig(Base):
     last_test_at = Column(DateTime,    nullable=True)
     last_test_ok = Column(Boolean,     nullable=True)
     last_test_msg= Column(String(500), nullable=True)
+    org_id       = Column(Integer,     default=1, nullable=False)
+    # Fernet-encrypted password (see app/services/common/crypto_service.py) —
+    # the column the app now writes to. `smtp_password` (plaintext) is kept
+    # readable during the transition for configs saved before this existed.
+    smtp_password_enc = Column(String, nullable=True)

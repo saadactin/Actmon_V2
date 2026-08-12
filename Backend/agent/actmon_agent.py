@@ -34,6 +34,13 @@ if sys.version_info < (3, 5):
                      % sys.version.split()[0])
     sys.exit(1)
 
+# Single source of truth for "which build of the agent is this?". Reported on
+# every infra push and on the boot ping, so the server can tell what each host
+# is actually running (and confirm an update really landed) instead of assuming.
+# BUMP THIS whenever agent behaviour changes — the update ledger compares it to
+# the version it expected to see after an upgrade.
+AGENT_VERSION = "1.1.1"
+
 
 def _read_registry():
     """Return (token, url) from HKLM\\SOFTWARE\\ActMon\\Agent, or (None, None).
@@ -322,11 +329,24 @@ def _win_svcctl(arg):
     verb = arg.split(":", 1)[0] if arg else "services"
     if verb in ("start", "stop", "restart"):
         u = arg.partition(":")[2]
+        # Single-quoted PowerShell literals only. A SQL Server named instance's
+        # service name always contains '$' (e.g. "MSSQL$ACTIN_MSSQL"); inside a
+        # PowerShell DOUBLE-quoted string, "$ACTIN_MSSQL" is parsed as a variable
+        # reference — undefined, so it silently interpolates to "", truncating
+        # the name to "MSSQL" before Start/Stop/Restart-Service ever sees it
+        # (and reporting a misleading "service 'MSSQL' not found" on failure).
+        # Single-quoted strings never interpolate; only literal single quotes
+        # inside the name itself need escaping (doubled, PowerShell's convention).
+        uq = u.replace("'", "''")
         cmd = {"start": "Start-Service", "stop": "Stop-Service", "restart": "Restart-Service"}[verb]
         extra = " -Force" if verb in ("stop", "restart") else ""
-        return _ps('try { %s -Name "%s"%s -ErrorAction Stop; '
-                   '"OK:%sed %s; $((Get-Service -Name "%s").Status)" } '
-                   'catch { "ERR:$($_.Exception.Message)" }' % (cmd, u, extra, verb, u, u))
+        return _ps(
+            "try { %s -Name '%s'%s -ErrorAction Stop; "
+            "$st = (Get-Service -Name '%s').Status; "
+            "'OK:%sed ' + '%s' + '; ' + $st } "
+            "catch { 'ERR:' + $_.Exception.Message }"
+            % (cmd, uq, extra, uq, verb, uq)
+        )
     # full service inventory with status (name|Running/Stopped|display)
     return _ps("Get-Service | Select-Object -First 400 "
                '| ForEach-Object { "$($_.Name)|$($_.Status)|$($_.DisplayName)" }')
@@ -386,6 +406,35 @@ def _self_update(url, token):
         urllib.request.urlretrieve(msi_url, tmp)
         if not os.path.isfile(tmp) or os.path.getsize(tmp) < 100000:
             return "ERR:downloaded MSI looks invalid"
+        # Integrity check before we hand this to msiexec. A size floor only
+        # catches a truncated transfer; this catches a corrupted or substituted
+        # one. The Linux source path has always verified a sha (see
+        # _self_update_check) — this brings the Windows MSI path to parity.
+        # If the server is too old to expose the hash we proceed on the size
+        # check alone rather than blocking upgrades on a missing endpoint.
+        try:
+            import hashlib
+            want = (_get_json("%s/agents/install/actmon-agent.msi/sha?token=%s&url=%s" % (
+                (url or "").rstrip("/"), urllib.parse.quote(token or ""),
+                urllib.parse.quote(url or ""))) or {}).get("sha256") or ""
+        except Exception:  # noqa: BLE001 — older server / transient failure
+            want = ""
+        if want:
+            h = hashlib.sha256()
+            with open(tmp, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            got = h.hexdigest()
+            if got != want:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                return ("ERR:MSI checksum mismatch (expected %s, got %s) - refusing to "
+                        "install a file that doesn't match the server's copy" % (want[:16], got[:16]))
+            _log("self-update: MSI checksum verified (%s)" % got[:16])
+        else:
+            _log("self-update: server did not provide a checksum - proceeding on size check only")
         pd = os.environ.get("ProgramData") or r"C:\ProgramData"
         log = os.path.join(pd, "ActMon", "update.log")
         run = 'msiexec /i "%s" /qn /norestart /l*v "%s"' % (tmp, log)
@@ -435,7 +484,15 @@ def _dbq_open(dbtype, host, port, user, pw, dbname):
         import oracledb
         _ora_init_thick(oracledb)
         svc = dbname or "XE"
-        return oracledb.connect(user=user, password=pw, dsn="%s:%s/%s" % (host, port or 1521, svc))
+        # Every other engine branch below sets a connect timeout; this one didn't,
+        # and it is the one gap here that isn't merely a raised exception on failure
+        # — a listener that's unreachable (host down, firewalled, restarting) makes
+        # this hang on the OS-level TCP connect, which on Windows can run well past a
+        # minute. A thread stuck in that call never returns to its own retry loop and
+        # never raises anything for the surrounding try/except to catch, so it just
+        # sits there — indistinguishable from "working" to everything supervising it.
+        return oracledb.connect(user=user, password=pw, dsn="%s:%s/%s" % (host, port or 1521, svc),
+                                tcp_connect_timeout=10)
     if "clickhouse" in dbtype:
         # DBAPI wrapper of the native-protocol driver — cursor semantics match the
         # generic SQL path below (execute/description/fetchall). The DBAPI connect is
@@ -807,7 +864,14 @@ def _poll_jobs_until(url, token, until_ts=None, stop_event=None):
             job_id, op = parts[0], parts[1]
             jp = _b64d(parts[2]) if len(parts) > 2 else ""
             jd = _b64d(parts[3]) if len(parts) > 3 else ""
-            _handle_job(url, token, job_id, op, jp, jd)
+            try:
+                _handle_job(url, token, job_id, op, jp, jd)
+            except Exception as e:  # noqa: BLE001 — one bad job must not end this thread.
+                # run_agent()'s supervisor now restarts the whole agent the moment any
+                # worker thread dies, so an uncaught exception here went from "this one
+                # job silently fails" to "the agent takes a full restart hit" — a single
+                # malformed or unexpected job payload is not worth that.
+                _log("job %s (%s) raised %s - skipped" % (job_id, op, e))
 
 
 def collect_mysql(tgt, state):
@@ -1225,7 +1289,8 @@ def _infra_loop(url, token, os_type, collect_host, collector_url, collector, int
             pass
         try:
             raw = collect_host(collector)
-            res = _post(url + "/agents/infra", {"token": token, "os_type": os_type, "raw": raw})
+            res = _post(url + "/agents/infra", {"token": token, "os_type": os_type, "raw": raw,
+                                                "agent_version": AGENT_VERSION})
             identity.set(res.get("agent_name"))
             if res.get("status") == "success":
                 _log("infra pushed -> %s / %s" % (res.get("server_id"), identity.get()))
@@ -1261,7 +1326,18 @@ def _db_engine_loop(url, token, engine_names, interval, stop_event, identity):
         key = "%s:%s:%s" % (dbt, tgt.get("host"), tgt.get("port"))
         state = state_by_key.setdefault(key, {})
         metrics, top, sessions = _ENGINE_COLLECTORS[dbt](tgt, state)
-        _post(url + "/agents/data", {"agent_name": identity.get(), "metrics": metrics,
+        # Push under THIS connection's own agent identity (the per-connection
+        # `agents` row the server keeps for it — db-config now returns it),
+        # not the shared host identity. Every engine used to push under
+        # identity.get() (the HOST'S OWN name), so every DB's metrics landed
+        # on the host's agent row (kind=database, tech=unclassified) and the
+        # real per-connection agent ("ClickHouse", "MySQL", …) never received
+        # a single sample — no Redis ring, no ClickHouse history, no Delivery
+        # stats, on that connection's own agent-monitoring page. Falls back to
+        # the host identity only if an older server hasn't started sending
+        # `agent_name` per target yet.
+        push_name = tgt.get("agent_name") or identity.get()
+        _post(url + "/agents/data", {"agent_name": push_name, "metrics": metrics,
                                      "top_sql": top, "sessions": sessions})
         return dbt, metrics, top, sessions
 
@@ -1336,7 +1412,19 @@ def run_agent(stop_event=None):
     os_type = "windows" if IS_WINDOWS else "linux"
     collect_host = collect_windows if IS_WINDOWS else collect_linux
     collector_url = "%s/agents/collector/%s" % (url, os_type)
-    _log("ActMon Agent starting on %s (%s) -> %s" % (host, os_type, url))
+    _log("ActMon Agent v%s starting on %s (%s) -> %s" % (AGENT_VERSION, host, os_type, url))
+
+    # Boot ping: tells the server which build actually came up. This is what
+    # confirms an update landed — a scheduled MSI upgrade replaces the service
+    # and restarts it, so the FIRST thing the new build does is announce itself.
+    # Best-effort: never block startup on it.
+    try:
+        _post(url + "/agents/startup-ping",
+              {"token": token, "hostname": host, "os_type": os_type,
+               "agent_version": AGENT_VERSION})
+        _log("startup ping sent (v%s)" % AGENT_VERSION)
+    except Exception as e:  # noqa: BLE001
+        _log("startup ping failed (non-fatal): %s" % e)
 
     # Fetch the exact collector command the backend expects (no drift vs SSH).
     collector = None
@@ -1376,13 +1464,43 @@ def run_agent(stop_event=None):
     for t in threads:
         t.start()
 
-    # Main thread just supervises from here — the real work happens on the threads
-    # above, each independent of the others.
-    if stop_event is not None:
-        stop_event.wait()
-    else:
-        while any(t.is_alive() for t in threads):
+    # Main thread supervises from here — and watching `stop_event` alone is not
+    # enough. Once the collector threads are running, this thread's only job is to
+    # wait, and `stop_event.wait()` stays "alive" forever no matter what happens to
+    # the threads it is nominally watching over. That gap let a real outage go
+    # undetected in the field: several threads on one host (infra + several DB
+    # engines) went silent within the same ~30s window and never recovered, even
+    # nearly an hour after the backend became reachable again — nothing here ever
+    # noticed they were gone, because this thread was still technically "running".
+    #
+    # The Windows Service wrapper (ActMonService.SvcDoRun, below) already has a
+    # watchdog for exactly this — but it can only act on THIS thread exiting; it
+    # has no visibility into the threads below unless this loop actually checks
+    # them. So: poll every worker's liveness, not just the stop flag. They are all
+    # `while not stopping(): ...` loops with no other exit, so any of them being
+    # dead without a stop having been requested is something that died or hung
+    # unexpectedly — worth ending the whole process over, so the service's
+    # restart-on-failure policy (already configured in the MSI: restart on the
+    # first, second and every failure after that, 30s apart) gets the chance to
+    # bring a clean process back up, rather than leaving a half-working one
+    # running indefinitely under a status that still reads "Running".
+    #
+    # A clean full restart — rather than trying to respawn just the dead thread —
+    # is the deliberate choice: the collector threads aren't written to be
+    # re-entered safely, and the MSI's restart policy is the one recovery path
+    # that is already built, configured, and known to work.
+    while not _stopping():
+        dead = [t.name for t in threads if not t.is_alive()]
+        if dead:
+            _log("FATAL: %d worker thread(s) died unexpectedly (%s) - exiting so "
+                 "the service supervisor can restart a clean process."
+                 % (len(dead), ", ".join(dead)))
+            return 1
+        for _ in range(5):
+            if _stopping():
+                break
             time.sleep(1)
+
     _log("ActMon Agent stopping.")
     return 0
 

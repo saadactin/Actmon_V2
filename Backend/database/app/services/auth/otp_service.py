@@ -6,6 +6,7 @@ OTP login service — 2-step login.
 OTP store is in-memory with a 5-minute TTL (no schema change). Email uses the
 default row in smtp_configs (reusing the app's existing SMTP setup).
 """
+import math
 import os
 import time
 import secrets
@@ -22,10 +23,14 @@ log = logging.getLogger("actmon.otp")
 
 OTP_TTL_SECONDS = int(os.getenv("OTP_TTL_SECONDS", "300"))   # 5 minutes
 OTP_MAX_ATTEMPTS = 5
+# Resend guards: a minimum gap between codes (stops accidental double-clicks and
+# deliberate mail-bombing of a user's inbox) and a hard cap per login attempt.
+OTP_RESEND_COOLDOWN_SECONDS = int(os.getenv("OTP_RESEND_COOLDOWN_SECONDS", "30"))
+OTP_MAX_RESENDS = int(os.getenv("OTP_MAX_RESENDS", "3"))
 # When on, the response includes the code (dev/testing only). Off in production.
 OTP_DEBUG = os.getenv("OTP_DEBUG", "0") in ("1", "true", "True")
 
-# token -> {user_id, code, expires, attempts, email}
+# token -> {user_id, code, expires, attempts, email, resend_count, last_sent}
 _STORE: dict[str, dict] = {}
 
 
@@ -96,20 +101,28 @@ def mask_email(email: str) -> str:
     return f"{head}{'*' * max(1, len(name) - 1)}@{dom}"
 
 
-def generate_and_send(db: Session, user: dict) -> dict:
-    """Create + email an OTP for a (already credential-validated) user. Returns otp_token."""
+def generate_and_send(db: Session, user: dict, *, resend_count: int = 0) -> dict:
+    """Create + email an OTP for a (already credential-validated) user. Returns otp_token.
+
+    The new token is stored ONLY after the email actually goes out — if SMTP
+    fails this raises with nothing written, so a failed send can never leave a
+    half-built session behind.
+    """
     _purge()
     email = user.get("email_id")
     if not email:
         raise HTTPException(status_code=400, detail="No email on file for this user; cannot send OTP.")
     code = f"{secrets.randbelow(1_000_000):06d}"
-    token = secrets.token_urlsafe(24)
-    _STORE[token] = {"user_id": user["user_id"], "code": code,
-                     "expires": _now() + OTP_TTL_SECONDS, "attempts": 0, "email": email}
     cfg = _smtp_config(db)
     _send_email(cfg, email, "Your Actmon login OTP", _otp_html(code, user.get("employee_name") or user.get("user_name")))
-    log.info("OTP issued for user_id=%s", user["user_id"])
-    out = {"otp_token": token, "email_masked": mask_email(email), "expires_in": OTP_TTL_SECONDS}
+    token = secrets.token_urlsafe(24)
+    _STORE[token] = {"user_id": user["user_id"], "code": code,
+                     "expires": _now() + OTP_TTL_SECONDS, "attempts": 0, "email": email,
+                     "resend_count": resend_count, "last_sent": _now()}
+    log.info("OTP issued for user_id=%s (resend #%s)", user["user_id"], resend_count)
+    out = {"otp_token": token, "email_masked": mask_email(email), "expires_in": OTP_TTL_SECONDS,
+           "resend_cooldown": OTP_RESEND_COOLDOWN_SECONDS,
+           "resends_left": max(0, OTP_MAX_RESENDS - resend_count)}
     if OTP_DEBUG:
         out["dev_otp"] = code   # testing only
     return out
@@ -132,10 +145,36 @@ def verify_otp(token: str, code: str) -> int:
 
 
 def resend(db: Session, token: str, user_lookup) -> dict:
-    """Re-issue an OTP for an existing pending token."""
+    """Re-issue an OTP for an existing pending token.
+
+    The previous token is retired only AFTER the replacement has been issued
+    and emailed. Doing it the other way round (pop first, then send) meant a
+    transient SMTP failure destroyed the pending login outright — the user was
+    left with no valid token at all and every retry answered "Session expired.
+    Please login again.", with re-entering credentials the only way out.
+    """
+    _purge()
     entry = _STORE.get(token)
-    if not entry:
+    if not entry or entry["expires"] < _now():
+        _STORE.pop(token, None)
         raise HTTPException(status_code=400, detail="Session expired. Please login again.")
+
+    waited = _now() - entry.get("last_sent", 0)
+    if waited < OTP_RESEND_COOLDOWN_SECONDS:
+        # ceil, not int()+1 — the latter reports "31s" for a 30s cooldown when
+        # no measurable time has passed (Windows' coarse clock makes that common).
+        remaining = math.ceil(OTP_RESEND_COOLDOWN_SECONDS - waited)
+        raise HTTPException(status_code=429,
+                            detail=f"Please wait {remaining}s before requesting another code.")
+    if entry.get("resend_count", 0) >= OTP_MAX_RESENDS:
+        raise HTTPException(status_code=429,
+                            detail="Resend limit reached for this login. Please sign in again to get a new code.")
+
     user = user_lookup(entry["user_id"])
-    _STORE.pop(token, None)
-    return generate_and_send(db, user)
+    if not user:
+        _STORE.pop(token, None)
+        raise HTTPException(status_code=400, detail="Session expired. Please login again.")
+
+    out = generate_and_send(db, user, resend_count=entry.get("resend_count", 0) + 1)
+    _STORE.pop(token, None)   # safe now: the replacement exists and was delivered
+    return out
