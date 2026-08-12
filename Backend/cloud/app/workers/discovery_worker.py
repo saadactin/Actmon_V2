@@ -10,6 +10,10 @@ import uuid
 
 logger = logging.getLogger("cloud_svc.discovery_runner")
 
+# Keep a strong reference to fire-and-forget cache-warming tasks so the event
+# loop doesn't garbage-collect them mid-run.
+_warm_tasks: set[asyncio.Task] = set()
+
 
 async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
     """
@@ -91,7 +95,29 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
 
             resources = await provider.scan_resources(on_batch=on_batch)
 
-            if seen_ids:
+            # A sweep that couldn't enumerate every scope returns a SUBSET of
+            # reality. Pruning against a subset deletes live resources: one
+            # unreachable region reduced a 127-resource OCI account to the 65
+            # global IAM objects that happened to list successfully. Only a clean
+            # sweep is authoritative enough to delete anything.
+            failures = provider.scan_failures()
+
+            if seen_ids and failures:
+                count = len(seen_ids)
+                logger.warning(
+                    "Discovery job=%s found %d resources but %d scope(s) failed to "
+                    "enumerate — SKIPPING prune to avoid deleting live resources. "
+                    "Stale rows (if any) will clear on the next clean scan. First: %s",
+                    job_id, count, len(failures), failures[:3],
+                )
+                await disco_repo.set_partial(
+                    job_id,
+                    f"Incomplete sweep: {len(failures)} scope(s) failed to enumerate, so "
+                    f"existing resources were kept rather than pruned. First failure: "
+                    f"{failures[0]}",
+                )
+                await db.commit()
+            elif seen_ids:
                 # Streamed path: batches already persisted. Prune rows from prior
                 # scans that weren't seen this time.
                 async with write_lock:
@@ -123,6 +149,21 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             # Per-resource cost_monthly stays as the provider reported it (usually
             # None → NA in the UI). Account-level spend comes from the billing API
             # via the cost service — no config-based estimates are fabricated here.
+
+            from app.services.alerting_service import check_storage_attachment_alerts
+
+            check_storage_attachment_alerts(
+                account.account_name, resources, account_id=str(account_id)
+            )
+
+            # Fire-and-forget: warm the cost cache now so the Cost page's
+            # first load after this scan doesn't pay a cold 30-50s billing
+            # API round trip. Not awaited — must not delay job completion.
+            from app.services.cost_service import prewarm_cost_cache
+
+            warm_task = asyncio.create_task(prewarm_cost_cache(account))
+            _warm_tasks.add(warm_task)
+            warm_task.add_done_callback(_warm_tasks.discard)
 
             await account_repo.update_last_discovery(account_id)
             await disco_repo.complete_job(job_id, count)

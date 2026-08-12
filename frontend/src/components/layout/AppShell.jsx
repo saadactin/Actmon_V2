@@ -22,6 +22,7 @@ import { APP, SHORTCUTS } from '@/config/app.config';
 const BLEED_PREFIXES = [
   '/agents/setup', '/agents/deploy',
   '/databases/add-data', '/databases/setup',
+  '/cloud',
 ];
 
 export default function AppShell({ user, onSignOut }) {

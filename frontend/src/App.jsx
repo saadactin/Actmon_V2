@@ -24,6 +24,22 @@ const AgentDetailPage = lazy(() => import('@/pages/agents/AgentDetailPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const HelpCenterPage = lazy(() => import('@/pages/help/HelpCenterPage'));
 
+// Cloud (AWS/Azure/OCI discovery) — ported from the existing module's
+// features/cloud/ tree, restyled to plain JS. CloudShell is the tab-bar shell;
+// everything else is one of its nested routes (see the route tree below).
+const CloudShell = lazy(() => import('@/features/cloud/components/CloudShell').then((m) => ({ default: m.CloudShell })));
+const CloudProviderChooser = lazy(() => import('@/features/cloud/pages/CloudProviderChooser'));
+const CloudAccountsPage = lazy(() => import('@/features/cloud/pages/CloudAccountsPage').then((m) => ({ default: m.CloudAccountsPage })));
+const CloudProviderAccountsPage = lazy(() => import('@/features/cloud/pages/CloudProviderAccountsPage'));
+const CloudDashboard = lazy(() => import('@/features/cloud/pages/CloudDashboard').then((m) => ({ default: m.CloudDashboard })));
+const CloudResourcesPage = lazy(() => import('@/features/cloud/pages/ResourcesPage').then((m) => ({ default: m.ResourcesPage })));
+const CloudResourceDetailPage = lazy(() => import('@/features/cloud/pages/ResourceDetailPage').then((m) => ({ default: m.ResourceDetailPage })));
+const CloudCostPage = lazy(() => import('@/features/cloud/pages/CostPage').then((m) => ({ default: m.CostPage })));
+const CloudSecurityPage = lazy(() => import('@/features/cloud/pages/SecurityPosturePage').then((m) => ({ default: m.SecurityPosturePage })));
+const CloudTopologyPage = lazy(() => import('@/features/cloud/pages/CloudTopologyPage').then((m) => ({ default: m.CloudTopologyPage })));
+const CloudCompliancePage = lazy(() => import('@/features/cloud/pages/CompliancePage').then((m) => ({ default: m.CompliancePage })));
+const CloudAlertsPage = lazy(() => import('@/features/cloud/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })));
+
 // Infrastructure — ported verbatim from the existing module. All three routes
 // share one host abstraction (os_servers): the overview/grid, a per-host
 // drilldown, and an SSH-backed file browser reached from that drilldown.
@@ -144,7 +160,7 @@ export default function App() {
   }, [token, user]);
 
   // Routes we define explicitly must not be shadowed by generated ones.
-  const explicit = new Set(['/dashboard', '/alerts', '/agents', '/databases', '/settings', '/infra', '/administration', '/help-center']);
+  const explicit = new Set(['/dashboard', '/alerts', '/agents', '/databases', '/settings', '/infra', '/administration', '/help-center', '/cloud']);
   const generated = NAV_INDEX.filter((n) => !explicit.has(n.to));
 
   return (
@@ -167,6 +183,22 @@ export default function App() {
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/help-center" element={<HelpCenterPage />} />
+
+        {/* Cloud (AWS/Azure/OCI discovery) — CloudShell is the tab-bar shell,
+            everything below is one of its nested routes (its own <Outlet/>). */}
+        <Route path="/cloud" element={<CloudShell />}>
+          <Route index element={<CloudProviderChooser />} />
+          <Route path="accounts" element={<CloudAccountsPage />} />
+          <Route path="resources" element={<CloudResourcesPage />} />
+          <Route path="resources/:resourceId" element={<CloudResourceDetailPage />} />
+          <Route path="cost" element={<CloudCostPage />} />
+          <Route path="security" element={<CloudSecurityPage />} />
+          <Route path="topology" element={<CloudTopologyPage />} />
+          <Route path="compliance" element={<CloudCompliancePage />} />
+          <Route path="alerts" element={<CloudAlertsPage />} />
+          <Route path=":provider" element={<CloudProviderAccountsPage />} />
+          <Route path=":provider/:accountId" element={<CloudDashboard />} />
+        </Route>
 
         {/* Order matters: the two named wizards must be matched before :tech. */}
         <Route path="/agents/setup" element={<AgentSetupPage />} />

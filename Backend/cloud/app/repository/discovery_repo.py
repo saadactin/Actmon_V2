@@ -44,6 +44,16 @@ class DiscoveryRepository:
             job.completed_at = datetime.now(timezone.utc)
             await self.db.flush()
 
+    async def set_partial(self, job_id: uuid.UUID, detail: str) -> None:
+        """Record that the sweep completed but was incomplete, so nothing was
+        pruned. The job still COMPLETEs (the resources it did find are valid) —
+        this note explains why stale rows may linger, and surfaces in the
+        Resources "why is this empty/stale" diagnostic."""
+        job = await self.db.get(DiscoveryJob, job_id)
+        if job:
+            job.error_detail = detail[:2000]
+            await self.db.flush()
+
     async def fail_job(self, job_id: uuid.UUID, error: str) -> None:
         job = await self.db.get(DiscoveryJob, job_id)
         if job:

@@ -16,8 +16,10 @@ if exist venv\Scripts\activate.bat (
 )
 
 echo.
-echo Starting service on port 8002...
-echo API Docs will be available at: http://127.0.0.1:8002/api/v1/cloud/docs
+rem 8001, not 8002: the frontend proxies /api/v1/cloud to 127.0.0.1:8001
+rem (Actmon_V1/vite.config.js), matching the CLOUD_SERVICE_PORT default.
+echo Starting service on port 8001...
+echo API Docs will be available at: http://127.0.0.1:8001/api/v1/cloud/docs
 echo.
 
-python -m uvicorn app.main:app --reload --port 8002 --host 0.0.0.0
+python -m uvicorn app.main:app --reload --port 8001 --host 0.0.0.0

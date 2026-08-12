@@ -51,6 +51,33 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # ── Release scans orphaned by a previous process ──────────────────────────
+    # Discovery runs as an in-process asyncio task, so a job left PENDING or
+    # RUNNING when the process died can never progress. It still looks active to
+    # DiscoveryService.trigger_scan, which returns that job instead of starting a
+    # new one — so "Scan All Accounts" silently does nothing, forever, and the
+    # inventory can never be refreshed. Nothing can legitimately be mid-scan at
+    # startup, so fail those rows now.
+    import logging as _logging
+    from sqlalchemy import text as _text
+
+    _log = _logging.getLogger("cloud_svc.startup")
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(_text(
+                "UPDATE discovery_jobs SET status='FAILED', completed_at=now(), "
+                "error_detail=COALESCE(error_detail, "
+                "'Interrupted: the service restarted while this scan was running.') "
+                "WHERE status IN ('PENDING','RUNNING')"
+            ))
+            if result.rowcount:
+                _log.warning(
+                    "Released %d discovery job(s) left RUNNING/PENDING by a previous "
+                    "process — they were blocking new scans.", result.rowcount,
+                )
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not release orphaned discovery jobs: %s", exc)
+
     yield
 
     await engine.dispose()

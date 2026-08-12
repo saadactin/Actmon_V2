@@ -13,6 +13,18 @@ OnBatch = Optional[Callable[[List[Dict[str, Any]]], Awaitable[None]]]
 class BaseCloudProvider(ABC):
     """Every cloud provider must implement this contract."""
 
+    def scan_failures(self) -> List[str]:
+        """Scopes that failed to enumerate during the last scan_resources() call.
+
+        Non-empty means the sweep was INCOMPLETE, so its result is a subset of
+        reality and callers must not treat it as authoritative — in particular
+        they must not prune stored resources against it, or a transient network
+        or permission error silently deletes live inventory. Providers that
+        cannot report this return [] and are assumed complete.
+        """
+        scanner = getattr(self, "scanner", None)
+        return list(getattr(scanner, "scan_failures", []) or [])
+
     @abstractmethod
     async def authenticate(self) -> bool:
         """Validate credentials and establish an authenticated session.
