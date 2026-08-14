@@ -12,6 +12,8 @@ import { ChevronDown, Cloud, Globe, Plus, Search } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 
 // ─── Provider metadata ────────────────────────────────────────────────────────
+// Brand colours are pinned (not theme tokens) — external provider identity,
+// same rationale as the Agents module's pinned --agent-* palette.
 
 export const PROVIDER_META = {
   AWS: {
@@ -47,7 +49,7 @@ export function getProviderDot(provider) {
   return PROVIDER_META[provider]?.logo ?? '⚪';
 }
 
-// ─── Presentation-only styling maps (light theme) ─────────────────────────────
+// ─── Presentation-only styling maps (pinned brand colours) ────────────────────
 
 const BADGE_BASE = 'inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border';
 
@@ -132,35 +134,35 @@ export const CloudProviderSelector = ({
       <div ref={ref} className="relative">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[200px] whitespace-nowrap transition-colors"
+          className="inline-flex h-control min-w-[200px] items-center gap-2 whitespace-nowrap rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:border-strong"
         >
           {triggerProvider ? (
-            <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[triggerProvider] ?? 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+            <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[triggerProvider] ?? 'border-border bg-sunken text-muted'}`}>
               {triggerProvider}
             </span>
           ) : (
-            <Cloud size={15} className="text-gray-500" />
+            <Cloud size={15} className="text-subtle" />
           )}
-          <span className="flex-1 text-left truncate">{triggerLabel}</span>
+          <span className="flex-1 truncate text-left">{triggerLabel}</span>
           <ChevronDown
             size={14}
-            className={`text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+            className={`text-subtle transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
           />
         </button>
 
         {/* ── Dropdown Panel ── */}
         {open && (
-          <div className="absolute left-0 top-full mt-2 z-[9999] min-w-[320px] bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
+          <div className="absolute left-0 top-full z-[9999] mt-2 min-w-[320px] overflow-hidden rounded-card border border-border bg-surface shadow-lg">
             {/* Search */}
-            <div className="px-3 py-3 border-b border-gray-200">
-              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5">
-                <Search size={13} className="shrink-0 text-gray-400" />
+            <div className="border-b border-border px-3 py-3">
+              <div className="flex items-center gap-2 rounded-control border border-border bg-sunken px-3 py-1.5">
+                <Search size={13} className="shrink-0 text-subtle" />
                 <input
                   autoFocus
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search accounts..."
-                  className="w-full bg-transparent border-none outline-none text-sm text-gray-700 placeholder:text-gray-400"
+                  className="w-full border-none bg-transparent text-[13px] text-fg outline-none placeholder:text-subtle"
                 />
               </div>
             </div>
@@ -170,23 +172,23 @@ export const CloudProviderSelector = ({
               {mode === 'multi' && (
                 <button
                   onClick={() => { onSelect('ALL'); setOpen(false); setSearch(''); }}
-                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors ${
+                  className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors ${
                     selected === 'ALL'
-                      ? 'bg-blue-50 text-blue-700 font-semibold'
-                      : 'text-gray-700 hover:bg-gray-50'
+                      ? 'bg-accent-soft font-semibold text-accent-text'
+                      : 'text-fg hover:bg-sunken'
                   }`}
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-text">
                     <Globe size={14} />
                   </span>
                   <div>
-                    <div className={selected === 'ALL' ? 'font-semibold text-blue-700' : 'font-medium text-gray-900'}>
+                    <div className={selected === 'ALL' ? 'font-semibold text-accent-text' : 'font-medium text-fg'}>
                       All Providers
                     </div>
-                    <div className="text-xs text-gray-500 mt-0.5">{accounts.length} accounts total</div>
+                    <div className="mt-0.5 text-xs text-muted">{accounts.length} accounts total</div>
                   </div>
                   {selected === 'ALL' && (
-                    <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+                    <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-accent" />
                   )}
                 </button>
               )}
@@ -206,7 +208,7 @@ export const CloudProviderSelector = ({
                       <span className={`text-[10px] font-bold uppercase tracking-wider ${PROVIDER_HEADER_TEXT[provider]}`}>
                         {meta.label}
                       </span>
-                      <span className="ml-auto text-[10px] font-semibold text-gray-400">
+                      <span className="ml-auto text-[10px] font-semibold text-subtle">
                         {provAccounts.length} acct{provAccounts.length !== 1 ? 's' : ''}
                       </span>
                     </div>
@@ -218,23 +220,23 @@ export const CloudProviderSelector = ({
                         <button
                           key={acc.id}
                           onClick={() => { onSelect(acc.id); setOpen(false); setSearch(''); }}
-                          className={`flex w-full items-center gap-2.5 px-3 py-2 pl-6 text-left text-sm transition-colors ${
+                          className={`flex w-full items-center gap-2.5 px-3 py-2 pl-6 text-left text-[13px] transition-colors ${
                             isSelected
-                              ? 'bg-blue-50 text-blue-700 font-semibold'
-                              : 'text-gray-700 hover:bg-gray-50'
+                              ? 'bg-accent-soft font-semibold text-accent-text'
+                              : 'text-fg hover:bg-sunken'
                           }`}
                         >
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${isSelected ? 'bg-accent' : 'bg-border'}`} />
                           <div className="min-w-0 flex-1">
-                            <div className={`truncate ${isSelected ? 'font-semibold text-blue-700' : 'font-medium text-gray-900'}`}>
+                            <div className={`truncate ${isSelected ? 'font-semibold text-accent-text' : 'font-medium text-fg'}`}>
                               {acc.account_name}
                             </div>
-                            <div className="text-xs text-gray-500 mt-0.5">
+                            <div className="mt-0.5 text-xs text-muted">
                               {acc.environment || 'NA'} · {acc.tenant_or_region || 'NA'}
                             </div>
                           </div>
                           {isSelected && (
-                            <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+                            <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-accent" />
                           )}
                         </button>
                       );
@@ -244,7 +246,7 @@ export const CloudProviderSelector = ({
               })}
 
               {!hasResults && (
-                <div className="px-4 py-6 text-center text-sm text-gray-500">
+                <div className="px-4 py-6 text-center text-[13px] text-muted">
                   No accounts match &quot;{search}&quot;
                 </div>
               )}
@@ -252,12 +254,12 @@ export const CloudProviderSelector = ({
 
             {/* Footer: add account (gated by Add permission) */}
             {onAddAccount && canHere('add') && (
-              <div className="border-t border-gray-200 py-2">
+              <div className="border-t border-border py-2">
                 <button
                   onClick={() => { onAddAccount(); setOpen(false); }}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"
+                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] font-medium text-accent-text transition-colors hover:bg-accent-soft"
                 >
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-text">
                     <Plus size={14} />
                   </span>
                   Connect New Cloud Account
@@ -288,20 +290,20 @@ export const ProviderSummaryBar = ({
       {/* All */}
       <button
         onClick={() => onSelectProvider(null)}
-        className={`flex items-center gap-2.5 rounded-xl border px-4 py-2.5 transition-colors ${
+        className={`flex items-center gap-2.5 rounded-card border px-4 py-2.5 transition-colors ${
           !selectedProvider
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-200 bg-white hover:bg-gray-50'
+            ? 'border-accent bg-accent-soft'
+            : 'border-border bg-surface hover:bg-sunken'
         }`}
       >
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-accent-soft text-accent-text">
           <Globe size={18} />
         </span>
         <div className="text-left">
-          <div className={`text-xs font-bold tracking-wide ${!selectedProvider ? 'text-blue-700' : 'text-gray-700'}`}>
+          <div className={`text-xs font-bold tracking-wide ${!selectedProvider ? 'text-accent-text' : 'text-fg'}`}>
             All Clouds
           </div>
-          <div className="text-[11px] text-gray-500 mt-0.5">
+          <div className="mt-0.5 text-[11px] text-muted">
             {accounts.length} accounts
           </div>
         </div>
@@ -315,10 +317,10 @@ export const ProviderSummaryBar = ({
           <button
             key={provider}
             onClick={() => onSelectProvider(provider === selectedProvider ? null : provider)}
-            className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+            className={`flex items-center gap-3 rounded-card border px-4 py-2.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               isActive
                 ? PROVIDER_ACTIVE_PILL[provider]
-                : 'border-gray-200 bg-white hover:bg-gray-50'
+                : 'border-border bg-surface hover:bg-sunken'
             }`}
             disabled={count === 0}
           >
@@ -328,10 +330,10 @@ export const ProviderSummaryBar = ({
             </span>
 
             <div className="text-left">
-              <div className={`text-[13px] font-bold tracking-wide ${isActive ? PROVIDER_HEADER_TEXT[provider] : 'text-gray-700'}`}>
+              <div className={`text-[13px] font-bold tracking-wide ${isActive ? PROVIDER_HEADER_TEXT[provider] : 'text-fg'}`}>
                 {provider}
               </div>
-              <div className="text-[11px] text-gray-500 mt-0.5">
+              <div className="mt-0.5 text-[11px] text-muted">
                 {count} account{count !== 1 ? 's' : ''}
               </div>
             </div>
@@ -339,7 +341,7 @@ export const ProviderSummaryBar = ({
             {/* Account count badge */}
             {count > 0 && (
               <span className={`ml-1 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                isActive ? PROVIDER_COUNT_ACTIVE[provider] : 'bg-gray-100 text-gray-600'
+                isActive ? PROVIDER_COUNT_ACTIVE[provider] : 'bg-sunken text-muted'
               }`}
               >
                 {count}

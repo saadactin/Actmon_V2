@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Database, Server, Activity, HardDrive, RefreshCw, Clock,
   Layers, Network, ShieldCheck, AlertTriangle, Cpu, MemoryStick,
-  FileText, Zap, Terminal, GitBranch, Archive, RotateCcw,
+  FileText, Zap, Terminal, GitBranch, RotateCcw,
   CheckCircle2, XCircle, ChevronRight, Heart, Users, Lock,
   TrendingUp, BarChart2, Table, Settings, Bell, ArrowUp,
   ArrowDown, Minus, Search, Filter,
@@ -33,9 +33,6 @@ import { DATABASE_COLUMNS, TABLE_COLUMNS, TABLE_SORT_PRESETS } from '@/config/db
 import { PageLoading } from '@/components/ui/Loading';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
-// Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
-const MySQLBackupPageEmbedded = React.lazy(() => import('./MySQLBackupPage'));
-
 /* ─── palette ─── */
 const C = {
   teal:   '#00758F',
@@ -51,7 +48,6 @@ const C = {
 
 /* ─── fetchers ─── */
 const fetchDashboard      = (id) => client.get(`/connections/mysql/${id}/dashboard`).then(r => r.data);
-const fetchBackupInfo     = (id) => client.get(`/connections/mysql/${id}/backup-info`).then(r => r.data);
 const fetchTableStats     = (id) => client.get(`/connections/mysql/${id}/table-stats`).then(r => r.data);
 const fetchUserStats      = (id) => client.get(`/connections/mysql/${id}/user-stats`).then(r => r.data);
 const fetchInnoDBMetrics  = (id) => client.get(`/connections/mysql/${id}/innodb-metrics`).then(r => r.data);
@@ -79,7 +75,6 @@ const TABS = [
   { id: 'replication', label: 'Replication',    icon: GitBranch },
   { id: 'users',       label: 'Users',          icon: Users },
   { id: 'storage',     label: 'Storage',        icon: HardDrive },
-  { id: 'backup',      label: 'Backup & PITR',  icon: Archive },
   { id: 'logs',        label: 'Logs',           icon: FileText },
 ];
 
@@ -412,15 +407,6 @@ export default function MySQLDashboard() {
     refetchInterval: REFRESH_INTERVAL * 1000,
   });
 
-  /* ── Backup query ── */
-  const { data: backupData, isLoading: backupLoading } = useQuery({
-    queryKey: ['mysqlBackup', id],
-    queryFn:  () => fetchBackupInfo(id),
-    retry: false,
-    refetchInterval: 60000,
-    enabled: activeTab === 'backup',
-  });
-
   /* ── Table stats query ── */
   const { data: tableData, isLoading: tableLoading } = useQuery({
     queryKey: ['mysqlTableStats', id],
@@ -646,13 +632,6 @@ export default function MySQLDashboard() {
           the strip stays clickable so switching tabs is a way out, not just
           Reload. Keyed on activeTab so switching away always clears it. */}
       <ErrorBoundary resetKey={activeTab}>
-
-        {/* ══ BACKUP & PITR (embedded — keeps the dashboard topbar) ══ */}
-        {activeTab === 'backup' && (
-          <React.Suspense fallback={<PageLoading title="Loading backup & PITR…" />}>
-            <MySQLBackupPageEmbedded embedded />
-          </React.Suspense>
-        )}
 
         {/* ══ OVERVIEW ══════════════════════════════════════════════ */}
         {activeTab === 'overview' && (() => {
@@ -881,12 +860,11 @@ export default function MySQLDashboard() {
             )}
 
             {/* ── Row 8: Quick actions ── */}
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <ActionCard icon={<Zap className="text-yellow-500" size={24} />}    title="Slow Queries"   desc="Identify expensive SQL"   onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)} />
               <ActionCard icon={<FileText className="text-red-500" size={24} />}  title="Error Logs"     desc="View & classify errors"    onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)} />
               <ActionCard icon={<Layers className="text-violet-500" size={24} />} title="Index Analysis" desc="Unused, dupe & missing"    onClick={() => navigate(`/mysql-dashboard/${id}/index-analysis`)} />
               <ActionCard icon={<Heart className="text-pink-500" size={24} />}    title="Self-Heal"      desc="AI-powered remediation"    onClick={() => navigate(`/mysql-dashboard/${id}/self-heal`)} />
-              <ActionCard icon={<Archive className="text-blue-500" size={24} />}  title="Backup & PITR"  desc="Recovery strategy check"  onClick={() => navigate(`/mysql-dashboard/${id}/backup`)} />
               <ActionCard icon={<FileText className="text-green-500" size={24} />} title="Reports"       desc="Open full DB report"       onClick={() => navigate(`/mysql-dashboard/${id}/reports`)} />
             </div>
 
@@ -2410,10 +2388,6 @@ export default function MySQLDashboard() {
             );
           })()
         )}
-
-        {/* ══ BACKUP & PITR ═════════════════════════════════════════ */}
-        {/* Legacy inline backup section removed — Backup & PITR now renders the
-            full embedded MySQLBackupPage (see activeTab === 'backup' block above). */}
 
         {/* ══ LOGS ══════════════════════════════════════════════════ */}
         {activeTab === 'logs' && (

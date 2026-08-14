@@ -11,6 +11,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common.actmon_internal_tables import clickhouse_exclude_internal_tables_sql
+from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +445,7 @@ def get_query_log(conn_id: int, db: Session) -> dict:
         "FROM system.query_log "
         "WHERE type IN ('QueryFinish','ExceptionBeforeStart','ExceptionWhileProcessing') "
         "  AND query NOT LIKE '%system.query_log%' "
+        f"  AND {clickhouse_exclude_internal_tables_sql('query')} "
         "ORDER BY event_time DESC LIMIT 100",
     )
     return {"status": "success" if not error else "error", "logs": logs, "total": len(logs), "error": error}
@@ -450,22 +453,129 @@ def get_query_log(conn_id: int, db: Session) -> dict:
 
 def get_slow_queries(conn_id: int, db: Session) -> dict:
     conn = _get_connection_or_404(conn_id, db)
+
+    # Aggregate by query shape (like pg_stat_statements/performance_schema do)
+    # rather than listing individual finished queries — system.query_log has
+    # carried `normalized_query_hash` since ClickHouse 21.x, making a real
+    # digest possible. `any(query_id)`/`max(event_time)` keep the legacy
+    # per-row field names populated (with an example/most-recent value) so
+    # anything still reading them doesn't break during the migration window.
     queries, _src, error = _query(
         conn,
-        "SELECT query_id, event_time, user, query_duration_ms, read_rows, read_bytes, "
-        "result_rows, memory_usage, LEFT(query, 500) AS query, type, databases, tables, "
-        "LEFT(exception, 300) AS exception "
+        "SELECT normalized_query_hash, any(query_id) AS query_id, "
+        "max(event_time) AS event_time, min(event_time) AS first_seen, any(user) AS user, "
+        "count() AS execution_count, "
+        "avg(query_duration_ms) AS query_duration_ms, "
+        "min(query_duration_ms) AS min_duration_ms, max(query_duration_ms) AS max_duration_ms, "
+        "sum(query_duration_ms) AS total_duration_ms, "
+        "avg(read_rows) AS read_rows, avg(read_bytes) AS read_bytes, "
+        "avg(result_rows) AS result_rows, avg(memory_usage) AS memory_usage, "
+        "any(LEFT(query, 500)) AS query, any(type) AS type, "
+        "any(databases) AS databases, any(tables) AS tables, "
+        "any(LEFT(exception, 300)) AS exception "
         "FROM system.query_log "
         "WHERE type IN ('QueryFinish','ExceptionWhileProcessing') "
-        "  AND query_duration_ms > 500 "
         "  AND event_time >= now() - INTERVAL 24 HOUR "
         "  AND query NOT LIKE '%system.query_log%' "
+        f"  AND {clickhouse_exclude_internal_tables_sql('query')} "
+        "GROUP BY normalized_query_hash "
+        "HAVING avg(query_duration_ms) > 500 "
         "ORDER BY query_duration_ms DESC LIMIT 100",
     )
-    return {
+    used_aggregation = True
+    if error:
+        # Older/restricted ClickHouse servers may lack normalized_query_hash —
+        # fall back to the original per-instance listing rather than failing.
+        used_aggregation = False
+        queries, _src, error = _query(
+            conn,
+            "SELECT query_id, event_time, user, query_duration_ms, read_rows, read_bytes, "
+            "result_rows, memory_usage, LEFT(query, 500) AS query, type, databases, tables, "
+            "LEFT(exception, 300) AS exception "
+            "FROM system.query_log "
+            "WHERE type IN ('QueryFinish','ExceptionWhileProcessing') "
+            "  AND query_duration_ms > 500 "
+            "  AND event_time >= now() - INTERVAL 24 HOUR "
+            "  AND query NOT LIKE '%system.query_log%' "
+            f"  AND {clickhouse_exclude_internal_tables_sql('query')} "
+            "ORDER BY query_duration_ms DESC LIMIT 100",
+        )
+
+    response = {
         "status": "success" if not error else "error",
         "queries": queries, "source": "system.query_log",
         "total": len(queries), "threshold_ms": 500, "window_hours": 24, "error": error,
+    }
+    _normalize_clickhouse_rows(queries, response, used_aggregation)
+    return response
+
+
+def _normalize_clickhouse_rows(queries: list, response: dict, used_aggregation: bool) -> None:
+    """Builds the shared cross-engine `normalized`/`capabilities` shape.
+    When `used_aggregation` is True the rows are per-query-shape digests
+    (execution_count/avg/min/max/total all mean something real); when False
+    (the normalized_query_hash fallback), each row is one finished query
+    instance — execution_count/min/max/total stay None, matching MongoDB's
+    honest per-instance handling. Mutates `response` in place; see
+    slow_query_normalize.py."""
+    common_rows = []
+    for q in queries:
+        if used_aggregation:
+            common_rows.append(build_normalized_row(
+                query_id=str(q.get("query_id")) if q.get("query_id") else None,
+                query_text=q.get("query"),
+                database_name=(q.get("databases") or [None])[0] if isinstance(q.get("databases"), list) else q.get("databases"),
+                user_name=q.get("user") or None,
+                execution_count=q.get("execution_count"),
+                total_execution_time=q.get("total_duration_ms"),
+                average_execution_time=q.get("query_duration_ms"),
+                min_execution_time=q.get("min_duration_ms"),
+                max_execution_time=q.get("max_duration_ms"),
+                rows_returned=q.get("result_rows"),
+                first_seen=q.get("first_seen"),
+                last_seen=q.get("event_time"),
+                source="system.query_log",
+            ))
+        else:
+            common_rows.append(build_normalized_row(
+                query_id=str(q.get("query_id")) if q.get("query_id") else None,
+                query_text=q.get("query"),
+                database_name=(q.get("databases") or [None])[0] if isinstance(q.get("databases"), list) else q.get("databases"),
+                user_name=q.get("user") or None,
+                average_execution_time=q.get("query_duration_ms"),
+                rows_returned=q.get("result_rows"),
+                last_seen=q.get("event_time"),
+                source="system.query_log",
+            ))
+    attach_normalized(response, "clickhouse", common_rows)
+
+
+def explain_query(conn_id: int, query_text: str, db: Session) -> dict:
+    """Real EXPLAIN for a ClickHouse query — ClickHouse previously had no
+    plan-viewing panel at all. Runs `EXPLAIN PLAN` (the query's execution
+    steps) and `EXPLAIN ESTIMATE` (rows/parts/marks ClickHouse expects to
+    touch) against the connection directly; never fabricates plan data."""
+    conn = _get_connection_or_404(conn_id, db)
+    sql = (query_text or "").strip().rstrip(";")
+    if not sql:
+        return {"status": "error", "error": "No query text provided"}
+
+    plan_rows, _src, plan_err = _query(conn, f"EXPLAIN PLAN header = 1, actions = 1 {sql}")
+    estimate_rows, _src2, estimate_err = _query(conn, f"EXPLAIN ESTIMATE {sql}")
+
+    if plan_err and estimate_err:
+        return {"status": "error", "error": plan_err}
+
+    plan_lines = [
+        (row.get("explain") or list(row.values())[0] if row else "")
+        for row in (plan_rows or [])
+    ]
+    return {
+        "status": "success",
+        "plan": plan_lines,
+        "plan_error": plan_err,
+        "estimate": estimate_rows or [],
+        "estimate_error": estimate_err,
     }
 
 

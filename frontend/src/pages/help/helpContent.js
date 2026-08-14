@@ -25,7 +25,7 @@ export const icon = (name, size=14) => `<svg viewBox="0 0 24 24" width="${size}"
 export const MODULES = [
   {id:'mod-dashboard', label:'Dashboard', icon:'dashboard', route:'/dashboard', available:true},
   {id:'mod-agents', label:'Agents', icon:'agents', route:'/agents', available:true},
-  {id:'mod-databases', label:'Database', icon:'db', route:'/databases', available:false},
+  {id:'mod-databases', label:'Database', icon:'db', route:'/databases', available:true},
   {id:'mod-cloud', label:'Cloud', icon:'cloud', route:'/cloud', available:false},
   {id:'mod-infrastructure', label:'Infrastructure', icon:'infra', route:'/infra', available:false},
   {id:'mod-mlai', label:'ML/AI', icon:'ml', route:'/ml', available:false},
@@ -89,11 +89,38 @@ export const GS_TOPICS = [
   ['gs-terminology','Basic Terminology'],
 ];
 
+// Topic ids use the `dbm-` prefix (Database Module) rather than `db-`, which
+// the Dashboard chapter already owns (db-overview, db-summary, etc.) — the two
+// modules share the word "database" but must not collide on topic ids.
+export const DATABASE_TOPICS = [
+  ['dbm-overview','Database Overview'],
+  ['dbm-navigation','Database Navigation'],
+  ['dbm-server-list','Server List & Topology'],
+  ['dbm-add-server','Adding a Server'],
+  ['dbm-connections','Connections & Collectors'],
+  ['dbm-mysql','MySQL Dashboard'],
+  ['dbm-postgresql','PostgreSQL Dashboard'],
+  ['dbm-oracle','Oracle Dashboard'],
+  ['dbm-mssql','SQL Server (MSSQL) Dashboard'],
+  ['dbm-mongodb','MongoDB Dashboard'],
+  ['dbm-clickhouse','ClickHouse Dashboard'],
+  ['dbm-cosmosdb','Cosmos DB'],
+  ['dbm-slow-queries','Slow Queries & Query Analysis'],
+  ['dbm-error-logs','Error Logs & Self-Heal'],
+  ['dbm-reports','Reports'],
+  ['dbm-drilldown-diagnose','Resource Drill-Down & Diagnose'],
+  ['dbm-permissions','Permissions'],
+  ['dbm-states','Error / Empty / Loading States'],
+  ['dbm-troubleshooting','Troubleshooting'],
+  ['dbm-reference','Database Reference'],
+];
+
 // Attach each available module's topic list — done here (after every topic
 // array above is initialized) rather than inline in MODULES, so adding a new
 // module's chapter later is just: fill in its TOPICS array + one line here.
 MODULES.find(m=>m.id==='mod-dashboard').topics = DASH_TOPICS;
 MODULES.find(m=>m.id==='mod-agents').topics = AGENTS_TOPICS;
+MODULES.find(m=>m.id==='mod-databases').topics = DATABASE_TOPICS;
 
 /* ============================================================
    DOCS content — one entry per page. `body` is the article HTML
@@ -126,11 +153,14 @@ export const ORC_HUES = {
 };
 const dashLabel = (id) => DASH_TOPICS.find(t => t[0] === id)[1];
 const agtLabel = (id) => AGENTS_TOPICS.find(t => t[0] === id)[1];
+const dbmLabel = (id) => DATABASE_TOPICS.find(t => t[0] === id)[1];
 export const HOME_CATEGORIES = [
   { id:'mod-dashboard', label:'Dashboard', icon:'dashboard', hue:ORC_HUES['mod-dashboard'], available:true, seeAll:'db-reference',
     links: ['db-overview','db-health','db-monitoring','db-alerts','db-troubleshooting'].map(id => ({id, label:dashLabel(id)})) },
   { id:'mod-agents', label:'Agents', icon:'agents', hue:ORC_HUES['mod-agents'], available:true, seeAll:'agt-reference',
     links: ['agt-overview','agt-status','agt-architecture','agt-registration-deploy','agt-troubleshooting'].map(id => ({id, label:agtLabel(id)})) },
+  { id:'mod-databases', label:'Database', icon:'db', hue:ORC_HUES['mod-databases'], available:true, seeAll:'dbm-reference',
+    links: ['dbm-overview','dbm-server-list','dbm-slow-queries','dbm-permissions','dbm-troubleshooting'].map(id => ({id, label:dbmLabel(id)})) },
   ...MODULES.filter(m => !m.topics).map(m => ({ id:m.id, label:m.label, icon:m.icon, hue:ORC_HUES[m.id], available:false, seeAll:null, links:[] })),
 ];
 export const HOME_BANNERS = [
@@ -140,8 +170,10 @@ export const HOME_BANNERS = [
     desc:'How to register, deploy, and diagnose ActMon collection agents on a monitored host.' },
   { eyebrow:'CONCEPTS', title:'Host vs. database agents', hue:ORC_HUES['mod-agents'], go:'agt-architecture',
     desc:'Why one host can have both a host-identity agent row and a per-connection database agent row.' },
+  { eyebrow:'REFERENCE', title:'Database module reference', hue:ORC_HUES['mod-databases'], go:'dbm-reference',
+    desc:'Every one of the seven engine dashboards, the shared server-list/connection layer, and the real backend routes behind them.' },
   { eyebrow:'ROADMAP', title:'What’s documented next', hue:ORC_HUES.gs, go:'gs-navigation',
-    desc:'The order the remaining modules — Database, Cloud, Infrastructure, and more — will be written in.' },
+    desc:'The order the remaining modules — Cloud, Infrastructure, and more — will be written in.' },
 ];
 
 /* ---------------- HOME ---------------- */
@@ -158,14 +190,16 @@ DOCS['home'] = {
     describing it as available.</p>
 
     <div class="note"><b>Documentation coverage</b>${icon('book',14)}<span>
-    This library is being built one module at a time. <b>Dashboard</b> and <b>Agents</b> are fully documented
-    below. Every other module is listed for navigation purposes and will be completed in the order shown in
+    This library is being built one module at a time. <strong>Dashboard</strong>, <strong>Agents</strong>, and
+    <strong>Database</strong> are fully documented below. Every other module is listed for navigation purposes
+    and will be completed in the order shown in
     <button onclick="go('gs-navigation')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Navigation</button>.
     </span></div>
 
     <h2>Getting Started</h2>
-    <p>Five short topics that orient you before the full Dashboard and Agents chapters — what ActMon is, how its
-    pieces fit together, how to move around it, and the terms used consistently throughout this library.</p>
+    <p>Five short topics that orient you before the full Dashboard, Agents, and Database chapters — what ActMon
+    is, how its pieces fit together, how to move around it, and the terms used consistently throughout this
+    library.</p>
     <div class="gs-cardgrid">
       ${GS_TOPICS.map(([id,label]) => `
         <button class="gs-card" onclick="go('${id}')">
@@ -233,6 +267,12 @@ DOCS['home'] = {
         <button onclick="go('agt-architecture')">Host vs. Database Agents</button>
         <button onclick="go('agt-reference')">Reference</button>
       </div>
+      <div class="col">
+        <b>Database</b>
+        <button onclick="go('dbm-overview')">Overview</button>
+        <button onclick="go('dbm-slow-queries')">Slow Queries & Query Analysis</button>
+        <button onclick="go('dbm-reference')">Reference</button>
+      </div>
     </div>
   `
 };
@@ -262,9 +302,12 @@ DOCS['gs-overview'] = {
     itself, developers integrating with it, support engineers troubleshooting it, and testers verifying its
     behavior.</p>
     <h2>What this phase of the documentation covers</h2>
-    <p>This release of the documentation completely covers the <strong>Dashboard</strong> module — the
-    monitoring landing page shown at <code>/dashboard</code>. Every other module is present in the navigation
-    tree so the overall documentation structure is visible, but its content is marked
+    <p>This release of the documentation completely covers the <strong>Dashboard</strong> module (the
+    monitoring landing page at <code>/dashboard</code>), the <strong>Agents</strong> module, and the
+    <strong>Database</strong> module — every one of the seven engine dashboards (MySQL, PostgreSQL, Oracle,
+    MSSQL, MongoDB, ClickHouse, Cosmos DB), the server-list/connection layer, and the shared backend patterns
+    behind them (collectors, permissions, drill-down). Every other module is present in the navigation tree so
+    the overall documentation structure is visible, but its content is marked
     <span class="pill neutral">Coming soon</span> until it is written in a later phase.</p>
   `
 };
@@ -307,7 +350,7 @@ DOCS['gs-navigation'] = {
       <tr><th>Label</th><th>Route</th><th>Notes</th></tr>
       <tr><td>Dashboard</td><td><code>/dashboard</code></td><td>Documented fully in this release.</td></tr>
       <tr><td>Agents</td><td><code>/agents</code></td><td>Monitored Systems / agent fleet list.</td></tr>
-      <tr><td>Database</td><td><code>/databases</code></td><td>Per-engine server lists and dashboards.</td></tr>
+      <tr><td>Database</td><td><code>/databases</code></td><td>Documented fully in this release.</td></tr>
       <tr><td>Cloud</td><td><code>/cloud</code></td><td>Listed in navigation; this route has no page implementation currently — visiting it renders the application's generic placeholder view.</td></tr>
       <tr><td>Infrastructure</td><td><code>/infra</code></td><td>Host fleet overview and per-host detail.</td></tr>
       <tr><td>ML/AI</td><td><code>/ml</code></td><td>Present in the module bar.</td></tr>
@@ -559,8 +602,9 @@ DOCS['db-database-mon'] = {
     <p>"Database" here means any host whose <code>database_services</code> list names a recognized engine — a
     single physical host running two database engines counts toward both engines' totals.</p>
     <div class="note"><b>Full detail</b>${icon('db',14)}<span>Per-database detail — connections, slow queries, error
-    logs, replication, backups, and more — lives on each engine's own dashboard (e.g. <code>/mysql-dashboard/:id</code>),
-    reached from the Database module. <span class="pill neutral">Documentation coming in the next module.</span></span></div>
+    logs, replication, and more — lives on each engine's own dashboard (e.g. <code>/mysql-dashboard/:id</code>),
+    reached from the Database module. See
+    <button onclick="go('dbm-overview')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database → Database Overview</button> for the complete chapter.</span></div>
   `
 };
 
@@ -577,7 +621,8 @@ DOCS['db-agent-mon'] = {
     age, host CPU/memory, active sessions, and failure history are read on the Agents module and each agent's
     own detail page, not summarized here.</p>
     <div class="note"><b>Full detail</b>${icon('agents',14)}<span>Per-agent status, heartbeat, and telemetry live on
-    the Agents module. <span class="pill neutral">Documentation coming in the next module.</span></span></div>
+    the Agents module. See
+    <button onclick="go('agt-overview')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Agents → Agents Overview</button> for the complete chapter.</span></div>
   `
 };
 
@@ -1662,6 +1707,928 @@ DOCS['agt-reference'] = {
   `
 };
 
+/* ============================================================
+   DATABASE MODULE — full chapter
+   ============================================================ */
+
+DOCS['dbm-overview'] = {
+  title:'Database Overview', dek:'What the Database module is, the seven engines it covers, and how it connects to the rest of ActMon.',
+  crumbs:['ActMon Documentation','Database','Database Overview'], module:'Database', status:'Complete',
+  body:`
+    <h2>What the Database module is</h2>
+    <p>The Database module is reached at <code>/databases</code> and is built from one shared component,
+    <code>frontend/src/pages/databases/DatabaseServersPage.jsx</code>, reused for two different screens exactly
+    the way the Dashboard's own component is reused nowhere else — this one component renders both the
+    "choose a technology" chooser (no <code>tech</code> prop) and every technology's own server list (a
+    <code>tech</code> prop, e.g. <code>/mysql-servers</code>). See
+    <button onclick="go('dbm-navigation')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Navigation</button>.</p>
+    <h2>Seven engines, six + one</h2>
+    <p>Six database engines share this component and its <code>/{tech}-servers → /{tech}-dashboard/:id</code>
+    flow: <strong>MySQL, PostgreSQL, Oracle, MSSQL, MongoDB, and ClickHouse</strong>. A seventh,
+    <strong>Cosmos DB</strong>, is deliberately handled by its own separate connections page
+    (<code>CosmosDBConnectionsPage.jsx</code>, route <code>/cosmosdb-servers</code>) rather than
+    <code>DatabaseServersPage.jsx</code> — the code's own reasoning, confirmed in that file, is that "a Cosmos
+    connection has no host and no port — it has an account endpoint, a key, and a default database/container,"
+    so the host/port-shaped server list used by the other six would leave its two identifying columns blank.
+    Cosmos DB still gets its own full dashboard at <code>/cosmosdb-dashboard/:id</code>, documented alongside
+    the other six in this chapter.</p>
+    <p>Eight further "Cloud-Based Databases" (Amazon DynamoDB, Google Cloud Firestore, Google Cloud Bigtable,
+    Azure Table Storage, Amazon DocumentDB, MongoDB Atlas, Couchbase Capella, Firebase Realtime Database) are
+    listed as static, non-clickable "Coming Soon" tiles on the chooser screen — none of them has a server list,
+    a dashboard, or a backend route anywhere in the application; they exist purely to show the roadmap.</p>
+    <h2>Who should use it</h2>
+    <ul>
+      <li><strong>Database administrators</strong> — the primary users: per-engine dashboards, slow-query and
+      error-log analysis, index recommendations, and (for MySQL and MSSQL) AI-assisted self-heal.</li>
+      <li><strong>ActMon administrators</strong> — registering new servers and connections, choosing SSH vs.
+      Agent collection.</li>
+      <li><strong>Support/on-call engineers</strong> — the Diagnose and Resource Drill-Down tools reached from a
+      struggling connection (see
+      <button onclick="go('dbm-drilldown-diagnose')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Resource Drill-Down &amp; Diagnose</button>).</li>
+    </ul>
+    <h2>What users should understand immediately</h2>
+    <ul>
+      <li>The seven engines are <strong>not equally capable</strong> — most visibly for self-heal (implemented
+      only for MySQL and MSSQL) and for backup reporting (Oracle's Reports page shows read-only RMAN job
+      history; no other engine has any backup-related UI — ActMon does not take, schedule, or restore backups
+      for any engine). This chapter states each engine's real capability rather than assuming parity.</li>
+      <li>Almost none of the per-connection data endpoints check organization/tenant scoping — only each
+      engine's connection <em>list</em> and <em>create</em> calls do. See
+      <button onclick="go('dbm-permissions')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Permissions</button> for the verified specifics.</li>
+      <li>A connection can be reached two ways — direct (SSH-polled or a plain network connection) or through an
+      installed ActMon agent — and most of the module treats both identically once data has been collected. See
+      <button onclick="go('dbm-connections')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Connections &amp; Collectors</button>.</li>
+    </ul>
+    <h2>How the Database module connects to other modules</h2>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Database module shows</th><th>Also summarized in</th></tr>
+      <tr><td>Total server/engine counts</td><td>Dashboard's Database Server tile, Engine Distribution and Servers By Technology charts (see <button onclick="go('db-database-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Dashboard → Database Monitoring</button>)</td></tr>
+      <tr><td>Host-level CPU/RAM/Disk (via the embedded Host Resources widget)</td><td>Infrastructure module (host detail page) — not yet documented</td></tr>
+      <tr><td>Per-connection agent status</td><td>Agents module (see <button onclick="go('agt-database-monitoring')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Agents → Database Agent Monitoring</button>)</td></tr>
+    </table></div>
+  `
+};
+
+DOCS['dbm-navigation'] = {
+  title:'Database Navigation', dek:'The chooser screen, per-technology routes, and how a server becomes a dashboard.',
+  crumbs:['ActMon Documentation','Database','Database Navigation'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route map</h2>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Route</th><th>Renders</th></tr>
+      <tr><td><code>/databases</code></td><td><code>DatabaseServersPage</code> with no <code>tech</code> prop — the "Choose Technology" chooser</td></tr>
+      <tr><td><code>/mysql-servers</code>, <code>/postgresql-servers</code>, <code>/oracle-servers</code>, <code>/mssql-servers</code>, <code>/mongodb-servers</code>, <code>/clickhouse-servers</code></td><td>The same <code>DatabaseServersPage</code> with <code>tech="..."</code> — that technology's server list</td></tr>
+      <tr><td><code>/cosmosdb-servers</code></td><td><code>CosmosDBConnectionsPage</code> — a separate component, not <code>DatabaseServersPage</code></td></tr>
+      <tr><td><code>/databases/add-os-server</code></td><td><code>AddOsServerPage</code> — the server-registration wizard (see <button onclick="go('dbm-add-server')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Adding a Server</button>)</td></tr>
+      <tr><td><code>/{tech}-dashboard/:id(/:tab)</code></td><td>That engine's own tabbed dashboard, once a connection exists</td></tr>
+    </table></div>
+    <h2>Chooser screen (<code>/databases</code>)</h2>
+    <p>A grid of technology tiles (one per engine the caller's role can see — gated by <code>can('/{tech}-servers','view')</code>), each showing a live server count and connection count for that engine, and a global summary strip below it with four counts pulled from the OS-server summary endpoint: <strong>Total Servers</strong>, <strong>Online</strong>, <strong>Warning</strong>, and <strong>HA Clusters</strong> — these four are fleet-wide, not per-engine. A separate "Cloud-Based Databases" section below that lists Cosmos DB (live, clickable) alongside eight disabled "Coming Soon" tiles.</p>
+    <h2>Per-technology server list (<code>/{tech}-servers</code>)</h2>
+    <p>Selecting a tile (or a tech-switcher pill on another engine's own list) navigates here. Full layout — KPI
+    cards, environment pills, tech switcher, grid/list toggle, cluster topology, standalone table — is
+    documented in <button onclick="go('dbm-server-list')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Server List &amp; Topology</button>.</p>
+    <h2>From a server row to a dashboard</h2>
+    <p>Clicking a server row (or its dashboard/diagnose/connect action icon) computes one of three destinations,
+    depending on what already exists for that row:</p>
+    <div class="tblwrap"><table class="doc navmatrix">
+      <tr><th>State</th><th>Icon/label shown</th><th>Destination</th></tr>
+      <tr><td>No connection linked to this server at all</td><td>"Connect" (Plus icon)</td><td><code>/connections/add?type=...&amp;host=...&amp;port=...&amp;name=...</code></td></tr>
+      <tr><td>A connection exists, but the database is not currently up</td><td>"Diagnose" (Stethoscope icon)</td><td><code>/diagnose/{connectionId}</code></td></tr>
+      <tr><td>A connection exists and the database is up</td><td>"Dashboard" (Activity icon)</td><td><code>/{tech}-dashboard/{connectionId}</code></td></tr>
+    </table></div>
+    <p>Breadcrumbs: the per-tech list's header has a "← Technologies" action back to <code>/databases</code>; the
+    chooser screen itself is a top-level page with no back action.</p>
+  `
+};
+
+DOCS['dbm-server-list'] = {
+  title:'Server List & Topology', dek:'KPI cards, filters, cluster topology, and the standalone-servers table.',
+  crumbs:['ActMon Documentation','Database','Server List & Topology'], module:'Database', status:'Complete',
+  body:`
+    <h2>KPI cards</h2>
+    <p>Five cards, computed <strong>client-side</strong> from servers matching the current technology only (not
+    from the fleet-wide summary endpoint the chooser screen uses):</p>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Card</th><th>Counts</th><th>Clickable</th></tr>
+      <tr><td>Total</td><td>Every server matching this technology</td><td>No (clears the status filter)</td></tr>
+      <tr><td>Online</td><td>Status = Connected</td><td>Yes — toggles a status filter over the lists below</td></tr>
+      <tr><td>Warning</td><td>Status = Warning</td><td>Yes</td></tr>
+      <tr><td>Offline</td><td>Neither Connected nor Warning</td><td>Yes</td></tr>
+      <tr><td>Clusters</td><td>Distinct <code>cluster_name</code> values among servers whose <code>node_type</code> is not Standalone</td><td>Yes</td></tr>
+    </table></div>
+    <p>Clicking a non-Total card shows a "Filtered by X · N of M" indicator with a Clear link.</p>
+    <h2>Filters and view controls</h2>
+    <ul>
+      <li><strong>Environment pills</strong> — <code>All, Production, UAT, Development, Testing</code> — selecting one re-fetches the server list filtered server-side.</li>
+      <li><strong>Tech-switcher pills</strong> — one per engine the role can see; clicking navigates straight to that engine's own list.</li>
+      <li><strong>Search</strong> — client-side, matches server name or IP address.</li>
+      <li><strong>Grid/List toggle</strong> — Grid (default) shows topology cards; List shows the table described below. Both read the same filtered data.</li>
+    </ul>
+    <h2>Clusters vs. standalone</h2>
+    <p>A server is grouped under "Cluster Topology" only when <strong>both</strong> are true: its
+    <code>node_type</code> is something other than <code>Standalone</code> (one of Primary, Secondary, Master,
+    Slave, Galera Node, Arbiter, Cluster Node), <strong>and</strong> it has a non-empty <code>cluster_name</code>.
+    A server with a non-Standalone role but no cluster name is still listed under Standalone Servers — role alone
+    does not move it out. Each cluster card shows environment, node count, DB-type badges, average CPU/RAM/Disk
+    across its nodes, and a status pill: <span class="pill good">HEALTHY</span> if every node is Connected,
+    <span class="pill warn">WARNING</span> if any node is Warning, else <span class="pill crit">DEGRADED</span>.
+    A cluster containing any Galera-role node renders as a multi-primary ring topology; otherwise it renders as
+    a Primary→Secondary streaming-replication chain.</p>
+    <h2>Standalone Servers table</h2>
+    <p>Columns: <strong>Server</strong> (connection name + initials avatar), <strong>Host / OS</strong> (IP + OS
+    badge), <strong>OS Status</strong>, <strong>DB Status</strong> (Running/Stopped/Degraded/Unknown), <strong>Resources</strong>
+    (CPU/RAM/Disk mini progress bars), <strong>Uptime</strong>, <strong>Actions</strong>.</p>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Action icon</th><th>What it does</th></tr>
+      <tr><td>Dashboard / Diagnose / Connect</td><td>Same destination logic as clicking the row — see <button onclick="go('dbm-navigation')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Navigation</button></td></tr>
+      <tr><td>SSH (Terminal icon)</td><td>Opens a real, interactive browser terminal — a WebSocket PTY session to the host over its stored SSH credentials (backend: <code>paramiko.invoke_shell</code> via <code>/api/v1/terminal/ws/{serverId}</code>)</td></tr>
+      <tr><td>Refresh</td><td>"Deep refresh (SSH)" — opens a live SSH session, runs <code>top</code>/<code>free</code>/<code>df</code>/<code>uptime</code> and a per-service <code>systemctl is-active</code> check, and writes the resulting CPU/RAM/Disk/uptime and each database instance's Running/Stopped status back to the row</td></tr>
+      <tr><td>Delete (Trash icon)</td><td>Confirms, then deletes the server row and any linked connection records — see <button onclick="go('dbm-reference')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Reference</button> for the exact endpoint</td></tr>
+    </table></div>
+    <p>None of these four action icons (Dashboard/Diagnose/Connect, SSH, Refresh, Delete) is gated by a
+    permission check in the reviewed code — only the header's "Add Server" button and the empty state's "+ Add
+    OS Server" button check <code>canHere('add')</code>.</p>
+    <h2>Empty state</h2>
+    <p>Zero servers for this technology (or zero matching an active search) shows an explanatory message and,
+    when not searching and the caller can add, a "+ Add OS Server" button.</p>
+  `
+};
+
+DOCS['dbm-add-server'] = {
+  title:'Adding a Server', dek:'The AddOsServerPage wizard — SSH vs. Agent, and what gets created.',
+  crumbs:['ActMon Documentation','Database','Adding a Server'], module:'Database', status:'Complete',
+  body:`
+    <h2>Entry point</h2>
+    <p>"Add Server" (chooser screen and every per-tech list) and "+ Add OS Server" (empty state) all navigate to
+    <code>/databases/add-os-server</code>, gated by <code>canHere('add')</code>. Closing the wizard at any point
+    (header "×" or footer Cancel) always returns to <code>/databases</code> without saving anything.</p>
+    <h2>Step 1 — Connection method</h2>
+    <p>A choice between <strong>Connect via SSH</strong> ("ActMon polls the host over SSH. No install — just
+    credentials," the default) and <strong>Connect via Agent</strong> ("Install a lightweight agent that pushes
+    the same metrics").</p>
+    <div class="note"><b>The Agent path creates nothing here</b>${icon('book',14)}<span>Choosing Agent and clicking
+    Next hands off immediately to <code>/databases/add-data</code> (the existing agent Setup catalogue) — this
+    wizard itself never creates a server or connection for the agent path.</span></div>
+    <h2>Steps 2–7 (SSH path)</h2>
+    <p>Staying on SSH proceeds through: <strong>Operating System</strong> (Linux, Ubuntu, Windows, CentOS, Oracle
+    Linux, RedHat) → <strong>Server Identity</strong> (server name, IP, optional hostname, environment — Production/UAT/Development/Testing) →
+    <strong>SSH Access</strong> (username, port default 22, password, an optional "Test SSH Connection" button
+    that performs a real paramiko connect + <code>echo ACTMON_OK</code> — testing is not required to proceed) →
+    <strong>Node Role</strong> (Standalone or one of Primary/Secondary/Master/Slave/Galera Node/Arbiter/Cluster
+    Node; anything but Standalone requires a cluster name, offered as pills from existing cluster names already
+    in use) → <strong>Services</strong> (multi-select which database engines run on this host, plus two toggles:
+    Live Monitoring and Auto Discovery, both on by default) → <strong>Review</strong> (read-only summary).</p>
+    <h2>On submit</h2>
+    <p>Creates one server row (status starts <code>Unknown</code>) and one database-instance row per selected
+    service (also status <code>Unknown</code>, port defaulted from a built-in per-engine default-port map). If
+    the Agent path had been chosen this step would also mint an agent enrollment token; for SSH,
+    <code>agent_token</code> stays empty. On success the page shows "Server registered successfully! Redirecting…"
+    and, after ~1.2s, navigates to the server-list route for the <strong>first</strong> database service that was
+    selected (or back to <code>/databases</code> if none were selected).</p>
+  `
+};
+
+DOCS['dbm-connections'] = {
+  title:'Connections & Collectors', dek:'SSH vs. Agent, the collector abstraction, and how a connection actually gets created.',
+  crumbs:['ActMon Documentation','Database','Connections & Collectors'], module:'Database', status:'Complete',
+  body:`
+    <h2>Two collector paths, one abstraction</h2>
+    <p>Every database connection reaches ActMon either <strong>directly</strong> (a plain network connection, or
+    an SSH-polled host) or through an <strong>installed ActMon agent</strong> running on that host. A shared
+    backend layer, the collector proxy, makes both paths look identical to the rest of the code: it resolves
+    whether a given connection's host has an enrolled agent, and if so builds a SQLAlchemy-engine-shaped shim
+    that actually routes queries through that agent instead of connecting directly — so the large majority of
+    dashboard code that does "get an engine, run a query" works unchanged either way. For MySQL and PostgreSQL,
+    the proxy can also fall back to a direct connection if the agent doesn't answer; for Oracle and MSSQL it
+    never silently falls back to direct (it raises an explicit "the agent did not answer in time" error instead),
+    since the server generally cannot reach those engines directly.</p>
+    <h2>Two ways a connection is actually created</h2>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Path</th><th>Entry point</th><th>What happens</th></tr>
+      <tr><td><strong>Manual / direct</strong></td><td>Each engine's own "Add Data Source" connection form</td><td>Tests connectivity immediately (a real <code>SELECT 1</code>), then inserts a connection row tagged as standard registration. <strong>No agent enrollment happens on this path</strong> — the connection is only ever queried directly, never through the collector proxy's agent branch.</td></tr>
+      <tr><td><strong>Agent-based</strong></td><td>The Agent Setup wizard (<code>/agents/setup/:tech</code>, reached from Add Server → Connect via Agent, or the Agents module directly)</td><td>Creates/refreshes the connection row tagged as agent registration <strong>and</strong> automatically registers the matching per-connection agent row in the same call — this is what lets the agent fleet start polling that database's status at all.</td></tr>
+    </table></div>
+    <div class="warnbox"><b>A real, previously-fixed bug this design guards against</b>${icon('alerts',14)}<span>
+    The application's own code comments document that a database instance's status was once set only at creation
+    time (always "Running") and never updated again, because the per-connection agent row that
+    <code>agent_collector_service.py</code> needs to start polling was missing. The agent-based creation path now
+    explicitly creates that row in the same request specifically to prevent this from recurring.</span></div>
+    <h2>Required fields (manual path)</h2>
+    <p>Every engine's connection form shares four required fields — connection name, host, port, username,
+    password, database name — plus a few engine-specific additions: Oracle accepts an optional service
+    name/SID/TNS descriptor; PostgreSQL an optional SSL mode (default "prefer"); MSSQL optional Windows
+    Authentication/instance name; MongoDB optional protocol/auth source/replica set; ClickHouse an optional
+    protocol. Cosmos DB's form is entirely different — no host/port at all, instead an account endpoint, a
+    primary key, a database name, and a container name (see
+    <button onclick="go('dbm-cosmosdb')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Cosmos DB</button>).</p>
+    <h2>Linking a discovered instance to a connection</h2>
+    <p>When a server was registered first (via Add Server) and a connection is created separately afterward, a
+    dedicated endpoint links the two — this is the manual glue step between a discovered
+    <code>DatabaseInstance</code> row and the <code>ConnectionMaster</code> row a dashboard actually reads from.</p>
+  `
+};
+
+DOCS['dbm-mysql'] = {
+  title:'MySQL Dashboard', dek:'The MySQL dashboard\'s 11 tabs, Overview content, and what each sub-page adds.',
+  crumbs:['ActMon Documentation','Database','MySQL Dashboard'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route and tabs</h2>
+    <p><code>/mysql-dashboard/:id</code> (Overview) and <code>/mysql-dashboard/:id/:tab</code> for the other tabs,
+    which are URL-driven, not local state. Exactly 10 tabs:
+    <strong>Overview, Performance, Queries, Databases, Tables, Locks, Replication, Users, Storage, Logs</strong>.
+    Four further pages have their own dedicated routes rather than being tabs: <code>/slow-queries</code>,
+    <code>/error-logs</code>, <code>/error-analysis</code>, <code>/self-heal</code>, <code>/index-analysis</code>,
+    <code>/reports</code>.</p>
+    <h2>Overview tab</h2>
+    <p>An 8-tile KPI strip (Uptime, Version, Databases, Tables, DB Size, Questions, Connections, Slow Queries —
+    every tile except Uptime/Version links to its related tab), the shared Host Resources panel, status badges
+    (connection %, cache-hit %, storage engine, replication state, binlog format, long-running/lock-contention
+    warnings), four semi-circle gauges, in-memory sparklines built from the last ~20 polls (not historical
+    data), two charts (cumulative statement-type counts; database sizes), three detail panels (Server
+    Information, InnoDB Buffer Pool, Threads &amp; Network), a conditional long-running-query alert, and five
+    quick-action cards to the sub-pages below.</p>
+    <div class="note"><b>Diagnosis fallback</b>${icon('alerts',14)}<span>If the dashboard's data call errors or
+    returns an error status, the whole tab UI is replaced by a diagnosis screen: the raw error, a heuristic
+    "possible causes" list keyed to the MySQL error code, a live error-log feed, and quick links to Error Logs,
+    Self-Heal, Slow Queries, and Index Analysis.</span></div>
+    <h2>Slow Queries</h2>
+    <p>The same shared 4-tab page every engine uses (Overview, Query Explorer, AI Analysis, Reports) — a row click
+    opens the shared detail page, same as every other engine. Full cross-engine slow-query pattern, including the
+    AI/EXPLAIN feature, in
+    <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button>.</p>
+    <h2>Error Logs, Error Analysis, and Self-Heal</h2>
+    <p><code>ErrorLogs.jsx</code> is the full-featured page (Error Logs / AI Analysis / Self-Heal / Reports
+    internal tabs, including a live SSH terminal that streams AI-suggested or user-typed remediation commands).
+    <code>ErrorAnalysis.jsx</code> is a separate, much smaller "paste any error text, get an AI opinion" utility
+    that is <strong>not linked from the dashboard's own tabs or quick-actions</strong> — it exists at its own
+    route but isn't reachable through the dashboard UI. The dedicated <code>MySQLSelfHeal.jsx</code> page is a
+    third, distinct surface again — full detail (including a real gap between its UI and what the backend
+    actually executes) in
+    <button onclick="go('dbm-error-logs')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Error Logs &amp; Self-Heal</button>.</p>
+    <h2>Index Analysis</h2>
+    <p>Five tabs — Unused Indexes, Duplicate Indexes, Missing Index Hints, Full-Scan Queries, All Indexes — each
+    with a count badge and a health-score ring. Every recommendation is a copyable SQL statement (<code>DROP</code>
+    or a suggested index template); <strong>nothing on this page executes DDL</strong>. Unused/duplicate/missing-hint
+    detection requires <code>performance_schema = ON</code>; when it's off, the page explains exactly what's
+    unavailable and shows the config line and restart command needed. "All Indexes" works regardless, since it
+    reads from <code>information_schema</code>.</p>
+    <h2>Reports</h2>
+    <p>A single-page report assembled from ten parallel endpoint calls, exportable as a client-captured PDF (and
+    optionally emailed/scheduled) — CSV export is <strong>not</strong> on this page, it lives on Slow Queries and
+    Error Logs instead. See <button onclick="go('dbm-reports')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Reports</button>.</p>
+  `
+};
+
+DOCS['dbm-postgresql'] = {
+  title:'PostgreSQL Dashboard', dek:'The PostgreSQL dashboard\'s 11 tabs and how its Query Analysis detail page works.',
+  crumbs:['ActMon Documentation','Database','PostgreSQL Dashboard'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route and tabs</h2>
+    <p><code>/postgresql-dashboard/:id</code> and <code>/:tab</code>, URL-driven. Exactly 10 tabs:
+    <strong>Overview, Performance, Queries, Databases, Tables, Locks, Replication, Users, Storage, Config</strong>.
+    Dedicated sibling pages exist for <code>/slow-queries</code> (plus its own
+    <code>/slow-queries/detail</code> — see below), <code>/error-logs</code>, <code>/index-analysis</code>,
+    <code>/reports</code>.</p>
+    <h2>Overview tab</h2>
+    <p>Same overall shape as MySQL's Overview (8 KPI tiles, embedded Host Resources, status badges, four gauges,
+    sparklines, two charts, three detail panels, a long-running-query alert, five quick-action cards) with
+    PostgreSQL-specific content: a Replication badge (<code>STANDALONE</code> or "N replica(s)"), an "Autovacuum
+    DISABLED" warning when applicable, and its own health-score formula (connection %, cache-hit %,
+    long-running-query count — no replication/lock penalty in this particular score).</p>
+    <h2>Replication tab</h2>
+    <p>Role (Primary/Standby), topology, per-standby byte/time lag with color-coded severity, replication slots,
+    WAL senders, publications/subscriptions, conflicts, and recovery state.</p>
+    <h2>Slow Queries and its detail page</h2>
+    <p>PostgreSQL was the reference implementation the shared Slow Queries page was built to match — every engine
+    now shares the exact same list and detail page. Clicking a row in the Query Explorer navigates to the shared
+    detail page (passing the row via router state); its execution-plan step runs a real
+    <code>EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)</code> against the live connection, and its AI step returns a
+    severity rating plus a structured summary. A stable per-digest query id also lets this page recover the query
+    on a direct link or reload, not only when opened from the list. Full cross-engine detail (filters, columns,
+    the "ActMon internal query" exclusion filter) in
+    <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button>.</p>
+    <h2>Error Logs</h2>
+    <p>Severity buckets FATAL/ERROR/WARNING/LOG/INFO/DEBUG. The response names its own source —
+    <code>csv_log</code>, <code>stderr_log</code>, or a <code>pg_stat_activity</code> fallback that only reflects
+    live sessions, not real historical errors — and the UI shows a setup guide (enable
+    <code>log_destination='csvlog'</code>) whenever it's stuck on that fallback with nothing to show. Per-row AI
+    analysis is explicitly labeled "PostgreSQL 17 · Error Intelligence."</p>
+    <h2>Index Analysis</h2>
+    <p>Four tabs: Unused Indexes, All Indexes, Bloated Tables (dead-tuple % with a copyable <code>VACUUM
+    ANALYZE</code>), and pg_stat_statements. As with MySQL, every action here produces copyable SQL — nothing
+    executes automatically.</p>
+    <h2>Host Resources drill-down</h2>
+    <p>PostgreSQL's Overview embeds the shared <code>HostResources</code> widget (also reused, unmodified, by
+    every other engine's dashboard) — its 4-level process→session→query drill-down and history view are
+    documented once, in
+    <button onclick="go('dbm-drilldown-diagnose')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Resource Drill-Down &amp; Diagnose</button>, rather than repeated per engine.</p>
+  `
+};
+
+DOCS['dbm-oracle'] = {
+  title:'Oracle Dashboard', dek:'16 independently-polled tabs, Live Queries, and Oracle\'s read-only RMAN reporting.',
+  crumbs:['ActMon Documentation','Database','Oracle Dashboard'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route and tabs</h2>
+    <p><code>/oracle-dashboard/:id</code> and <code>/:tab</code>. Exactly <strong>16</strong> tabs — the most of
+    any engine: <strong>Overview, Performance, Sessions, Top SQL, Tablespaces, Objects, Tables, Data Guard,
+    Redo Logs, Processes, Users, Sys Stats, Slow SQL, Live Queries, Locks, Parameters</strong>. Architecturally
+    distinctive: each tab fires its <strong>own</strong> backend query, enabled only while that tab is active —
+    unlike MySQL/PostgreSQL/MSSQL, which fetch one large payload up front and derive every tab from it. Dedicated
+    sibling routes exist for <code>/live-queries</code>, <code>/slow-queries</code>, <code>/error-logs</code>,
+    <code>/index-analysis</code>, <code>/reports</code>.</p>
+    <h2>Overview tab</h2>
+    <p>8 metric tiles (Instance, Database, Status, Sessions, Host CPU, SGA, PGA, Database size), the shared Host
+    Resources panel, status pills, a tablespace-fullness warning (any tablespace over 85%), two charts
+    (utilisation ratios; top wait events by seconds), three in-memory trend panels, three key/value panels
+    (Instance, Database, Memory), and a "Top SQL by elapsed time" preview linking to the full Top SQL tab.</p>
+    <h2>Data Guard and Redo Logs</h2>
+    <p>Data Guard is its own tab: archive destination status, standby redo logs, and Data Guard status messages
+    — with an explicit "Not configured" empty state when no standby destination exists (most single-instance
+    Oracle connections will see this). Redo Logs shows log groups/members with a warning when any group has
+    fewer than 2 members.</p>
+    <h2>Live Queries</h2>
+    <p>A genuinely real-time active-session view (polls every 5 seconds — deliberately faster than the
+    dashboard's own 15s, "the view someone opens when the database is misbehaving"): SID, user, status, client,
+    what it's waiting on and for how long (color-banded), the statement, and — fetched on demand per SQL ID and
+    cached — its execution plan. A summary row up top (Sessions/Active/Idle/Waiting/Blocked/Longest wait) and a
+    blocked-session callout.</p>
+    <h2>Slow SQL</h2>
+    <p>Ranked by <strong>average</strong> elapsed time per execution (total-elapsed ranking lives on the separate
+    Top SQL tab instead). Uses the same shared Slow Queries list and detail page every engine does — a row click
+    opens the detail page, whose execution-plan step re-runs the existing <code>v$sql_plan</code> lookup by
+    <code>sql_id</code> rather than a new Oracle-specific endpoint. See
+    <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button> for how this compares across engines.</p>
+    <h2>RMAN reporting — read-only</h2>
+    <div class="warnbox"><b>No backup-execution surface for Oracle — or for any engine</b>${icon('alerts',14)}<span>Oracle's only
+    backup-related feature is a read-only RMAN section inside the Reports page (job/failure counts, last full
+    backup) — there is no dashboard tab and no UI anywhere that takes, schedules, or restores an Oracle backup.
+    ActMon does not take, schedule, or restore backups for any of the seven engines.</span></div>
+    <h2>Reports — 20 sections, one conditional</h2>
+    <p>Twenty report sections built from 21 parallel endpoint calls. One section — EBS (E-Business Suite)
+    workflow and concurrent-manager status — only renders if the connection's own data reports
+    <code>is_ebs: true</code>; a non-EBS Oracle instance shows no EBS content at all.</p>
+    <h2>Index Analysis and error logs</h2>
+    <p>Index fragmentation here is explicitly a <em>proxy</em> (derived from B-tree level, not a direct
+    measurement), with copyable <code>ANALYZE INDEX … VALIDATE STRUCTURE</code> and <code>ALTER INDEX … REBUILD
+    ONLINE</code> statements. Error Logs reads the alert log and, if inaccessible, falls back to redo-log
+    metadata — but refuses to present that fallback as if it were real alert data, showing zero entries plus an
+    explanation instead.</p>
+  `
+};
+
+DOCS['dbm-mssql'] = {
+  title:'SQL Server (MSSQL) Dashboard', dek:'9 tabs and a real detail page for slow queries.',
+  crumbs:['ActMon Documentation','Database','SQL Server (MSSQL) Dashboard'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route and tabs</h2>
+    <p><code>/mssql-dashboard/:id</code> and <code>/:tab</code>. Exactly 9 tabs:
+    <strong>Overview, Performance, Queries, Databases, Tables, Locks, Replication, Logins, Storage</strong>.
+    Like MySQL/PostgreSQL, the whole dashboard is derived client-side from one payload call
+    (<code>monitoring-dashboard</code>) rather than Oracle's per-tab-query approach. Dedicated sibling routes:
+    <code>/slow-queries</code>, its own <code>/slow-queries/detail</code>, <code>/error-logs</code>,
+    <code>/index-analysis</code>, <code>/reports</code>.</p>
+    <h2>Overview tab</h2>
+    <p>8 metric tiles (Version/Edition, Uptime, Databases, Active sessions, Buffer cache %, Host/SQL CPU %, Wait
+    types count, Disk footprint), Host Resources, status pills (connection/buffer/CPU/memory %, blocking-chain
+    count, AlwaysOn/replication state), two charts (utilisation; top wait types from
+    <code>sys.dm_os_wait_stats</code>), three trend panels, three key/value panels (Server, Memory, Throughput),
+    and a blocking-chain warning when any exists.</p>
+    <h2>Slow Queries → the shared detail page</h2>
+    <p>Clicking a row here <strong>navigates</strong> to <code>/mssql-dashboard/:id/slow-queries/detail</code> —
+    the same shared detail page every engine opens into, on the reasoning MSSQL's own page originated: "the
+    per-query work (parse the tables, read each one's indexes, then ask the model) needs more room than a table
+    row, and it should be linkable." Real execution-plan XML retrieval is a disclosed follow-up here — this
+    engine's plan step says so rather than faking one. Full cross-engine comparison in
+    <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button>.</p>
+    <h2>Error Logs and self-heal</h2>
+    <p>Reads <code>xp_readerrorlog</code> (falls back to <code>sys.messages</code>, with an explicit warning that
+    the fallback is a message catalogue, not this server's actual log). Selecting a row opens a drawer offering
+    permission-gated diagnostic and remediation <strong>T-SQL commands</strong> — each is classified
+    safe/caution/dangerous, and a write/DDL command is refused if the connected login lacks the SQL Server
+    privilege it needs (sysadmin/securityadmin/ALTER ANY LOGIN). Full detail in
+    <button onclick="go('dbm-error-logs')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Error Logs &amp; Self-Heal</button>.</p>
+    <h2>Replication / AlwaysOn</h2>
+    <p>Shows AlwaysOn availability groups (name, role, synchronization health) when configured, falling back to a
+    "STANDALONE" label plus a snapshot-replication participants table otherwise.</p>
+    <div class="note"><b>No backup surface</b>${icon('book',14)}<span>ActMon does not take, schedule, or restore
+    backups for MSSQL — there is no backup-related tab or page on this dashboard.</span></div>
+  `
+};
+
+DOCS['dbm-mongodb'] = {
+  title:'MongoDB Dashboard', dek:'Operations, not queries — 13 tabs and sharding.',
+  crumbs:['ActMon Documentation','Database','MongoDB Dashboard'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route and tabs</h2>
+    <p><code>/mongodb-dashboard/:id</code> and <code>/:tab</code>. 13 tabs:
+    <strong>Overview, Operations, Profiler, Collections, Indexes, Replication, Oplog, Sharding, Transactions,
+    WiredTiger, Users, Slow Queries, Error Logs</strong>. The last two are <em>also</em> reachable as their own
+    dedicated routes (<code>/slow-queries</code>, <code>/error-logs</code>) — the standalone pages and the
+    embedded dashboard tabs are separate components covering the same data. The dedicated route moved from
+    <code>/slow-operations</code> to <code>/slow-queries</code> to match every other engine (an old bookmark to
+    <code>/slow-operations</code> still redirects).</p>
+    <div class="note"><b>MongoDB reports individual operations, not aggregated statistics</b>${icon('book',14)}<span>
+    <code>currentOp</code>/<code>system.profile</code> have no query-digest concept — each row on the shared
+    Slow Queries page is one observed operation, so its duration is that single operation's time, not a running
+    average. The page labels this explicitly rather than presenting a one-off value as an aggregate.</span></div>
+    <h2>Overview tab</h2>
+    <p>KPI strip (Version, Uptime, Databases, Collections, Connections, Memory, a Replication State badge —
+    PRIMARY/SECONDARY/STANDALONE, Total Ops), Host Resources, four gauges (connection %, WiredTiger cache used
+    %, op rate, WT cache hit %), sparklines, an opcounters chart plus a paged databases table, three info panels
+    (Server Information — including replica-set name and state — Memory &amp; WiredTiger Cache, Network &amp;
+    Global Lock), and quick-access cards to Slow Queries/Collection Analysis/Error Logs.</p>
+    <h2>Replication and Sharding — separate tabs, not part of Overview</h2>
+    <p>Replication shows the full replica-set member table (host, state, health, uptime, optime, lag, priority,
+    votes) with a per-secondary lag chart, or an explicit "no replica set detected" state on a standalone
+    instance. Sharding, likewise its own tab, shows shard count/sharded-DB count/balancer mode/config
+    servers/per-shard chunk distribution when sharding is enabled, or a plain "not running as a sharded cluster"
+    message when it isn't.</p>
+    <h2>Slow Queries (operations)</h2>
+    <p>Merges <code>db.currentOp()</code> (live) with <code>system.profile</code> (profiler) results, normalized
+    into the same common row shape every engine uses. A row click navigates to the shared detail page, same as
+    every other engine — its execution-plan step runs a real <code>explain("executionStats")</code> against the
+    operation's own filter and namespace (not just the <code>planSummary</code> string it used to show). Because
+    MongoDB has no per-query id, a direct link or reload to the detail page can't recover a specific past
+    operation — only opening it fresh from the list works, and the page says so. Full cross-engine comparison in
+    <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button>.</p>
+    <h2>Collection Analysis (there is no separate Index Analysis page)</h2>
+    <p>MongoDB has no standalone "Index Analysis" file — index browsing is a tab inside
+    <code>CollectionAnalysis.jsx</code>, alongside a Collections tab (size/document-count leaderboards, a full
+    filterable collection table) and an Insights tab (rollup metrics, a high-scan-ratio collection list, and
+    static best-practice recommendations — no live "apply this fix" action).</p>
+    <div class="note"><b>No backup surface</b>${icon('book',14)}<span>ActMon does not take, schedule, or restore
+    backups for MongoDB — there is no backup-related tab or page on this dashboard.</span></div>
+  `
+};
+
+DOCS['dbm-clickhouse'] = {
+  title:'ClickHouse Dashboard', dek:'Part pressure, merges, and compression — the 12-tab dashboard for a columnar store.',
+  crumbs:['ActMon Documentation','Database','ClickHouse Dashboard'], module:'Database', status:'Complete',
+  body:`
+    <h2>Route and tabs</h2>
+    <p><code>/clickhouse-dashboard/:id</code> and <code>/:tab</code>. 12 tabs, each backed by its own
+    <code>system.*</code> table read: <strong>Overview, Running, Query Log, Slow Queries, Databases, Tables,
+    Partitions, Merges, Replicas, Clusters, System Metrics, Settings</strong>. Slow Queries and Error Logs also
+    exist as separate dedicated routes (<code>/slow-queries</code>, <code>/error-logs</code>), plus a third
+    dedicated route, <code>/table-analysis</code>.</p>
+    <h2>Overview tab — part pressure is the headline concern</h2>
+    <p>8 metric tiles include a distinctive one for this engine: <strong>Parts / partition</strong>
+    (<code>max_part_count_for_partition</code>), with the explanation "ClickHouse stops accepting inserts into a
+    partition once it has too many parts." When part pressure exceeds 60% of a configurable threshold (default
+    3000), a warning notice about <code>TOO_MANY_PARTS</code> appears. Status pills cover parts % of limit,
+    memory %, disk %, cumulative failed queries, replication delay, and running-merges count; charts cover part
+    pressure/memory/disk utilisation and per-database space usage.</p>
+    <h2>Table Analysis — the distinctive, ClickHouse-specific page</h2>
+    <p>Five tabs, all oriented around the one number that becomes an outage: <strong>Part pressure</strong>
+    (per-table active-part count against the warning threshold, with a Healthy/High/"Inserts at risk" verdict),
+    <strong>Parts</strong> (the 200 largest active parts — explicitly capped, not a server total),
+    <strong>Merges</strong> (running merges, progress %, rows read/written/collapsed, with a warning above 15
+    concurrent merges), <strong>Table stats</strong> (rows/size/bytes-per-row per MergeTree table), and
+    <strong>Compression</strong> (uncompressed vs. compressed size, % saved, ratio badge per table).</p>
+    <h2>Query Log, Running, and Slow Queries</h2>
+    <p>Query Log and the dedicated Slow Queries page both read from <code>system.query_log</code>; both apply the
+    same ActMon-internal-query exclusion filter used across every SQL-based engine (see
+    <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button>), so ActMon's own bookkeeping queries against this
+    same ClickHouse instance never appear in either list.</p>
+    <h2>No backup surface</h2>
+    <p>ClickHouse has no Backup tab and no backup-related page anywhere in the Database module — ActMon does not
+    take, schedule, or restore backups for any of the seven engines.</p>
+  `
+};
+
+DOCS['dbm-cosmosdb'] = {
+  title:'Cosmos DB', dek:'The one engine that is billed per call — why its dashboard polls almost nothing on a timer.',
+  crumbs:['ActMon Documentation','Database','Cosmos DB'], module:'Database', status:'Complete',
+  body:`
+    <h2>A different connection model from the other six</h2>
+    <p>Cosmos DB does not go through <code>DatabaseServersPage.jsx</code>, the shared server list, or the
+    OS-agent Setup wizard at all — none of those model "an account endpoint, a key, and a default
+    database/container" the way they model a host/port. It has its own connections list
+    (<code>/cosmosdb-servers</code> → <code>CosmosDBConnectionsPage.jsx</code>) and its own edit page
+    (<code>/cosmosdb-edit/:id</code>), whose form fields (endpoint, primary key, database, container, API type,
+    preferred region, consistency level, etc.) are driven entirely from a dedicated field catalogue rather than
+    the host/port form every other engine shares. One documented quirk: the API never returns a saved key back to
+    the edit form, so the key field always loads blank — leaving it blank on save means "keep what is stored,"
+    not "clear the key."</p>
+    <h2>Why the dashboard polls almost nothing</h2>
+    <div class="warnbox"><b>Every read against a live Cosmos account costs money</b>${icon('alerts',14)}<span>The
+    dashboard's own code comment states this directly: Cosmos exposes no free, <code>system.*</code>-style
+    metrics tier the way the other six engines do — every figure shown is a real Azure API call, billed in
+    Request Units. Consequently, nothing on this dashboard polls the live account on an interval except one
+    endpoint that reads back ActMon's own log of calls it has already made (refreshed every 30s) — that one is
+    free because it never touches Cosmos itself.</span></div>
+    <h2>Route and tabs</h2>
+    <p><code>/cosmosdb-dashboard/:id</code> and <code>/:tab</code>. 8 tabs: <strong>Overview, Databases,
+    Containers, Documents, Indexing, Slow Calls, Errors, ActMon AI</strong>.</p>
+    <h2>Overview tab</h2>
+    <p>An explicit notice that its trend charts reflect "ActMon's own calls, not your application's traffic";
+    6 metric tiles (calls logged, avg response, last RU charge, slow calls, errors, throttled 429s), a
+    throttling notice when 429s occurred, four charts, a container-facts panel (partition key, throughput,
+    storage, document count, index size, TTL, indexing mode, consistency), and a Partitioning panel that
+    explicitly labels data it genuinely cannot show without Azure Monitor rather than omitting it silently.</p>
+    <h2>Documents, Indexing, Slow Calls, Errors</h2>
+    <p>Documents browses via Cosmos's own continuation-token paging (not page numbers, since Cosmos doesn't
+    support offset paging cheaply) and clearly marks a free-text WHERE-clause filter and an exact cross-partition
+    count as separately billed actions requiring an explicit click. Indexing shows the indexing policy with
+    "buys you / costs you" tradeoffs per path type, plus an AI analysis. Slow Calls and Errors are both driven
+    from the same ActMon call-log data as the Overview's Activity feed, not native Cosmos telemetry.</p>
+    <h2>No backup surface, and no clear add-connection path confirmed</h2>
+    <p>Like ClickHouse, there is no backup UI for Cosmos DB anywhere in the module. Separately: the connections
+    page's own "Add connection" button currently points at the generic agent Setup catalogue, whose technology
+    list does not include Cosmos DB — only the <strong>edit</strong> flow for an already-existing Cosmos
+    connection is clearly implemented in the reviewed frontend code.</p>
+  `
+};
+
+DOCS['dbm-slow-queries'] = {
+  title:'Slow Queries & Query Analysis', dek:'One shared page for every engine — how the backend normalizes six different collectors into a common shape, and what each engine honestly can\'t provide.',
+  crumbs:['ActMon Documentation','Database','Slow Queries & Query Analysis'], module:'Database', status:'Complete',
+  body:`
+    <h2>One shared page, not six</h2>
+    <p>Every engine's Slow Queries page — MySQL, PostgreSQL, MSSQL, Oracle, ClickHouse, MongoDB — renders through
+    the same two components (<code>frontend/src/pages/_shared/SlowQueriesPage.jsx</code> and
+    <code>SlowQueryDetailPage.jsx</code>), the same way <code>DatabaseServersPage</code> already serves every
+    engine's server list off one <code>tech</code> prop. Layout, tabs, filters, columns, severity thresholds and
+    states are identical everywhere; only the collection mechanism underneath differs per engine, and that
+    difference is deliberately invisible to the page itself.</p>
+    <h2>Four tabs, every engine</h2>
+    <p><strong>Overview</strong> — KPI strip, a slowest-12 bar chart, a by-user pie chart (where the engine reports
+    a user), and hotspot cards (slowest / most executed / most rows). <strong>Query Explorer</strong> — the full
+    filterable, sortable list; a row opens <strong>Detail</strong>, a separate page with the query's cost, its
+    native execution plan, and AI analysis. <strong>AI Analysis</strong> — pick from the worst 5 queries and run
+    ActMon's AI on any of them, independent of the detail page. <strong>Reports</strong> — a KPI summary plus a
+    client-side CSV export (built from already-fetched rows, not a backend report — PDF export is a different
+    feature, see <button onclick="go('dbm-reports')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Reports</button>).</p>
+    <h2>A common row shape, normalized server-side</h2>
+    <p>Each engine's own service (<code>pg_stat_statements</code> for PostgreSQL, <code>performance_schema</code>/
+    slow log for MySQL, <code>sys.dm_exec_query_stats</code> for MSSQL, <code>v$sqlarea</code> for Oracle,
+    <code>system.query_log</code> for ClickHouse, <code>currentOp</code>/<code>system.profile</code> for MongoDB)
+    keeps its own SQL — nothing here forces one engine's query shape onto another. What changed is the response:
+    every endpoint now also returns a <code>normalized</code> array of rows in one common shape (query id, query
+    text, database/schema/user/host, execution count, avg/min/max/total time, rows returned/affected, first/last
+    seen, status, severity, source) plus a <code>capabilities</code> object saying which of those fields this
+    engine can actually populate. The shared page reads only <code>normalized</code> and <code>capabilities</code>
+    — a field an engine cannot report is <code>null</code>, never guessed at, and the page hides that column
+    entirely rather than showing a column of dashes.</p>
+    <h2>Digest engines vs. one honest exception</h2>
+    <p>PostgreSQL, MySQL, MSSQL, Oracle and ClickHouse all aggregate by a query digest — one row represents every
+    execution of a query shape, with real averages and counts. MongoDB's <code>currentOp</code>/profiler data has
+    no digest concept at all: each row is <strong>one observed operation</strong>, not an aggregate, so its
+    "average time" column is genuinely that single operation's duration — the page labels this explicitly
+    (<code>capabilities.aggregation === "instance"</code>) rather than presenting a one-off value as a running
+    average.</p>
+    <h2>Refetch-by-id: four engines can, two honestly can't</h2>
+    <p>PostgreSQL, MySQL, MSSQL and Oracle rows carry a stable digest id, so the detail page can re-fetch a query
+    by id on a direct link or a page reload. ClickHouse's per-instance fallback rows and MongoDB's operations have
+    no such id — the specific instance may already be gone from the log or profiler by the time of a reload — so
+    those two show an honest "go back to the list" state instead of a broken re-fetch.</p>
+    <h2>Execution plans, per engine's own native mechanism</h2>
+    <p>PostgreSQL and MySQL run a real <code>EXPLAIN (ANALYZE)</code>; Oracle reuses its existing
+    <code>v$sql_plan</code> lookup by <code>sql_id</code>; ClickHouse runs <code>EXPLAIN PLAN</code>/
+    <code>EXPLAIN ESTIMATE</code>; MongoDB runs a real <code>explain("executionStats")</code> command (not just
+    the <code>planSummary</code> string it used to show). Each shape is rendered as its own kind of result — a
+    plan-node tree, an indented operation list, or a def-list of planner stats — rather than forced into one
+    generic table that doesn't fit all of them. MSSQL's real execution-plan XML retrieval is an explicit,
+    disclosed follow-up, not yet built; its detail page says so rather than faking a plan.</p>
+    <h2>ActMon does not let its own queries pollute this list</h2>
+    <p>Every engine's slow-query collector excludes ActMon's own internal bookkeeping tables (agents, audit log,
+    user/role/permission tables, cloud accounts, and more — one shared, maintained list in
+    <code>actmon_internal_tables.py</code>) before the rows ever reach the frontend — Postgres/MySQL/ClickHouse via
+    a regex match, MSSQL and Oracle via a <code>NOT LIKE</code> chain (Oracle's own regex engine has a pattern-length
+    ceiling a single alternation of this list exceeds), and MongoDB via a Python-side filter on the namespace and
+    query text. A monitored connection that happens to share ActMon's own Postgres instance will not show ActMon's
+    housekeeping queries mixed in with the real workload being watched.</p>
+    <h2>Setup prerequisites, when the engine needs one</h2>
+    <p>PostgreSQL's slow-query list requires the <code>pg_stat_statements</code> extension; when it's missing, the
+    Overview tab shows a setup panel with a one-click "Enable extension automatically" action alongside the manual
+    <code>postgresql.conf</code>/<code>CREATE EXTENSION</code>/grant instructions — falling back to
+    <code>pg_stat_activity</code> (live sessions only) in the meantime. Every other engine reads from an
+    always-available system view/schema with no equivalent setup gate.</p>
+  `
+};
+
+DOCS['dbm-error-logs'] = {
+  title:'Error Logs & Self-Heal', dek:'What each engine\'s error log actually shows, and the real gap between MySQL\'s self-heal UI and what it executes.',
+  crumbs:['ActMon Documentation','Database','Error Logs & Self-Heal'], module:'Database', status:'Complete',
+  body:`
+    <h2>Error logs, per engine</h2>
+    <p>Every engine's error-log page names its own real data source rather than presenting a possibly-stale
+    fallback as if it were live: PostgreSQL discloses whether it's reading a CSV log, stderr log, or falling back
+    to <code>pg_stat_activity</code> (in which case it explicitly warns that only live sessions are visible, not
+    historical errors); Oracle reads the alert log and, if inaccessible, falls back to redo-log metadata while
+    refusing to display that as alert content; MSSQL reads <code>xp_readerrorlog</code> and falls back to
+    <code>sys.messages</code> with an explicit "this is the message catalogue, not this server's log" warning;
+    MySQL's page also carries a guided "Fix Server" flow that offers concrete remediation commands when error
+    logging is disabled server-side.</p>
+    <h2>Self-heal exists for exactly two engines: MySQL and MSSQL</h2>
+    <p>There is no shared/generic self-heal service — each is an independent implementation with its own
+    knowledge base and its own permission logic. PostgreSQL, Oracle, MongoDB, ClickHouse, and Cosmos DB have
+    <strong>no</strong> self-heal feature at all.</p>
+    <h3>MSSQL — permission-gated, command-based</h3>
+    <p>Selecting an error opens a drawer with diagnostic and remediation <strong>T-SQL commands</strong>, each
+    classified safe/caution/dangerous. A write/DDL command is refused (not just hidden) if the connected SQL
+    Server login lacks the specific privilege it needs (sysadmin, securityadmin, or ALTER ANY LOGIN, depending on
+    the command) — the gate is a real database-login-privilege check, verified against the live connection each
+    time, not a static assumption.</p>
+    <h3>MySQL — a real, verified gap between the UI and the backend</h3>
+    <div class="warnbox"><b>The dedicated Self-Heal page's action choice is not actually read</b>${icon('alerts',14)}<span>
+    <code>MySQLSelfHeal.jsx</code> lets the user choose between "diagnose only" and "run self-heal," but the
+    backend service derives its own action type entirely from the AI analysis' output — a field the AI prompt in
+    this codebase never actually asks for. In practice this means the code path taken is effectively always the
+    read-only diagnose branch (checking service status and reading the latest error logs), regardless of which
+    radio button the user selected. This documentation states the code's real, verified behavior rather than
+    what the UI implies it does.</span></div>
+    <p>Separately, MySQL's full-featured <code>ErrorLogs.jsx</code> page has its own, more powerful Self-Heal
+    tab: a live terminal that streams AI-suggested or user-typed shell commands over the connection's <em>own</em>
+    configured SSH credentials (not the hardcoded fallback credentials the dedicated Self-Heal page's deeper
+    action branches use) — this pathway has no dry-run and no per-command confirmation beyond the initial "Run N
+    Commands" click, and requires SSH to already be configured for that connection.</p>
+    <h2>What "self-heal" never does, on any engine</h2>
+    <p>No self-heal surface on any engine performs a destructive action without either an explicit AI signal that
+    was never actually produced (MySQL's dedicated page) or an explicit per-command click plus a live
+    login-privilege check (MSSQL, and MySQL's terminal-based Self-Heal tab). There is no engine where self-heal
+    runs unattended on a schedule.</p>
+  `
+};
+
+DOCS['dbm-reports'] = {
+  title:'Reports', dek:'The shared report shell every engine builds its report page on, and how PDF export/email/scheduling works.',
+  crumbs:['ActMon Documentation','Database','Reports'], module:'Database', status:'Complete',
+  body:`
+    <h2>One shared shell, seven different reports</h2>
+    <p>Every engine's Reports page (MySQL, PostgreSQL, Oracle, MSSQL — MongoDB and ClickHouse assemble equivalent
+    material inline elsewhere, not as a dedicated Reports route) is built on the same shared report kit
+    (<code>frontend/src/pages/_shared/reportKit.jsx</code>): a period selector (commonly <code>live</code> plus
+    historical windows), a set of numbered sections assembled from many parallel endpoint calls specific to that
+    engine, and one shared export mechanism.</p>
+    <h2>How export actually works</h2>
+    <p>"Download PDF" does <strong>not</strong> call a report-generation endpoint — the already-rendered report
+    is captured client-side (the DOM is snapshotted to a canvas, then sliced into A4 pages), and the resulting
+    file is produced entirely in the browser. "Send / Schedule" opens a modal with a Send Now tab (attaches that
+    same client-captured PDF, or falls back to a backend-generated PDF if the client capture fails) and a
+    Schedule tab (recurring email delivery — hourly/daily/weekly/monthly/yearly). Sending requires an SMTP
+    configuration to already exist; if none is configured, the modal blocks sending and links to Settings.</p>
+    <h2>Where CSV lives instead</h2>
+    <p>None of the engine Reports pages offer a CSV export — CSV is a feature of the Slow Queries and Error Logs
+    pages instead (see <button onclick="go('dbm-slow-queries')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Slow Queries &amp; Query Analysis</button>), built client-side from
+    already-fetched rows, not a backend export.</p>
+    <h2>Permission gates on the export actions themselves</h2>
+    <p>The Download PDF button is only shown to callers with an <code>export</code> permission on the current
+    page; the Send/Schedule button requires <code>execute</code>. This is the one place in the Database module's
+    reviewed frontend code where an action button is gated by the application's own RBAC permission check rather
+    than being unconditionally rendered.</p>
+    <h2>Health scores are computed independently per surface</h2>
+    <p>A dashboard's own Overview tab and that same engine's Reports page each compute a health score with
+    slightly different weighting/thresholds — they are not guaranteed to show the same number for the same
+    connection at the same moment, since each was written to answer a slightly different question (a live
+    at-a-glance signal vs. a point-in-time report snapshot).</p>
+  `
+};
+
+DOCS['dbm-drilldown-diagnose'] = {
+  title:'Resource Drill-Down & Diagnose', dek:'Two separate, non-overlapping subsystems behind the Host Resources widget and a struggling connection\'s "Diagnose" link.',
+  crumbs:['ActMon Documentation','Database','Resource Drill-Down & Diagnose'], module:'Database', status:'Complete',
+  body:`
+    <div class="note"><b>These are two different features, not one</b>${icon('book',14)}<span>"Drill-down" and
+    "diagnose" are separate backend subsystems with no cross-reference between them in the reviewed code — they
+    solve different problems and are reached from different places.</span></div>
+    <h2>Resource Drill-Down — the Host Resources widget</h2>
+    <p>Embedded inline on every engine's dashboard Overview tab (the same shared component, unmodified per
+    engine), this is a CPU/RAM/Disk panel that opens into a 4-level, on-demand drill-down when a gauge is
+    clicked: <strong>Level 1</strong> the host's OS process list (sortable by CPU/Memory, tagging which processes
+    belong to the database); <strong>Level 2</strong> OS process detail for a non-database process, or
+    <strong>Level 3</strong> that database's own live sessions for a database-owned process; <strong>Level 4</strong>
+    session/query detail — state, wait event, blockers, last query, and, for PostgreSQL specifically, deeper
+    analysis (largest tables, missing-index recommendations with ready-to-run DDL, index usage stats,
+    partitioning candidates). A "Generate RCA Report" action is available at the final step. A separate
+    "History" view charts 1h/6h/24h of logged CPU/RAM/Disk samples, flags utilization spikes, and lets a past
+    snapshot be opened or turned into its own RCA. Nothing here is fetched until the user actually opens a
+    level — the widget's own top-level gauges are the only thing polled automatically.</p>
+    <h2>Diagnose — a connection-specific, on-demand health verdict</h2>
+    <p>Reached from a server/connection whose "Dashboard" link instead reads "Diagnose" (see
+    <button onclick="go('dbm-navigation')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Navigation</button>) — this is a targeted, real-time
+    service/port/log check, not a monitoring dashboard. It builds a check catalogue (OS-level plus DB-level
+    checks) that runs nothing until an individual check is actually invoked; each check goes over the agent's
+    shell channel to get the truth from the host itself (actual service status, whether the port is listening,
+    the collector's last real error) rather than trusting a possibly-stale cached dashboard value. PostgreSQL
+    gets a materially deeper diagnose implementation than the other six engines, which share one generic
+    version. The only mutating action this subsystem exposes directly is starting a stopped service; restart/stop
+    go through the same already-audited service-action endpoint the Infrastructure module uses. A diagnosis
+    "run" is only recorded to history once an admin actually executes a check — never just from opening the
+    page.</p>
+    <h2>Neither reads the cached telemetry tiers</h2>
+    <p>Both subsystems always query live (via SSH or the agent), never the Redis/ClickHouse metrics pipeline or
+    the snapshot cache each dashboard's own Overview payload uses — see
+    <button onclick="go('dbm-reference')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Reference</button> for how those caches work.</p>
+  `
+};
+
+DOCS['dbm-permissions'] = {
+  title:'Permissions', dek:'What is actually checked before a Database-module action runs — verified per engine, not assumed.',
+  crumbs:['ActMon Documentation','Database','Permissions'], module:'Database', status:'Complete',
+  body:`
+    <div class="imp"><b>No role/permission-based authorization exists in this backend at all</b>${icon('alerts',14)}<span>
+    A repository-wide check for a permission-checking mechanism on the backend turns up nothing — every access
+    control decision in the Database module's backend is organization (tenant) scoping only, never a role or
+    permission check. The frontend's own RBAC system (<code>canHere</code>/<code>can</code>) does gate a handful
+    of buttons — see below — but nothing re-checks that decision server-side.</span></div>
+    <h2>The one consistent pattern, across all seven engines</h2>
+    <p>For every engine, only that engine's connection <strong>list</strong> and <strong>create</strong>
+    endpoints apply organization scoping (filtering the list to the caller's org, and stamping new rows with the
+    caller's org id). Every other endpoint that engine's dashboard and sub-pages actually call — the dashboard
+    payload itself, slow queries, error logs, index analysis, replication, users, reports,
+    self-heal — takes only the numeric connection id, with <strong>no organization check</strong> found anywhere
+    in the route or service layer. This pattern is identical for MySQL, PostgreSQL, Oracle, MSSQL, MongoDB,
+    ClickHouse, and Cosmos DB — there is no engine that is meaningfully more or less scoped than the others.</p>
+    <div class="warnbox"><b>A missing or invalid token is treated as unrestricted, by design</b>${icon('alerts',14)}<span>
+    The organization-scoping helper explicitly treats a request with no bearer token, or one that fails to
+    decode, as a super-admin-equivalent caller with no organization filter applied — the code's own comment
+    states this is intentional, so "internal or agent callers" keep working without a user token. Combined with
+    the point above, this means any caller who can reach the API and knows (or guesses) a connection id can read
+    that connection's monitoring data regardless of which organization actually owns it.</span></div>
+    <h2>Where the frontend's own RBAC does gate something</h2>
+    <ul>
+      <li>The server list's "Add Server" header button and the empty state's "+ Add OS Server" button both
+      require the caller's <code>add</code> permission on the current route.</li>
+      <li>A Reports page's "Download PDF" button requires <code>export</code>; its "Send / Schedule" button
+      requires <code>execute</code> — the only place in this module where an action button (as opposed to a
+      whole page) is gated this way.</li>
+      <li>The Refresh, SSH-terminal, Dashboard/Diagnose/Connect, and Delete action icons on the server list are
+      <strong>not</strong> gated by any permission check in the reviewed frontend code — they render and work
+      regardless of role.</li>
+    </ul>
+    <p>As with the Agents module, "Permission Status"/login-privilege checks that appear inside MSSQL's self-heal
+    drawer (sysadmin/securityadmin/ALTER ANY LOGIN) are the <em>monitored database's own account</em> privileges
+    — unrelated to ActMon's own application-level RBAC.</p>
+  `
+};
+
+DOCS['dbm-states'] = {
+  title:'Error / Empty / Loading States', dek:'What the Database module looks like when data is missing, loading, or a connection is unreachable.',
+  crumbs:['ActMon Documentation','Database','Error / Empty / Loading States'], module:'Database', status:'Complete',
+  body:`
+    <h2>Server list</h2>
+    <ul>
+      <li><strong>Zero servers for a technology</strong> — an explanatory empty state with a "+ Add OS Server"
+      action (when the caller can add and isn't currently searching).</li>
+      <li><strong>Search matches nothing</strong> — a distinct "no servers matching…" message, no add action
+      shown.</li>
+      <li><strong>No allowed technologies for this role</strong> — the chooser screen shows its own "No database
+      access" empty state instead of an empty grid.</li>
+    </ul>
+    <h2>A dashboard whose connection can't be reached</h2>
+    <p>MySQL's dashboard replaces its entire tab UI with a diagnosis screen when the main data call errors: the
+    raw error, a heuristic "possible causes" list keyed to the specific error code, a live error-log feed, and
+    quick links into Error Logs/Self-Heal/Slow Queries/Index Analysis. Every engine's own "Diagnose" link (shown
+    instead of "Dashboard" on the server list whenever a connection exists but the database is not currently up)
+    is the more general version of this same idea — see
+    <button onclick="go('dbm-drilldown-diagnose')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Resource Drill-Down &amp; Diagnose</button>.</p>
+    <h2>Missing prerequisites, named rather than hidden</h2>
+    <p>Several features degrade to a named, explained state rather than an empty chart when a server-side
+    prerequisite is missing: PostgreSQL's slow queries without <code>pg_stat_statements</code>; MySQL's index
+    analysis without <code>performance_schema</code>; PostgreSQL's error logs falling back to
+    <code>pg_stat_activity</code>; Oracle's error logs falling back to redo-log metadata; MSSQL's error logs
+    falling back to <code>sys.messages</code>. In every one of these cases the UI states which real data source
+    it is actually showing, rather than silently substituting a lesser one.</p>
+    <h2>Reports</h2>
+    <p>The Send/Schedule email modal blocks sending outright, with a link to Settings, when no SMTP configuration
+    exists yet — rather than allowing a send that would silently fail.</p>
+  `
+};
+
+DOCS['dbm-troubleshooting'] = {
+  title:'Troubleshooting', dek:'Practical answers grounded in the actual Database module implementation.',
+  crumbs:['ActMon Documentation','Database','Troubleshooting'], module:'Database', status:'Complete',
+  body:`
+    <h3>A server's row still says "Connect," even though I already added a database on that host</h3>
+    <ul class="steps">
+      <li><strong>Problem</strong> — the row's action icon is "Connect" (Plus), not "Dashboard."</li>
+      <li><strong>Possible cause</strong> — a discovered database instance on this host was never linked to an
+      actual connection record; the two are separate rows until explicitly linked.</li>
+      <li><strong>Verification</strong> — check whether a connection with a matching name/host/port already
+      exists on the relevant engine's own connection list.</li>
+      <li><strong>Resolution</strong> — link the existing instance to the connection, or click Connect to create
+      one; if it was meant to be agent-monitored, use the Agent Setup wizard instead, which links the connection
+      automatically as part of registration.</li>
+    </ul>
+    <h3>A server's DB status is stuck on "Unknown" after registering it</h3>
+    <ul class="steps">
+      <li><strong>Problem</strong> — a newly-added server never reports Running/Stopped for its services.</li>
+      <li><strong>Possible cause</strong> — SSH-registered servers start every database instance at status
+      Unknown until a Refresh (or the next scheduled poll) actually reaches the host; agent-registered
+      connections depend on the per-connection agent row having been created — this has historically been a real
+      bug when that row was missing.</li>
+      <li><strong>Verification</strong> — use the row's Refresh action and see whether status updates
+      immediately.</li>
+      <li><strong>Resolution</strong> — confirm SSH credentials are correct for a direct connection, or confirm
+      an agent is actually enrolled and running for an agent-based one.</li>
+    </ul>
+    <h3>Slow Queries / Error Logs shows nothing, even though the database is clearly busy</h3>
+    <ul class="steps">
+      <li><strong>Problem</strong> — an empty or near-empty slow-query/error list on an active database.</li>
+      <li><strong>Possible cause</strong> — a missing prerequisite named by the page itself: PostgreSQL without
+      <code>pg_stat_statements</code>, MySQL without <code>performance_schema</code>, or an error-log page that
+      has silently fallen back to a lesser data source (see
+      <button onclick="go('dbm-states')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Error / Empty / Loading States</button>).</li>
+      <li><strong>Verification</strong> — read the page's own setup-guide or fallback-source notice; it names
+      the exact missing prerequisite.</li>
+      <li><strong>Resolution</strong> — follow the on-page instructions (enable the extension/schema, or fix the
+      logging configuration named).</li>
+    </ul>
+    <h3>Self-heal on MySQL seems to ignore my "diagnose only" vs "run" choice</h3>
+    <ul class="steps">
+      <li><strong>Problem</strong> — the dedicated Self-Heal page's radio choice doesn't seem to change what
+      actually runs.</li>
+      <li><strong>Possible cause</strong> — this is expected, verified behavior: the backend derives its action
+      type from the AI analysis' own output, a field the current AI prompt never actually returns, so the
+      read-only diagnose path runs in practice regardless of the UI selection (see
+      <button onclick="go('dbm-error-logs')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Error Logs &amp; Self-Heal</button>).</li>
+      <li><strong>Verification</strong> — check the self-heal history record for the run; it will show a
+      diagnose-only outcome.</li>
+      <li><strong>Resolution</strong> — for an actual remediation action, use the connection's Error Logs page's
+      own Self-Heal tab (the SSH-terminal-based one) instead.</li>
+    </ul>
+    <h3>A Reports page's "Send / Schedule" button is missing or disabled</h3>
+    <ul class="steps">
+      <li><strong>Problem</strong> — no way to email or schedule a report.</li>
+      <li><strong>Possible cause</strong> — the caller's role lacks the <code>execute</code> permission this
+      button is gated behind, or (separately) no SMTP configuration exists yet.</li>
+      <li><strong>Verification</strong> — check the role's permissions, and check Settings for an SMTP config.</li>
+      <li><strong>Resolution</strong> — grant the permission, or configure SMTP, as applicable.</li>
+    </ul>
+  `
+};
+
+DOCS['dbm-reference'] = {
+  title:'Database Reference', dek:'Consolidated reference — routes, the collector/telemetry architecture, and per-engine endpoint tables.',
+  crumbs:['ActMon Documentation','Database','Database Reference'], module:'Database', status:'Complete',
+  body:`
+    <h2>Frontend routes</h2>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Route</th><th>Component</th></tr>
+      <tr><td><code>/databases</code></td><td><code>DatabaseServersPage</code> (chooser)</td></tr>
+      <tr><td><code>/{tech}-servers</code> (mysql, postgresql, oracle, mssql, mongodb, clickhouse)</td><td><code>DatabaseServersPage</code> (per-tech list)</td></tr>
+      <tr><td><code>/cosmosdb-servers</code></td><td><code>CosmosDBConnectionsPage</code></td></tr>
+      <tr><td><code>/databases/add-os-server</code></td><td><code>AddOsServerPage</code></td></tr>
+      <tr><td><code>/{tech}-dashboard/:id(/:tab)</code></td><td>Per-engine dashboard component</td></tr>
+      <tr><td><code>/mysql-dashboard/:id/{slow-queries, error-logs, error-analysis, self-heal, index-analysis, reports}</code></td><td>Dedicated MySQL sub-pages</td></tr>
+      <tr><td><code>/postgresql-dashboard/:id/{slow-queries, slow-queries/detail, error-logs, index-analysis, reports}</code></td><td>Dedicated PostgreSQL sub-pages</td></tr>
+      <tr><td><code>/oracle-dashboard/:id/{live-queries, slow-queries, error-logs, index-analysis, reports}</code></td><td>Dedicated Oracle sub-pages</td></tr>
+      <tr><td><code>/mssql-dashboard/:id/{slow-queries, slow-queries/detail, error-logs, index-analysis, reports}</code></td><td>Dedicated MSSQL sub-pages</td></tr>
+      <tr><td><code>/mongodb-dashboard/:id/{slow-operations, error-logs, collection-analysis}</code></td><td>Dedicated MongoDB sub-pages</td></tr>
+      <tr><td><code>/clickhouse-dashboard/:id/{slow-queries, error-logs, table-analysis}</code></td><td>Dedicated ClickHouse sub-pages</td></tr>
+      <tr><td><code>/cosmosdb-edit/:id</code></td><td>Cosmos connection edit form</td></tr>
+    </table></div>
+    <h2>Telemetry architecture — three tiers, not one</h2>
+    <p>A per-engine dashboard's own payload is served primarily from a PostgreSQL-backed JSON snapshot cache
+    (refreshed roughly every 60 seconds by a background collector; a <code>live</code> query parameter bypasses
+    it for a fresh read). A separate, generic numeric metrics API (<code>/api/v1/metrics/...</code>) exposes the
+    Redis hot-ring (very latest samples) and ClickHouse history (longer-range) tiers used for gauges/trend
+    widgets — its own documentation instructs callers to treat an empty result as "this tier is offline" and
+    fall back to the PostgreSQL-backed endpoints, confirming it is a supplementary surface, not the primary one.
+    A third path — Resource Drill-Down and Diagnose — always queries live over SSH/agent and never reads either
+    cached tier; see
+    <button onclick="go('dbm-drilldown-diagnose')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Resource Drill-Down &amp; Diagnose</button>.</p>
+    <h2>The collector abstraction</h2>
+    <p>A shared proxy layer resolves whether a connection's host has an enrolled agent and, if so, builds a
+    SQLAlchemy-engine-shaped shim that routes queries through that agent instead of a direct connection — see
+    <button onclick="go('dbm-connections')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Connections &amp; Collectors</button>. MySQL/PostgreSQL can fall back to a direct query if the
+    agent doesn't answer; Oracle/MSSQL never do (they surface an explicit timeout error instead).</p>
+    <h2>Endpoint families, per engine</h2>
+    <p>Every engine follows the same two-router shape: one CRUD router (list/create — organization-scoped;
+    get/update/delete/test — not organization-scoped) and one (or more) monitoring routers covering the
+    dashboard payload, slow queries, error logs, index analysis, and engine-specific tabs — none of the
+    monitoring endpoints apply organization scoping. See
+    <button onclick="go('dbm-permissions')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Permissions</button> for the verified specifics of that gap.</p>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Engine</th><th>Primary endpoint prefix</th><th>Distinctive endpoint families</th></tr>
+      <tr><td>MySQL</td><td><code>/connections/mysql</code></td><td>slow-queries (explain-analyze, analyze-groq, export), error-logs (self-heal, self-heal-stream), index-analysis, replication, table browsing, report email</td></tr>
+      <tr><td>PostgreSQL</td><td><code>/connections/postgresql</code></td><td>24 monitoring endpoints incl. pg-slow-queries, pg-index-analysis, pg-wal-stats, pg-checkpoint-stats, pg-slru-stats, pg-ssl-stats; drilldown (host-metrics, processes, session detail, rca, grant-monitor, history)</td></tr>
+      <tr><td>Oracle</td><td><code>/connections/oracle</code></td><td>31 monitoring endpoints — the most granular of any engine — incl. sga/pga-detail, top-sql, wait-events, tablespaces, data-guard, redo-logs, rman-backup (read-only), archive-log-gap, ebs-concurrent/ebs-workflow</td></tr>
+      <tr><td>MSSQL</td><td><code>/connections/mssql</code></td><td>One large monitoring-dashboard payload; slow-queries (analyze-groq); error-analysis (error-deep-analysis, heal-permissions, run-command)</td></tr>
+      <tr><td>MongoDB</td><td><code>/connections/mongodb</code></td><td>mongo-ops/profiler/slow-operations, mongo-collections/indexes/collection-analysis, mongo-replication/oplog/sharding/transactions/wiredtiger/users, analyze-groq</td></tr>
+      <tr><td>ClickHouse</td><td><code>/connections/clickhouse</code></td><td>ch-queries/query-log/slow-queries (ActMon-query-excluded), ch-tables/partitions/merges/replicas/clusters, ch-table-analysis</td></tr>
+      <tr><td>Cosmos DB</td><td><code>/connections/cosmosdb</code></td><td>databases/containers/items/query/document-count (billed, RU-based), activity (free — reads ActMon's own call log), ai-analysis</td></tr>
+    </table></div>
+    <h2>Shared infrastructure endpoints</h2>
+    <div class="tblwrap"><table class="doc">
+      <tr><th>Endpoint</th><th>Purpose</th></tr>
+      <tr><td><code>GET /os-servers/live-status</code>, <code>/summary</code>, <code>/</code></td><td>Server list live status / fleet summary / full list — polled by the chooser and per-tech screens</td></tr>
+      <tr><td><code>POST /os-servers/</code>, <code>PUT/DELETE /os-servers/{id}</code></td><td>Create/update/delete a server (create is org-scoped; update/delete are not)</td></tr>
+      <tr><td><code>POST /os-servers/test-ssh</code>, <code>/os-servers/{id}/refresh</code></td><td>SSH connectivity test; deep SSH refresh of CPU/RAM/Disk/uptime and per-service status</td></tr>
+      <tr><td><code>POST /os-servers/{id}/instances/{instId}/link</code></td><td>Link a discovered database instance to a connection</td></tr>
+      <tr><td><code>/api/v1/drilldown/{tech}/{conn_id}/...</code>, <code>/connections/postgresql/{conn_id}/...</code> (drilldown)</td><td>Resource Drill-Down — see <button onclick="go('dbm-drilldown-diagnose')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Resource Drill-Down &amp; Diagnose</button></td></tr>
+      <tr><td><code>/{conn_id}/diagnose/plan</code>, <code>/check/{id}</code>, <code>/rca</code>, <code>/diagnose</code></td><td>Diagnose — connection-specific live health verdict</td></tr>
+      <tr><td><code>/api/v1/metrics/live/{agent}</code>, <code>/history/{agent}</code>, <code>/stable/{agent}</code></td><td>Generic Redis/ClickHouse/PostgreSQL telemetry tiers</td></tr>
+    </table></div>
+    <h2>Navigation summary</h2>
+    <p>See <button onclick="go('dbm-navigation')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Navigation</button> for the chooser→list→dashboard flow, and each engine's
+    own topic for that engine's tab list and sub-pages.</p>
+  `
+};
+
 /* ---------------- "coming soon" module stubs ---------------- */
 MODULES.filter(m=>!m.available).forEach(m=>{
   DOCS[m.id] = {
@@ -1682,4 +2649,4 @@ MODULES.filter(m=>!m.available).forEach(m=>{
 /* ============================================================
    Runtime — sidebar, router, breadcrumbs, pager, search
    ============================================================ */
-export const FLOW = [...GS_TOPICS.map(t=>t[0]), ...DASH_TOPICS.map(t=>t[0]), ...AGENTS_TOPICS.map(t=>t[0])];
+export const FLOW = [...GS_TOPICS.map(t=>t[0]), ...DASH_TOPICS.map(t=>t[0]), ...AGENTS_TOPICS.map(t=>t[0]), ...DATABASE_TOPICS.map(t=>t[0])];

@@ -12,13 +12,18 @@ import Input from '@/components/ui/Input';
 import PageHeader from '@/components/layout/PageHeader';
 import Tabs from '@/components/ui/Tabs';
 import Table, { EmptyState } from '@/components/ui/Table';
+import { usePermissions } from '@/hooks/usePermissions';
 
 // Same tab set as the host detail page — clicking one here navigates back to
-// /infra/:id and asks it to open that tab (see InfraHostDetail's location.state.tab).
+// /infra/:id/:tab (tabs are real routes there, see InfraHostDetail's SLUG_FOR_TAB).
 const TABS = ['Overview', 'Ports', 'Processes', 'Storage', 'Network', 'Services', 'Diagnostics', 'IP Configuration', 'Config Files'];
 const TAB_ICONS = {
   Overview: 'activity', Ports: 'plug', Processes: 'box', Storage: 'desktop', Network: 'network',
   Services: 'settings2', Diagnostics: 'diagnose', 'IP Configuration': 'route', 'Config Files': 'file-edit',
+};
+const SLUG_FOR_TAB = {
+  Overview: 'overview', Ports: 'ports', Processes: 'processes', Storage: 'storage', Network: 'network',
+  Services: 'services', Diagnostics: 'diagnostics', 'IP Configuration': 'ip-configuration', 'Config Files': 'config-files',
 };
 
 const fmtBytes = (b) => {
@@ -36,6 +41,7 @@ export function InfraFileExplorer() {
   const { id } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { canHere } = usePermissions();
   const [params, setParams] = useSearchParams();
   const path = params.get('path') || '/';
   const file = params.get('file') || null;
@@ -114,7 +120,7 @@ export function InfraFileExplorer() {
   const crumbs = active === '/' ? [] : active.replace(/^\/+/, '').split('/');
   const crumbPath = (i) => '/' + crumbs.slice(0, i + 1).join('/');
 
-  const goTab = (t) => navigate(`/infra/${id}`, { state: { tab: t } });
+  const goTab = (t) => navigate(`/infra/${id}${t !== 'Overview' ? `/${SLUG_FOR_TAB[t]}` : ''}`);
   const refreshAll = () => {
     qc.invalidateQueries({ queryKey: ['hostInfraDetail', id] });
     qc.invalidateQueries({ queryKey: ['fsList', id] });
@@ -202,19 +208,23 @@ export function InfraFileExplorer() {
             <Badge tone="warning" size="sm">File Explorer</Badge>
             <Button variant="secondary" size="sm" icon="folder" onClick={() => setParams({ path: '/' })}>File Explorer</Button>
             <Button variant="secondary" size="sm" icon="shield-check" onClick={() => goTab('IP Configuration')}>Firewall</Button>
-            {hostRow.collector === 'agent' && isWin && (
+            {hostRow.collector === 'agent' && isWin && canHere('execute') && (
               <Button variant="secondary" size="sm" icon="download" title="Download the latest agent and upgrade in place" onClick={() => setShowUpdate(true)}>Update Agent</Button>
             )}
-            <Button variant="secondary" size="sm" icon="power" onClick={() => setShowRestart(true)}>Restart</Button>
-            <button
-              type="button"
-              onClick={refreshAll}
-              title="Refresh now"
-              className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
-            >
-              <Icon name="refresh" size={13} className={hostFetching || isFetching || reading ? 'animate-spin' : undefined} />
-              Refresh
-            </button>
+            {canHere('restart') && (
+              <Button variant="secondary" size="sm" icon="power" onClick={() => setShowRestart(true)}>Restart</Button>
+            )}
+            {canHere('view') && (
+              <button
+                type="button"
+                onClick={refreshAll}
+                title="Refresh now"
+                className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
+              >
+                <Icon name="refresh" size={13} className={hostFetching || isFetching || reading ? 'animate-spin' : undefined} />
+                Refresh
+              </button>
+            )}
           </>
         }
       />
@@ -305,7 +315,7 @@ export function InfraFileExplorer() {
               <span className="font-mono">{fmtBytes(doc.size)}</span>
               {doc.truncated && <Badge tone="warning" size="xs">showing first {fmtBytes(doc.read_bytes)}</Badge>}
               <div className="ml-auto flex items-center gap-2">
-                {!doc.binary && !editing && !doc.truncated && (
+                {!doc.binary && !editing && !doc.truncated && canHere('edit') && (
                   <Button variant="secondary" size="sm" icon="file-edit" onClick={startEdit}>Edit</Button>
                 )}
                 {!doc.binary && !editing && doc.truncated && (

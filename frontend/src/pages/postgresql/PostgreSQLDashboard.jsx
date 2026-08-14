@@ -34,9 +34,6 @@ import { PageLoading } from '@/components/ui/Loading';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptPostgresTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 
-// Backup & PITR rendered inline as a dashboard tab (keeps the shared topbar).
-const PostgreSQLBackupPageEmbedded = React.lazy(() => import('./PostgreSQLBackupPage'));
-
 /* ─── palette ─── */
 const C = {
   pg:     '#336791',
@@ -65,7 +62,6 @@ const TABS = [
   { id: 'replication', label: 'Replication', icon: GitBranch },
   { id: 'users',       label: 'Users',       icon: Users },
   { id: 'storage',     label: 'Storage',     icon: HardDrive },
-  { id: 'backup',      label: 'Backup & PITR', icon: Shield },
   { id: 'config',      label: 'Config',      icon: Settings },
 ];
 
@@ -729,13 +725,6 @@ export default function PostgreSQLDashboard() {
         {/* ══ CONFIG ══ */}
         {activeTab === 'config' && (
           <AdvancedConfigTab detail={configDetail} isLoading={configLoading} refetch={refetchConfig} />
-        )}
-
-        {/* ══ BACKUP & PITR (embedded — keeps the dashboard topbar) ══ */}
-        {activeTab === 'backup' && (
-          <React.Suspense fallback={<PageLoading title="Loading backup & PITR…" />}>
-            <PostgreSQLBackupPageEmbedded embedded />
-          </React.Suspense>
         )}
 
       </div>

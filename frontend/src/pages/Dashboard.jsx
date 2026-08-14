@@ -172,7 +172,7 @@ export default function Dashboard() {
       <div className="mt-gutter-lg grid gap-gutter-lg xl:grid-cols-4">
         <div className="flex flex-col gap-gutter-lg xl:col-span-3">
           {/* shape of the estate: health, engines, where it runs */}
-          <div className="grid gap-gutter-lg lg:grid-cols-3">
+          <div className="grid gap-gutter-lg lg:grid-cols-4">
             <ChartCard
               cardId="fleet-health"
               family="flat"
@@ -204,6 +204,28 @@ export default function Dashboard() {
             />
 
             <ChartCard
+              cardId="hosts-by-os"
+              family="flat"
+              defaultKind="donut"
+              items={d.byOsType}
+              chartProps={{
+                legend: 'below',
+                size: 146,
+                centerLabel: `${d.infra.total} Hosts`,
+                emptyLabel: 'No hosts registered yet',
+                labelWidth: 64,
+              }}
+              title="Hosts by OS"
+              className="lg:min-h-[260px]"
+              loading={busy}
+              tableColumns={[
+                { key: 'os', label: 'OS' },
+                { key: 'hosts', label: 'Hosts', align: 'right' },
+              ]}
+              tableRows={d.byOsType.map((o) => ({ key: o.key, cells: { os: o.label, hosts: o.value } }))}
+            />
+
+            <ChartCard
               cardId="engine-distribution"
               family="flat"
               defaultKind="donut"
@@ -211,6 +233,7 @@ export default function Dashboard() {
               chartProps={{
                 legend: 'below',
                 size: 146,
+                centerLabel: `${engineShare.reduce((s, e) => s + e.value, 0)} Hosts`,
                 emptyLabel: 'No database hosts discovered yet',
                 labelWidth: 84,
               }}
@@ -232,6 +255,7 @@ export default function Dashboard() {
               chartProps={{
                 legend: 'below',
                 size: 146,
+                centerLabel: showCloud ? `${d.cloud.total} Accounts` : `${d.infra.total} Hosts`,
                 labelWidth: 92,
                 emptyLabel: showCloud ? 'No accounts' : 'No hosts registered yet',
               }}
@@ -301,6 +325,11 @@ export default function Dashboard() {
               chartProps={{
                 max: 100, unit: '%', format: (v) => Math.round(v),
                 emptyLabel: 'No host is reporting CPU yet',
+                // Switched to the donut form, these are independent hosts' CPU
+                // %s — summing them (PieChart's default center label) is a
+                // meaningless number, not a "total". Name what's actually
+                // being counted instead, same as the other donuts on this page.
+                centerLabel: `${cpuItems.length} Host${cpuItems.length !== 1 ? 's' : ''}`,
               }}
               title="Top Hosts By CPU"
               titleNote={`(Top ${TOP_CPU_HOSTS})`}

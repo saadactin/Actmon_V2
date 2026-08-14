@@ -1,127 +1,253 @@
-import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronRight, Cloud, Clock, Globe, Plus, Server } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, LayoutGrid, List } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
+import { useCloudStore } from '../state/cloudStore';
 import { PROVIDER_META } from '../components/CloudProviderSelector';
+import { CloudAccountList } from '../components/CloudAccountList';
+import CloudPageHeader from '../components/CloudPageHeader';
+import CloudFilterBar from '../components/CloudFilterBar';
+import CloudSection from '../components/CloudSection';
+import { KEY_TO_SLUG, keyFromSlug, providerKeyOf } from '../utils/providerScope';
+import Icon from '@/components/ui/Icon';
 
-const SLUG_TO_KEY = { aws: 'AWS', azure: 'Azure', oci: 'OCI' };
-const providerKeyOf = (p) => (p === 'Oracle' ? 'OCI' : p);
+// Real taxonomy this app's Cloud accounts are tagged with — see
+// AddCloudAccountForm's <select name="environment"> options. Not the same
+// set as the Databases module's ENV_FILTERS (no UAT/Testing here).
+const ENV_FILTERS = ['All', 'Production', 'Staging', 'Development'];
 
-export default function CloudProviderAccountsPage() {
+// last_discovery_status is derived server-side from the account's most recent
+// discovery job (never_scanned | scanning | failed | ok) — never_scanned and
+// scanning both read as "needs attention", the same bar mysql-servers' Warning
+// bucket sets, since neither confirms the connection is actually healthy.
+const bucketOf = (acc) => {
+  const status = acc.last_discovery_status;
+  if (status === 'ok') return 'online';
+  if (status === 'failed') return 'offline';
+  return 'warning';
+};
+
+// `provider` ('aws' | 'azure' | 'oci') comes in as a literal prop from the
+// route definition (App.jsx), the same way DatabaseServersPage takes a
+// `tech` prop per /{tech}-servers route, rather than a dynamic :provider
+// param — each provider gets its own clean, bookmarkable URL.
+export default function CloudProviderAccountsPage({ provider: slug }) {
   const navigate = useNavigate();
-  const { provider: slug } = useParams();
-  const providerKey = SLUG_TO_KEY[(slug || '').toLowerCase()] || slug;
+  const setDrawerOpen = useCloudStore((state) => state.setAddAccountDrawerOpen);
+  const providerKey = keyFromSlug(slug) || slug;
   const meta = PROVIDER_META[providerKey] || { label: providerKey, color: '#64748b', bg: '#f1f5f9', logo: '☁️' };
 
-  const { data: accounts, isLoading } = useCloudAccounts();
+  const { data: accounts } = useCloudAccounts();
   const { data: allResources } = useAllResources();
+  const [search, setSearch] = useState('');
+  const [envFilter, setEnvFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [view, setView] = useState('list');
 
   const providerAccounts = (accounts || []).filter((a) => providerKeyOf(a.provider) === providerKey);
-  const resourceCountFor = (accountId) => (allResources || []).filter((r) => r.account_id === accountId).length;
+  const providerAccountIds = new Set(providerAccounts.map((a) => a.id));
+  const totalResources = (allResources || []).filter((r) => providerAccountIds.has(r.account_id)).length;
+  const onlineCount = providerAccounts.filter((a) => bucketOf(a) === 'online').length;
+  const warningCount = providerAccounts.filter((a) => bucketOf(a) === 'warning').length;
+  const offlineCount = providerAccounts.filter((a) => bucketOf(a) === 'offline').length;
+
+  const KPI_CARDS = [
+    {
+      key: null,
+      icon: null,
+      logo: meta.logo,
+      iconBg: meta.bg,
+      iconColor: meta.color,
+      label: 'Total',
+      value: providerAccounts.length,
+      sub: 'accounts',
+      ring: 'ring-accent-soft',
+    },
+    {
+      key: 'online',
+      icon: 'check',
+      iconBg: 'var(--success-soft)',
+      iconColor: 'var(--success-fg)',
+      label: 'Online',
+      value: onlineCount,
+      sub: 'last scan ok',
+      ring: 'ring-success-soft',
+    },
+    {
+      key: 'warning',
+      icon: 'alert',
+      iconBg: 'var(--warning-soft)',
+      iconColor: 'var(--warning-fg)',
+      label: 'Warning',
+      value: warningCount,
+      sub: 'needs attention',
+      ring: 'ring-warning-soft',
+    },
+    {
+      key: 'offline',
+      icon: 'ban',
+      iconBg: 'var(--danger-soft)',
+      iconColor: 'var(--danger-fg)',
+      label: 'Offline',
+      value: offlineCount,
+      sub: 'scan failed',
+      ring: 'ring-danger-soft',
+    },
+    {
+      key: null,
+      icon: 'boxes',
+      iconBg: 'var(--accent-soft)',
+      iconColor: 'var(--accent-text)',
+      label: 'Resources',
+      value: totalResources,
+      sub: 'discovered',
+      ring: 'ring-accent-soft',
+      clickable: false,
+    },
+  ];
 
   return (
-    <div className="min-h-full bg-[#f1f4f9]">
-      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 pt-3 pb-4 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
-
-        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
-          <span>ActMon</span><ChevronRight size={11} />
-          <button onClick={() => navigate('/cloud')} className="hover:text-white/90 transition-colors">Cloud</button>
-          <ChevronRight size={11} /><span className="text-white font-semibold">{providerKey}</span>
-        </div>
-
-        <div className="relative flex items-center gap-3">
-          <button onClick={() => navigate('/cloud')}
-            className="w-9 h-9 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 flex items-center justify-center flex-shrink-0" title="Back to providers">
-            <ArrowLeft size={16} className="text-white" />
-          </button>
-          <div className="w-9 h-9 rounded-lg bg-white/15 border border-white/25 flex items-center justify-center flex-shrink-0 text-lg">
+    <>
+      <CloudPageHeader
+        title={meta.label || providerKey}
+        description={`${providerAccounts.length} account${providerAccounts.length !== 1 ? 's' : ''} · pick one to view its dashboard`}
+        backTo="/cloud"
+        leading={(
+          <div
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-xl"
+            style={{ background: meta.bg, color: meta.color }}
+          >
             {meta.logo}
           </div>
-          <div>
-            <h1 className="text-lg font-black text-white tracking-tight leading-none">{meta.label || providerKey}</h1>
-            <p className="text-sky-200/70 text-[11px] mt-0.5">{providerAccounts.length} account{providerAccounts.length !== 1 ? 's' : ''} · pick one to view its dashboard</p>
-          </div>
+        )}
+        actions={(
           <button
-            onClick={() => navigate('/cloud/accounts')}
-            className="ml-auto h-9 px-4 rounded-lg bg-white text-blue-700 font-bold flex items-center gap-1.5 hover:bg-sky-50 shadow-sm transition-all text-sm flex-shrink-0"
+            onClick={() => setDrawerOpen(true)}
+            className="flex h-control shrink-0 items-center gap-1.5 rounded-control bg-accent px-3.5 text-[13px] font-semibold text-accent-fg transition-colors hover:bg-accent-hover"
           >
             <Plus size={15} /> Add Account
           </button>
-        </div>
-      </div>
-
-      <div className="max-w-screen-2xl mx-auto px-8 py-10">
-        <div className="flex items-center gap-3 mb-7">
-          <h2 className="text-[18px] font-black text-slate-800">Accounts</h2>
-          <div className="flex-1 h-px bg-slate-200" />
-        </div>
-
-        {isLoading ? (
-          <div className="text-center py-16 text-slate-400 text-sm">Loading accounts…</div>
-        ) : providerAccounts.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-16 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
-              <Cloud size={28} className="text-slate-300" />
-            </div>
-            <h3 className="text-lg font-black text-slate-700">No {providerKey} accounts connected</h3>
-            <p className="text-slate-400 text-sm mt-1">Add a {providerKey} account to start discovering its resources.</p>
-            <button onClick={() => navigate('/cloud/accounts')}
-              className="mt-5 h-10 px-5 rounded-xl bg-blue-600 text-white font-bold text-sm hover:bg-blue-700 shadow inline-flex items-center gap-2">
-              <Plus size={16} /> Add {providerKey} Account
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {providerAccounts.map((acc) => {
-              const resourceCount = resourceCountFor(acc.id);
-              return (
-                <button
-                  key={acc.id}
-                  onClick={() => navigate(`/cloud/${slug}/${acc.id}`)}
-                  className="group relative bg-white rounded-2xl border-2 border-slate-100 p-6 text-left shadow-md hover:shadow-xl transition-all duration-200 hover:-translate-y-1"
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm text-xl"
-                      style={{ background: meta.bg, color: meta.color }}>
-                      {meta.logo}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-[16px] font-black text-slate-900 leading-tight truncate">{acc.account_name}</h3>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        {acc.environment && (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{acc.environment}</span>
-                        )}
-                        <span className="text-[11px] text-slate-400 flex items-center gap-1"><Globe size={10} /> {acc.tenant_or_region}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 mt-4 flex-wrap">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
-                      <Server size={11} className="text-slate-500" />
-                      <span className="text-[12px] font-black text-slate-700">{resourceCount}</span>
-                      <span className="text-[10px] text-slate-400">resources</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 border border-slate-200">
-                      <Clock size={11} className="text-slate-500" />
-                      <span className="text-[11px] text-slate-500">
-                        {acc.last_discovery ? new Date(acc.last_discovery).toLocaleDateString() : 'Never scanned'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
-                    <span className="text-[12px] font-bold" style={{ color: meta.color }}>Open dashboard</span>
-                    <ChevronRight size={15} style={{ color: meta.color }} className="group-hover:translate-x-1 transition-transform" />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         )}
+      />
+
+      {/* KPI cards — same click-to-filter card row mysql-servers uses (Total/Online/Warning/Offline), extended with a Resources card since Cloud has no cluster/HA-group concept */}
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+        {KPI_CARDS.map((card) => {
+          const clickable = card.clickable !== false;
+          const active = clickable && statusFilter === card.key;
+          const Wrapper = clickable ? 'button' : 'div';
+          return (
+            <Wrapper
+              key={card.label}
+              type={clickable ? 'button' : undefined}
+              onClick={clickable ? () => setStatusFilter((prev) => (prev === card.key ? null : card.key)) : undefined}
+              className={`flex items-center gap-3 rounded-2xl border bg-surface px-4 py-3.5 text-left shadow-sm transition-all ${
+                clickable ? 'hover:-translate-y-0.5 hover:shadow-md' : ''
+              } ${active ? `border-transparent ring-2 ${card.ring}` : 'border-border'}`}
+            >
+              <div
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-lg"
+                style={{ background: card.iconBg, color: card.iconColor }}
+              >
+                {card.logo ? card.logo : <Icon name={card.icon} size={18} />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">{card.label}</p>
+                <p className="text-2xl leading-none font-black text-fg">{card.value}</p>
+                <p className="mt-0.5 truncate text-[10px] text-subtle">{card.sub}</p>
+              </div>
+            </Wrapper>
+          );
+        })}
       </div>
-    </div>
+
+      {statusFilter && (
+        <div className="-mt-4 mb-4 flex items-center gap-2">
+          <span className="text-xs text-muted">
+            Filtered by <b className="capitalize text-fg">{statusFilter}</b>
+          </span>
+          <button onClick={() => setStatusFilter(null)} className="text-xs font-bold text-accent-text hover:opacity-80">
+            Clear
+          </button>
+        </div>
+      )}
+
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-surface px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-1">
+          {ENV_FILTERS.map((env) => (
+            <button
+              key={env}
+              type="button"
+              onClick={() => setEnvFilter(env)}
+              className={`h-7 rounded-lg px-3.5 text-[11px] font-bold transition-all ${
+                envFilter === env
+                  ? 'bg-accent text-accent-fg shadow'
+                  : 'text-subtle hover:bg-sunken hover:text-fg'
+              }`}
+            >
+              {env}
+            </button>
+          ))}
+        </div>
+
+        {/* provider switcher — same role as mysql-servers' tech-switcher pills */}
+        <div className="ml-2 flex flex-wrap items-center gap-1 border-l border-border pl-2">
+          {Object.keys(PROVIDER_META).map((key) => {
+            const pMeta = PROVIDER_META[key];
+            const isActive = key === providerKey;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => navigate(`/cloud/${KEY_TO_SLUG[key]}-accounts`)}
+                className={`flex h-7 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-all ${
+                  isActive ? 'border-transparent text-white shadow' : 'border-border text-subtle hover:opacity-80'
+                }`}
+                style={isActive ? { background: pMeta.color } : undefined}
+              >
+                <span>{pMeta.logo}</span>
+                <span className="hidden sm:inline">{key}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <div className="min-w-[200px] max-w-xs flex-1">
+            <CloudFilterBar
+              search={search}
+              onSearchChange={setSearch}
+              searchPlaceholder={`Search ${providerKey} account name…`}
+            />
+          </div>
+          <div className="flex rounded-xl bg-sunken p-0.5">
+            {[['grid', LayoutGrid], ['list', List]].map(([v, Ico]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                title={`${v} view`}
+                className={`flex h-8 w-9 items-center justify-center rounded-lg transition-all ${
+                  view === v ? 'bg-surface text-accent-text shadow-sm' : 'text-subtle hover:text-fg'
+                }`}
+              >
+                <Ico size={15} />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <CloudSection bodyClassName="p-0">
+        <CloudAccountList
+          search={search}
+          providerFilter={providerKey}
+          environmentFilter={envFilter}
+          statusFilter={statusFilter}
+          view={view}
+        />
+      </CloudSection>
+    </>
   );
 }

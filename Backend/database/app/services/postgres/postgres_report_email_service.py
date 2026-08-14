@@ -113,7 +113,6 @@ def _collect_report_data(conn_id: int, base_url: str) -> dict:
         "wal":          _fetch(b, f"{p}/pg-wal-stats"),
         "checkpoint":   _fetch(b, f"{p}/pg-checkpoint-stats"),
         "sessions":     _fetch(b, f"{p}/pg-session-details"),
-        "backup":       _fetch(b, f"{p}/backup-summary"),
     }
 
 
@@ -144,7 +143,6 @@ def generate_postgres_pdf(db_name: str, report_period: str, data: dict,
     hs     = dash.get("health_summary", {}) or dash.get("overview", {}) or {}
     tables = (data.get("tables", {}) or {}).get("tables", []) or []
     repl   = data.get("replication", {}) or {}
-    backup = data.get("backup", {}) or {}
 
     server      = _s(conn_host or hs.get("host"), db_name)
     db_version  = _s(hs.get("version") or hs.get("pg_version"), "N/A")
@@ -157,8 +155,6 @@ def generate_postgres_pdf(db_name: str, report_period: str, data: dict,
 
     repl_standby = _s((repl.get("standbys") or [{}])[0].get("application_name") if repl.get("standbys") else None, "None")
     repl_lag     = _s((repl.get("standbys") or [{}])[0].get("write_lag") if repl.get("standbys") else None, "N/A")
-
-    last_bkp     = _s((backup.get("last_backup") or {}).get("status") or backup.get("last_backup_time"), "No data")
 
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -230,7 +226,6 @@ def generate_postgres_pdf(db_name: str, report_period: str, data: dict,
     kv_row("Database Size",       db_size,        True)
     kv_row("Replication Standby", repl_standby,  False)
     kv_row("Replication Lag",     repl_lag,       True)
-    kv_row("Last Backup",         last_bkp,      False)
     pdf.ln(4)
 
     if tables:
@@ -422,7 +417,7 @@ def build_email_body(db_name: str, report_period: str, data: dict, has_pdf: bool
           </table>
         </td></tr>
         <tr><td style="font-size:13px;color:#334155;line-height:1.75;padding:8px 0 20px 0;font-family:Arial,sans-serif">
-          Please review the <strong>attached PDF report</strong> for complete details including performance, WAL stats, replication, and backup status.
+          Please review the <strong>attached PDF report</strong> for complete details including performance, WAL stats, and replication.
         </td></tr>
         <tr><td style="font-size:13px;color:#334155;padding-bottom:6px;font-family:Arial,sans-serif">Regards,</td></tr>
         <tr><td style="padding-bottom:2px">

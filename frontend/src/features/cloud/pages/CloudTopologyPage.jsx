@@ -1,14 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 import { useTopology } from '../hooks/useTopology';
 import { useCloudScope } from '../hooks/useCloudScope';
-import { CloudProviderSelector } from '../components/CloudProviderSelector';
-import {
-  ZoomIn, ZoomOut, Maximize2, Search, ExternalLink, X,
-  RefreshCw, Info, Share2, Loader2, Network,
-} from 'lucide-react';
+import CloudPageHeader from '../components/CloudPageHeader';
+import CloudToolbar from '../components/CloudToolbar';
+import CloudSection from '../components/CloudSection';
+import Icon from '@/components/ui/Icon';
+import IconButton from '@/components/ui/IconButton';
+import Button from '@/components/ui/Button';
+import { Spinner } from '@/components/ui/Loading';
 
 // ── Type Metadata ──────────────────────────────────────────────────
+// NOTE: these are literal hex values, not theme tokens — they colour the
+// SVG graph itself (nodes/edges/legend swatches) and must stay pixel-identical
+// across themes so a node's colour always means the same resource type.
 const TYPE_META = {
   // ── AWS ──
   EC2Instance: { color: '#f59e0b', label: 'EC2 Instance' },
@@ -75,7 +81,7 @@ const TYPE_META = {
 const CARD_W = 200;
 const CARD_H = 68;
 
-export const CloudTopologyPage = () => {
+export const CloudTopologyPage = ({ embedded = false }) => {
   const navigate = useNavigate();
   // Scope-aware (see useCloudScope) — topology stays on the chosen provider.
   const scope = useCloudScope();
@@ -215,58 +221,69 @@ export const CloudTopologyPage = () => {
   const outbound = selectedNodeId ? edges.filter((e) => e.source === selectedNodeId).map((e) => ({ edge: e, node: nodes.find((n) => n.id === e.target) })).filter((c) => c.node) : [];
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-slate-100 px-7 pt-6 pb-0">
+    <div className="flex flex-col bg-bg">
       {/* ── Header ──────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4 flex-wrap mb-3 shrink-0">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
-            <span className="p-2 rounded-lg bg-blue-50 text-blue-600">
-              <Share2 size={20} />
-            </span>
-            Resource Topology Map
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">Visual dependency graph · drag to pan · scroll to zoom</p>
-        </div>
-
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Search */}
-          <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-lg px-3 py-1.5 w-[210px] focus-within:ring-2 focus-within:ring-blue-500">
-            <Search size={14} className="text-gray-400 shrink-0" />
+      {embedded ? (
+        <div className="mb-4 flex shrink-0 items-center justify-end gap-2">
+          <div className="flex h-control w-[210px] items-center gap-2 rounded-control border border-border bg-surface px-3 focus-within:ring-2 focus-within:ring-accent">
+            <Icon name="search" size={14} className="shrink-0 text-subtle" />
             <input
               type="text"
               placeholder="Search resource…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-transparent border-none outline-none text-sm text-gray-700 placeholder:text-gray-400"
+              className="w-full bg-transparent border-none outline-none text-sm text-fg placeholder:text-subtle"
             />
             {searchQuery && (
-              <button onClick={() => setSearchQuery('')} className="text-gray-400 hover:text-gray-600 flex items-center shrink-0"><X size={12} /></button>
+              <button type="button" onClick={() => setSearchQuery('')} className="text-subtle hover:text-fg flex items-center shrink-0">
+                <Icon name="close" size={12} />
+              </button>
             )}
           </div>
-
-          {/* Account picker */}
-          {accounts && accounts.length > 0 && (
-            <CloudProviderSelector
-              accounts={accounts}
-              mode="multi"
-              selected={currentAccountView}
-              onSelect={(id) => { setCurrentAccountView(id || 'ALL'); setSelectedNodeId(null); }}
-            />
-          )}
-
-          {/* Refresh */}
-          <button
-            onClick={() => refetch()}
-            className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg px-3 py-1.5 text-sm font-semibold inline-flex items-center gap-1.5"
-            title="Refresh"
-          >
-            <RefreshCw size={15} />
-          </button>
+          <IconButton icon="refresh" label="Refresh" onClick={() => refetch()} />
         </div>
-      </div>
+      ) : (
+        <CloudPageHeader
+          className="shrink-0"
+          backTo="/cloud"
+          icon="network"
+          title="Resource Topology Map"
+          description="Visual dependency graph · drag to pan · scroll to zoom"
+          actions={(
+            <CloudToolbar
+              selectorProps={accounts && accounts.length > 0 ? {
+                accounts,
+                mode: 'multi',
+                selected: currentAccountView,
+                onSelect: (id) => { setCurrentAccountView(id || 'ALL'); setSelectedNodeId(null); },
+              } : undefined}
+            >
+              {/* Search */}
+              <div className="flex h-control w-[210px] items-center gap-2 rounded-control border border-border bg-surface px-3 focus-within:ring-2 focus-within:ring-accent">
+                <Icon name="search" size={14} className="shrink-0 text-subtle" />
+                <input
+                  type="text"
+                  placeholder="Search resource…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-transparent border-none outline-none text-sm text-fg placeholder:text-subtle"
+                />
+                {searchQuery && (
+                  <button type="button" onClick={() => setSearchQuery('')} className="text-subtle hover:text-fg flex items-center shrink-0">
+                    <Icon name="close" size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* Refresh */}
+              <IconButton icon="refresh" label="Refresh" onClick={() => refetch()} />
+            </CloudToolbar>
+          )}
+        />
+      )}
 
       {/* ── Legend ──────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-2.5 flex items-center gap-4 flex-wrap mb-3 shrink-0">
+      <CloudSection className="mb-3 shrink-0" bodyClassName="flex items-center gap-4 flex-wrap">
         {[
           { color: '#eab308', label: 'Security edge' },
           { color: '#10b981', label: 'Data flow' },
@@ -274,24 +291,29 @@ export const CloudTopologyPage = () => {
           { color: '#9ca3af', label: 'IAM role' },
           { color: '#d1d5db', label: 'Default resource' },
         ].map((l) => (
-          <div key={l.label} className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+          <div key={l.label} className="inline-flex items-center gap-1.5 text-xs text-muted">
             <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: l.color }} />
             {l.label}
           </div>
         ))}
-        <div className="ml-auto inline-flex items-center gap-1.5 text-xs text-gray-500">
-          <Info size={12} />
+        <div className="ml-auto inline-flex items-center gap-1.5 text-xs text-subtle">
+          <Icon name="info" size={12} />
           {nodes.length} nodes · {edges.length} edges
         </div>
-      </div>
+      </CloudSection>
 
-      {/* ── Main area ───────────────────────────────────────────── */}
-      <div className="flex gap-4 flex-1 min-h-0 pb-6">
+      {/* ── Main area ─────────────────────────────────────────────
+          Explicit height (not flex-1 off a viewport-height ancestor): this
+          page renders inside AppShell's own scroll container, not a
+          dedicated full-height shell, so sizing off 100vh here would
+          overflow by the top-nav/tab-bar/header's height and force a
+          second, outer scrollbar. */}
+      <div className="flex gap-4 pb-6 h-[calc(100vh-19rem)] min-h-[420px]">
 
         {/* Canvas */}
         <div
           ref={canvasRef}
-          className="relative bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden min-h-0 select-none transition-[flex] duration-300"
+          className="relative rounded-card border border-border bg-surface overflow-hidden min-h-0 select-none transition-[flex] duration-300"
           style={{
             cursor: isDragging ? 'grabbing' : 'grab',
             flex: selectedNode ? '1 1 0%' : '1 1 100%',
@@ -302,37 +324,41 @@ export const CloudTopologyPage = () => {
           onMouseLeave={handleMouseUp}
         >
           {/* Column headers */}
-          <div className="absolute top-0 left-0 right-0 h-11 flex items-center bg-white/95 border-b border-gray-200 pointer-events-none z-[5]">
-            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">Identity &amp; Network</div>
-            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">Compute &amp; Logic</div>
-            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-gray-500">Storage &amp; Database</div>
+          <div className="absolute top-0 left-0 right-0 h-11 flex items-center bg-surface/95 border-b border-border pointer-events-none z-[5]">
+            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-muted">Identity &amp; Network</div>
+            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-muted">Compute &amp; Logic</div>
+            <div className="flex-1 text-center text-xs font-semibold uppercase tracking-wider text-muted">Storage &amp; Database</div>
           </div>
 
           {/* Zoom controls */}
-          <div className="absolute bottom-5 left-4 z-10 flex flex-col items-center gap-1.5 bg-white border border-gray-200 rounded-lg shadow-md p-1.5">
-            <button onClick={() => setZoom((p) => Math.min(3, p + 0.12))} className="w-8 h-8 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center justify-center" title="Zoom in"><ZoomIn size={15} /></button>
-            <span className="text-[11px] font-semibold text-gray-600 text-center leading-none">{Math.round(zoom * 100)}%</span>
-            <button onClick={() => setZoom((p) => Math.max(0.3, p - 0.12))} className="w-8 h-8 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center justify-center" title="Zoom out"><ZoomOut size={15} /></button>
-            <div className="w-full h-px bg-gray-200" />
-            <button onClick={resetView} className="w-8 h-8 rounded-md border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 flex items-center justify-center" title="Reset view"><Maximize2 size={15} /></button>
+          <div className="absolute bottom-5 left-4 z-10 flex flex-col items-center gap-1.5 bg-surface border border-border rounded-control shadow-md p-1.5">
+            <IconButton size="sm" label="Zoom in" onClick={() => setZoom((p) => Math.min(3, p + 0.12))}>
+              <ZoomIn size={15} />
+            </IconButton>
+            <span className="text-[11px] font-semibold text-muted text-center leading-none">{Math.round(zoom * 100)}%</span>
+            <IconButton size="sm" label="Zoom out" onClick={() => setZoom((p) => Math.max(0.3, p - 0.12))}>
+              <ZoomOut size={15} />
+            </IconButton>
+            <div className="w-full h-px bg-border" />
+            <IconButton size="sm" icon="expand" label="Reset view" onClick={resetView} />
           </div>
 
           {/* Loading state */}
           {isLoading && (
             <div className="absolute inset-0 z-[8] flex flex-col items-center justify-center gap-3">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-              <span className="text-sm text-gray-500">Building topology graph…</span>
+              <Spinner size="lg" />
+              <span className="text-sm text-muted">Building topology graph…</span>
             </div>
           )}
 
           {/* Empty state */}
           {!isLoading && nodes.length === 0 && (
             <div className="absolute inset-0 z-[8] flex flex-col items-center justify-center text-center px-6">
-              <span className="p-3 rounded-full bg-gray-100 text-gray-400 mb-3">
-                <Network size={24} />
+              <span className="p-3 rounded-full bg-sunken text-subtle mb-3">
+                <Icon name="network" size={24} />
               </span>
-              <h3 className="text-base font-semibold text-gray-900">No topology data</h3>
-              <p className="text-sm text-gray-500 mt-1">Run a discovery scan to build the dependency graph.</p>
+              <h3 className="text-base font-semibold text-fg">No topology data</h3>
+              <p className="text-sm text-muted mt-1">Run a discovery scan to build the dependency graph.</p>
             </div>
           )}
 
@@ -502,7 +528,7 @@ export const CloudTopologyPage = () => {
 
         {/* ── Detail Sidebar ───────────────────────────────────── */}
         {selectedNode && selectedNodeMeta && (
-          <div className="w-80 shrink-0 bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col overflow-y-auto">
+          <div className="w-80 shrink-0 rounded-card border border-border bg-surface p-5 flex flex-col overflow-y-auto">
             {/* Sidebar header with close */}
             <div className="flex items-start gap-3 mb-5">
               <div
@@ -510,7 +536,7 @@ export const CloudTopologyPage = () => {
                 style={{ background: selectedNodeMeta.color }}
               />
               <div className="flex-1 min-w-0">
-                <h3 className="text-[15px] font-semibold text-gray-900 break-all leading-snug">
+                <h3 className="text-[15px] font-semibold text-fg break-all leading-snug">
                   {selectedNode.name}
                 </h3>
                 <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: selectedNodeMeta.color }}>
@@ -518,17 +544,11 @@ export const CloudTopologyPage = () => {
                 </span>
               </div>
               {/* Close button */}
-              <button
-                onClick={() => setSelectedNodeId(null)}
-                className="w-7 h-7 rounded-md border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 flex items-center justify-center shrink-0"
-                title="Close details"
-              >
-                <X size={16} />
-              </button>
+              <IconButton icon="close" label="Close details" size="sm" onClick={() => setSelectedNodeId(null)} />
             </div>
 
             {/* Meta rows */}
-            <dl className="border border-gray-200 rounded-lg divide-y divide-gray-100 overflow-hidden mb-5">
+            <dl className="border border-border rounded-control divide-y divide-border overflow-hidden mb-5">
               {[
                 // status is null for types with no real status (buckets, IAM roles, ResourceGroup hubs…) → neutral N/A
                 { label: 'Status', value: selectedNode.status?.toUpperCase() ?? 'N/A', accent: !!selectedNode.status },
@@ -539,13 +559,13 @@ export const CloudTopologyPage = () => {
                 { label: 'Resource ID', value: selectedNode.provider_id || 'N/A', mono: true },
               ].map((row) => (
                 <div key={row.label} className="flex items-start justify-between gap-3 px-3.5 py-2.5">
-                  <dt className="text-xs text-gray-500 uppercase font-semibold shrink-0">{row.label}</dt>
+                  <dt className="text-xs text-muted uppercase font-semibold shrink-0">{row.label}</dt>
                   <dd className={`text-right break-all ${
                     row.accent
-                      ? 'text-sm font-semibold text-emerald-600'
+                      ? 'text-sm font-semibold text-success-fg'
                       : row.mono
-                        ? 'text-xs font-mono text-gray-800'
-                        : 'text-sm text-gray-800'
+                        ? 'text-xs font-mono text-fg'
+                        : 'text-sm text-fg'
                   }`}>
                     {row.value}
                   </dd>
@@ -559,12 +579,14 @@ export const CloudTopologyPage = () => {
             <ConnectionList title="Outputs" connections={outbound} onSelect={setSelectedNodeId} />
 
             {/* CTA */}
-            <button
+            <Button
+              variant="primary"
+              className="mt-4 w-full"
+              iconRight="external"
               onClick={() => navigate(`/cloud/resources/${selectedNode.id}`)}
-              className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 py-2.5 text-sm font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
             >
-              View Full Resource Details <ExternalLink size={13} />
-            </button>
+              View Full Resource Details
+            </Button>
           </div>
         )}
       </div>
@@ -576,11 +598,11 @@ export const CloudTopologyPage = () => {
 function ConnectionList({ title, connections, onSelect }) {
   return (
     <div className="mb-2">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-        {title} <span className="text-gray-400">({connections.length})</span>
+      <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">
+        {title} <span className="text-subtle">({connections.length})</span>
       </div>
       {connections.length === 0
-        ? <div className="text-sm text-gray-400 italic pl-1">None</div>
+        ? <div className="text-sm text-subtle italic pl-1">None</div>
         : (
           <div className="flex flex-col gap-1.5">
             {connections.map((c, i) => {
@@ -590,10 +612,10 @@ function ConnectionList({ title, connections, onSelect }) {
                   key={i}
                   type="button"
                   onClick={() => onSelect(c.node.id)}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 bg-white border border-gray-200 rounded-lg text-left cursor-pointer hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                  className="w-full flex items-center gap-2.5 px-3 py-2 bg-surface border border-border rounded-control text-left cursor-pointer hover:bg-accent-soft hover:border-strong transition-colors"
                 >
                   <span className="w-1 h-6 rounded-sm shrink-0" style={{ background: m.color }} />
-                  <span className="flex-1 text-sm font-medium text-gray-800 truncate">
+                  <span className="flex-1 text-sm font-medium text-fg truncate">
                     {c.node.name}
                   </span>
                   <span

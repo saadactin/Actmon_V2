@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,11 +10,15 @@ import Input from '@/components/ui/Input';
 import Switch from '@/components/ui/Switch';
 import Badge from '@/components/ui/Badge';
 import Steps from '@/components/ui/Steps';
-import { createOsServer, listOsServers, testSshConnection } from '@/api/servers';
+import { createOsServer, getOsServer, linkDbInstance, listOsServers, testSshConnection } from '@/api/servers';
+import { createConnection, testConnection } from '@/api/connections';
 import {
   AGENT_STEPS, DATABASE_SERVICES, ENVIRONMENTS, NODE_TYPES, OPERATING_SYSTEMS,
   SERVER_FORM_DEFAULTS, SSH_STEPS, TECH_ROUTE, serviceColor, toServerPayload,
 } from '@/config/servers';
+import { engineMeta } from '@/config/engines';
+import ConnectionFieldsForm from '@/components/connections/ConnectionFieldsForm';
+import { defaultsForEngine, requiredFieldsForEngine, toConnectionPayload } from '@/config/connectionFieldCatalog';
 
 /**
  * Add OS Server.
@@ -36,12 +40,28 @@ export default function AddOsServerPage() {
   const [step, setStep] = useState(0);
   const [selectedOs, setSelectedOs] = useState('Linux');
   const [selectedDbs, setSelectedDbs] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
   const [sshTested, setSshTested] = useState(false);
   const [message, setMessage] = useState(null);
   const [showPass, setShowPass] = useState(false);
   const [collector, setCollector] = useState('ssh'); // 'ssh' | 'agent'
+
+  /* ── server registration + per-engine connection sequencing ──────────────
+     The server is created once, right as Services hands off to Add
+     Connection — not at the very end — so each connection created after this
+     point can be linked to a real server/instance immediately, the same way
+     it would be if added later from the Database hub. Nothing here is a new
+     backend concept: createOsServer, getOsServer, createConnection and
+     linkDbInstance all already exist and are unchanged. */
+  const [serverId, setServerId] = useState(null);
+  const [dbInstances, setDbInstances] = useState([]); // [{id, db_type, ...}] from getOsServer
+  const [registering, setRegistering] = useState(false);
+  const [connIdx, setConnIdx] = useState(0); // index into selectedDbs for the current connection form
+  const [connForms, setConnForms] = useState({}); // { [dbName]: fieldValues }
+  const [connErrors, setConnErrors] = useState({});
+  const [connTestResult, setConnTestResult] = useState(null);
+  const [connSaving, setConnSaving] = useState(false);
+  const [connResults, setConnResults] = useState({}); // { [dbName]: {status:'saved'|'skipped', connectionId?} }
 
   const { register, getValues, setValue, watch, formState: { errors } } = useForm({
     defaultValues: SERVER_FORM_DEFAULTS,
@@ -99,22 +119,122 @@ export default function AddOsServerPage() {
     }
   };
 
-  const onSubmit = async () => {
+  /* Registers the server the moment Services hands off — not at the very end
+     — so every connection added afterward has a real server to attach to,
+     the same way linking one later from the Database hub already works. */
+  const registerServer = async () => {
     const data = getValues();
-    setLoading(true); setMessage(null);
+    setRegistering(true); setMessage(null);
     try {
-      await createOsServer(toServerPayload({ data, selectedOs, selectedDbs, collector }));
+      const res = await createOsServer(toServerPayload({ data, selectedOs, selectedDbs, collector }));
+      const newId = res?.data?.id ?? res?.id;
+      setServerId(newId);
       qc.invalidateQueries({ queryKey: ['osServers'] });
       qc.invalidateQueries({ queryKey: ['serverSummary'] });
-      setMessage({ type: 'success', text: 'Server registered successfully! Redirecting…' });
-      // Land on the servers page for the first DB service on this host.
-      const techSlug = TECH_ROUTE[selectedDbs[0]];
-      setTimeout(() => navigate(techSlug ? `/${techSlug}-servers` : '/databases'), 1200);
+
+      if (selectedDbs.length > 0) {
+        const detail = await getOsServer(newId);
+        setDbInstances(detail?.data?.db_instances || detail?.db_instances || []);
+        setConnIdx(0);
+        setStep(cur + 1); // Services → Add Connection
+      } else {
+        setStep(cur + 2); // nothing to connect — straight to Review
+      }
+      return true;
     } catch (err) {
-      setMessage({ type: 'error', text: err?.message || 'Failed to save server' });
+      setMessage({ type: 'error', text: err?.message || 'Failed to register server' });
+      return false;
     } finally {
-      setLoading(false);
+      setRegistering(false);
     }
+  };
+
+  /* ── the current engine in the Add Connection sequence ───────────────── */
+  const currentDbName = selectedDbs[connIdx];
+  const currentEngineKey = currentDbName ? TECH_ROUTE[currentDbName] : null;
+  const currentMeta = currentEngineKey ? engineMeta(currentEngineKey) : null;
+  const currentForm = currentDbName ? connForms[currentDbName] : null;
+
+  // Seed each engine's form the first time its turn comes up — host from the
+  // server just registered, port from that engine's own default, a suggested
+  // name. Only ever runs once per engine (guarded by the form not existing
+  // yet), so it never clobbers what the user has already typed.
+  useEffect(() => {
+    if (!currentDbName || connForms[currentDbName]) return;
+    setConnForms((f) => ({
+      ...f,
+      [currentDbName]: {
+        ...defaultsForEngine(currentEngineKey, currentMeta?.port),
+        host: wIp || '',
+        connection_name: `${wName || 'server'}-${currentEngineKey}`,
+      },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentDbName]);
+
+  const setCurrentForm = (next) => {
+    setConnForms((f) => ({ ...f, [currentDbName]: next }));
+    setConnTestResult(null);
+  };
+
+  const advanceConnection = () => {
+    setConnTestResult(null); setConnErrors({});
+    if (connIdx + 1 < selectedDbs.length) {
+      setConnIdx((i) => i + 1);
+    } else {
+      setStep(cur + 1); // Add Connection → Review
+    }
+  };
+
+  const validateCurrentConn = () => {
+    const next = {};
+    requiredFieldsForEngine(currentEngineKey).forEach((f) => {
+      if (!String(currentForm?.[f] ?? '').trim()) next[f] = 'Required';
+    });
+    setConnErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const testCurrentConnection = async () => {
+    if (!validateCurrentConn()) return;
+    setConnTestResult({ tone: 'info', title: 'Testing…' });
+    try {
+      const r = await testConnection(currentEngineKey, toConnectionPayload(currentEngineKey, currentForm));
+      setConnTestResult({ tone: 'success', title: r?.message || 'Connection successful.' });
+    } catch (err) {
+      setConnTestResult({ tone: 'danger', title: 'Connection failed.', body: err?.message });
+    }
+  };
+
+  const saveCurrentConnection = async () => {
+    if (!validateCurrentConn()) return;
+    setConnSaving(true);
+    try {
+      const fallbackName = `${wName || 'server'}-${currentEngineKey}`;
+      const res = await createConnection(currentEngineKey, toConnectionPayload(currentEngineKey, currentForm, fallbackName));
+      const connectionId = res?.data?.id ?? res?.id;
+      const instance = dbInstances.find((i) => i.db_type === currentDbName);
+      if (instance?.id && connectionId) {
+        await linkDbInstance(serverId, instance.id, connectionId);
+      }
+      setConnResults((r) => ({ ...r, [currentDbName]: { status: 'saved', connectionId } }));
+      advanceConnection();
+    } catch (err) {
+      setConnTestResult({ tone: 'danger', title: 'Could not save connection.', body: err?.message });
+    } finally {
+      setConnSaving(false);
+    }
+  };
+
+  const skipCurrentConnection = () => {
+    setConnResults((r) => ({ ...r, [currentDbName]: { status: 'skipped' } }));
+    advanceConnection();
+  };
+
+  const finish = () => {
+    const firstSaved = selectedDbs.find((d) => connResults[d]?.status === 'saved');
+    const techSlug = firstSaved ? TECH_ROUTE[firstSaved] : null;
+    navigate(techSlug ? `/${techSlug}-servers` : '/databases');
   };
 
   /* ── steps ──────────────────────────────────────────────────────────────── */
@@ -400,11 +520,42 @@ export default function AddOsServerPage() {
           checked={watch('auto_discovery')} onChange={(v) => setValue('auto_discovery', v)}
         />
       </div>
+      {message && <MessageBox message={message} />}
+    </StepBody>
+  );
+
+  /* The server is already registered by the time this step is reached (see
+     registerServer) — this walks through one connection form per selected
+     engine, pre-filled from the server's own host, saving each independently
+     via the same createConnection() a standalone "Add Connection" page uses,
+     then linking it to this server's matching DatabaseInstance row. */
+  const addConnectionStep = currentDbName ? (
+    <StepBody
+      title={`Add Connection — ${currentMeta.name}`}
+      hint={`${connIdx + 1} of ${selectedDbs.length} — connect ActMon to this ${currentMeta.name} instance`}
+    >
+      <ConnectionFieldsForm
+        engine={currentEngineKey}
+        value={currentForm || {}}
+        onChange={setCurrentForm}
+        errors={connErrors}
+      />
+      {connTestResult && (
+        <div className="mt-gutter">
+          <MessageBox message={{ type: connTestResult.tone === 'danger' ? 'error' : 'success', text: [connTestResult.title, connTestResult.body].filter(Boolean).join(' — ') }} />
+        </div>
+      )}
+    </StepBody>
+  ) : (
+    <StepBody title="Add Connection" hint="No database services were selected — nothing to connect.">
+      <p className="text-[13px] text-muted">
+        You can add a connection for this server any time from the Database hub.
+      </p>
     </StepBody>
   );
 
   const reviewStep = (
-    <StepBody title="Review" hint="Confirm the server details, then register it.">
+    <StepBody title="Review" hint="The server is registered — here's what was set up.">
       <dl className="max-w-2xl rounded-lg border border-border">
         <SummaryRow label="Operating System" value={selectedOs} />
         <SummaryRow label="Connection" value={collector === 'ssh' ? 'SSH' : 'Agent'} />
@@ -413,8 +564,30 @@ export default function AddOsServerPage() {
         {collector === 'ssh' && <SummaryRow label="SSH User" value={wSsh} />}
         <SummaryRow label="Node Role" value={nodeType} />
         {nodeType !== 'Standalone' && <SummaryRow label="Cluster" value={watchCluster} />}
-        <SummaryRow label="Databases" value={selectedDbs.join(', ')} />
-        <SummaryRow label="Environment" value={watch('environment')} last />
+        <SummaryRow label="Environment" value={watch('environment')} last={selectedDbs.length === 0} />
+        {selectedDbs.length > 0 && (
+          <div className="border-t border-border px-card py-2.5">
+            <span className="mb-1.5 block text-[12px] font-semibold text-subtle">Database connections</span>
+            <div className="space-y-1">
+              {selectedDbs.map((d) => {
+                const r = connResults[d];
+                return (
+                  <div key={d} className="flex items-center gap-2 text-[13px]">
+                    <Icon
+                      name={r?.status === 'saved' ? 'check' : r?.status === 'skipped' ? 'minus' : 'alert'}
+                      size={13}
+                      className={r?.status === 'saved' ? 'text-success-fg' : 'text-subtle'}
+                    />
+                    <span className="text-fg">{d}</span>
+                    <span className="text-subtle">
+                      {r?.status === 'saved' ? '— connected' : r?.status === 'skipped' ? '— skipped, add later from the Database hub' : '— not configured'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </dl>
       {message && <MessageBox message={message} />}
     </StepBody>
@@ -427,6 +600,7 @@ export default function AddOsServerPage() {
     'SSH Access': sshStep,
     'Node Role': nodeStep,
     Services: servicesStep,
+    'Add Connection': addConnectionStep,
     Review: reviewStep,
   }[name];
 
@@ -456,14 +630,27 @@ export default function AddOsServerPage() {
           </span>
           <div className="flex items-center gap-2">
             <Button variant="ghost" onClick={() => navigate('/databases')}>Cancel</Button>
-            {cur > 0 && (
-              <Button variant="secondary" icon="arrow-left" onClick={() => setStep(cur - 1)}>
+            {/* Once the server is registered (past Services), going back can't
+                un-register it or un-save a connection — Previous still lets you
+                look, but within Add Connection it steps back one engine at a
+                time rather than leaving the step entirely. */}
+            {cur > 0 && !(name === 'Add Connection' && connIdx === 0) && (
+              <Button
+                variant="secondary"
+                icon="arrow-left"
+                onClick={() => (name === 'Add Connection' ? setConnIdx((i) => i - 1) : setStep(cur - 1))}
+              >
                 Previous
               </Button>
             )}
             {name === 'SSH Access' && (
               <Button variant="secondary" icon="terminal" loading={testing} onClick={handleTestSsh}>
                 Test SSH
+              </Button>
+            )}
+            {name === 'Add Connection' && currentDbName && (
+              <Button variant="secondary" icon="plug" onClick={testCurrentConnection}>
+                Test Connection
               </Button>
             )}
 
@@ -473,6 +660,23 @@ export default function AddOsServerPage() {
               <Button variant="primary" iconRight="arrow-right" onClick={() => navigate('/databases/add-data')}>
                 Next
               </Button>
+            ) : name === 'Services' ? (
+              <Button variant="primary" icon="shield" loading={registering} onClick={registerServer}>
+                {registering ? 'Registering…' : 'Register & Continue'}
+              </Button>
+            ) : name === 'Add Connection' ? (
+              currentDbName ? (
+                <>
+                  <Button variant="ghost" onClick={skipCurrentConnection}>Skip for now</Button>
+                  <Button variant="primary" iconRight="arrow-right" loading={connSaving} onClick={saveCurrentConnection}>
+                    Save &amp; Continue
+                  </Button>
+                </>
+              ) : (
+                <Button variant="primary" iconRight="arrow-right" onClick={() => setStep(cur + 1)}>
+                  Next
+                </Button>
+              )
             ) : !isLast ? (
               <Button
                 variant="primary"
@@ -483,8 +687,8 @@ export default function AddOsServerPage() {
                 Next
               </Button>
             ) : (
-              <Button variant="primary" icon="shield" loading={loading} onClick={onSubmit}>
-                {loading ? 'Saving…' : 'Register Server'}
+              <Button variant="primary" icon="check" onClick={finish}>
+                Finish
               </Button>
             )}
           </div>

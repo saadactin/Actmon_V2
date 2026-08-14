@@ -9,8 +9,10 @@ import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Badge from '@/components/ui/Badge';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import Pagination, { pageCountOf, paginate } from '@/components/ui/Pagination';
+import { useThemeStore } from '@/theme/themeStore';
 import { bandFor } from '@/components/charts/status';
-import useAgents, { filterAgents } from '@/hooks/useAgents';
+import useAgents, { computeAgentCounts, computeAgentOptions, filterAgents } from '@/hooks/useAgents';
 import {
   AGENT_LEVEL_COLORS, LEVEL_COLORS, SORT_OPTIONS, STATUS_FILTERS, STAT_CARDS, TIMING, VIEW_MODES,
   VIEW_STORAGE_KEY, agentEngineColor, agentState, clusterBadge, engineOf, statusLevel,
@@ -69,7 +71,16 @@ const CELL_TEXT_STYLE = { color: 'var(--agent-gray)' };
 export default function AgentsPage() {
   const navigate = useNavigate();
   const api = useAgents();
-  const { agents, counts, options } = api;
+
+  /* This page shows only the physical host agent that's actually installed on
+     a server. A single host agent can feed many database connections, and the
+     backend auto-creates one row per connection (`has_connection: true`) to
+     track that mapping — those rows are real and still power each database's
+     own agent detail page (DatabaseAgentPage), but they are not separate
+     installed agents, so they don't get their own row here. */
+  const agents = useMemo(() => api.agents.filter((a) => !a.has_connection), [api.agents]);
+  const counts = useMemo(() => computeAgentCounts(agents), [agents]);
+  const options = useMemo(() => computeAgentOptions(agents), [agents]);
 
   const [view, setView] = useState(() => {
     try { return localStorage.getItem(VIEW_STORAGE_KEY) || 'grid'; } catch { return 'grid'; }
@@ -87,6 +98,15 @@ export default function AgentsPage() {
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
   const [showRegister, setShowRegister] = useState(false);
+
+  // Paging — same pattern as ObjectTable.jsx: the app-wide `rowsPerPage`
+  // appearance setting is the default, overridable per-session by the pager's
+  // own page-size control. Shared across grid and list views so switching
+  // between them doesn't lose your place.
+  const [page, setPage] = useState(1);
+  const appPageSize = useThemeStore((s) => s.rowsPerPage);
+  const [ownPageSize, setOwnPageSize] = useState(null);
+  const pageSize = ownPageSize ?? appPageSize;
 
   /* ── auto-refresh countdown (the query itself polls; this is the read-out) ── */
   const [countdown, setCountdown] = useState(TIMING.refreshSeconds);
@@ -230,10 +250,26 @@ export default function AgentsPage() {
   };
   // Numbered in the table's OWN display order, not the pre-sort fetch order —
   // sorting by a column re-numbers 1..N, it doesn't carry each row's original
-  // position along with it.
+  // position along with it. Numbering happens BEFORE paging, so page 2 reads
+  // 11, 12, … rather than resetting to 1 each page.
   const numberedRows = sortRows(rows, sort).map((r, i) => ({
     ...r, cells: { ...r.cells, srNo: <span className={cn(CELL_TEXT, 'tabular-nums')} style={CELL_TEXT_STYLE}>{i + 1}</span> },
   }));
+
+  const pageCount = pageCountOf(filtered.length, pageSize);
+  // Filtering/searching changes which rows exist, so the page the user was on
+  // may no longer be there — clamp rather than reset to 1, so a list that
+  // merely shrinks a little keeps their position (same as ObjectTable.jsx).
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const safePage = Math.min(page, pageCount);
+  const pagedForGrid = paginate(filtered, safePage, pageSize);
+  const pagedForList = paginate(numberedRows, safePage, pageSize);
+  const pager = filtered.length > 0 && (
+    <Pagination
+      page={safePage} pageCount={pageCount} total={filtered.length} pageSize={pageSize}
+      onPage={setPage} onPageSize={setOwnPageSize} unit="agents"
+    />
+  );
 
   return (
     <>
@@ -442,26 +478,32 @@ export default function AgentsPage() {
             />
           </div>
         ) : view === 'grid' ? (
-          <div className="grid grid-cols-1 gap-gutter sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-            {filtered.map((agent) => (
-              <AgentCard key={agent.name} agent={agent} onOpen={openAgent} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 gap-gutter sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {pagedForGrid.map((agent) => (
+                <AgentCard key={agent.name} agent={agent} onOpen={openAgent} />
+              ))}
+            </div>
+            {pager && <div className="card mt-4">{pager}</div>}
+          </>
         ) : (
-          // No outer .card wrapper — the reference renders each row as its own
-          // floating rounded card on a plain backdrop, which Table's darkHeader
-          // mode already provides, rather than one bordered card holding a flat
-          // table.
-          <Table
-            columns={columns}
-            rows={numberedRows}
-            sort={sort}
-            onSort={onSort}
-            rowHeight={64}
-            loading={api.isFetching && !api.isLoading}
-            empty={<EmptyState icon="agent" title="No agents match your filters." />}
-            darkHeader
-          />
+          <>
+            {/* No outer .card wrapper — the reference renders each row as its own
+                floating rounded card on a plain backdrop, which Table's darkHeader
+                mode already provides, rather than one bordered card holding a flat
+                table. */}
+            <Table
+              columns={columns}
+              rows={pagedForList}
+              sort={sort}
+              onSort={onSort}
+              rowHeight={64}
+              loading={api.isFetching && !api.isLoading}
+              empty={<EmptyState icon="agent" title="No agents match your filters." />}
+              darkHeader
+            />
+            {pager && <div className="card mt-4">{pager}</div>}
+          </>
         )}
       </div>
     </>

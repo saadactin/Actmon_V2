@@ -59,7 +59,8 @@ export const SERVER_FORM_DEFAULTS = {
 
 /** Wizard steps. The agent path stops at Connection and hands off to Add Data. */
 export const SSH_STEPS = [
-  'Connection', 'Operating System', 'Server Identity', 'SSH Access', 'Node Role', 'Services', 'Review',
+  'Connection', 'Operating System', 'Server Identity', 'SSH Access', 'Node Role', 'Services',
+  'Add Connection', 'Review',
 ];
 export const AGENT_STEPS = ['Connection'];
 

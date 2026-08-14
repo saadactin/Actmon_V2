@@ -94,3 +94,19 @@ def export_slow_queries_report(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={result['filename']}"},
     )
+
+
+# Registered LAST (after the literal /export path) so it never shadows that
+# route — a variable path segment registered before a literal one would
+# otherwise swallow it.
+@router.get("/{conn_id}/slow-queries/{query_id}")
+def get_slow_query_by_id(conn_id: int, query_id: str, db: Session = Depends(get_db)):
+    """Lets the shared Slow Query detail page re-fetch by id on a refresh or
+    direct link, instead of only working when router state carries the row."""
+    from fastapi import HTTPException
+    from app.services.common.slow_query_normalize import find_normalized_by_id
+    response = mysql_slow_query_service.get_slow_queries(conn_id, db)
+    row = find_normalized_by_id(response, query_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Query not found in the current slow-query window")
+    return {"status": "success", "query": row}

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
 from app.routes.auth.auth_routes import current_claims
+from app.services.auth.permission_guard import check_permission, require_permission
 from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
 from app.services.os_server.os_server_service import (
     DbInstanceIn,  # noqa: F401
@@ -25,6 +26,10 @@ from app.services.os_server.os_server_service import (
 )
 
 router = APIRouter(prefix="/api/v1/os-servers", tags=["OS Servers"])
+
+# The one governed page every mutating action below belongs to
+# (page_master.page_url = '/infra/:id' — confirmed against the live table).
+INFRA_DETAIL_PAGE = "/infra/:id"
 
 
 def get_db():
@@ -124,15 +129,19 @@ def route_fw_list(server_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{server_id}/firewall")
-def route_fw_add(server_id: int, ip: str, action: str = "allow", db: Session = Depends(get_db)):
-    """Whitelist (allow) or blacklist (block) a source IP / CIDR on this host."""
+def route_fw_add(server_id: int, ip: str, action: str = "allow", db: Session = Depends(get_db),
+                 _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "add"))):
+    """Whitelist (allow) or blacklist (block) a source IP / CIDR on this host.
+    Previously had NO auth of any kind — require_permission's own dependency
+    on current_claims is what closes that, not just the RBAC bit on top."""
     from app.services.os_server.net_config_service import svc_fw_add
     return svc_fw_add(server_id, ip, action, db)
 
 
 @router.delete("/{server_id}/firewall/{handle}")
-def route_fw_del(server_id: int, handle: str, db: Session = Depends(get_db)):
-    """Remove a firewall rule by its nft handle."""
+def route_fw_del(server_id: int, handle: str, db: Session = Depends(get_db),
+                 _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "delete"))):
+    """Remove a firewall rule by its nft handle. Previously had NO auth at all."""
     from app.services.os_server.net_config_service import svc_fw_del
     return svc_fw_del(server_id, handle, db)
 
@@ -143,8 +152,11 @@ class FsWriteBody(BaseModel):
 
 
 @router.put("/{server_id}/fs/file")
-def route_fs_write(server_id: int, body: FsWriteBody, db: Session = Depends(get_db)):
-    """Edit/overwrite a text file on the host (keeps a .actmon.bak backup)."""
+def route_fs_write(server_id: int, body: FsWriteBody, db: Session = Depends(get_db),
+                   _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "edit"))):
+    """Edit/overwrite a text file on the host (keeps a .actmon.bak backup).
+    Previously had NO auth of any kind — require_permission's own dependency
+    on current_claims is what closes that, not just the RBAC bit on top."""
     from app.services.os_server.fs_browse_service import svc_fs_write
     return svc_fs_write(server_id, body.path, body.content, db)
 
@@ -201,6 +213,10 @@ def route_service_action(server_id: int, body: HostActionBody,
     if not body.unit:
         raise HTTPException(status_code=400, detail="Service name is required.")
     action = (body.action or "restart").lower()
+    # Restart is gated by the 'restart' bit specifically, start/stop by
+    # 'execute' — the required permission depends on this body field, so it
+    # can't be a static per-route Depends() resolved before the body parses.
+    check_permission(claims, db, INFRA_DETAIL_PAGE, "restart" if action == "restart" else "execute")
     result = svc_service_action(server_id, body.unit, action, db)
     _audit_service_action(db, server_id, claims.get("user_id"), f"{action}_service", {"unit": body.unit, "result": result})
     return result
@@ -208,7 +224,8 @@ def route_service_action(server_id: int, body: HostActionBody,
 
 @router.post("/{server_id}/restart-service")
 def route_restart_service(server_id: int, body: HostActionBody,
-                          claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
+                          claims: dict = Depends(current_claims), db: Session = Depends(get_db),
+                          _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "restart"))):
     """Restart a service. Re-authenticates the caller's password first."""
     from app.services.os_server.host_action_service import verify_user_password, svc_restart_service
     if not verify_user_password(db, claims.get("user_id"), body.password):
@@ -222,7 +239,8 @@ def route_restart_service(server_id: int, body: HostActionBody,
 
 @router.post("/{server_id}/kill-process")
 def route_kill_process(server_id: int, body: HostActionBody,
-                       claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
+                       claims: dict = Depends(current_claims), db: Session = Depends(get_db),
+                       _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "execute"))):
     """Force-kill a process by PID. Re-authenticates the caller's password first."""
     from app.services.os_server.host_action_service import verify_user_password, svc_kill_process
     if not verify_user_password(db, claims.get("user_id"), body.password):
@@ -234,7 +252,8 @@ def route_kill_process(server_id: int, body: HostActionBody,
 
 @router.post("/{server_id}/reboot")
 def route_reboot(server_id: int, body: HostActionBody,
-                 claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
+                 claims: dict = Depends(current_claims), db: Session = Depends(get_db),
+                 _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "restart"))):
     """Reboot the host. Re-authenticates the caller's password first."""
     from app.services.os_server.host_action_service import verify_user_password, svc_reboot_host
     if not verify_user_password(db, claims.get("user_id"), body.password):
@@ -244,7 +263,8 @@ def route_reboot(server_id: int, body: HostActionBody,
 
 @router.post("/{server_id}/update-agent")
 def route_update_agent(server_id: int, body: HostActionBody,
-                       claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
+                       claims: dict = Depends(current_claims), db: Session = Depends(get_db),
+                       _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "execute"))):
     """Trigger a self-upgrade of the host's Windows agent. Re-authenticates first."""
     from app.services.os_server.host_action_service import verify_user_password, svc_update_agent
     if not verify_user_password(db, claims.get("user_id"), body.password):
@@ -275,7 +295,8 @@ class RegSetBody(BaseModel):
 
 @router.post("/{server_id}/os-config/registry")
 def route_reg_set(server_id: int, body: RegSetBody,
-                  claims: dict = Depends(current_claims), db: Session = Depends(get_db)):
+                  claims: dict = Depends(current_claims), db: Session = Depends(get_db),
+                  _perm: dict = Depends(require_permission(INFRA_DETAIL_PAGE, "edit"))):
     """Set a Windows registry value. Re-authenticates the caller's password first."""
     from app.services.os_server.host_action_service import verify_user_password, svc_reg_set
     if not verify_user_password(db, claims.get("user_id"), body.password):

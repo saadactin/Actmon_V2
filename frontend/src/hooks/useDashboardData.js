@@ -127,14 +127,27 @@ export default function useDashboardData() {
       reporting: hosts.filter((h) => num(h.cpu_usage) > 0).length,
     };
 
-    /* ── busiest hosts by CPU ── */
+    /* ── busiest hosts by CPU ──
+       The OS rides along in the label itself (rather than a new column) since
+       the side-legend that renders this list is the same shared PieChart used
+       by charts with no host/OS concept at all — folding it into the text is
+       the only change that doesn't leak a host-specific field into that
+       generic component.
+       Offline hosts are excluded outright: their cpu_usage is whatever was
+       last reported before they stopped reporting — frozen, not live — so it
+       has no business being ranked against hosts that are actually reporting
+       right now. Warning hosts stay in; a warning is still a live reading. */
     const topCpu = hosts
-      .map((h) => ({
-        key: String(h.server_id ?? h.id ?? h.server_name ?? h.ip_address),
-        label: h.server_name || h.ip_address || '—',
-        value: num(h.cpu_usage),
-        sub: h.ip_address && h.server_name ? h.ip_address : undefined,
-      }))
+      .filter((h) => { const s = statusOf(h.status); return s === STATUS.good || s === STATUS.warning; })
+      .map((h) => {
+        const name = h.server_name || h.ip_address || '—';
+        return {
+          key: String(h.server_id ?? h.id ?? h.server_name ?? h.ip_address),
+          label: h.os_type ? `${name} · ${h.os_type}` : name,
+          value: num(h.cpu_usage),
+          sub: h.ip_address && h.server_name ? h.ip_address : undefined,
+        };
+      })
       .filter((h) => h.value > 0)
       .sort((a, b) => b.value - a.value)
       .slice(0, TOP_CPU_HOSTS);
@@ -161,6 +174,11 @@ export default function useDashboardData() {
       const key = h.environment || 'Unspecified';
       environments[key] = (environments[key] || 0) + 1;
     }
+    const osTypes = {};
+    for (const h of hosts) {
+      const key = h.os_type || 'Unspecified';
+      osTypes[key] = (osTypes[key] || 0) + 1;
+    }
     const toList = (map) => Object.entries(map)
       .map(([label, value]) => ({ key: label, label, value }))
       .sort((a, b) => b.value - a.value);
@@ -175,6 +193,7 @@ export default function useDashboardData() {
       alerts: { total: alerts.length, ...bySeverity, recent: recentAlerts, list: sortedAlerts },
       cloud: { total: cloud.length, byProvider: toList(providers) },
       byEnvironment: toList(environments),
+      byOsType: toList(osTypes),
     };
   }, [hosts, agents, alerts, cloud, summary]);
 

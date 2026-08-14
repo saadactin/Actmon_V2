@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.models.os_server_model import OsServer
 from app.services.postgres.postgres_connection_service import _pg_engine, _get_conn_or_404
+from app.services.common.actmon_internal_tables import pg_exclude_internal_tables_sql
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -469,6 +470,7 @@ def rca(connection_id: int, db: Session, pid: Optional[int] = None, resource: st
         top_statements = _safe_rows(c,
             "SELECT left(query, 300) AS query, calls, round(total_exec_time::numeric,1) AS total_ms, "
             "round(mean_exec_time::numeric,1) AS mean_ms, rows FROM pg_stat_statements "
+            f"WHERE {pg_exclude_internal_tables_sql('query')} "
             "ORDER BY total_exec_time DESC LIMIT 5")
         seq_tables = _safe_rows(c,
             "SELECT schemaname, relname, seq_scan, seq_tup_read, idx_scan, n_live_tup "

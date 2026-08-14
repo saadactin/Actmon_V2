@@ -2,10 +2,38 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSecurityPosture } from '../hooks/useSecurity';
 import { useCloudScope } from '../hooks/useCloudScope';
-import { CloudProviderSelector } from '../components/CloudProviderSelector';
-import { ShieldAlert, ShieldCheck, AlertTriangle, Info, RefreshCw, ExternalLink, Filter, Wrench, Loader2 } from 'lucide-react';
+import CloudPageHeader from '../components/CloudPageHeader';
+import CloudToolbar from '../components/CloudToolbar';
+import CloudSection from '../components/CloudSection';
+import CloudFilterBar from '../components/CloudFilterBar';
+import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/Table';
+import { PageLoading } from '@/components/ui/Loading';
+import { ShieldAlert, ShieldCheck, AlertTriangle, Info, ExternalLink, Filter, Wrench } from 'lucide-react';
 
-export const SecurityPosturePage = () => {
+// Grade → colour is a computed data value (like the score itself), not app
+// chrome, so it stays a direct hex scale rather than a chrome token.
+const getGradeColor = (grade) => {
+  switch (grade) {
+    case 'A': return '#22c55e';
+    case 'B': return '#10b981';
+    case 'C': return '#eab308';
+    case 'D': return '#f97316';
+    case 'F': return '#ef4444';
+    default: return '#94a3b8';
+  }
+};
+
+// Severity → Badge tone / left-accent border, per the app's status token trio.
+const SEVERITY_TONE = { CRITICAL: 'danger', HIGH: 'danger', MEDIUM: 'warning', LOW: 'info', INFO: 'neutral' };
+const SEVERITY_ACCENT = { CRITICAL: 'border-l-danger', HIGH: 'border-l-danger', MEDIUM: 'border-l-warning', LOW: 'border-l-info', INFO: 'border-l-border' };
+const SEVERITY_CHIP = { CRITICAL: 'bg-danger-soft text-danger-fg', HIGH: 'bg-danger-soft text-danger-fg', MEDIUM: 'bg-warning-soft text-warning-fg', LOW: 'bg-info-soft text-info-fg', INFO: 'bg-neutral-soft text-muted' };
+
+const severityTone = (sev) => SEVERITY_TONE[(sev || '').toUpperCase()] || 'neutral';
+const severityAccent = (sev) => SEVERITY_ACCENT[(sev || '').toUpperCase()] || 'border-l-border';
+
+export const SecurityPosturePage = ({ embedded = false }) => {
   const navigate = useNavigate();
   // Scope-aware account resolution (see useCloudScope) — keeps this tab on the
   // provider the user drilled into instead of defaulting to accounts[0].
@@ -23,46 +51,8 @@ export const SecurityPosturePage = () => {
   const selectedAccount = scope.account;
 
   if (isLoading) {
-    return (
-      <div className="p-6">
-        <div className="flex flex-col items-center justify-center py-24 gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          <span className="text-sm text-gray-500">Analyzing security configuration...</span>
-        </div>
-      </div>
-    );
+    return <PageLoading title="Analyzing security configuration..." />;
   }
-
-  // Get color for grade
-  const getGradeColor = (grade) => {
-    switch (grade) {
-      case 'A': return '#22c55e';
-      case 'B': return '#10b981';
-      case 'C': return '#eab308';
-      case 'D': return '#f97316';
-      case 'F': return '#ef4444';
-      default: return '#94a3b8';
-    }
-  };
-
-  // Tailwind classes per severity: badge pill + left border accent
-  const getSeverityClasses = (sev) => {
-    switch (sev.toUpperCase()) {
-      case 'CRITICAL':
-        return { badge: 'bg-red-50 text-red-700 border-red-200', accent: 'border-l-red-500' };
-      case 'HIGH':
-        return { badge: 'bg-orange-50 text-orange-700 border-orange-200', accent: 'border-l-orange-500' };
-      case 'MEDIUM':
-        return { badge: 'bg-amber-50 text-amber-700 border-amber-200', accent: 'border-l-amber-500' };
-      case 'LOW':
-        return { badge: 'bg-blue-50 text-blue-700 border-blue-200', accent: 'border-l-blue-500' };
-      case 'INFO':
-      default:
-        return { badge: 'bg-gray-100 text-gray-600 border-gray-200', accent: 'border-l-gray-400' };
-    }
-  };
-
-  const BADGE_BASE = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border';
 
   const findings = posture?.findings || [];
   const categories = Array.from(new Set(findings.map((f) => f.category)));
@@ -76,65 +66,71 @@ export const SecurityPosturePage = () => {
     return matchesSev && matchesCat;
   });
 
+  const severityOptions = [
+    { id: 'ALL', label: 'All Severities' },
+    { id: 'CRITICAL', label: 'Critical / High' },
+    { id: 'MEDIUM', label: 'Medium' },
+    { id: 'LOW', label: 'Low' },
+    { id: 'INFO', label: 'Info' },
+  ];
+  const categoryOptions = [
+    { id: 'ALL', label: 'All Categories' },
+    ...categories.map((cat) => ({ id: cat, label: cat })),
+  ];
+
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-start gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
-            <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
-              <ShieldAlert size={20} />
-            </div>
-            Security Posture Scanner
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Identify misconfigurations, open ports, and IAM privilege violations
-          </p>
+    <>
+      {embedded ? (
+        <div className="mb-4 flex justify-end">
+          <Button variant="primary" icon="refresh" loading={isRefetching} onClick={() => refetch()}>
+            {isRefetching ? 'Scanning...' : 'Scan Now'}
+          </Button>
         </div>
-
-        {/* Account picker & scan trigger */}
-        {accounts && accounts.length > 0 && (
-          <div className="flex items-center gap-3">
-            <CloudProviderSelector
-              accounts={accounts}
-              mode="single"
-              selected={selectedAccountId}
-              onSelect={(id) => id && setSelectedAccountId(id)}
-            />
-
-            <button
-              onClick={() => refetch()}
-              disabled={isRefetching}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60"
+      ) : (
+        <CloudPageHeader
+          backTo="/cloud"
+          title="Security Posture Scanner"
+          description="Identify misconfigurations, open ports, and IAM privilege violations"
+          actions={accounts && accounts.length > 0 && (
+            <CloudToolbar
+              selectorProps={{
+                accounts,
+                mode: 'single',
+                selected: selectedAccountId,
+                onSelect: (id) => id && setSelectedAccountId(id),
+              }}
             >
-              <RefreshCw size={14} className={isRefetching ? 'animate-spin' : ''} />
-              {isRefetching ? 'Scanning...' : 'Scan Now'}
-            </button>
-          </div>
-        )}
-      </div>
+              <Button variant="primary" icon="refresh" loading={isRefetching} onClick={() => refetch()}>
+                {isRefetching ? 'Scanning...' : 'Scan Now'}
+              </Button>
+            </CloudToolbar>
+          )}
+        />
+      )}
 
       {isError || !posture ? (
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-          <div className="text-center py-10 px-5">
-            <ShieldAlert size={48} className="text-red-500 mx-auto mb-4" />
-            <h3 className="text-base font-semibold text-gray-900 mb-2">Security Scan Unavailable</h3>
-            <p className="text-sm text-gray-500">
+        <CloudSection>
+          <div className="flex flex-col items-center gap-3 py-10 px-5 text-center">
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-danger-soft text-danger-fg">
+              <ShieldAlert size={26} />
+            </span>
+            <h3 className="text-[15px] font-semibold text-fg">Security Scan Unavailable</h3>
+            <p className="max-w-sm text-sm text-muted">
               Unable to analyze cloud account resources. Please make sure resources have been discovered first.
             </p>
           </div>
-        </div>
+        </CloudSection>
       ) : (
-        <>
+        <div className="space-y-5">
           {/* Main Dashboard Cards */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-5">
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_3fr]">
 
             {/* Health Score Gauge */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 flex flex-col items-center justify-center text-center">
-              <div className="relative w-[140px] h-[140px] flex items-center justify-center">
+            <CloudSection bodyClassName="flex flex-col items-center justify-center text-center">
+              <div className="relative flex h-[140px] w-[140px] items-center justify-center">
                 {/* SVG Gauge */}
                 <svg width="140" height="140" viewBox="0 0 140 140">
-                  <circle cx="70" cy="70" r="58" fill="none" stroke="#e5e7eb" strokeWidth="10" />
+                  <circle cx="70" cy="70" r="58" fill="none" stroke="var(--border)" strokeWidth="10" />
                   <circle
                     cx="70" cy="70" r="58" fill="none"
                     stroke={getGradeColor(posture.grade)}
@@ -147,14 +143,14 @@ export const SecurityPosturePage = () => {
                   />
                 </svg>
                 <div className="absolute flex flex-col items-center">
-                  <span className="text-4xl font-bold text-gray-900 leading-none">{posture.score}</span>
-                  <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider mt-1">Score</span>
+                  <span className="text-4xl font-bold leading-none text-fg">{posture.score}</span>
+                  <span className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">Score</span>
                 </div>
               </div>
 
               <div className="mt-4">
                 <span
-                  className="text-xs font-bold px-3.5 py-1 rounded-full border"
+                  className="rounded-full border px-3.5 py-1 text-xs font-bold"
                   style={{
                     color: getGradeColor(posture.grade),
                     backgroundColor: `${getGradeColor(posture.grade)}1a`,
@@ -164,50 +160,50 @@ export const SecurityPosturePage = () => {
                   Grade {posture.grade}
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mt-3 px-2">
+              <p className="mt-3 px-2 text-xs text-muted">
                 {posture.score >= 90 ? 'Excellent security posture. Keep it up!'
                   : posture.score >= 70 ? 'Good overall security, but some issues need attention.'
                     : 'Critical misconfigurations found. Immediate action required!'}
               </p>
-            </div>
+            </CloudSection>
 
             {/* Severity Breakdown & Metrics */}
             <div className="flex flex-col gap-4">
               {/* Severity Card grid */}
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3.5">
+              <div className="grid grid-cols-2 gap-3.5 xl:grid-cols-4">
                 {[
-                  { label: 'Critical / High', count: (posture.by_severity.CRITICAL || 0) + (posture.by_severity.HIGH || 0), chip: 'bg-red-50 text-red-600', icon: <ShieldAlert size={20} /> },
-                  { label: 'Medium', count: posture.by_severity.MEDIUM || 0, chip: 'bg-amber-50 text-amber-600', icon: <AlertTriangle size={20} /> },
-                  { label: 'Low', count: posture.by_severity.LOW || 0, chip: 'bg-blue-50 text-blue-600', icon: <Info size={20} /> },
-                  { label: 'Info', count: posture.by_severity.INFO || 0, chip: 'bg-gray-100 text-gray-500', icon: <ShieldCheck size={20} /> },
+                  { label: 'Critical / High', count: (posture.by_severity.CRITICAL || 0) + (posture.by_severity.HIGH || 0), chip: SEVERITY_CHIP.CRITICAL, icon: <ShieldAlert size={20} /> },
+                  { label: 'Medium', count: posture.by_severity.MEDIUM || 0, chip: SEVERITY_CHIP.MEDIUM, icon: <AlertTriangle size={20} /> },
+                  { label: 'Low', count: posture.by_severity.LOW || 0, chip: SEVERITY_CHIP.LOW, icon: <Info size={20} /> },
+                  { label: 'Info', count: posture.by_severity.INFO || 0, chip: SEVERITY_CHIP.INFO, icon: <ShieldCheck size={20} /> },
                 ].map((stat) => (
-                  <div key={stat.label} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${stat.chip}`}>
+                  <div key={stat.label} className="card flex items-center gap-4 p-card">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${stat.chip}`}>
                       {stat.icon}
                     </div>
                     <div>
-                      <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">{stat.label}</div>
-                      <div className="text-2xl font-bold text-gray-900 mt-0.5">{stat.count}</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-muted">{stat.label}</div>
+                      <div className="mt-0.5 text-2xl font-bold text-fg">{stat.count}</div>
                     </div>
                   </div>
                 ))}
               </div>
 
               {/* General details bar */}
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-6 py-4 flex justify-around items-center">
+              <div className="card flex items-center justify-around px-card py-4">
                 <div>
-                  <span className="text-xs text-gray-500">Resources Scanned</span>
-                  <div className="text-lg font-bold text-gray-900 mt-1">{posture.total_resources_scanned}</div>
+                  <span className="text-xs text-muted">Resources Scanned</span>
+                  <div className="mt-1 text-lg font-bold text-fg">{posture.total_resources_scanned}</div>
                 </div>
-                <div className="w-px h-8 bg-gray-200" />
+                <div className="h-8 w-px bg-border" />
                 <div>
-                  <span className="text-xs text-gray-500">Total Findings</span>
-                  <div className="text-lg font-bold text-gray-900 mt-1">{posture.total_findings}</div>
+                  <span className="text-xs text-muted">Total Findings</span>
+                  <div className="mt-1 text-lg font-bold text-fg">{posture.total_findings}</div>
                 </div>
-                <div className="w-px h-8 bg-gray-200" />
+                <div className="h-8 w-px bg-border" />
                 <div>
-                  <span className="text-xs text-gray-500">Last Scanned</span>
-                  <div className="text-lg font-bold text-gray-900 mt-1">
+                  <span className="text-xs text-muted">Last Scanned</span>
+                  <div className="mt-1 text-lg font-bold text-fg">
                     {selectedAccount?.last_discovery ? new Date(selectedAccount.last_discovery).toLocaleString() : 'Never'}
                   </div>
                 </div>
@@ -217,106 +213,71 @@ export const SecurityPosturePage = () => {
           </div>
 
           {/* Filter Bar */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm px-5 py-3 flex justify-between items-center">
-            <div className="flex items-center gap-2 text-sm font-semibold text-gray-500">
+          <div className="card flex flex-wrap items-center justify-between gap-3 px-card py-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-muted">
               <Filter size={16} /> Filters
             </div>
 
-            <div className="flex gap-3">
-              {/* Severity Filter */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Severity:</span>
-                <select
-                  value={severityFilter}
-                  onChange={(e) => setSeverityFilter(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="ALL">All Severities</option>
-                  <option value="CRITICAL">Critical / High</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="LOW">Low</option>
-                  <option value="INFO">Info</option>
-                </select>
-              </div>
-
-              {/* Category Filter */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Category:</span>
-                <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="ALL">All Categories</option>
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            <CloudFilterBar
+              filters={[
+                { key: 'severity', value: severityFilter, onChange: setSeverityFilter, options: severityOptions, width: 'auto' },
+                { key: 'category', value: categoryFilter, onChange: setCategoryFilter, options: categoryOptions, width: 'auto' },
+              ]}
+            />
           </div>
 
           {/* Findings List */}
           <div className="flex flex-col gap-3">
             {filteredFindings.length === 0 ? (
-              <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-14 px-5 text-center">
-                <ShieldCheck size={36} className="text-green-500 mx-auto mb-3" />
-                <h3 className="text-base font-semibold text-gray-900 mb-1">All Clear</h3>
-                <p className="text-sm text-gray-500">No findings match your filters.</p>
-              </div>
+              <CloudSection>
+                <EmptyState icon="shield-check" title="All Clear" body="No findings match your filters." />
+              </CloudSection>
             ) : (
-              filteredFindings.map((finding, idx) => {
-                const sev = getSeverityClasses(finding.severity);
-                return (
-                  <div key={idx} className={`bg-white rounded-xl border border-gray-200 shadow-sm border-l-4 ${sev.accent} px-6 py-4`}>
-                    <div className="flex justify-between items-start gap-4">
-                      <div>
-                        {/* Title and Badge */}
-                        <div className="flex items-center gap-2.5 flex-wrap">
-                          <h4 className="text-[15px] font-semibold text-gray-900">{finding.title}</h4>
-                          <span className={`${BADGE_BASE} ${sev.badge}`}>
-                            {finding.severity}
-                          </span>
-                          <span className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded">
-                            {finding.category}
-                          </span>
-                        </div>
-
-                        {/* Description */}
-                        <p className="text-sm text-gray-600 leading-relaxed mt-2 mb-3">
-                          {finding.description}
-                        </p>
-
-                        {/* Recommendation */}
-                        <div className="bg-blue-50/60 border border-blue-100 rounded-lg p-3">
-                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-blue-700 uppercase tracking-wide mb-1">
-                            <Wrench size={12} /> Remediation Recommendation
-                          </div>
-                          <p className="text-xs text-gray-700">
-                            {finding.recommendation}
-                          </p>
-                        </div>
+              filteredFindings.map((finding, idx) => (
+                <div key={idx} className={`card border-l-4 px-card py-4 ${severityAccent(finding.severity)}`}>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      {/* Title and Badge */}
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <h4 className="text-[15px] font-semibold text-fg">{finding.title}</h4>
+                        <Badge tone={severityTone(finding.severity)}>{finding.severity}</Badge>
+                        <Badge tone="neutral">{finding.category}</Badge>
                       </div>
 
-                      {/* Affected Resource Link */}
-                      <div className="shrink-0 text-right">
-                        <span className="block text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Target Resource</span>
-                        <button
-                          onClick={() => navigate(`/cloud/resources/${finding.resource_id}`)}
-                          className="text-blue-600 hover:text-blue-700 text-sm font-semibold inline-flex items-center gap-1 mt-1"
-                        >
-                          {finding.resource_name}
-                          <ExternalLink size={12} />
-                        </button>
+                      {/* Description */}
+                      <p className="mt-2 mb-3 text-sm leading-relaxed text-muted">
+                        {finding.description}
+                      </p>
+
+                      {/* Recommendation */}
+                      <div className="rounded-control border border-info-soft bg-info-soft p-3">
+                        <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-info-fg">
+                          <Wrench size={12} /> Remediation Recommendation
+                        </div>
+                        <p className="text-xs text-fg">
+                          {finding.recommendation}
+                        </p>
                       </div>
                     </div>
+
+                    {/* Affected Resource Link */}
+                    <div className="shrink-0 text-right">
+                      <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted">Target Resource</span>
+                      <button
+                        onClick={() => navigate(`/cloud/resources/${finding.resource_id}`)}
+                        className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-accent-text hover:text-accent-hover"
+                      >
+                        {finding.resource_name}
+                        <ExternalLink size={12} />
+                      </button>
+                    </div>
                   </div>
-                );
-              })
+                </div>
+              ))
             )}
           </div>
-        </>
+        </div>
       )}
-    </div>
+    </>
   );
 };

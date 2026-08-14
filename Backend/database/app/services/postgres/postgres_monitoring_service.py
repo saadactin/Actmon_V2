@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from urllib.parse import quote_plus
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common.actmon_internal_tables import pg_exclude_internal_tables_sql
+from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -749,6 +751,7 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             "stddev_exec_time, rows, shared_blks_hit, shared_blks_read "
             "FROM pg_stat_statements "
             "WHERE query NOT LIKE '%pg_stat_statements%' "
+            f"AND {pg_exclude_internal_tables_sql('query')} "
             "ORDER BY mean_exec_time DESC LIMIT 50"
         )
         pg_stat_statements = [dict(s) for s in pg_stat_statements]
@@ -998,6 +1001,11 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
     from app.utils.agent_cache import get_snapshot as _get_snap
     _cached = _get_snap(conn_id, "pg_slow_queries", db)
     if _cached is not None:
+        # Snapshots persisted before the normalization layer existed won't
+        # carry `normalized`/`capabilities` yet — backfill from the cached
+        # legacy `queries` rows rather than forcing a fresh collector run.
+        if "normalized" not in _cached:
+            _normalize_pg_rows(_cached.get("queries") or [], _cached)
         return _cached
 
     conn_rec = db.query(ConnectionMaster).filter(
@@ -1023,19 +1031,48 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
     pgss_eng, pgss_db = _pgss_engine(conn_rec)
     read_eng = pgss_eng or engine
 
+    # `queryid`/`min_exec_time` back the normalized query_id/min_execution_time
+    # fields, but min_exec_time only exists from pg_stat_statements 1.8 (PG 13)
+    # onward — an older extension version must not take the whole list down;
+    # retry without those two columns before falling back to pg_stat_activity.
+    #
+    # Note: a captured query containing a raw NUL byte (a rare, pre-existing
+    # data anomaly — Postgres text columns cannot store one, and there is no
+    # SQL-level way to strip it before the server must already decode the
+    # column as text to run any expression against it, so this can't be fixed
+    # with a `replace()`/cast in the query itself) will make BOTH attempts
+    # below fail with "invalid byte sequence"/"null character not permitted" —
+    # that's surfaced honestly as a distinct `error` value below rather than
+    # silently mislabeled as "extension unavailable".
     try:
-        rows = _rows(
-            read_eng,
-            "SELECT userid::regrole AS user_name, s.dbid, d.datname, s.query, s.calls, "
-            "s.total_exec_time, s.mean_exec_time, s.max_exec_time, s.stddev_exec_time, "
-            "s.rows, s.shared_blks_hit, s.shared_blks_read "
-            "FROM pg_stat_statements s "
-            "JOIN pg_database d ON d.oid = s.dbid "
-            "WHERE s.query NOT LIKE '%pg_stat_statements%' "
-            "AND s.query NOT LIKE '%pg_catalog%' "
-            "ORDER BY s.mean_exec_time DESC "
-            "LIMIT 50"
-        )
+        try:
+            rows = _rows(
+                read_eng,
+                "SELECT s.queryid, userid::regrole AS user_name, s.dbid, d.datname, s.query, s.calls, "
+                "s.total_exec_time, s.mean_exec_time, s.min_exec_time, s.max_exec_time, s.stddev_exec_time, "
+                "s.rows, s.shared_blks_hit, s.shared_blks_read "
+                "FROM pg_stat_statements s "
+                "JOIN pg_database d ON d.oid = s.dbid "
+                "WHERE s.query NOT LIKE '%pg_stat_statements%' "
+                "AND s.query NOT LIKE '%pg_catalog%' "
+                f"AND {pg_exclude_internal_tables_sql('s.query')} "
+                "ORDER BY s.mean_exec_time DESC "
+                "LIMIT 50"
+            )
+        except Exception:
+            rows = _rows(
+                read_eng,
+                "SELECT NULL AS queryid, userid::regrole AS user_name, s.dbid, d.datname, s.query, s.calls, "
+                "s.total_exec_time, s.mean_exec_time, NULL AS min_exec_time, s.max_exec_time, s.stddev_exec_time, "
+                "s.rows, s.shared_blks_hit, s.shared_blks_read "
+                "FROM pg_stat_statements s "
+                "JOIN pg_database d ON d.oid = s.dbid "
+                "WHERE s.query NOT LIKE '%pg_stat_statements%' "
+                "AND s.query NOT LIKE '%pg_catalog%' "
+                f"AND {pg_exclude_internal_tables_sql('s.query')} "
+                "ORDER BY s.mean_exec_time DESC "
+                "LIMIT 50"
+            )
         queries = [dict(r) for r in rows]
         for q in queries:
             q["user_name"]       = str(q.get("user_name") or "")
@@ -1045,6 +1082,7 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
             q["shared_blks_read"]= int(q.get("shared_blks_read") or 0)
             q["total_exec_time"] = float(q.get("total_exec_time") or 0.0)
             q["mean_exec_time"]  = float(q.get("mean_exec_time") or 0.0)
+            q["min_exec_time"]   = float(q["min_exec_time"]) if q.get("min_exec_time") is not None else None
             q["max_exec_time"]   = float(q.get("max_exec_time") or 0.0)
             q["stddev_exec_time"]= float(q.get("stddev_exec_time") or 0.0)
         pg_stat_statements_available = True
@@ -1055,6 +1093,14 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
             error = "not_installed"
         elif "permission denied" in raw.lower() or "42501" in raw:
             error = "permission_denied"
+        elif "invalid byte sequence" in raw.lower() or "null character not permitted" in raw.lower():
+            # A captured query contains a byte pg_stat_statements' own text
+            # storage can't safely round-trip (most often a stray NUL byte) —
+            # a genuine, pre-existing data anomaly in the monitored database's
+            # own workload, not something ActMon caused or can sanitize away
+            # in SQL. Labeled honestly instead of the generic "unavailable" so
+            # it isn't confused with the extension being missing/unreachable.
+            error = "corrupt_query_text"
         else:
             error = "unavailable"
 
@@ -1084,7 +1130,7 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
             except Exception:
                 pass
 
-    return {
+    response = {
         "status":  "success",
         "source":  source,
         "queries": queries,
@@ -1093,6 +1139,43 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
         "total":   len(queries),
         "error":   error,
     }
+    _normalize_pg_rows(queries, response)
+    return response
+
+
+def _normalize_pg_rows(queries: list, response: dict) -> None:
+    """Builds the shared cross-engine `normalized`/`capabilities` shape from
+    whichever raw row set this call ended up with — `pg_stat_statements`
+    digests (the normal path) or the `pg_stat_activity` fallback (individual
+    currently-running queries, used only when the extension is unavailable).
+    Mutates `response` in place; see slow_query_normalize.py."""
+    source = response.get("source") or "pg_stat_statements"
+    normalized = []
+    for q in queries:
+        if "calls" in q:  # pg_stat_statements digest shape
+            normalized.append(build_normalized_row(
+                query_id=str(q["queryid"]) if q.get("queryid") is not None else None,
+                query_text=q.get("query"),
+                database_name=q.get("datname"),
+                user_name=q.get("user_name") or None,
+                execution_count=q.get("calls"),
+                total_execution_time=q.get("total_exec_time"),
+                average_execution_time=q.get("mean_exec_time"),
+                min_execution_time=q.get("min_exec_time"),
+                max_execution_time=q.get("max_exec_time"),
+                rows_returned=q.get("rows"),
+                source="pg_stat_statements",
+            ))
+        else:  # pg_stat_activity fallback — one row per currently-active query, not a digest
+            normalized.append(build_normalized_row(
+                query_text=q.get("query"),
+                database_name=q.get("datname"),
+                user_name=q.get("usename") or None,
+                average_execution_time=(q.get("elapsed_sec") or 0) * 1000,
+                max_execution_time=(q.get("elapsed_sec") or 0) * 1000,
+                source="pg_stat_activity",
+            ))
+    attach_normalized(response, "postgresql", normalized)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1733,6 +1816,7 @@ def svc_queries_detail(conn_id: int, db: Session):
         "WHERE query NOT LIKE '%pg_stat_statements%' "
         "  AND query NOT LIKE '%pg_catalog%' "
         "  AND query NOT LIKE '%pg_class%' "
+        f"  AND {pg_exclude_internal_tables_sql('query')} "
     )
 
     def _cast(rows_list):

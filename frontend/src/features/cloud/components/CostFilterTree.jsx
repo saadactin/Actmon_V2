@@ -43,8 +43,8 @@ function buildTree(items) {
   });
 }
 
-const rowClass = (active) => `w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs text-left transition-colors ${
-  active ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'
+const rowClass = (active) => `w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-control text-xs text-left transition-colors ${
+  active ? 'bg-accent-soft text-accent-text font-semibold' : 'text-muted hover:bg-sunken'
 }`;
 
 export const CostFilterTree = ({ items, selection, onChange }) => {
@@ -66,7 +66,7 @@ export const CostFilterTree = ({ items, selection, onChange }) => {
 
   if (items.length === 0) {
     return (
-      <div className="text-xs text-gray-400 px-2 py-4 text-center">
+      <div className="text-xs text-subtle px-2 py-4 text-center">
         No stopped instances to filter.
       </div>
     );
@@ -77,7 +77,7 @@ export const CostFilterTree = ({ items, selection, onChange }) => {
       {selection.provider && (
         <button
           onClick={() => onChange(EMPTY_TREE_SELECTION)}
-          className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 px-2 pb-1.5"
+          className="text-[11px] font-semibold text-accent-text hover:opacity-80 px-2 pb-1.5"
         >
           Clear drill-down
         </button>
@@ -88,12 +88,12 @@ export const CostFilterTree = ({ items, selection, onChange }) => {
         return (
           <div key={pKey}>
             <div className="flex items-center gap-0.5">
-              <button onClick={() => toggleExpand(pKey)} className="shrink-0 text-gray-400 hover:text-gray-600 p-0.5">
+              <button onClick={() => toggleExpand(pKey)} className="shrink-0 text-subtle hover:text-fg p-0.5">
                 {pExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               </button>
               <button onClick={() => selectProvider(p.name)} className={rowClass(selection.provider === p.name && !selection.account)}>
                 <span className="flex items-center gap-1.5 truncate"><Cloud className="h-3.5 w-3.5 shrink-0" />{p.name}</span>
-                <span className="text-[10px] text-gray-400 font-bold shrink-0">{p.count}</span>
+                <span className="text-[10px] text-subtle font-bold shrink-0">{p.count}</span>
               </button>
             </div>
 
@@ -104,12 +104,12 @@ export const CostFilterTree = ({ items, selection, onChange }) => {
               return (
                 <div key={aKey} className="ml-3.5">
                   <div className="flex items-center gap-0.5">
-                    <button onClick={() => toggleExpand(aKey)} className="shrink-0 text-gray-400 hover:text-gray-600 p-0.5">
+                    <button onClick={() => toggleExpand(aKey)} className="shrink-0 text-subtle hover:text-fg p-0.5">
                       {aExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                     </button>
                     <button onClick={() => selectAccount(p.name, a.name)} className={rowClass(aActive && !selection.region)}>
                       <span className="flex items-center gap-1.5 truncate"><Server className="h-3.5 w-3.5 shrink-0" />{a.name}</span>
-                      <span className="text-[10px] text-gray-400 font-bold shrink-0">{a.count}</span>
+                      <span className="text-[10px] text-subtle font-bold shrink-0">{a.count}</span>
                     </button>
                   </div>
 
@@ -120,12 +120,12 @@ export const CostFilterTree = ({ items, selection, onChange }) => {
                     return (
                       <div key={rKey} className="ml-3.5">
                         <div className="flex items-center gap-0.5">
-                          <button onClick={() => toggleExpand(rKey)} className="shrink-0 text-gray-400 hover:text-gray-600 p-0.5">
+                          <button onClick={() => toggleExpand(rKey)} className="shrink-0 text-subtle hover:text-fg p-0.5">
                             {rExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
                           </button>
                           <button onClick={() => selectRegion(p.name, a.name, r.name)} className={rowClass(rActive && !selection.type)}>
                             <span className="flex items-center gap-1.5 truncate"><MapPin className="h-3.5 w-3.5 shrink-0" />{r.name}</span>
-                            <span className="text-[10px] text-gray-400 font-bold shrink-0">{r.count}</span>
+                            <span className="text-[10px] text-subtle font-bold shrink-0">{r.count}</span>
                           </button>
                         </div>
 
@@ -135,7 +135,7 @@ export const CostFilterTree = ({ items, selection, onChange }) => {
                             <div key={`${rKey}/t:${t.name}`} className="ml-7">
                               <button onClick={() => selectType(p.name, a.name, r.name, t.name)} className={rowClass(tActive)}>
                                 <span className="flex items-center gap-1.5 truncate"><Layers className="h-3.5 w-3.5 shrink-0" />{t.name}</span>
-                                <span className="text-[10px] text-gray-400 font-bold shrink-0">{t.count}</span>
+                                <span className="text-[10px] text-subtle font-bold shrink-0">{t.count}</span>
                               </button>
                             </div>
                           );

@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Bell, CheckCircle2, AlertTriangle, ShieldAlert, Loader2 } from 'lucide-react';
+import { ShieldAlert, AlertTriangle } from 'lucide-react';
 import { useCloudScope } from '../hooks/useCloudScope';
+import CloudPageHeader from '../components/CloudPageHeader';
+import Badge from '@/components/ui/Badge';
+import { PageLoading } from '@/components/ui/Loading';
+import { EmptyState } from '@/components/ui/Table';
 
-const SEVERITY_PILL_CLASSES = {
-  CRITICAL: 'bg-red-50 text-red-700 border-red-200',
-  HIGH: 'bg-orange-50 text-orange-700 border-orange-200',
-  MEDIUM: 'bg-amber-50 text-amber-700 border-amber-200',
-  LOW: 'bg-blue-50 text-blue-700 border-blue-200',
-  INFO: 'bg-gray-100 text-gray-600 border-gray-200',
+const SEVERITY_TONE = {
+  CRITICAL: 'danger',
+  HIGH: 'danger',
+  MEDIUM: 'warning',
+  LOW: 'info',
+  INFO: 'neutral',
 };
 
-export const AlertsPage = () => {
+export const AlertsPage = ({ embedded = false }) => {
   const [allAlerts, setAllAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -50,67 +54,59 @@ export const AlertsPage = () => {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="max-w-[1000px] mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
-              <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
-                <Bell size={20} />
-              </div>
-              Real-Time Alerts
-            </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              In-app anomaly detection and security incident alerts.
-            </p>
-          </div>
-        </div>
+    <>
+      {!embedded && (
+        <CloudPageHeader
+          backTo="/cloud"
+          icon="bell"
+          title="Real-Time Alerts"
+          description="In-app anomaly detection and security incident alerts."
+        />
+      )}
 
-        {loading ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-24">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            <p className="text-sm text-gray-500">Loading alerts...</p>
-          </div>
-        ) : alerts.length === 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-12 px-6">
-            <CheckCircle2 size={40} className="text-green-500 mb-3" />
-            <h3 className="text-base font-semibold text-gray-900">No alerts</h3>
-            <p className="text-sm text-gray-500 mt-1">Real-time anomaly detection alerts will appear here.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {alerts.map((alert) => (
+      {loading ? (
+        <PageLoading title="Loading alerts…" />
+      ) : alerts.length === 0 ? (
+        <div className="rounded-card border border-border bg-surface py-12">
+          <EmptyState
+            icon="check"
+            title="No alerts"
+            body="Real-time anomaly detection alerts will appear here."
+          />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {alerts.map((alert) => {
+            const isCritical = alert.severity === 'CRITICAL';
+            return (
               <div
                 key={alert.id}
-                className={`bg-white rounded-xl border border-gray-200 shadow-sm border-l-4 p-5 flex items-start gap-4 ${alert.severity === 'CRITICAL' ? 'border-l-red-500' : 'border-l-amber-500'} ${alert.is_read ? 'opacity-70' : ''}`}
+                className={`flex items-start gap-4 rounded-card border border-border bg-surface p-5 border-l-4 ${isCritical ? 'border-l-danger' : 'border-l-warning'} ${alert.is_read ? 'opacity-70' : ''}`}
               >
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${alert.severity === 'CRITICAL' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
-                  {alert.severity === 'CRITICAL' ? <ShieldAlert size={20} /> : <AlertTriangle size={20} />}
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-control ${isCritical ? 'bg-danger-soft text-danger-fg' : 'bg-warning-soft text-warning-fg'}`}>
+                  {isCritical ? <ShieldAlert size={20} /> : <AlertTriangle size={20} />}
                 </div>
-                <div className="flex-1 min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
-                    <h3 className="text-[15px] font-semibold text-gray-900">{alert.anomaly_type}</h3>
-                    <span className="text-xs text-gray-500 whitespace-nowrap">
+                    <h3 className="text-[15px] font-semibold text-fg">{alert.anomaly_type}</h3>
+                    <span className="whitespace-nowrap text-xs text-muted">
                       {new Date(alert.created_at).toLocaleString()}
                     </span>
                   </div>
-                  <p className="text-sm text-gray-600 mt-1.5 leading-relaxed">
+                  <p className="mt-1.5 text-sm leading-relaxed text-muted">
                     {alert.details}
                   </p>
-                  <div className="flex items-center gap-3 mt-3">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border ${SEVERITY_PILL_CLASSES[alert.severity] || SEVERITY_PILL_CLASSES.INFO}`}>
+                  <div className="mt-3 flex items-center gap-3">
+                    <Badge tone={SEVERITY_TONE[alert.severity] || SEVERITY_TONE.INFO}>
                       {alert.severity}
-                    </span>
+                    </Badge>
                     {alert.simulated === true && (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wide border bg-amber-50 text-amber-700 border-amber-300">
-                        Simulated
-                      </span>
+                      <Badge tone="warning">Simulated</Badge>
                     )}
                     {!alert.is_read && (
                       <button
                         onClick={() => handleMarkRead(alert.id)}
-                        className="text-sm font-semibold text-blue-600 hover:text-blue-700"
+                        className="text-sm font-semibold text-accent-text hover:text-accent-hover"
                       >
                         Mark as read
                       </button>
@@ -118,10 +114,10 @@ export const AlertsPage = () => {
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 };

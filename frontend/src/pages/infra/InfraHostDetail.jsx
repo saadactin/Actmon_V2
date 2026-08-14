@@ -12,6 +12,7 @@ import {
 } from '@/api/servers';
 import { getMetricsHistory } from '@/api/agents';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
+import { usePermissions } from '@/hooks/usePermissions';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import Badge from '@/components/ui/Badge';
@@ -95,6 +96,13 @@ const TAB_ICONS = {
   Overview: 'activity', Ports: 'plug', Processes: 'box', Storage: 'desktop', Network: 'network',
   Services: 'settings2', Diagnostics: 'diagnose', 'IP Configuration': 'route', 'Config Files': 'file-edit',
 };
+// URL slug ↔ tab label — /infra/:id/:tab (e.g. "ip-configuration") maps to the
+// TABS label used everywhere else in this file ("IP Configuration").
+const SLUG_FOR_TAB = {
+  Overview: 'overview', Ports: 'ports', Processes: 'processes', Storage: 'storage', Network: 'network',
+  Services: 'services', Diagnostics: 'diagnostics', 'IP Configuration': 'ip-configuration', 'Config Files': 'config-files',
+};
+const TAB_SLUG = Object.fromEntries(Object.entries(SLUG_FOR_TAB).map(([label, slug]) => [slug, label]));
 
 // The axios response interceptor flattens every failure to `new Error(detail)`, so
 // error.response is gone — the real text lives on error.message. Support both shapes.
@@ -237,6 +245,7 @@ function ModuleList({ cards, onOpen }) {
 // Advanced: edit real network config files, then apply by restarting networking.
 function NetConfigEditor({ id, onBack, backLabel }) {
   const qc = useQueryClient();
+  const { canHere } = usePermissions();
   const { data, isLoading, error } = useQuery({ queryKey: ['netFiles', id], queryFn: () => getNetFiles(id), retry: false });
   const [openPath, setOpenPath] = useState(null);
   const [draft, setDraft] = useState('');
@@ -283,7 +292,7 @@ function NetConfigEditor({ id, onBack, backLabel }) {
 
   return (
     <Section title="Edit Network Config" icon="file-edit" color={C.blue} onBack={onBack} backLabel={backLabel}
-      action={netUnit && (
+      action={netUnit && canHere('restart') && (
         <button onClick={() => setRestart(netUnit)}
           className="h-8 px-3 rounded-control bg-warning-soft text-warning-fg text-[13px] font-bold flex items-center gap-1.5 hover:opacity-80">
           <Icon name="power" size={13} /> Restart Networking
@@ -309,7 +318,9 @@ function NetConfigEditor({ id, onBack, backLabel }) {
                       </span>
                     </button>
                     <IconButton icon="file-edit" label="Edit this file" size="sm" tone="accent" onClick={() => openFile(f.path)} />
-                    <IconButton icon="power" label={`Restart ${unitFor(f.path)}`} size="sm" onClick={() => setRestart(unitFor(f.path))} />
+                    {canHere('restart') && (
+                      <IconButton icon="power" label={`Restart ${unitFor(f.path)}`} size="sm" onClick={() => setRestart(unitFor(f.path))} />
+                    )}
                   </div>
                 ))}
                 {(data.files || []).length === 0 && <p className="text-[14px] text-subtle">No known network config files found.</p>}
@@ -338,7 +349,9 @@ function NetConfigEditor({ id, onBack, backLabel }) {
                       {draft !== orig && <Badge tone="warning" size="xs">unsaved changes</Badge>}
                       <div className="ml-auto flex gap-2">
                         <Button size="sm" variant="secondary" disabled={draft === orig} onClick={() => setDraft(orig)}>Revert</Button>
-                        <Button size="sm" variant="primary" icon="save" loading={saving} disabled={saving || draft === orig} onClick={save}>Save</Button>
+                        {canHere('edit') && (
+                          <Button size="sm" variant="primary" icon="save" loading={saving} disabled={saving || draft === orig} onClick={save}>Save</Button>
+                        )}
                       </div>
                     </div>
                     <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false}
@@ -348,7 +361,9 @@ function NetConfigEditor({ id, onBack, backLabel }) {
                       <div className="mt-3 rounded-control bg-warning-soft p-3 flex items-center gap-3">
                         <Icon name="power" size={17} className="text-warning-fg flex-shrink-0" />
                         <p className="text-[14px] text-warning-fg flex-1">Config saved. Apply it by restarting <span className="font-mono font-bold">{unitFor(openPath)}</span>.</p>
-                        <Button size="sm" variant="secondary" icon="power" onClick={() => setRestart(unitFor(openPath))}>Restart {unitFor(openPath)}</Button>
+                        {canHere('restart') && (
+                          <Button size="sm" variant="secondary" icon="power" onClick={() => setRestart(unitFor(openPath))}>Restart {unitFor(openPath)}</Button>
+                        )}
                       </div>
                     )}
                   </>
@@ -364,6 +379,7 @@ function NetConfigEditor({ id, onBack, backLabel }) {
 // Firewall — IP whitelist (allow) / blacklist (block) manager (nftables 'actmon').
 function FirewallPanel({ id, onBack, backLabel }) {
   const qc = useQueryClient();
+  const { canHere } = usePermissions();
   const { data, isLoading, error } = useQuery({
     queryKey: ['firewall', id], queryFn: () => listFirewall(id), retry: false,
   });
@@ -397,21 +413,23 @@ function FirewallPanel({ id, onBack, backLabel }) {
     <Section title="Firewall — IP Whitelist / Blacklist" icon="shield-check" color={C.violet} onBack={onBack} backLabel={backLabel}
       action={data?.source && <span className="text-[12px] font-bold text-subtle">via {data.source}</span>}>
       {/* Add form */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="IP address or CIDR (e.g. 10.0.0.5 or 192.168.1.0/24)"
-          onKeyDown={(e) => e.key === 'Enter' && add()} className="font-mono" wrapperClassName="flex-1 min-w-[240px]" />
-        <div className="flex rounded-control border border-border overflow-hidden">
-          <button onClick={() => setAction('allow')}
-            className={cn('px-4 h-10 text-[13px] font-bold flex items-center gap-1.5', action === 'allow' ? 'bg-success text-white' : 'bg-surface text-muted hover:bg-sunken')}>
-            <Icon name="shield-check" size={14} /> Allow
-          </button>
-          <button onClick={() => setAction('block')}
-            className={cn('px-4 h-10 text-[13px] font-bold flex items-center gap-1.5 border-l border-border', action === 'block' ? 'bg-danger text-white' : 'bg-surface text-muted hover:bg-sunken')}>
-            <Icon name="ban" size={14} /> Block
-          </button>
+      {canHere('add') && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Input value={ip} onChange={(e) => setIp(e.target.value)} placeholder="IP address or CIDR (e.g. 10.0.0.5 or 192.168.1.0/24)"
+            onKeyDown={(e) => e.key === 'Enter' && add()} className="font-mono" wrapperClassName="flex-1 min-w-[240px]" />
+          <div className="flex rounded-control border border-border overflow-hidden">
+            <button onClick={() => setAction('allow')}
+              className={cn('px-4 h-10 text-[13px] font-bold flex items-center gap-1.5', action === 'allow' ? 'bg-success text-white' : 'bg-surface text-muted hover:bg-sunken')}>
+              <Icon name="shield-check" size={14} /> Allow
+            </button>
+            <button onClick={() => setAction('block')}
+              className={cn('px-4 h-10 text-[13px] font-bold flex items-center gap-1.5 border-l border-border', action === 'block' ? 'bg-danger text-white' : 'bg-surface text-muted hover:bg-sunken')}>
+              <Icon name="ban" size={14} /> Block
+            </button>
+          </div>
+          <Button variant="primary" icon="plus" loading={busy} disabled={busy || !ip.trim()} onClick={add}>Add Rule</Button>
         </div>
-        <Button variant="primary" icon="plus" loading={busy} disabled={busy || !ip.trim()} onClick={add}>Add Rule</Button>
-      </div>
+      )}
       {msg && <p className="text-[14px] text-danger-fg mb-3">{msg}</p>}
 
       {isLoading ? <LoadingLine label="Loading rules…" />
@@ -426,7 +444,9 @@ function FirewallPanel({ id, onBack, backLabel }) {
                 {allow.map((r) => (
                   <div key={r.handle} className="flex items-center justify-between py-2 px-3 rounded-control bg-success-soft mb-1.5">
                     <span className="font-mono font-semibold text-success-fg text-[14px]">{r.ip}</span>
-                    <IconButton icon="trash" label="Remove rule" size="sm" tone="danger" disabled={busy} onClick={() => remove(r.handle)} />
+                    {canHere('delete') && (
+                      <IconButton icon="trash" label="Remove rule" size="sm" tone="danger" disabled={busy} onClick={() => remove(r.handle)} />
+                    )}
                   </div>
                 ))}
               </div>
@@ -436,7 +456,9 @@ function FirewallPanel({ id, onBack, backLabel }) {
                 {block.map((r) => (
                   <div key={r.handle} className="flex items-center justify-between py-2 px-3 rounded-control bg-danger-soft mb-1.5">
                     <span className="font-mono font-semibold text-danger-fg text-[14px]">{r.ip}</span>
-                    <IconButton icon="trash" label="Remove rule" size="sm" tone="danger" disabled={busy} onClick={() => remove(r.handle)} />
+                    {canHere('delete') && (
+                      <IconButton icon="trash" label="Remove rule" size="sm" tone="danger" disabled={busy} onClick={() => remove(r.handle)} />
+                    )}
                   </div>
                 ))}
               </div>
@@ -496,6 +518,7 @@ export function PasswordPrompt({ title, confirmLabel = 'Confirm', danger, onConf
 // Services inventory + control (start / stop / restart, each password-gated).
 function ServicesPanel({ id, onBack, backLabel }) {
   const qc = useQueryClient();
+  const { canHere } = usePermissions();
   const { data, isLoading, error } = useQuery({ queryKey: ['services', id], queryFn: () => listServices(id), retry: false, refetchInterval: 30000 });
   const [q, setQ] = useState('');
   const [prompt, setPrompt] = useState(null);
@@ -525,18 +548,24 @@ function ServicesPanel({ id, onBack, backLabel }) {
       status: <Badge tone={stTone(s.status)} size="xs">{s.status}</Badge>,
       control: (
         <div className="flex items-center gap-1.5">
-          <button onClick={() => setPrompt({ unit: s.unit, action: 'start' })} disabled={s.status === 'running'}
-            className="h-8 px-2.5 rounded-control bg-success-soft text-success-fg disabled:opacity-40 flex items-center gap-1 text-[12px] font-bold hover:opacity-80">
-            <Icon name="play" size={12} /> Start
-          </button>
-          <button onClick={() => setPrompt({ unit: s.unit, action: 'stop' })} disabled={s.status !== 'running'}
-            className="h-8 px-2.5 rounded-control bg-danger-soft text-danger-fg disabled:opacity-40 flex items-center gap-1 text-[12px] font-bold hover:opacity-80">
-            <Icon name="stop" size={12} /> Stop
-          </button>
-          <button onClick={() => setPrompt({ unit: s.unit, action: 'restart' })}
-            className="h-8 px-2.5 rounded-control bg-warning-soft text-warning-fg flex items-center gap-1 text-[12px] font-bold hover:opacity-80">
-            <Icon name="restart" size={12} /> Restart
-          </button>
+          {canHere('execute') && (
+            <>
+              <button onClick={() => setPrompt({ unit: s.unit, action: 'start' })} disabled={s.status === 'running'}
+                className="h-8 px-2.5 rounded-control bg-success-soft text-success-fg disabled:opacity-40 flex items-center gap-1 text-[12px] font-bold hover:opacity-80">
+                <Icon name="play" size={12} /> Start
+              </button>
+              <button onClick={() => setPrompt({ unit: s.unit, action: 'stop' })} disabled={s.status !== 'running'}
+                className="h-8 px-2.5 rounded-control bg-danger-soft text-danger-fg disabled:opacity-40 flex items-center gap-1 text-[12px] font-bold hover:opacity-80">
+                <Icon name="stop" size={12} /> Stop
+              </button>
+            </>
+          )}
+          {canHere('restart') && (
+            <button onClick={() => setPrompt({ unit: s.unit, action: 'restart' })}
+              className="h-8 px-2.5 rounded-control bg-warning-soft text-warning-fg flex items-center gap-1 text-[12px] font-bold hover:opacity-80">
+              <Icon name="restart" size={12} /> Restart
+            </button>
+          )}
         </div>
       ),
     },
@@ -614,8 +643,17 @@ function DiagnosticsPanel({ id }) {
 const CONN_STATE_ORDER = ['ESTABLISHED', 'LISTEN', 'TIME_WAIT', 'CLOSE_WAIT', 'FIN_WAIT', 'SYN_SENT', 'SYN_RECEIVED', 'LAST_ACK', 'CLOSING', 'CLOSED'];
 const netUp = (s) => String(s || '').toLowerCase() === 'up';
 
-function NetworkPanel({ data, id, navigate, onBack, backLabel }) {
-  const [view, setView] = useState(null);
+function NetworkPanel({ data, id, navigate, onBack, backLabel, routed }) {
+  // Two call sites: the top-level Network TAB (routed=true, view comes from
+  // /infra/:id/network/:sub) and an embedded shortcut from Config Files'
+  // "Network Configuration" card (routed=false/undefined, plain local state —
+  // that card only ever opens this panel's own grid, never a specific card).
+  const { sub: routedView } = useParams();
+  const [localView, setLocalView] = useState(null);
+  const view = routed ? (routedView || null) : localView;
+  const setView = routed
+    ? (v) => navigate(v ? `/infra/${id}/network/${v}` : `/infra/${id}/network`)
+    : setLocalView;
   const [layout, setLayout] = useState('grid');
 
   const net = data.network || {};
@@ -654,7 +692,6 @@ function NetworkPanel({ data, id, navigate, onBack, backLabel }) {
     { key: 'routing', title: 'Routing Information', desc: 'Routing table, default & static routes.', icon: 'route', color: C.slate, count: routes.length },
     { key: 'arp', title: 'ARP Table', desc: 'IP-to-MAC neighbor mappings.', icon: 'radio', color: C.cyan, count: arp.length },
     { key: 'processes', title: 'Network Processes', desc: 'Processes bound to listening ports.', icon: 'box', color: C.violet, count: null },
-    { key: 'historical', title: 'Historical Charts', desc: 'Traffic trends over 1h / 24h / 7d.', icon: 'clock', color: C.slate },
   ];
 
   /* ── Card menu ── */
@@ -898,10 +935,6 @@ function NetworkView(p) {
     );
   }
 
-  if (view === 'historical') {
-    return soon('Historical traffic charts (1h / 24h / 7d) require the metrics history service. Coming soon.');
-  }
-
   return soon('Module coming soon.');
 }
 
@@ -931,8 +964,18 @@ function FieldGrid({ items }) {
   );
 }
 
-function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabel }) {
-  const [view, setView] = useState(initialView !== undefined ? initialView : null);
+function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabel, routed }) {
+  // Two call sites: the top-level IP Configuration TAB (routed=true, view
+  // comes from /infra/:id/ip-configuration/:sub) and embedded shortcuts from
+  // Config Files' dns/routing/firewall cards (routed=false/undefined, driven
+  // by the hardcoded `initialView` prop as before — Config Files' own slug
+  // names don't always match this menu's card keys, e.g. 'routing' → 'advanced').
+  const { sub: routedView } = useParams();
+  const [localView, setLocalView] = useState(initialView !== undefined ? initialView : null);
+  const view = routed ? (routedView || null) : localView;
+  const setView = routed
+    ? (v) => navigate(v ? `/infra/${id}/ip-configuration/${v}` : `/infra/${id}/ip-configuration`)
+    : setLocalView;
   const [layout, setLayout] = useState('grid');
   const [sel, setSel] = useState(0);
   const [checks, setChecks] = useState({});
@@ -951,13 +994,10 @@ function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabe
     { key: 'ipv4', title: 'IPv4 Configuration', desc: 'Address, subnet, gateway, DHCP lease details.', icon: 'globe', color: C.cyan },
     { key: 'ipv6', title: 'IPv6 Configuration', desc: 'Link-local, global address, prefix & lifetimes.', icon: 'globe', color: C.violet },
     { key: 'dns', title: 'DNS Configuration', desc: 'Primary/secondary DNS, suffixes, registration.', icon: 'globe', color: C.green },
-    { key: 'proxy', title: 'Proxy Configuration', desc: 'Proxy server, port, PAC script, bypass list.', icon: 'shield-check', color: C.amber },
     { key: 'advanced', title: 'Advanced Configuration', desc: 'NetBIOS, WINS, routes, forwarding, jumbo frames.', icon: 'settings2', color: C.slate },
     { key: 'conflict', title: 'IP Conflict Detection', desc: 'Duplicate IP / MAC detection & conflict status.', icon: 'alert', color: C.red },
-    { key: 'changes', title: 'Configuration Changes', desc: 'Last IP / gateway / DNS / DHCP change events.', icon: 'clock', color: C.slate },
     { key: 'validation', title: 'Validation Checks', desc: 'Gateway, DNS, internet & public-IP reachability.', icon: 'check', color: C.green },
     { key: 'export', title: 'Export Options', desc: 'Copy, JSON, CSV export of the IP configuration.', icon: 'save', color: C.blue },
-    { key: 'import', title: 'Import Options', desc: 'Import configuration from JSON / CSV.', icon: 'plus', color: C.violet },
     { key: 'edit', title: 'Edit Network Config', desc: 'Edit hosts / interfaces files, restart networking.', icon: 'file-edit', color: C.cyan },
     { key: 'firewall', title: 'Firewall — Whitelist / Blacklist', desc: "Allow or block source IPs / CIDRs on this host's firewall.", icon: 'shield-check', color: C.violet },
   ];
@@ -1058,16 +1098,6 @@ function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabe
         <button onClick={() => setView('validation')} className="text-[12px] font-bold text-accent-text hover:underline mt-3">Run a live DNS reachability check →</button>
       </Section>
     );
-  } else if (view === 'proxy') {
-    body = (
-      <Section title="Proxy Configuration" icon="shield-check" color={C.amber}>
-        <FieldGrid items={[
-          ['Proxy Enabled', null], ['Proxy Server', null], ['Proxy Port', null],
-          ['Proxy Bypass List', null], ['Auto Detect Proxy', null], ['PAC Script URL', null],
-        ]} />
-        <p className="text-[12px] text-subtle mt-3">Proxy settings are not yet collected — planned via the agent (Windows: WinHTTP / registry, Linux: env &amp; APT/YUM proxy).</p>
-      </Section>
-    );
   } else if (view === 'advanced') {
     body = (
       <Section title="Advanced Configuration" icon="settings2" color={C.slate}>
@@ -1095,16 +1125,6 @@ function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabe
           ['Last Conflict Time', null],
         ]} />
         <p className="text-[12px] text-subtle mt-3">Derived from the current ARP table. Continuous duplicate-address monitoring is planned.</p>
-      </Section>
-    );
-  } else if (view === 'changes') {
-    body = (
-      <Section title="Configuration Changes" icon="clock" color={C.slate}>
-        <FieldGrid items={[
-          ['Last IP Address Change', null], ['Last Gateway Change', null], ['Last DNS Change', null],
-          ['Last DHCP Renewal', null], ['Interface State Changes', null],
-        ]} />
-        <p className="text-[12px] text-subtle mt-3">Change history requires the time-series store — coming with Historical Charts.</p>
       </Section>
     );
   } else if (view === 'validation') {
@@ -1162,21 +1182,6 @@ function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabe
         <pre className="mt-4 bg-sunken text-fg border border-border rounded-control p-3.5 text-[12px] font-mono max-h-72 overflow-auto">{JSON.stringify(cfg, null, 2)}</pre>
       </Section>
     );
-  } else if (view === 'import') {
-    body = (
-      <Section title="Import Options" icon="plus" color={C.violet}>
-        <p className="text-[14px] text-muted mb-3">Import a saved configuration to review or (with agent support) apply.</p>
-        <div className="flex flex-wrap gap-2.5">
-          <label className="h-10 px-4 rounded-control border border-border text-fg text-[13px] font-bold hover:bg-sunken flex items-center gap-2 cursor-pointer">
-            Import JSON <input type="file" accept=".json" className="hidden" onChange={(e) => e.target.files?.[0] && alert(`Selected ${e.target.files[0].name}. Applying imported config will be enabled with agent write-support.`)} />
-          </label>
-          <label className="h-10 px-4 rounded-control border border-border text-fg text-[13px] font-bold hover:bg-sunken flex items-center gap-2 cursor-pointer">
-            Import CSV <input type="file" accept=".csv" className="hidden" onChange={(e) => e.target.files?.[0] && alert(`Selected ${e.target.files[0].name}. Applying imported config will be enabled with agent write-support.`)} />
-          </label>
-        </div>
-        <p className="text-[12px] text-subtle mt-3">Applying an imported configuration to a live host will run through the agent's network-edit channel (with a confirmation + password) — wiring in progress.</p>
-      </Section>
-    );
   } else {
     body = <Section title="Module" icon="info" color={C.slate}><p className="text-subtle py-6 text-center">Coming soon.</p></Section>;
   }
@@ -1190,55 +1195,9 @@ function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabe
 /* ── Configuration Files launcher ── */
 // Typical on-disk sources per module (shown in the drill; used to seed File Explorer).
 const CFG_FILE_HINTS = {
-  boot: { linux: ['/boot/grub/grub.cfg', '/etc/default/grub'], win: ['bcdedit'] },
-  kernel: { linux: ['/etc/sysctl.conf', '/etc/sysctl.d/', '/proc/cmdline'] },
   ssh: { linux: ['/etc/ssh/sshd_config', '/etc/ssh/ssh_config', '~/.ssh/authorized_keys'], win: ['C:\\ProgramData\\ssh\\sshd_config'] },
-  user: { linux: ['/etc/passwd', '/etc/shadow'], win: ['net user'] },
-  group: { linux: ['/etc/group'], win: ['net localgroup'] },
-  auth: { linux: ['/etc/pam.d/', '/etc/nsswitch.conf'] },
-  security: { linux: ['/etc/security/', '/etc/login.defs'] },
-  sysctl: { linux: ['/etc/sysctl.conf', '/etc/sysctl.d/*.conf'] },
-  systemd: { linux: ['/etc/systemd/system/', '/lib/systemd/system/'] },
-  cron: { linux: ['/etc/crontab', '/etc/cron.d/', '/var/spool/cron/'], win: ['schtasks'] },
-  tasks: { win: ['Task Scheduler', 'schtasks /query'], linux: ['/etc/cron.d/'] },
   ntp: { linux: ['/etc/chrony/chrony.conf', '/etc/ntp.conf', '/etc/systemd/timesyncd.conf'], win: ['w32tm /query /configuration'] },
-  logging: { linux: ['/etc/rsyslog.conf', '/etc/systemd/journald.conf', '/var/log/'], win: ['Event Viewer'] },
-  audit: { linux: ['/etc/audit/auditd.conf', '/etc/audit/rules.d/'], win: ['auditpol /get /category:*'] },
-  package: { linux: ['/etc/apt/sources.list', '/etc/yum.repos.d/', '/etc/dnf/dnf.conf'] },
-  selinux: { linux: ['/etc/selinux/config', '/etc/apparmor.d/'] },
-  locale: { linux: ['/etc/locale.conf', '/etc/default/locale', '/etc/timezone'] },
-  env: { linux: ['/etc/environment', '/etc/profile.d/'], win: ['Environment variables'] },
-  sysvars: { linux: ['/etc/environment'], win: ['HKLM\\SYSTEM\\...\\Environment'] },
-  cert: { linux: ['/etc/ssl/certs/', '/etc/pki/'], win: ['certlm.msc'] },
-  docker: { linux: ['/etc/docker/daemon.json', 'docker info'] },
-  k8s: { linux: ['/etc/kubernetes/', '~/.kube/config'] },
-  vpn: { linux: ['/etc/openvpn/', '/etc/wireguard/'] },
-  database: { linux: ['/etc/mysql/', '/etc/postgresql/', 'my.cnf', 'postgresql.conf'] },
-  web: { linux: ['/etc/nginx/nginx.conf', '/etc/apache2/', '/etc/httpd/'], win: ['IIS applicationHost.config'] },
-  mail: { linux: ['/etc/postfix/main.cf', '/etc/dovecot/'] },
-  fileshare: { linux: ['/etc/samba/smb.conf', '/etc/exports'], win: ['net share'] },
-  remote: { linux: ['/etc/ssh/sshd_config'], win: ['RDP settings'] },
-  ldap: { linux: ['/etc/sssd/sssd.conf', '/etc/nslcd.conf'], win: ['Active Directory'] },
-  domain: { win: ['domain / workgroup'], linux: ['/etc/krb5.conf'] },
-  wireless: { linux: ['/etc/NetworkManager/system-connections/', 'wpa_supplicant.conf'], win: ['netsh wlan'] },
-  printer: { linux: ['/etc/cups/'], win: ['Get-Printer'] },
   power: { linux: ['/etc/systemd/logind.conf'], win: ['powercfg /query'] },
-  driver: { linux: ['lsmod', '/lib/modules/'], win: ['Get-WindowsDriver'] },
-  device: { linux: ['lspci', 'lsusb', '/dev/'], win: ['Device Manager'] },
-  usb: { linux: ['lsusb'], win: ['Get-PnpDevice'] },
-  backup: { linux: ['/etc/cron.d/backup', 'rsync/borg config'] },
-  monitoring: { linux: ['agent config', '/etc/prometheus/'] },
-  license: { linux: ['/usr/share/doc/*/copyright'], win: ['slmgr /dlv'] },
-  software: { linux: ['/var/lib/dpkg/status', '/var/log/dpkg.log', '/var/log/yum.log'], win: ['HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall'] },
-  virt: { linux: ['/etc/libvirt/qemu.conf', '/etc/libvirt/libvirtd.conf'], win: ['Hyper-V Manager', 'Get-VM'] },
-  container: { linux: ['/etc/containers/containers.conf', '/etc/containers/registries.conf'] },
-  cloud: { linux: ['/etc/cloud/cloud.cfg', '/etc/cloud/cloud.cfg.d/'], win: ['EC2Launch config'] },
-  appserver: { linux: ['/etc/tomcat/server.xml', '/opt/tomcat/conf/server.xml'], win: ['Tomcat service config'] },
-  ha: { linux: ['/etc/corosync/corosync.conf', '/etc/pacemaker/'] },
-  cluster: { linux: ['/etc/corosync/corosync.conf', '/etc/pcs/'] },
-  lb: { linux: ['/etc/haproxy/haproxy.cfg', '/etc/nginx/conf.d/lb.conf'] },
-  san: { linux: ['/etc/multipath.conf', '/etc/iscsi/iscsid.conf'] },
-  regional: { linux: ['/etc/default/locale', '/etc/timezone'], win: ['Region Settings (intl.cpl)'] },
 };
 
 /* ── Config module drill: Files · Registry · Commands (per-module config) ── */
@@ -1510,6 +1469,7 @@ function DatabaseConfigPanel({ id, isWin, data, navigate, onBack }) {
 // Files — view / edit / add real files; folder entries open in File Explorer;
 // files that need a service bounce show a password-gated Restart.
 function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating System — Files', backLabel = 'Operating System', navigate, onBack }) {
+  const { canHere } = usePermissions();
   const FILES = files || (isWin ? [
     { label: 'Hosts file', path: 'C:\\Windows\\System32\\drivers\\etc\\hosts', restart: 'Dnscache' },
     { label: 'License (license.rtf)', path: 'C:\\Windows\\System32\\license.rtf' },
@@ -1642,7 +1602,7 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
                 ) : (
                   <IconButton icon="file-edit" label="Edit this file" size="sm" tone="accent" onClick={() => openFile(f.path)} />
                 )}
-                {f.restart && <IconButton icon="power" label={`Restart ${f.restart}`} size="sm" onClick={() => setRestart(f.restart)} />}
+                {f.restart && canHere('restart') && <IconButton icon="power" label={`Restart ${f.restart}`} size="sm" onClick={() => setRestart(f.restart)} />}
               </div>
             ))}
             {/* Add / open an arbitrary file (created on save if missing) */}
@@ -1703,13 +1663,15 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
                   {draft !== orig && <Badge tone="warning" size="xs" className="flex-shrink-0">unsaved changes</Badge>}
                   <div className="ml-auto flex gap-2 flex-shrink-0">
                     <Button size="sm" variant="secondary" disabled={draft === orig} onClick={() => setDraft(orig)}>Revert</Button>
-                    <Button size="sm" variant="primary" icon="save" loading={saving} disabled={saving || draft === orig} onClick={save}>Save</Button>
+                    {canHere('edit') && (
+                      <Button size="sm" variant="primary" icon="save" loading={saving} disabled={saving || draft === orig} onClick={save}>Save</Button>
+                    )}
                   </div>
                 </div>
                 <textarea value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false}
                   className="w-full h-[calc(100vh-340px)] min-h-[440px] p-3.5 rounded-control border border-border text-[13px] leading-relaxed font-mono text-fg outline-none focus:border-accent resize-y bg-sunken" />
                 {msg && <MessageLine ok={msg.ok} text={msg.text} />}
-                {saved && restartFor(openPath) && (
+                {saved && restartFor(openPath) && canHere('restart') && (
                   <div className="mt-3 rounded-control bg-warning-soft p-3 flex items-center gap-3">
                     <Icon name="power" size={17} className="text-warning-fg flex-shrink-0" />
                     <p className="text-[14px] text-warning-fg flex-1">Saved. Apply it by restarting <span className="font-mono font-bold">{restartFor(openPath)}</span>.</p>
@@ -1729,6 +1691,7 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
 
 // OS Registry (Windows) — read the standard keys; edit a value (password-gated).
 function OsRegistryPanel({ id, keys, title = 'Operating System — Registry', backLabel = 'Operating System', onBack }) {
+  const { canHere } = usePermissions();
   const KEYS = keys || [
     { label: 'Windows Version', key: 'HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion' },
     { label: 'Computer Name', key: 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\ComputerName\\ComputerName' },
@@ -1801,15 +1764,15 @@ function OsRegistryPanel({ id, keys, title = 'Operating System — Registry', ba
                                     className="w-full h-9 px-2.5 rounded-control border border-accent-border bg-surface text-fg text-[13px] font-mono outline-none focus:border-accent" />
                                 ) : <span className="font-mono text-muted break-all">{v.value || <span className="text-subtle">—</span>}</span>}
                               </td>
-                              <td className="px-3.5 py-2.5 whitespace-nowrap">
+              <td className="px-3.5 py-2.5 whitespace-nowrap">
                                 {editing === v.name ? (
                                   <div className="flex gap-1.5">
                                     <Button size="sm" variant="primary" icon="save" disabled={draftVal === (v.value || '')} onClick={() => setCommit({ name: v.name, value: draftVal })}>Save</Button>
                                     <Button size="sm" variant="secondary" onClick={() => setEditing(null)}>Cancel</Button>
                                   </div>
-                                ) : (
+                                ) : canHere('edit') ? (
                                   <Button size="sm" variant="subtle" icon="file-edit" onClick={() => { setEditing(v.name); setDraftVal(v.value || ''); }}>Edit</Button>
-                                )}
+                                ) : null}
                               </td>
                             </tr>
                           ))}
@@ -1872,7 +1835,9 @@ function OsCommandsPanel({ id, isWin, commands, title = 'Operating System — Co
 }
 
 function ConfigFilesMenu({ data, id, navigate, setTab }) {
-  const [view, setView] = useState(null);
+  // View is URL-driven: /infra/:id/config-files/:sub → each module has its own route.
+  const { sub: view } = useParams();
+  const setView = (v) => navigate(v ? `/infra/${id}/config-files/${v}` : `/infra/${id}/config-files`);
   const [layout, setLayout] = useState('grid');
   const [q, setQ] = useState('');
   const isWin = /win/i.test(data.host?.os_type || '');
@@ -1884,35 +1849,12 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
     ['CPU Configuration', 'cpu', 'cpu'], ['Memory Configuration', 'memory', 'memory'],
     ['Disk Configuration', 'disk', 'desktop'], ['Storage Configuration', 'storage', 'desktop'],
     ['Filesystem Configuration', 'filesystem', 'desktop'], ['Partition Configuration', 'partition', 'desktop'],
-    ['Boot Configuration', 'boot', 'power'], ['Kernel Configuration', 'kernel', 'settings2'],
     ['Network Configuration', 'network', 'network'], ['IP Configuration', 'ip', 'route'],
-    ['DNS Configuration', 'dns', 'globe'], ['Proxy Configuration', 'proxy', 'shield-check'],
-    ['Routing Configuration', 'routing', 'route'], ['Firewall Configuration', 'firewall', 'shield-check'],
-    ['Security Configuration', 'security', 'shield-check'], ['Authentication Configuration', 'auth', 'shield-check'],
-    ['User Configuration', 'user', 'server'], ['Group Configuration', 'group', 'server'],
-    ['SSH Configuration', 'ssh', 'settings2'], ['Service Configuration', 'service', 'settings2'],
-    ['Process Configuration', 'process', 'box'], ['Environment Configuration', 'env', 'settings2'],
-    ['System Variables Configuration', 'sysvars', 'settings2'], ['Time & NTP Configuration', 'ntp', 'clock'],
-    ['Logging Configuration', 'logging', 'report'], ['Audit Configuration', 'audit', 'report'],
-    ['Package Management Configuration', 'package', 'box'], ['Software Configuration', 'software', 'box'],
-    ['Driver Configuration', 'driver', 'settings2'], ['Device Configuration', 'device', 'plug'],
-    ['Printer Configuration', 'printer', 'plug'], ['USB Device Configuration', 'usb', 'plug'],
-    ['Power Management Configuration', 'power', 'power'], ['Scheduled Tasks Configuration', 'tasks', 'clock'],
-    ['Cron Configuration', 'cron', 'clock'], ['Certificate Configuration', 'cert', 'shield-check'],
-    ['Virtualization Configuration', 'virt', 'box'], ['Container Configuration', 'container', 'box'],
-    ['Docker Configuration', 'docker', 'box'], ['Kubernetes Configuration', 'k8s', 'box'],
-    ['Cloud Configuration', 'cloud', 'globe'], ['Database Configuration', 'database', 'server'],
-    ['Web Server Configuration', 'web', 'globe'], ['Application Server Configuration', 'appserver', 'server'],
-    ['Mail Server Configuration', 'mail', 'globe'], ['File Sharing Configuration', 'fileshare', 'folder'],
-    ['Remote Access Configuration', 'remote', 'plug'], ['Monitoring Configuration', 'monitoring', 'activity'],
-    ['Backup Configuration', 'backup', 'save'], ['High Availability Configuration', 'ha', 'network'],
-    ['Cluster Configuration', 'cluster', 'network'], ['Load Balancer Configuration', 'lb', 'network'],
-    ['Storage Network Configuration', 'san', 'desktop'], ['VPN Configuration', 'vpn', 'shield-check'],
-    ['Wireless Configuration', 'wireless', 'wifi'], ['Domain Configuration', 'domain', 'globe'],
-    ['LDAP/Active Directory Configuration', 'ldap', 'server'], ['SELinux/AppArmor Configuration', 'selinux', 'shield-check'],
-    ['Sysctl Configuration', 'sysctl', 'settings2'], ['Systemd Configuration', 'systemd', 'settings2'],
-    ['Locale & Language Configuration', 'locale', 'globe'], ['Regional Settings Configuration', 'regional', 'globe'],
-    ['License Configuration', 'license', 'report'],
+    ['DNS Configuration', 'dns', 'globe'], ['Routing Configuration', 'routing', 'route'],
+    ['Firewall Configuration', 'firewall', 'shield-check'], ['SSH Configuration', 'ssh', 'settings2'],
+    ['Service Configuration', 'service', 'settings2'], ['Process Configuration', 'process', 'box'],
+    ['Time & NTP Configuration', 'ntp', 'clock'], ['Power Management Configuration', 'power', 'power'],
+    ['Database Configuration', 'database', 'server'],
   ];
   const CARDS = RAW.map((r, idx) => ({ title: r[0], key: r[1], icon: r[2], goto: r[3], color: CFG_PALETTE[idx % CFG_PALETTE.length] }));
 
@@ -1989,7 +1931,7 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
   if (view === 'process') {
     return <ProcessesPanel processes={data.processes || []} id={id} onBack={onBack} backLabel={backLabel} />;
   }
-  const IP_SUBVIEW = { ip: null, dns: 'dns', proxy: 'proxy', routing: 'advanced', firewall: 'firewall' };
+  const IP_SUBVIEW = { ip: null, dns: 'dns', routing: 'advanced', firewall: 'firewall' };
   if (view in IP_SUBVIEW) {
     return <IpConfigMenu data={data} id={id} navigate={navigate} isWin={isWin} initialView={IP_SUBVIEW[view]} onBack={onBack} backLabel={backLabel} />;
   }
@@ -2078,6 +2020,7 @@ const addrScope = (addr = '') => {
 // Standardized, searchable listening-ports page (with password-gated kill).
 function PortsPanel({ ports = [], id }) {
   const qc = useQueryClient();
+  const { canHere } = usePermissions();
   const [q, setQ] = useState('');
   const [kill, setKill] = useState(null);   // {pid, process} pending kill
   const sorted = [...ports].sort((a, b) => (Number(a.port) || 0) - (Number(b.port) || 0));
@@ -2114,7 +2057,7 @@ function PortsPanel({ ports = [], id }) {
         ),
         process: <span className="font-semibold text-fg truncate" title={p.process || ''}>{p.process || '—'}</span>,
         pid: <span className="font-mono text-subtle">{p.pid || '—'}</span>,
-        action: p.pid ? (
+        action: p.pid && canHere('execute') ? (
           <button onClick={() => setKill({ pid: p.pid, process: p.process })}
             className="h-7 px-3 rounded-control bg-danger-soft text-danger-fg text-[12px] font-bold hover:opacity-80">
             End process
@@ -2151,6 +2094,7 @@ function PortsPanel({ ports = [], id }) {
 // Standardized, searchable processes page (with password-gated End process).
 function ProcessesPanel({ processes = [], id, onBack, backLabel }) {
   const qc = useQueryClient();
+  const { canHere } = usePermissions();
   const [q, setQ] = useState('');
   const [end, setEnd] = useState(null);   // {pid, command} pending termination
   const sorted = [...processes].sort((a, b) => pctNum(b.cpu) - pctNum(a.cpu));
@@ -2177,7 +2121,7 @@ function ProcessesPanel({ processes = [], id, onBack, backLabel }) {
         cpu: <span className="font-bold whitespace-nowrap" style={{ color: pctColor(cpu) }}>{cpu}%</span>,
         mem: <span className="font-bold whitespace-nowrap" style={{ color: pctColor(mem) }}>{mem}%</span>,
         command: <span className="font-mono text-[13px] text-fg truncate" title={p.command}>{p.command}</span>,
-        action: p.pid ? (
+        action: p.pid && canHere('execute') ? (
           <button onClick={() => setEnd({ pid: p.pid, command: p.command })}
             className="h-7 px-3 rounded-control bg-danger-soft text-danger-fg text-[12px] font-bold hover:opacity-80">
             End process
@@ -2322,14 +2266,19 @@ export default function InfraHostDetail() {
   const navigate = useNavigate();
   const location = useLocation();
   const qc = useQueryClient();
-  // Cross-page navigation (e.g. from File Explorer's tab bar) can request a
-  // starting tab via navigate(..., { state: { tab } }); default to Overview.
-  const [tabRaw, setTabRaw] = useState(location.state?.tab || 'Overview');
-  const [subView, setSubView] = useState(null);
+  const { canHere, can } = usePermissions();
+  // Tab is URL-driven: /infra/:id/:tab → every tab has its own route (mirrors
+  // MySQLDashboard.jsx's activeTab/setActiveTab pattern). setTab keeps its old
+  // signature but now navigates instead of setState. Read from the raw
+  // pathname rather than useParams() — Network/IP Configuration/Config Files
+  // are matched by their own /infra/:id/<tab>/:sub route (no `:tab` param at
+  // all in THAT route), so useParams().tab would be undefined there and
+  // silently fall back to Overview.
+  const tabSlug = location.pathname.split('/')[3];
+  const tab = TAB_SLUG[tabSlug] || 'Overview';
+  const setTab = (t) => navigate(`/infra/${id}${t !== 'Overview' ? `/${SLUG_FOR_TAB[t]}` : ''}`);
   const [showRestart, setShowRestart] = useState(false);
   const [showUpdate, setShowUpdate] = useState(false);
-  const tab = tabRaw;
-  const setTab = (t) => { setTabRaw(t); setSubView(null); };
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['hostInfraDetail', id],
@@ -2346,15 +2295,17 @@ export default function InfraHostDetail() {
   // and persisted ClickHouse history the Agent monitoring page uses (keyed by
   // `host.server_name`, which IS the agent_name these metrics are stored under).
   //
-  // SSH-polled hosts have no such pipeline — nothing pushes them into ClickHouse
-  // — but the whole Infra module should still show a live trend, not a dead
-  // single reading. So for those, this page builds its OWN trend client-side:
-  // every 30s refetch of getHostInfraDetail already carries a fresh cpu/memory
-  // snapshot, so each one is appended to a rolling in-browser buffer and charted
-  // exactly like the ClickHouse-backed series. It's session-local (resets on
-  // reload, caps at 120 points ≈ 1 hour) rather than persisted history, which is
-  // why the range/granularity picker only appears for agent hosts — there's no
-  // server-side range to pick from client-buffered samples.
+  // SSH-polled hosts get real persisted history too now — os_server_refresh_
+  // scheduler.py writes an AgentMetric row (kind='infra', tech='host') on every
+  // 3-minute SSH poll, the same table the agent-push path writes to, keyed by
+  // the same host.server_name. So BOTH collector types query the same
+  // ClickHouse-backed history below; `agentSeries` is named for the original
+  // agent-only case but is really just "the persisted series," whichever
+  // collector produced it. The client-side session buffer (`sshBuffer` below)
+  // is kept as a fallback ONLY for whichever hosts have no persisted samples
+  // yet (a brand-new host, or one the scheduler hasn't ticked for yet) — it's
+  // session-local (resets on reload, caps at 120 points ≈ 1 hour), so persisted
+  // history is always preferred once it exists.
   const [showSystemInfo, setShowSystemInfo] = useState(false);
   const [perfRange, setPerfRange] = useState('60');
   const [perfCustomMinutes, setPerfCustomMinutes] = useState('1440');
@@ -2370,7 +2321,7 @@ export default function InfraHostDetail() {
     // agent's database-engine rows (their host_cpu/host_memory are always 0).
     queryFn: () => getMetricsHistory(host.server_name, { minutes: perfMinutes, bucketSeconds: perfBucketSeconds, kind: 'infra', tech: 'host' }),
     refetchInterval: Math.max(15_000, Math.min(60_000, perfBucketSeconds * 250)),
-    enabled: Boolean(host.server_name) && isAgentHost,
+    enabled: Boolean(host.server_name),
     retry: false,
   });
 
@@ -2392,7 +2343,7 @@ export default function InfraHostDetail() {
 
   const [sshBuffer, setSshBuffer] = useState([]);
   useEffect(() => {
-    if (isAgentHost || !data || failed) return;
+    if (!data || failed) return;
     const cpuVal = pctNum(data.cpu_pct);
     const memVal = pctNum((data.memory || {}).used_pct);
     // Same "busiest mount" reduction the Overview tab uses below for its own
@@ -2401,20 +2352,24 @@ export default function InfraHostDetail() {
     const diskVal = pctNum(Math.max(0, ...(data.filesystems || []).map((f) => f.use_pct ?? 0), 0));
     setSshBuffer((buf) => [...buf, { ts: Date.now(), cpu: cpuVal, mem: memVal, disk: diskVal }].slice(-120));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, isAgentHost, failed]);
+  }, [data, failed]);
   const sshSeries = useMemo(() => sshBuffer.map((s) => ({
     label: new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
     cpu: s.cpu, mem: s.mem, disk: s.disk,
   })), [sshBuffer]);
 
-  const liveSeries = isAgentHost ? agentSeries : sshSeries;
+  // Prefer persisted (ClickHouse-backed) history whenever it actually has
+  // samples — for either collector type now — and fall back to the client-side
+  // session buffer only while a host has none yet.
+  const usingPersisted = agentSeries.length > 0;
+  const liveSeries = usingPersisted ? agentSeries : sshSeries;
   const cpuSeries = liveSeries.map((s) => ({ label: s.label, value: s.cpu }));
   const memSeries = liveSeries.map((s) => ({ label: s.label, value: s.mem }));
   const diskSeries = liveSeries.map((s) => ({ label: s.label, value: s.disk }));
   const hasPerfSeries = liveSeries.length > 0;
   const perfRangeLabel = PERF_RANGE_OPTIONS.find((o) => o.id === perfRange)?.label || '';
   const perfGranularityLabel = PERF_GRANULARITY_OPTIONS.find((o) => o.id === perfGranularity)?.label || '';
-  const perfSubtitle = isAgentHost
+  const perfSubtitle = usingPersisted
     ? `${perfRangeLabel} · ${perfGranularityLabel}`
     : `Live session trend · updates every ${Math.round((data?.poll_interval_s || 30))}s`;
   const perfEmptyHint = isAgentHost
@@ -2451,19 +2406,23 @@ export default function InfraHostDetail() {
             </Badge>
             <Button variant="secondary" size="sm" icon="folder" onClick={() => navigate(`/infra/${id}/files`)}>File Explorer</Button>
             <Button variant="secondary" size="sm" icon="shield-check" onClick={() => setTab('IP Configuration')}>Firewall</Button>
-            {host.collector === 'agent' && isWin && (
+            {host.collector === 'agent' && isWin && can('/infra/:id', 'execute') && (
               <Button variant="secondary" size="sm" icon="download" title="Download the latest agent and upgrade in place" onClick={() => setShowUpdate(true)}>Update Agent</Button>
             )}
-            <Button variant="secondary" size="sm" icon="power" onClick={() => setShowRestart(true)}>Restart</Button>
-            <button
-              type="button"
-              onClick={() => qc.invalidateQueries(['hostInfraDetail', id])}
-              title="Refresh now"
-              className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
-            >
-              <Icon name="refresh" size={13} className={isFetching ? 'animate-spin' : undefined} />
-              Refresh
-            </button>
+            {can('/infra/:id', 'restart') && (
+              <Button variant="secondary" size="sm" icon="power" onClick={() => setShowRestart(true)}>Restart</Button>
+            )}
+            {can('/infra/:id', 'view') && (
+              <button
+                type="button"
+                onClick={() => qc.invalidateQueries(['hostInfraDetail', id])}
+                title="Refresh now"
+                className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
+              >
+                <Icon name="refresh" size={13} className={isFetching ? 'animate-spin' : undefined} />
+                Refresh
+              </button>
+            )}
           </>
         }
       />
@@ -2507,33 +2466,32 @@ export default function InfraHostDetail() {
                 <SectionBand
                   icon="activity" title="Performance"
                   right={
-                    isAgentHost ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Select value={perfRange} onChange={setPerfRange} options={PERF_RANGE_OPTIONS} size="sm" width="auto" aria-label="Time range" />
-                        {perfRange === 'custom' && (
-                          <Input
-                            type="number" min={1} value={perfCustomMinutes}
-                            onChange={(e) => setPerfCustomMinutes(e.target.value)}
-                            wrapperClassName="w-20" size="sm" aria-label="Custom minutes"
-                          />
-                        )}
-                        <Select value={perfGranularity} onChange={setPerfGranularity} options={PERF_GRANULARITY_OPTIONS} size="sm" width="auto" aria-label="Granularity" />
-                      </div>
-                    ) : (
-                      <span className="text-[11px] text-subtle">SSH-polled — trend builds from live snapshots, no range to pick</span>
-                    )
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select value={perfRange} onChange={setPerfRange} options={PERF_RANGE_OPTIONS} size="sm" width="auto" aria-label="Time range" />
+                      {perfRange === 'custom' && (
+                        <Input
+                          type="number" min={1} value={perfCustomMinutes}
+                          onChange={(e) => setPerfCustomMinutes(e.target.value)}
+                          wrapperClassName="w-20" size="sm" aria-label="Custom minutes"
+                        />
+                      )}
+                      <Select value={perfGranularity} onChange={setPerfGranularity} options={PERF_GRANULARITY_OPTIONS} size="sm" width="auto" aria-label="Granularity" />
+                      {!isAgentHost && (
+                        <span className="text-[11px] text-subtle">SSH-polled every 3 min — finer granularities will look sparse</span>
+                      )}
+                    </div>
                   }
                 />
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
                   <TrendTile
                     cardId="infra-host-cpu-trend" title="CPU Utilization"
-                    data={cpuSeries} hasData={hasPerfSeries} loading={isAgentHost && perfHistoryQ.isFetching}
+                    data={cpuSeries} hasData={hasPerfSeries} loading={perfHistoryQ.isFetching}
                     color="var(--chart-2)" emptyHint={perfEmptyHint}
                     subtitle={perfSubtitle}
                   />
                   <TrendTile
                     cardId="infra-host-memory-trend" title="Memory Utilization"
-                    data={memSeries} hasData={hasPerfSeries} loading={isAgentHost && perfHistoryQ.isFetching}
+                    data={memSeries} hasData={hasPerfSeries} loading={perfHistoryQ.isFetching}
                     color="var(--chart-5)" emptyHint={perfEmptyHint}
                     subtitle={perfSubtitle}
                   />
@@ -2541,7 +2499,7 @@ export default function InfraHostDetail() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
                   <TrendTile
                     cardId="infra-host-disk-trend" title="Disk Utilization"
-                    data={diskSeries} hasData={hasPerfSeries} loading={isAgentHost && perfHistoryQ.isFetching}
+                    data={diskSeries} hasData={hasPerfSeries} loading={perfHistoryQ.isFetching}
                     color="var(--chart-1)" emptyHint={perfEmptyHint}
                     subtitle={rootFs ? `${perfSubtitle} · busiest: ${rootFs.mount}` : perfSubtitle}
                   />
@@ -2711,10 +2669,10 @@ export default function InfraHostDetail() {
           {tab === 'Diagnostics' && <DiagnosticsPanel id={id} />}
 
           {/* ── IP CONFIGURATION (card launcher) ── */}
-          {tab === 'IP Configuration' && <IpConfigMenu data={data} id={id} navigate={navigate} isWin={isWin} />}
+          {tab === 'IP Configuration' && <IpConfigMenu data={data} id={id} navigate={navigate} isWin={isWin} routed />}
 
           {/* ── NETWORK (enterprise dashboard) ── */}
-          {tab === 'Network' && <NetworkPanel data={data} id={id} navigate={navigate} />}
+          {tab === 'Network' && <NetworkPanel data={data} id={id} navigate={navigate} routed />}
 
           {/* ── CONFIGURATION FILES (card launcher) ── */}
           {tab === 'Config Files' && <ConfigFilesMenu data={data} id={id} navigate={navigate} setTab={setTab} />}

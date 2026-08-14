@@ -4,12 +4,18 @@ import { useQuery } from '@tanstack/react-query';
 import { getResourceDetail, getResourceMetrics } from '../api/resources.api';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import {
-  ArrowLeft, Loader2, AlertTriangle, Activity, BarChart3, Braces,
+  AlertTriangle, Activity, BarChart3, Braces,
   Calendar, ClipboardList, Clock, Cloud, Cpu, Database, DollarSign,
-  Fingerprint, Globe, HardDrive, Inbox, Info, MapPin, Megaphone, Package,
+  Globe, HardDrive, Inbox, Info, MapPin, Megaphone, Package,
   Scale, Server, Settings, Boxes, Table2, Tag, Tags, Timer, Zap,
 } from 'lucide-react';
 import { DiagnosticModal } from '../components/DiagnosticModal';
+import CloudPageHeader from '../components/CloudPageHeader';
+import CloudSection from '../components/CloudSection';
+import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
+import { PageLoading } from '@/components/ui/Loading';
+import cn from '@/lib/cn';
 
 /* ─── constants ─────────────────────────────────────────────────────── */
 const TYPE_META = {
@@ -25,24 +31,25 @@ const TYPE_META = {
 };
 
 const TABS = ['Overview', 'Monitoring', 'Configuration', 'Metadata', 'Tags', 'Raw JSON'];
+// URL slug ↔ tab label — /cloud/resources/:resourceId/:tab (e.g. "raw-json").
+const SLUG_FOR_TAB = {
+  Overview: 'overview', Monitoring: 'monitoring', Configuration: 'configuration',
+  Metadata: 'metadata', Tags: 'tags', 'Raw JSON': 'raw-json',
+};
+const TAB_FOR_SLUG = Object.fromEntries(Object.entries(SLUG_FOR_TAB).map(([label, slug]) => [slug, label]));
 
 /* ─── helpers ────────────────────────────────────────────────────────── */
 function getMeta(type) {
   return TYPE_META[type] || { icon: Cloud, label: type };
 }
 
-function statusStyle(status) {
-  if (!status) {
-    return { pill: 'bg-gray-100 text-gray-600 border-gray-200', dot: 'bg-gray-400' };
-  }
+/** Maps a resource/metric status string to the app's fixed status-tone scale. */
+function statusTone(status) {
+  if (!status) return 'neutral';
   const s = status.toLowerCase();
-  if (['running', 'active', 'available'].includes(s)) {
-    return { pill: 'bg-green-50 text-green-700 border-green-200', dot: 'bg-green-500' };
-  }
-  if (['pending', 'starting'].includes(s)) {
-    return { pill: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-500' };
-  }
-  return { pill: 'bg-red-50 text-red-700 border-red-200', dot: 'bg-red-500' };
+  if (['running', 'active', 'available'].includes(s)) return 'success';
+  if (['pending', 'starting'].includes(s)) return 'warning';
+  return 'danger';
 }
 
 function fmt(val) {
@@ -62,33 +69,46 @@ function bytes(b) {
 }
 
 /* ─── sub-components ────────────────────────────────────────────────── */
-function InfoPanel({ title, icon: Icon, children }) {
+function StatusBadge({ status }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="flex items-center gap-2 px-5 py-3.5 border-b border-gray-200 bg-gray-50">
-        <Icon size={16} className="text-blue-600" />
-        <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider">{title}</h3>
-      </div>
-      <div className="py-1">{children}</div>
-    </div>
+    <Badge tone={statusTone(status)} size="xs" className="uppercase tracking-wide">
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {status || 'NA'}
+    </Badge>
   );
 }
 
-function Row({ label, value, mono = false, highlight = false, badge }) {
+/** Token-styled card wrapping a titled group of Rows — CloudSection with an icon slot. */
+function InfoPanel({ title, icon: TitleIcon, children, bodyClassName = 'p-0' }) {
+  return (
+    <CloudSection
+      title={(
+        <span className="flex items-center gap-2">
+          {TitleIcon && <TitleIcon size={15} className="text-accent-text" />}
+          {title}
+        </span>
+      )}
+      bodyClassName={bodyClassName}
+    >
+      {children}
+    </CloudSection>
+  );
+}
+
+function Row({ label, value, mono = false, highlight = false, statusValue }) {
   const display = fmt(value);
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-2.5 border-b border-gray-100 last:border-b-0">
-      <span className="shrink-0 min-w-[140px] text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</span>
-      {badge ? (
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${badge.pill}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
-          {badge.text}
-        </span>
+    <div className="flex items-center justify-between gap-4 border-b border-border px-card py-2.5 last:border-b-0">
+      <span className="min-w-[140px] shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">{label}</span>
+      {statusValue !== undefined ? (
+        <StatusBadge status={statusValue} />
       ) : (
         <span
-          className={`max-w-[55%] text-right break-all ${
-            mono ? 'font-mono text-xs' : 'text-sm'
-          } ${highlight ? 'text-blue-700 font-semibold' : 'text-gray-800 font-medium'}`}
+          className={cn(
+            'max-w-[55%] text-right break-all',
+            mono ? 'font-mono text-xs' : 'text-sm',
+            highlight ? 'font-semibold text-accent-text' : 'font-medium text-fg',
+          )}
         >
           {display}
         </span>
@@ -99,9 +119,9 @@ function Row({ label, value, mono = false, highlight = false, badge }) {
 
 function TagPill({ k, v }) {
   return (
-    <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-md border border-gray-200">
-      <span className="font-semibold">{k}</span>
-      <span className="text-gray-400">:</span>
+    <span className="inline-flex items-center gap-1 rounded-control border border-border bg-sunken px-2 py-0.5 text-xs text-muted">
+      <span className="font-semibold text-fg">{k}</span>
+      <span className="text-subtle">:</span>
       <span>{v}</span>
     </span>
   );
@@ -215,15 +235,15 @@ function TypeSpecificPanel({ resource }) {
 function MetricsEmpty({ diagnostic, source }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center text-center py-16 px-6">
-      <BarChart3 size={40} className="text-gray-300 mb-3" />
-      <h3 className="text-base font-semibold text-gray-900">No Metrics Available</h3>
-      <p className="text-sm text-gray-500 mt-1 max-w-md">
+    <CloudSection bodyClassName="p-0 flex flex-col items-center justify-center py-16 px-6 text-center">
+      <BarChart3 size={40} className="mb-3 text-subtle" />
+      <h3 className="text-base font-semibold text-fg">No Metrics Available</h3>
+      <p className="mt-1 max-w-md text-sm text-muted">
         No monitoring datapoints were returned for this resource in the last 24 hours.
       </p>
       <button
         onClick={() => setOpen(true)}
-        className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700"
+        className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-accent-text hover:opacity-80"
       >
         <Info size={14} /> Why are metrics unavailable?
       </button>
@@ -244,7 +264,7 @@ function MetricsEmpty({ diagnostic, source }) {
           onClose={() => setOpen(false)}
         />
       )}
-    </div>
+    </CloudSection>
   );
 }
 
@@ -258,12 +278,7 @@ function MonitoringTabContent({ resourceId }) {
   });
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 min-h-[200px]">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        <span className="text-sm text-gray-500">Fetching metrics…</span>
-      </div>
-    );
+    return <PageLoading title="Fetching metrics…" minHeight={200} />;
   }
 
   if (isError || !metricsData || !metricsData.metrics) {
@@ -293,36 +308,36 @@ function MonitoringTabContent({ resourceId }) {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-gutter">
       {/* Data source badge */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex flex-wrap items-center gap-3">
         {isRealtime && source ? (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-green-50 text-green-700 border-green-200">
-            <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
+          <Badge tone="success" size="xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
             Live — {source}
-          </span>
+          </Badge>
         ) : (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-gray-100 text-gray-600 border-gray-200">
-            <AlertTriangle size={12} className="text-gray-400" />
+          <Badge tone="neutral" size="xs">
+            <AlertTriangle size={12} />
             No live data — NA
-          </span>
+          </Badge>
         )}
-        <span className="text-[11px] text-gray-500">Last 24h</span>
+        <span className="text-[11px] text-muted">Last 24h</span>
       </div>
 
       {Object.entries(metrics).map(([metricName, dataPoints]) => {
         if (!dataPoints || dataPoints.length === 0) {
           return (
-            <div key={metricName} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <CloudSection key={metricName}>
               <div className="flex items-center justify-between gap-4">
-                <h4 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider">
-                  <Activity size={16} className="text-gray-400" />
+                <h4 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-fg">
+                  <Activity size={16} className="text-subtle" />
                   {metricName}
                 </h4>
-                <span className="text-[11px] font-semibold text-gray-400">NA</span>
+                <span className="text-[11px] font-semibold text-subtle">NA</span>
               </div>
-              <p className="mt-2 text-xs text-gray-400">No datapoints returned for this metric.</p>
-            </div>
+              <p className="mt-2 text-xs text-subtle">No datapoints returned for this metric.</p>
+            </CloudSection>
           );
         }
 
@@ -333,16 +348,18 @@ function MonitoringTabContent({ resourceId }) {
 
         const seriesMax = Math.max(...chartData.map((d) => d.value));
 
+        // Semantic per-metric-category colouring, drawn from the theme's chart
+        // palette (not brand colours) so it follows light/dark and any accent.
         const mn = metricName.toLowerCase();
-        let strokeColor = '#2563eb';
+        let strokeColor = 'var(--chart-1)';
         if (mn.includes('error') || mn.includes('throttle')) {
-          strokeColor = '#ef4444';
+          strokeColor = 'var(--chart-8)';
         } else if (mn.includes('duration') || mn.includes('latency')) {
-          strokeColor = '#8b5cf6';
+          strokeColor = 'var(--chart-7)';
         } else if (mn.includes('memory') || mn.includes('capacity') || mn.includes('count') || mn.includes('object')) {
-          strokeColor = '#0d9488';
+          strokeColor = 'var(--chart-3)';
         } else if (mn.includes('network') || mn.includes('disk')) {
-          strokeColor = '#f59e0b';
+          strokeColor = 'var(--chart-4)';
         }
 
         // The gradient id is derived from the metric name (e.g. "CPU Utilization
@@ -352,15 +369,15 @@ function MonitoringTabContent({ resourceId }) {
         const gradientId = `chart-grad-${metricName.replace(/[^a-zA-Z0-9]/g, '-')}`;
 
         return (
-          <div key={metricName} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-            <div className="flex items-center justify-between gap-4 mb-3">
-              <h4 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider">
+          <CloudSection key={metricName}>
+            <div className="mb-3 flex items-center justify-between gap-4">
+              <h4 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-fg">
                 <Activity size={16} style={{ color: strokeColor }} />
                 {metricName}
-                <span className="text-[11px] font-normal normal-case tracking-normal text-gray-400">(Last 24h)</span>
+                <span className="text-[11px] font-normal normal-case tracking-normal text-subtle">(Last 24h)</span>
               </h4>
-              <span className="text-[11px] font-semibold text-gray-500">
-                Max: <span className="font-bold text-gray-700">{formatCompactNumber(seriesMax)}</span>
+              <span className="text-[11px] font-semibold text-muted">
+                Max: <span className="font-bold text-fg">{formatCompactNumber(seriesMax)}</span>
               </span>
             </div>
             <div className="h-40">
@@ -372,16 +389,16 @@ function MonitoringTabContent({ resourceId }) {
                       <stop offset="100%" stopColor={strokeColor} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
                   <XAxis
                     dataKey="time"
-                    tick={{ fill: '#9ca3af', fontSize: 11 }}
-                    axisLine={{ stroke: '#eef0f3' }}
+                    tick={{ fill: 'var(--chart-axis)', fontSize: 11 }}
+                    axisLine={{ stroke: 'var(--chart-grid)' }}
                     tickLine={false}
                     minTickGap={24}
                   />
                   <YAxis
-                    tick={{ fill: '#9ca3af', fontSize: 11 }}
+                    tick={{ fill: 'var(--chart-axis)', fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                     width={44}
@@ -389,9 +406,14 @@ function MonitoringTabContent({ resourceId }) {
                   />
                   <Tooltip
                     cursor={{ stroke: strokeColor, strokeWidth: 1, strokeDasharray: '3 3' }}
-                    contentStyle={{ background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
-                    itemStyle={{ color: '#374151', fontSize: 12, fontWeight: 600 }}
-                    labelStyle={{ color: '#9ca3af', fontSize: 11, marginBottom: 2 }}
+                    contentStyle={{
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      boxShadow: 'var(--shadow-md)',
+                    }}
+                    itemStyle={{ color: 'var(--fg)', fontSize: 12, fontWeight: 600 }}
+                    labelStyle={{ color: 'var(--fg-subtle)', fontSize: 11, marginBottom: 2 }}
                     formatter={(value) => [formatCompactNumber(value), metricName]}
                   />
                   <Area
@@ -402,12 +424,12 @@ function MonitoringTabContent({ resourceId }) {
                     strokeLinecap="round"
                     fillOpacity={1}
                     fill={`url(#${gradientId})`}
-                    activeDot={{ r: 4, fill: strokeColor, stroke: '#ffffff', strokeWidth: 2 }}
+                    activeDot={{ r: 4, fill: strokeColor, stroke: 'var(--surface)', strokeWidth: 2 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          </div>
+          </CloudSection>
         );
       })}
     </div>
@@ -416,9 +438,12 @@ function MonitoringTabContent({ resourceId }) {
 
 /* ─── main component ─────────────────────────────────────────────────── */
 export const ResourceDetailPage = () => {
-  const { resourceId } = useParams();
+  const { resourceId, tab: tabSlug } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('Overview');
+  // Tab is URL-driven: /cloud/resources/:resourceId/:tab → every tab has its own route.
+  const activeTab = TAB_FOR_SLUG[tabSlug] || 'Overview';
+  const setActiveTab = (t) =>
+    navigate(`/cloud/resources/${resourceId}${t !== 'Overview' ? `/${SLUG_FOR_TAB[t]}` : ''}`);
 
   const { data: resource, isLoading, isError } = useQuery({
     queryKey: ['resource-detail', resourceId],
@@ -428,38 +453,24 @@ export const ResourceDetailPage = () => {
   });
 
   if (isLoading) {
-    return (
-      <div className="p-6">
-        <div className="flex flex-col items-center justify-center gap-3 py-24">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          <span className="text-sm text-gray-500">Loading resource…</span>
-        </div>
-      </div>
-    );
+    return <PageLoading title="Loading resource…" minHeight={320} />;
   }
 
   if (isError || !resource) {
     return (
-      <div className="p-6">
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col items-center justify-center gap-3 py-12 px-6 text-center">
-          <AlertTriangle size={40} className="text-red-500" />
-          <h2 className="text-base font-semibold text-gray-900">Resource not found</h2>
-          <p className="text-sm text-gray-500">The resource you are looking for does not exist or could not be loaded.</p>
-          <button
-            onClick={() => navigate(-1)}
-            className="mt-2 inline-flex items-center gap-1.5 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 rounded-lg px-4 py-2 text-sm font-semibold transition-colors"
-          >
-            <ArrowLeft size={16} />
-            Go Back
-          </button>
-        </div>
-      </div>
+      <CloudSection bodyClassName="p-0 flex flex-col items-center justify-center gap-3 py-12 px-6 text-center">
+        <AlertTriangle size={40} className="text-danger" />
+        <h2 className="text-base font-semibold text-fg">Resource not found</h2>
+        <p className="text-sm text-muted">The resource you are looking for does not exist or could not be loaded.</p>
+        <Button variant="secondary" icon="arrow-left" onClick={() => navigate(-1)} className="mt-2">
+          Go Back
+        </Button>
+      </CloudSection>
     );
   }
 
   const typeMeta = getMeta(resource.resource_type);
   const TypeIcon = typeMeta.icon;
-  const sc = statusStyle(resource.status);
   const tags = resource.tags || {};
   const config = resource.config || {};
   const metadata_ = resource.metadata_ || {};
@@ -521,17 +532,16 @@ export const ResourceDetailPage = () => {
     switch (activeTab) {
       case 'Overview':
         return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-gutter lg:grid-cols-2">
             {/* Left column */}
-            <div className="flex flex-col gap-4">
-              <InfoPanel title="Identity" icon={Fingerprint}>
+            <div className="flex flex-col gap-gutter">
+              <InfoPanel title="Identity" icon={Cloud}>
                 <Row label="Resource Name" value={resource.resource_name} highlight />
                 <Row label="Resource Type" value={resource.resource_type} />
                 <Row label="Provider ID / ARN" value={resource.provider_resource_id} mono />
                 <Row label="Region / Zone" value={resource.region_or_zone} />
                 <Row label="IP / Endpoint" value={resource.ip_address || '—'} />
-                <Row label="Status" value={resource.status}
-                  badge={{ text: resource.status ? resource.status.toUpperCase() : 'NA', pill: sc.pill, dot: sc.dot }} />
+                <Row label="Status" value={resource.status} statusValue={resource.status} />
                 <Row label="Monthly Cost" value={costText != null ? `${costText}/mo` : 'Not tracked'} />
               </InfoPanel>
 
@@ -539,7 +549,7 @@ export const ResourceDetailPage = () => {
             </div>
 
             {/* Right column */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-gutter">
               <InfoPanel title="Discovery Info" icon={Clock}>
                 <Row label="Discovered At" value={resource.discovered_at ? new Date(resource.discovered_at).toLocaleString() : '—'} />
                 <Row label="Resource UUID" value={resource.id} mono />
@@ -547,10 +557,8 @@ export const ResourceDetailPage = () => {
               </InfoPanel>
 
               {tagCount > 0 && (
-                <InfoPanel title={`Tags (${tagCount})`} icon={Tags}>
-                  <div className="px-5 py-4 flex flex-wrap gap-2">
-                    {Object.entries(tags).map(([k, v]) => <TagPill key={k} k={k} v={v} />)}
-                  </div>
+                <InfoPanel title={`Tags (${tagCount})`} icon={Tags} bodyClassName="flex flex-wrap gap-2">
+                  {Object.entries(tags).map(([k, v]) => <TagPill key={k} k={k} v={v} />)}
                 </InfoPanel>
               )}
 
@@ -593,10 +601,8 @@ export const ResourceDetailPage = () => {
       case 'Tags':
         if (tagCount === 0) return <Empty icon={Tags} msg="No tags found on this resource." />;
         return (
-          <InfoPanel title={`Tags (${tagCount})`} icon={Tags}>
-            <div className="px-5 py-4 flex flex-wrap gap-2">
-              {Object.entries(tags).map(([k, v]) => <TagPill key={k} k={k} v={v} />)}
-            </div>
+          <InfoPanel title={`Tags (${tagCount})`} icon={Tags} bodyClassName="flex flex-wrap gap-2">
+            {Object.entries(tags).map(([k, v]) => <TagPill key={k} k={k} v={v} />)}
           </InfoPanel>
         );
 
@@ -604,17 +610,15 @@ export const ResourceDetailPage = () => {
         const hasRaw = Object.keys(rawData).length > 0;
         const raw = hasRaw ? rawData : { config, metadata: metadata_, tags };
         return (
-          <InfoPanel title="Raw Provider Response" icon={Braces}>
-            <div className="p-4">
-              {!hasRaw && (
-                <p className="mb-3 text-xs text-gray-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  No raw provider response stored — showing normalized config.
-                </p>
-              )}
-              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono text-gray-700 overflow-x-auto max-h-[500px] leading-relaxed">
-                {JSON.stringify(raw, null, 2)}
-              </pre>
-            </div>
+          <InfoPanel title="Raw Provider Response" icon={Braces} bodyClassName="p-card">
+            {!hasRaw && (
+              <p className="mb-3 rounded-control border border-warning-soft bg-warning-soft px-3 py-2 text-xs text-warning-fg">
+                No raw provider response stored — showing normalized config.
+              </p>
+            )}
+            <pre className="max-h-[500px] overflow-x-auto rounded-control border border-border bg-sunken p-3 font-mono text-xs leading-relaxed text-fg">
+              {JSON.stringify(raw, null, 2)}
+            </pre>
           </InfoPanel>
         );
       }
@@ -624,107 +628,90 @@ export const ResourceDetailPage = () => {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Back */}
-      <button
-        onClick={() => navigate('/cloud/resources')}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors"
-      >
-        <ArrowLeft size={16} />
-        Back to Resources
-      </button>
-
-      {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <div className="flex items-start gap-4">
-          {/* Icon */}
-          <div className="h-14 w-14 shrink-0 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center">
-            <TypeIcon size={28} className="text-blue-600" />
-          </div>
-
-          {/* Title */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 flex-wrap mb-1.5">
-              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-                {resource.resource_name}
-              </h1>
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border uppercase tracking-wide ${sc.pill}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${sc.dot}`} />
-                {resource.status || 'NA'}
-              </span>
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border bg-blue-50 text-blue-700 border-blue-200">
-                {typeMeta.label}
-              </span>
-            </div>
-            <div className="flex items-center gap-4 flex-wrap text-sm text-gray-500">
+    <>
+      <CloudPageHeader
+        title={resource.resource_name}
+        description={(
+          <span className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1">
+              <MapPin size={13} className="text-subtle" />
+              {resource.region_or_zone || '—'}
+            </span>
+            {resource.ip_address && (
               <span className="inline-flex items-center gap-1">
-                <MapPin size={14} className="text-gray-400" />
-                {resource.region_or_zone}
+                <Globe size={13} className="text-subtle" />
+                {resource.ip_address}
               </span>
-              {resource.ip_address && (
-                <span className="inline-flex items-center gap-1">
-                  <Globe size={14} className="text-gray-400" />
-                  {resource.ip_address}
-                </span>
-              )}
-            </div>
-            <p className="mt-2 font-mono text-xs text-gray-400 break-all">
-              {resource.provider_resource_id}
-            </p>
+            )}
+            <span className="font-mono text-[11px] text-subtle break-all">{resource.provider_resource_id}</span>
+          </span>
+        )}
+        leading={(
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-accent-soft text-accent-text">
+            <TypeIcon size={20} />
           </div>
-        </div>
+        )}
+        backTo="/cloud/resources"
+        actions={(
+          <div className="flex items-center gap-2">
+            <StatusBadge status={resource.status} />
+            <Badge tone="outline" size="sm">{typeMeta.label}</Badge>
+          </div>
+        )}
+        tabs={(
+          <div className="no-scrollbar flex gap-1 overflow-x-auto" role="tablist">
+            {TABS.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                role="tab"
+                aria-selected={activeTab === tab}
+                className={cn(
+                  'relative flex shrink-0 items-center gap-2 whitespace-nowrap px-3 pt-2 pb-2.5 text-[13px] font-semibold transition-colors duration-[var(--dur-fast)]',
+                  activeTab === tab ? 'text-accent-text' : 'text-muted hover:text-fg',
+                )}
+              >
+                {tab}
+                {activeTab === tab && <span className="absolute inset-x-1.5 -bottom-px h-[2px] rounded-full bg-accent" />}
+              </button>
+            ))}
+          </div>
+        )}
+      />
 
-        {/* Stat row */}
-        <div className="flex flex-wrap gap-3 mt-5 pt-5 border-t border-gray-100">
-          {[
-            { icon: Clock, label: 'Discovered', value: resource.discovered_at ? new Date(resource.discovered_at).toLocaleDateString() : '—' },
-            { icon: Tags, label: 'Tags', value: tagCount.toString() },
-            { icon: Settings, label: 'Config Fields', value: configCount.toString() },
-            { icon: DollarSign, label: 'Cost/mo', value: costText != null ? costText : 'N/A' },
-            ...extraStats,
-          ].map((s) => {
-            const StatIcon = s.icon;
-            return (
-              <div key={s.label} className="min-w-[110px] rounded-lg bg-gray-50 border border-gray-200 px-4 py-2.5">
-                <div className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
-                  <StatIcon size={12} className="text-gray-400" />
-                  {s.label}
-                </div>
-                <div className="mt-0.5 text-sm font-bold text-gray-800">{s.value}</div>
+      {/* Quick stats row */}
+      <div className="mb-gutter flex flex-wrap gap-3">
+        {[
+          { icon: Clock, label: 'Discovered', value: resource.discovered_at ? new Date(resource.discovered_at).toLocaleDateString() : '—' },
+          { icon: Tags, label: 'Tags', value: tagCount.toString() },
+          { icon: Settings, label: 'Config Fields', value: configCount.toString() },
+          { icon: DollarSign, label: 'Cost/mo', value: costText != null ? costText : 'N/A' },
+          ...extraStats,
+        ].map((s) => {
+          const StatIcon = s.icon;
+          return (
+            <div key={s.label} className="min-w-[110px] rounded-control border border-border bg-sunken px-4 py-2.5">
+              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                <StatIcon size={12} className="text-subtle" />
+                {s.label}
               </div>
-            );
-          })}
-        </div>
+              <div className="mt-0.5 text-sm font-bold text-fg">{s.value}</div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* ── Tabs ─────────────────────────────────────────────────────── */}
-      <div className="flex gap-1 bg-white border border-gray-200 rounded-xl shadow-sm p-1 overflow-x-auto">
-        {TABS.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 whitespace-nowrap px-3.5 py-2 rounded-lg text-sm transition-colors ${
-              activeTab === tab
-                ? 'bg-blue-50 text-blue-700 font-semibold'
-                : 'text-gray-500 font-medium hover:text-gray-800 hover:bg-gray-50'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Content ──────────────────────────────────────────────────── */}
+      {/* Content */}
       {renderTabContent()}
-    </div>
+    </>
   );
 };
 
 function Empty({ icon: Icon, msg }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm text-center py-12 px-6">
-      <Icon size={32} className="mx-auto text-gray-300" />
-      <p className="mt-3 text-sm text-gray-500">{msg}</p>
-    </div>
+    <CloudSection bodyClassName="p-0 py-12 px-6 text-center">
+      <Icon size={32} className="mx-auto text-subtle" />
+      <p className="mt-3 text-sm text-muted">{msg}</p>
+    </CloudSection>
   );
 }

@@ -10,6 +10,8 @@ from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common.actmon_internal_tables import oracle_exclude_internal_tables_sql
+from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
 # ──────────────────────────────────────────────────────────────
@@ -296,7 +298,7 @@ def oracle_dashboard(conn_id: int, db: Session):
     try:
         raw = _rows(
             engine,
-            """SELECT sql_id, executions,
+            f"""SELECT sql_id, executions,
                       ROUND(elapsed_time / 1000, 2) AS elapsed_ms,
                       ROUND(cpu_time / 1000, 2)     AS cpu_ms,
                       buffer_gets, disk_reads, rows_processed,
@@ -304,6 +306,7 @@ def oracle_dashboard(conn_id: int, db: Session):
                       SUBSTR(sql_text, 1, 300) AS sql_text
                FROM v$sql
                WHERE executions > 0
+                 AND {oracle_exclude_internal_tables_sql('sql_text')}
                ORDER BY elapsed_time DESC
                FETCH FIRST 20 ROWS ONLY"""
         )
@@ -615,7 +618,7 @@ def oracle_top_sql(conn_id: int, db: Session):
     try:
         raw = _rows(
             engine,
-            """SELECT sql_id, executions,
+            f"""SELECT sql_id, executions,
                       ROUND(elapsed_time / 1000, 2)                         AS elapsed_ms,
                       ROUND(cpu_time / 1000, 2)                             AS cpu_ms,
                       buffer_gets, disk_reads, rows_processed,
@@ -627,6 +630,7 @@ def oracle_top_sql(conn_id: int, db: Session):
                       SUBSTR(sql_fulltext, 1, 2000) AS sql_fulltext
                FROM v$sql
                WHERE executions > 0
+                 AND {oracle_exclude_internal_tables_sql('sql_text')}
                ORDER BY elapsed_time DESC
                FETCH FIRST 50 ROWS ONLY"""
         )
@@ -1871,7 +1875,7 @@ def oracle_slow_queries(conn_id: int, db: Session):
     try:
         raw = _rows(
             engine,
-            """SELECT sql_id, executions,
+            f"""SELECT sql_id, executions,
                       ROUND(elapsed_time/NULLIF(executions,0)/1000000,4) AS avg_elapsed_sec,
                       ROUND(cpu_time/NULLIF(executions,0)/1000000,4)     AS avg_cpu_sec,
                       ROUND(disk_reads/NULLIF(executions,0),0)           AS avg_disk_reads,
@@ -1881,6 +1885,7 @@ def oracle_slow_queries(conn_id: int, db: Session):
                       parsing_schema_name
                FROM v$sqlarea
                WHERE executions > 0
+                 AND {oracle_exclude_internal_tables_sql('sql_text')}
                ORDER BY elapsed_time/NULLIF(executions,0) DESC
                FETCH FIRST 50 ROWS ONLY"""
         )
@@ -1899,9 +1904,33 @@ def oracle_slow_queries(conn_id: int, db: Session):
             }
             for r in raw
         ]
-        return {"status": "success", "source": "v$sqlarea", "total": len(queries), "queries": queries, "error": None}
+        response = {"status": "success", "source": "v$sqlarea", "total": len(queries), "queries": queries, "error": None}
+        _normalize_oracle_rows(queries, response)
+        return response
     except Exception as exc:
         return {"status": "error", "source": "v$sqlarea", "total": 0, "queries": [], "error": str(exc)}
+
+
+def _normalize_oracle_rows(queries: list, response: dict) -> None:
+    """Builds the shared cross-engine `normalized`/`capabilities` shape from
+    the v$sqlarea rows above. Mutates `response` in place; see
+    slow_query_normalize.py."""
+    common_rows = []
+    for q in queries:
+        avg_ms = (q.get("avg_elapsed_sec") or 0) * 1000
+        execs = q.get("executions")
+        common_rows.append(build_normalized_row(
+            query_id=q.get("sql_id"),
+            query_text=q.get("sql_text"),
+            schema_name=q.get("parsing_schema_name"),
+            execution_count=execs,
+            total_execution_time=(avg_ms * execs) if execs is not None else None,
+            average_execution_time=avg_ms,
+            rows_returned=q.get("rows_processed"),
+            last_seen=q.get("last_active_time"),
+            source="v$sqlarea",
+        ))
+    attach_normalized(response, "oracle", common_rows)
 
 
 # ──────────────────────────────────────────────────────────────

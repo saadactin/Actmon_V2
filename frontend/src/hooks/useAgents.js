@@ -59,21 +59,10 @@ export default function useAgents() {
     },
   });
 
-  const counts = useMemo(() => {
-    const level = (a) => statusLevel(a.status);
-    return {
-      all: agents.length,
-      online: agents.filter((a) => level(a) === 'online').length,
-      offline: agents.filter((a) => level(a) === 'offline').length,
-      issues: agents.filter((a) => ['warning', 'critical'].includes(level(a))).length,
-    };
-  }, [agents]);
+  const counts = useMemo(() => computeAgentCounts(agents), [agents]);
 
   /** Filter dropdown options built from the data actually present. */
-  const options = useMemo(() => ({
-    dbTypes: ['all', ...[...new Set(agents.map((a) => a.db_type).filter(Boolean))].sort()],
-    environments: ['all', ...[...new Set(agents.map((a) => a.environment).filter(Boolean))].sort()],
-  }), [agents]);
+  const options = useMemo(() => computeAgentOptions(agents), [agents]);
 
   return {
     agents,
@@ -90,6 +79,27 @@ export default function useAgents() {
     sync: sync.mutate,
     isSyncing: sync.isPending,
     syncMessage,
+  };
+}
+
+/** KPI counts for a given agent array — pulled out so a caller can compute
+ * these over a filtered subset (e.g. AgentsPage's host-only rows) without
+ * duplicating the logic the hook itself uses for the unfiltered list. */
+export function computeAgentCounts(agents) {
+  const level = (a) => statusLevel(a.status);
+  return {
+    all: agents.length,
+    online: agents.filter((a) => level(a) === 'online').length,
+    offline: agents.filter((a) => level(a) === 'offline').length,
+    issues: agents.filter((a) => ['warning', 'critical'].includes(level(a))).length,
+  };
+}
+
+/** Filter dropdown options built from the data actually present in `agents`. */
+export function computeAgentOptions(agents) {
+  return {
+    dbTypes: ['all', ...[...new Set(agents.map((a) => a.db_type).filter(Boolean))].sort()],
+    environments: ['all', ...[...new Set(agents.map((a) => a.environment).filter(Boolean))].sort()],
   };
 }
 

@@ -63,14 +63,16 @@ const GROUP_BUCKET = {
 const GROUP_ORDER = ['System', 'Network', 'Database', 'Logs'];
 
 export default function DiagnosisPage() {
-  const { connId } = useParams();
+  const { connId, tab: tabSlug } = useParams();
   const id = Number(connId);
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { canHere } = usePermissions();
   const canAct = canHere('execute');
 
-  const [activeTab, setActiveTab] = useState('overview');
+  // Tab is URL-driven: /diagnose/:connId/:tab → every tab has its own route.
+  const activeTab = TAB_DEFS.some((t) => t.id === tabSlug) ? tabSlug : 'overview';
+  const setActiveTab = (t) => navigate(`/diagnose/${connId}${t !== 'overview' ? `/${t}` : ''}`);
 
   // ── passive data (safe to auto-fetch — no command execution) ───────────
   const [overview, setOverview] = useState(null);

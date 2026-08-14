@@ -31,8 +31,12 @@ export default function PageHeader({
   /** Replaces the icon tile — for pages whose subject has its own mark
       (a database engine's logo and colour, for instance). */
   leading,
-  /** Renders a back link before the title. */
+  /** Renders a back link before the title (navigates to a literal route). */
   backTo,
+  /** Renders a back button before the title (runs a callback instead of
+      navigating) — for pages whose "back" is a stateful step, not a route,
+      e.g. popping a drill-down stack. Ignored if `backTo` is also passed. */
+  onBack,
   backLabel = 'Back',
   actions,
   tabs,
@@ -57,7 +61,7 @@ export default function PageHeader({
     <div className={cn('page-header header-surface mb-gutter', className)}>
       <div className="flex flex-wrap items-start justify-between gap-gutter-sm">
         <div className="flex min-w-0 items-start gap-3">
-          {backTo && (
+          {backTo ? (
             <Link
               to={backTo}
               title={backLabel}
@@ -66,6 +70,16 @@ export default function PageHeader({
             >
               <Icon name="chevron-left" size={18} />
             </Link>
+          ) : onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              title={backLabel}
+              aria-label={backLabel}
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border text-muted transition-colors hover:bg-sunken hover:text-fg"
+            >
+              <Icon name="chevron-left" size={18} />
+            </button>
           )}
           {leading || (mark && (
             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-accent-soft text-accent-text">

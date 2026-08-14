@@ -30,7 +30,10 @@ const SEVERITY_TEXT = {
   info: 'text-info-fg',
 };
 
-export default function RecentAlertsPanel({ alerts = [], counts, loading, onOpenAll, className }) {
+export default function RecentAlertsPanel({
+  alerts = [], counts, loading, onOpenAll, className,
+  title = 'Recent Alerts', actionLabel = 'More Alerts',
+}) {
   const [filter, setFilter] = useState('all');
 
   // Info only earns a tab when something informational is actually firing —
@@ -52,13 +55,13 @@ export default function RecentAlertsPanel({ alerts = [], counts, loading, onOpen
   return (
     <section className={cn('card flex flex-col', className)}>
       <header className="flex items-center gap-2 px-card pt-card pb-3">
-        <h2 className="truncate-safe min-w-0 flex-1 text-[17px] font-bold text-fg">Recent Alerts</h2>
+        <h2 className="truncate-safe min-w-0 flex-1 text-[17px] font-bold text-fg">{title}</h2>
         <button
           type="button"
           onClick={onOpenAll}
           className="flex h-8 shrink-0 items-center gap-1 rounded-control bg-inverse px-3 text-[12px] font-semibold text-on-inverse transition-opacity hover:opacity-90"
         >
-          More Alerts
+          {actionLabel}
         </button>
       </header>
 

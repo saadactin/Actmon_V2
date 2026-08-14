@@ -864,12 +864,11 @@ export default function MongoDBDashboard() {
               </div>
 
               {/* ── Quick Access to dedicated sub-pages ── */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {[
                   { label: 'Slow Operations',     icon: Clock,    path: `/mongodb-dashboard/${id}/slow-operations`,     desc: 'Advanced slow op explorer', color: 'from-orange-500 to-red-500' },
                   { label: 'Collection Analysis', icon: BarChart2, path: `/mongodb-dashboard/${id}/collection-analysis`, desc: 'Indexes & scan insights',     color: 'from-blue-500 to-indigo-600' },
                   { label: 'Error Logs',          icon: FileText,  path: `/mongodb-dashboard/${id}/error-logs`,          desc: 'Severity-filtered log view', color: 'from-red-500 to-rose-600' },
-                  { label: 'Backup & Restore',    icon: Archive,   path: `/mongodb-dashboard/${id}/backup`,              desc: 'mongodump command builder', color: 'from-green-600 to-emerald-700' },
                 ].map(p => (
                   <button key={p.label} onClick={() => navigate(p.path)}
                     className="text-left bg-white border border-slate-200 rounded-2xl p-4 hover:shadow-md hover:-translate-y-0.5 transition-all group flex items-center gap-3">
@@ -2557,12 +2556,11 @@ export default function MongoDBDashboard() {
               </div>
 
               {/* Quick links */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {[
                   { label: 'Slow Operations',     icon: Clock,     path: `/mongodb-dashboard/${id}/slow-operations`, color: 'from-orange-500 to-red-500' },
                   { label: 'Collection Analysis', icon: BarChart2, path: `/mongodb-dashboard/${id}/collection-analysis`, color: 'from-blue-500 to-indigo-600' },
                   { label: 'Error Logs',          icon: FileText,  path: `/mongodb-dashboard/${id}/error-logs`, color: 'from-red-500 to-rose-600' },
-                  { label: 'Backup & Restore',    icon: Archive,   path: `/mongodb-dashboard/${id}/backup`, color: 'from-green-600 to-emerald-700' },
                 ].map(p => (
                   <button key={p.label} onClick={() => navigate(p.path)}
                     className="text-left bg-white border border-slate-200 rounded-2xl p-4 hover:shadow-md hover:-translate-y-0.5 transition-all group flex items-center gap-3">

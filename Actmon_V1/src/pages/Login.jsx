@@ -68,6 +68,27 @@ export const Login = () => {
   const [devOtp, setDevOtp] = useState(null);
   const [code, setCode] = useState('');
   const [resent, setResent] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);   // seconds left before Resend is allowed again
+
+  // Mirrors the server-side resend cooldown so the button self-disables instead
+  // of letting the user fire requests that can only come back as 429s.
+  useEffect(() => {
+    if (cooldown <= 0) return undefined;
+    const id = setInterval(() => setCooldown((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
+
+  // Once the OTP token is dead (expired / retired / resend cap hit) nothing on
+  // this screen can recover it — Verify and Resend both just repeat the same
+  // error, which is the trap in the reported bug. Bounce back to sign-in and
+  // carry the reason across so the user knows why.
+  useEffect(() => {
+    if (step !== 'otp' || !authError) return;
+    if (/session expired|please login again|please sign in again/i.test(authError)) {
+      setStep('credentials'); setCode(''); setOtpToken(null); setDevOtp(null); setCooldown(0);
+    }
+  }, [authError, step]);
 
   const isExpired = searchParams.get('expired') === 'true';
   const { register, handleSubmit, formState: { errors } } = useForm({
@@ -101,11 +122,31 @@ export const Login = () => {
     if (data) navigate(firstAllowedPath(data.menu), { replace: true });
   };
   const onResend = async () => {
-    const res = await resendOtp(otpToken);
-    if (res?.otp_token) { setOtpToken(res.otp_token); setDevOtp(res.dev_otp || null); }
-    setCode(''); setResent(true); setTimeout(() => setResent(false), 3000);
+    if (resending || cooldown > 0) return;
+    setResending(true);
+    setError(null);
+    try {
+      const res = await resendOtp(otpToken);
+      // Only treat this as a success when a replacement token actually came
+      // back. The old code unconditionally flashed "Code resent" — so a failed
+      // resend showed a green confirmation next to a red error, and wiped the
+      // code the user had already typed.
+      if (res?.otp_token) {
+        setOtpToken(res.otp_token);
+        setDevOtp(res.dev_otp || null);
+        setCode('');
+        setCooldown(res.resend_cooldown || 30);
+        setResent(true);
+        setTimeout(() => setResent(false), 3000);
+      }
+    } finally {
+      setResending(false);
+    }
   };
-  const backToLogin = () => { setStep('credentials'); setCode(''); setError(null); };
+  const backToLogin = () => {
+    setStep('credentials'); setCode(''); setError(null);
+    setOtpToken(null); setDevOtp(null); setCooldown(0); setResent(false);
+  };
 
   return (
     <div className="min-h-screen flex bg-slate-100">
@@ -195,9 +236,11 @@ export const Login = () => {
                   className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-slate-800 transition-colors">
                   <ArrowLeft className="h-4 w-4" /> Back to login
                 </button>
-                <button type="button" onClick={onResend} disabled={resent}
-                  className="inline-flex items-center gap-1.5 text-sm font-bold text-[#0078D4] hover:text-blue-700 disabled:text-emerald-600 transition-colors">
-                  <RefreshCw className="h-3.5 w-3.5" /> {resent ? 'Code resent' : 'Resend code'}
+                <button type="button" onClick={onResend} disabled={resending || resent || cooldown > 0}
+                  className={`inline-flex items-center gap-1.5 text-sm font-bold transition-colors ${
+                    resent ? 'text-emerald-600' : cooldown > 0 || resending ? 'text-slate-400' : 'text-[#0078D4] hover:text-blue-700'}`}>
+                  <RefreshCw className={`h-3.5 w-3.5 ${resending ? 'animate-spin' : ''}`} />
+                  {resending ? 'Sending…' : resent ? 'Code resent' : cooldown > 0 ? `Resend in ${cooldown}s` : 'Resend code'}
                 </button>
               </div>
             </form>

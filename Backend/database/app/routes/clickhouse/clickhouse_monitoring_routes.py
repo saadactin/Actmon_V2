@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
-from app.services.clickhouse import clickhouse_monitoring_service
+from app.services.clickhouse import clickhouse_monitoring_service, clickhouse_ai_analysis
 
 router = APIRouter(
     prefix="/api/v1/connections/clickhouse",
@@ -41,6 +42,22 @@ def get_ch_query_log(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/ch-slow-queries")
 def get_ch_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     return clickhouse_monitoring_service.get_slow_queries(conn_id, db)
+
+
+@router.post("/{conn_id}/ch-slow-queries/analyze-groq")
+def analyze_ch_slow_query(
+    conn_id: int, payload: clickhouse_ai_analysis.ClickHouseSlowQueryGroqRequest, db: Session = Depends(get_db)
+):
+    return clickhouse_ai_analysis.analyze_slow_query_groq(conn_id, payload, db)
+
+
+class ChExplainRequest(BaseModel):
+    query_text: str
+
+
+@router.post("/{conn_id}/ch-slow-queries/explain")
+def explain_ch_slow_query(conn_id: int, payload: ChExplainRequest, db: Session = Depends(get_db)):
+    return clickhouse_monitoring_service.explain_query(conn_id, payload.query_text, db)
 
 
 @router.get("/{conn_id}/ch-tables")

@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  FileSpreadsheet, FileText, ChevronLeft, ChevronRight, ChevronDown,
-  Loader2, CalendarRange, Search, X, AlertTriangle, Link2, Unlink,
+  FileSpreadsheet, FileText, ChevronDown, Loader2, CalendarRange, AlertTriangle, Link2, Unlink,
 } from 'lucide-react';
 import { useCostReport } from '../hooks/useCost';
 import { downloadCsv } from '../utils/csvExport';
 import { downloadCostReportPdf } from '../utils/costPdfExport';
+import CloudFilterBar from './CloudFilterBar';
+import Table, { EmptyState } from '@/components/ui/Table';
+import Pagination from '@/components/ui/Pagination';
+import Badge from '@/components/ui/Badge';
+import Button from '@/components/ui/Button';
+import { InlineLoading } from '@/components/ui/Loading';
 
 const DAY_PRESETS = [30, 90, 180, 365];
 const PAGE_SIZE = 50;
@@ -15,8 +20,7 @@ function symbolFor(code) {
   return code ? (CURRENCY_SYMBOLS[code] ?? `${code} `) : '';
 }
 
-const selectClass = 'text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500';
-const inputClass = 'text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500';
+const inputClass = 'rounded-control border border-border bg-surface px-2.5 py-1.5 text-xs text-fg placeholder:text-subtle focus:outline-none focus:ring-2 focus:ring-accent';
 
 export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => {
   const [openSelf, setOpenSelf] = useState(false);
@@ -200,40 +204,153 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
     }
   };
 
+  // Filter row — search + the category selects that are worth showing (some are
+  // conditional: provider/account only appear when more than one is present,
+  // resource type / attachment only apply to the "by resource" shape).
+  const filterFields = [
+    showProviderFilter && {
+      key: 'provider',
+      value: providerFilter,
+      onChange: (v) => { setProviderFilter(v); setAccountFilter('All'); setPage(1); },
+      options: [{ id: 'All', label: 'All Providers' }, ...providers.map((p) => ({ id: p, label: p }))],
+    },
+    showAccountFilter && {
+      key: 'account',
+      value: accountFilter,
+      onChange: (v) => { setAccountFilter(v); setPage(1); },
+      options: [{ id: 'All', label: 'All Accounts' }, ...accountsInReport.map((a) => ({ id: a, label: a }))],
+    },
+    {
+      key: 'service',
+      value: serviceFilter,
+      onChange: (v) => { setServiceFilter(v); setPage(1); },
+      options: [{ id: 'All', label: 'All Services' }, ...services.map((s) => ({ id: s, label: s }))],
+    },
+    byResource && resourceTypes.length > 0 && {
+      key: 'type',
+      value: typeFilter,
+      onChange: (v) => { setTypeFilter(v); setPage(1); },
+      options: [{ id: 'All', label: 'All Resource Types' }, ...resourceTypes.map((t) => ({ id: t, label: t }))],
+    },
+    byResource && {
+      key: 'attach',
+      value: attachFilter,
+      onChange: (v) => { setAttachFilter(v); setPage(1); },
+      options: [{ id: 'All', label: 'Any Attachment' }, { id: 'Attached', label: 'Attached' }, { id: 'Unattached', label: 'Unattached' }],
+    },
+    {
+      key: 'region',
+      value: regionFilter,
+      onChange: (v) => { setRegionFilter(v); setPage(1); },
+      options: [{ id: 'All', label: 'All Regions' }, ...regions.map((r) => ({ id: r, label: r }))],
+    },
+  ].filter(Boolean);
+
+  // Table columns/rows for the shared Table component
+  const columns = byResource
+    ? [
+      { key: 'resource', label: 'Resource' },
+      { key: 'type', label: 'Type' },
+      { key: 'service', label: 'Service' },
+      { key: 'region', label: 'Region' },
+      { key: 'size', label: 'Size (GB)', align: 'right' },
+      { key: 'attached', label: 'Attached To' },
+      { key: 'cost', label: 'Cost', align: 'right' },
+    ]
+    : [
+      { key: 'date', label: 'Date' },
+      { key: 'provider', label: 'Provider' },
+      { key: 'account', label: 'Account' },
+      { key: 'service', label: 'Service' },
+      { key: 'region', label: 'Region' },
+      { key: 'cost', label: 'Cost', align: 'right' },
+    ];
+
+  const tableRows = byResource
+    ? pageRows.map((r, i) => ({
+      key: i,
+      cells: {
+        resource: (
+          <div className="max-w-[260px]">
+            {r.resource_name ? (
+              <span className="font-semibold text-fg">{r.resource_name}</span>
+            ) : (
+              <span className="text-subtle italic" title={r.provider_resource_id}>not in inventory</span>
+            )}
+            {r.status && (
+              <Badge tone={/stop|deallocat/i.test(r.status) ? 'danger' : 'neutral'} size="xs" className="ml-1.5 uppercase tracking-wide">
+                {r.status}
+              </Badge>
+            )}
+          </div>
+        ),
+        type: r.resource_type || '—',
+        service: r.service || '—',
+        region: r.region || '—',
+        size: r.size_gb != null ? Number(r.size_gb).toLocaleString() : '—',
+        attached: r.attached_to_name ? (
+          <span className="inline-flex items-center gap-1.5 text-fg">
+            <Link2 size={12} className="shrink-0 text-accent-text" />
+            {r.attached_to_name}
+            {r.attached_to_status && /stop|deallocat/i.test(r.attached_to_status) && (
+              <Badge tone="danger" size="xs" className="uppercase tracking-wide">stopped</Badge>
+            )}
+          </span>
+        ) : r.attachment_status === 'Unattached' ? (
+          <span className="inline-flex items-center gap-1.5 text-warning">
+            <Unlink size={12} className="shrink-0" /> Unattached
+          </span>
+        ) : (
+          <span className="text-subtle">—</span>
+        ),
+        cost: <span className="font-semibold text-fg">{symbolFor(r.currency)}{(r.cost ?? 0).toFixed(2)}</span>,
+      },
+    }))
+    : pageRows.map((r, i) => ({
+      key: i,
+      cells: {
+        date: r.date,
+        provider: <Badge tone="neutral">{r.provider}</Badge>,
+        account: r.account_name,
+        service: r.service,
+        region: r.region || '—',
+        cost: <span className="font-semibold text-fg">{symbolFor(r.currency)}{(r.cost ?? 0).toFixed(2)}</span>,
+      },
+    }));
+
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div className="card overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between gap-3 px-5 py-4 hover:bg-gray-50 transition-colors"
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-sunken"
       >
-        <span className="flex items-center gap-2.5 text-sm font-bold text-gray-700 uppercase tracking-wider">
-          <CalendarRange size={16} className="text-blue-600" />
+        <span className="flex items-center gap-2.5 text-sm font-bold uppercase tracking-wider text-fg">
+          <CalendarRange size={16} className="text-accent-text" />
           Detailed Cost Report
-          <span className="text-[11px] font-semibold text-gray-400 normal-case tracking-normal">
+          <span className="text-[11px] font-semibold normal-case tracking-normal text-subtle">
             (up to 365 days · per resource or per service · CSV / PDF)
           </span>
         </span>
-        <ChevronDown size={16} className={`text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={16} className={`text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="border-t border-gray-100 p-5 space-y-4">
+        <div className="space-y-4 border-t border-border p-5">
           {/* Date range presets */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Range:</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Range:</span>
             {DAY_PRESETS.map((d) => (
-              <button
+              <Button
                 key={d}
+                size="sm"
+                variant={days === d ? 'subtle' : 'secondary'}
                 onClick={() => { setDays(d); setPage(1); }}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-                  days === d ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                }`}
               >
                 Last {d} days
-              </button>
+              </Button>
             ))}
             {(isLoading || isFetching) && (
-              <span className="flex items-center gap-1.5 text-xs text-gray-400">
+              <span className="flex items-center gap-1.5 text-xs text-subtle">
                 <Loader2 size={12} className="animate-spin" /> Querying billing APIs…
               </span>
             )}
@@ -241,36 +358,35 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
 
           {/* Grouping — the whole shape of the report, so it sits beside the range */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Detail:</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Detail:</span>
             {[
               ['resource', 'By resource', 'Every billed resource with name, type, size and what it is attached to'],
               ['service', 'By service & day', 'Daily spend per service — the timeline view'],
             ].map(([mode, label, title]) => (
-              <button
+              <Button
                 key={mode}
                 title={title}
+                size="sm"
+                variant={groupBy === mode ? 'subtle' : 'secondary'}
                 onClick={() => { setGroupBy(mode); setPage(1); }}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
-                  groupBy === mode ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                }`}
               >
                 {label}
-              </button>
+              </Button>
             ))}
             {byResource && (
-              <span className="text-[11px] text-gray-500">
+              <span className="text-[11px] text-muted">
                 totals per resource over the window (not per-day)
               </span>
             )}
             {autoFellBack && !byResource && (
-              <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              <span className="rounded-control border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-warning-fg">
                 This provider has no per-resource billing data — switched to service &amp; day.
               </span>
             )}
           </div>
 
           {isError ? (
-            <div className="text-sm text-red-600 flex items-center gap-2 py-4">
+            <div className="flex items-center gap-2 py-4 text-sm text-danger">
               <AlertTriangle size={16} /> Failed to load the cost report.
             </div>
           ) : isLoading || !data ? (
@@ -278,14 +394,9 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
                first response lands, and the summary/table below read from it.
                isLoading is false on a refetch that still has data, so switching
                range or grouping keeps the old rows visible instead of flashing. */
-            <div className="flex flex-col items-center justify-center gap-3 py-14">
-              <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
-              <span className="text-xs text-gray-500">
-                Querying billing APIs for the last {days} days…
-              </span>
-            </div>
+            <InlineLoading label={`Querying billing APIs for the last ${days} days…`} className="py-14" />
           ) : rows.length === 0 ? (
-            <div className="text-sm text-gray-500 py-8 text-center">
+            <div className="py-8 text-center text-sm text-muted">
               {byResource ? (
                 <>
                   No per-resource billing data for this range. AWS is expected here — Cost Explorer only
@@ -303,75 +414,39 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
           ) : (
             <>
               {/* Filters */}
+              <CloudFilterBar
+                search={search}
+                onSearchChange={(v) => { setSearch(v); setPage(1); }}
+                searchPlaceholder={byResource ? 'Search resource, type, attached-to…' : 'Search service, account, region…'}
+                filters={filterFields}
+              />
               <div className="flex flex-wrap items-center gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
-                  <input
-                    value={search}
-                    onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                    placeholder={byResource ? 'Search resource, type, attached-to…' : 'Search service, account, region…'}
-                    className={`${inputClass} pl-8 w-60`}
-                  />
-                </div>
-                {showProviderFilter && (
-                  <select className={selectClass} value={providerFilter} onChange={(e) => { setProviderFilter(e.target.value); setAccountFilter('All'); setPage(1); }}>
-                    <option value="All">All Providers</option>
-                    {providers.map((p) => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                )}
-                {showAccountFilter && (
-                  <select className={selectClass} value={accountFilter} onChange={(e) => { setAccountFilter(e.target.value); setPage(1); }}>
-                    <option value="All">All Accounts</option>
-                    {accountsInReport.map((a) => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                )}
-                <select className={selectClass} value={serviceFilter} onChange={(e) => { setServiceFilter(e.target.value); setPage(1); }}>
-                  <option value="All">All Services</option>
-                  {services.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-                {byResource && resourceTypes.length > 0 && (
-                  <select className={selectClass} value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}>
-                    <option value="All">All Resource Types</option>
-                    {resourceTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                )}
-                {byResource && (
-                  <select className={selectClass} value={attachFilter} onChange={(e) => { setAttachFilter(e.target.value); setPage(1); }}>
-                    <option value="All">Any Attachment</option>
-                    <option value="Attached">Attached</option>
-                    <option value="Unattached">Unattached</option>
-                  </select>
-                )}
-                <select className={selectClass} value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setPage(1); }}>
-                  <option value="All">All Regions</option>
-                  {regions.map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
                 {/* Date bounds are meaningless on per-resource totals */}
                 {!byResource && (
                   <>
                     <input type="date" className={inputClass} value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} title="From date" />
-                    <span className="text-xs text-gray-400">to</span>
+                    <span className="text-xs text-subtle">to</span>
                     <input type="date" className={inputClass} value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} title="To date" />
                   </>
                 )}
                 <input type="number" placeholder="Min cost" className={`${inputClass} w-24`} value={minCost} onChange={(e) => { setMinCost(e.target.value); setPage(1); }} />
                 <input type="number" placeholder="Max cost" className={`${inputClass} w-24`} value={maxCost} onChange={(e) => { setMaxCost(e.target.value); setPage(1); }} />
                 {hasActiveFilters && (
-                  <button onClick={clearFilters} className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700">
-                    <X size={12} /> Clear filters
-                  </button>
+                  <Button variant="ghost" size="sm" icon="close" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
                 )}
               </div>
 
               {/* Summary + export */}
-              <div className="flex items-center justify-between gap-3 flex-wrap bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5">
-                <span className="text-xs text-gray-600">
-                  <strong className="text-gray-900">{filtered.length.toLocaleString()}</strong> rows ·
-                  Total <strong className="text-gray-900">{sym}{totalCost.toFixed(2)}</strong>
-                  {!currency && <span className="text-gray-400"> (currency: NA)</span>}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-sunken px-4 py-2.5">
+                <span className="text-xs text-muted">
+                  <strong className="text-fg">{filtered.length.toLocaleString()}</strong> rows ·
+                  Total <strong className="text-fg">{sym}{totalCost.toFixed(2)}</strong>
+                  {!currency && <span className="text-subtle"> (currency: NA)</span>}
                   {byResource && (data?.unmatched_resources ?? 0) > 0 && (
                     <span
-                      className="text-gray-400"
+                      className="text-subtle"
                       title="Billed resource IDs with no match in discovered inventory — usually types discovery doesn't scan (boot volumes, VNICs, DB systems) or resources deleted mid-window."
                     >
                       {' '}· {(data?.unmatched_resources ?? 0).toLocaleString()} not in inventory
@@ -379,156 +454,35 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
                   )}
                 </span>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleDownloadCsv}
-                    disabled={filtered.length === 0}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  >
+                  <Button variant="secondary" size="sm" disabled={filtered.length === 0} onClick={handleDownloadCsv}>
                     <FileSpreadsheet size={13} /> Download CSV
-                  </button>
-                  <button
-                    onClick={handleDownloadPdf}
-                    disabled={filtered.length === 0 || exporting !== null}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  >
+                  </Button>
+                  <Button variant="secondary" size="sm" disabled={filtered.length === 0 || exporting !== null} onClick={handleDownloadPdf}>
                     {exporting === 'pdf' ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />} Download PDF
-                  </button>
+                  </Button>
                 </div>
               </div>
 
               {exportNote && (
-                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <div className="rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-[11px] text-warning-fg">
                   {exportNote}
                 </div>
               )}
 
               {/* Table */}
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        {(byResource
-                          ? ['Resource', 'Type', 'Service', 'Region', 'Size (GB)', 'Attached To', 'Cost']
-                          : ['Date', 'Provider', 'Account', 'Service', 'Region', 'Cost']
-                        ).map((h, i, arr) => (
-                          <th
-                            key={h}
-                            className={`px-3 py-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${
-                              i === arr.length - 1 || h === 'Size (GB)' ? 'text-right' : 'text-left'
-                            }`}
-                          >
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {pageRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={byResource ? 7 : 6} className="px-3 py-10 text-center text-sm text-gray-500">
-                            No rows match these filters.
-                          </td>
-                        </tr>
-                      ) : byResource ? (
-                        pageRows.map((r, i) => (
-                          <tr key={i} className="hover:bg-gray-50">
-                            <td className="px-3 py-2 text-xs whitespace-nowrap max-w-[260px]">
-                              {r.resource_name ? (
-                                <span className="font-semibold text-gray-900">{r.resource_name}</span>
-                              ) : (
-                                <span
-                                  className="text-gray-400 italic"
-                                  title={r.provider_resource_id}
-                                >
-                                  not in inventory
-                                </span>
-                              )}
-                              {r.status && (
-                                <span className={`ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase border ${
-                                  /stop|deallocat/i.test(r.status)
-                                    ? 'bg-red-50 text-red-600 border-red-200'
-                                    : 'bg-gray-100 text-gray-500 border-gray-200'
-                                }`}
-                                >
-                                  {r.status}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{r.resource_type || '—'}</td>
-                            <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">{r.service || '—'}</td>
-                            <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{r.region || '—'}</td>
-                            <td className="px-3 py-2 text-xs text-right text-gray-700 whitespace-nowrap tabular-nums">
-                              {r.size_gb != null ? Number(r.size_gb).toLocaleString() : '—'}
-                            </td>
-                            <td className="px-3 py-2 text-xs whitespace-nowrap">
-                              {r.attached_to_name ? (
-                                <span className="inline-flex items-center gap-1.5 text-gray-700">
-                                  <Link2 size={12} className="text-blue-500 shrink-0" />
-                                  {r.attached_to_name}
-                                  {r.attached_to_status && /stop|deallocat/i.test(r.attached_to_status) && (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200 text-[9px] font-bold uppercase">
-                                      stopped
-                                    </span>
-                                  )}
-                                </span>
-                              ) : r.attachment_status === 'Unattached' ? (
-                                <span className="inline-flex items-center gap-1.5 text-amber-600">
-                                  <Unlink size={12} className="shrink-0" /> Unattached
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-right font-semibold text-gray-900 whitespace-nowrap tabular-nums">
-                              {symbolFor(r.currency)}{(r.cost ?? 0).toFixed(2)}
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        pageRows.map((r, i) => (
-                          <tr key={i} className="hover:bg-gray-50">
-                            <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{r.date}</td>
-                            <td className="px-3 py-2 text-xs whitespace-nowrap">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-gray-100 text-gray-600 border-gray-200">
-                                {r.provider}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-xs text-gray-600 whitespace-nowrap">{r.account_name}</td>
-                            <td className="px-3 py-2 text-xs text-gray-700 whitespace-nowrap">{r.service}</td>
-                            <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">{r.region || '—'}</td>
-                            <td className="px-3 py-2 text-xs text-right font-semibold text-gray-900 whitespace-nowrap tabular-nums">
-                              {symbolFor(r.currency)}{(r.cost ?? 0).toFixed(2)}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination */}
-                <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100 bg-gray-50">
-                  <span className="text-[11px] text-gray-500">
-                    Page {clampedPage} of {totalPages}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      disabled={clampedPage <= 1}
-                      className="p-1 rounded border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 disabled:opacity-40"
-                    >
-                      <ChevronLeft size={13} />
-                    </button>
-                    <button
-                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={clampedPage >= totalPages}
-                      className="p-1 rounded border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 disabled:opacity-40"
-                    >
-                      <ChevronRight size={13} />
-                    </button>
-                  </div>
-                </div>
+              <div className="card overflow-hidden">
+                <Table
+                  columns={columns}
+                  rows={tableRows}
+                  empty={<EmptyState icon="search" title="No rows match these filters" />}
+                />
+                <Pagination
+                  page={clampedPage}
+                  pageCount={totalPages}
+                  total={filtered.length}
+                  onPage={setPage}
+                  unit="rows"
+                />
               </div>
             </>
           )}

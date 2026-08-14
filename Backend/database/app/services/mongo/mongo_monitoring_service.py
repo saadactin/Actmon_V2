@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from urllib.parse import quote_plus
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common.actmon_internal_tables import contains_internal_table
+from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
 # ---------------------------------------------------------------------------
@@ -625,23 +627,116 @@ def get_slow_operations(conn_id: int, db: Session):
         except Exception:
             pass
 
+        # Split out ActMon's own monitoring traffic (this connection may point
+        # at the same Mongo instance ActMon itself uses) — same idea as every
+        # other engine's exclusion filter, applied here on the Python side
+        # since profiler/currentOp results aren't produced by a query ActMon
+        # can add a WHERE clause to.
+        def _is_actmon(op):
+            return contains_internal_table(op.get("ns", "")) or contains_internal_table(op.get("query", ""))
+
+        actmon_internal = [op for op in (current_ops + profile_ops) if _is_actmon(op)]
+        current_ops = [op for op in current_ops if not _is_actmon(op)]
+        profile_ops = [op for op in profile_ops if not _is_actmon(op)]
+
         all_ops = current_ops + profile_ops
         all_ops.sort(key=lambda x: x.get("millis", x.get("secs_running", 0) * 1000), reverse=True)
 
-        return {
+        response = {
             "status":       "success",
             "current_ops":  current_ops,
             "profile_ops":  profile_ops,
             "all_ops":      all_ops,
             "total":        len(all_ops),
+            "actmon_internal_count": len(actmon_internal),
             "profiling_status": {
                 "enabled":    profiling_enabled,
                 "was_active": len(current_ops) > 0,
             },
         }
+        _normalize_mongo_rows(all_ops, response)
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB slow operations error: {str(e)}")
+    finally:
+        if mc:
+            try:
+                mc.close()
+            except Exception:
+                pass
+
+
+def _normalize_mongo_rows(all_ops: list, response: dict) -> None:
+    """Builds the shared cross-engine `normalized`/`capabilities` shape from
+    currentOp/profiler operations. Unlike every other engine, these rows are
+    individual OPERATIONS, not aggregated digests — MongoDB's profiler has no
+    per-query-shape summary the way pg_stat_statements/performance_schema do,
+    so execution_count/total/min/max_execution_time stay None (a single
+    observed duration is not an average). Mutates `response` in place; see
+    slow_query_normalize.py."""
+    common_rows = []
+    for op in all_ops:
+        ns = op.get("ns") or ""
+        db_name = ns.split(".", 1)[0] if "." in ns else (ns or None)
+        duration_ms = op.get("millis")
+        if duration_ms is None:
+            duration_ms = (op.get("secs_running") or 0) * 1000
+        common_rows.append(build_normalized_row(
+            query_text=op.get("query"),
+            database_name=db_name,
+            user_name=op.get("user") or None,
+            host=op.get("client") or None,
+            average_execution_time=duration_ms,
+            rows_returned=op.get("nreturned"),
+            last_seen=op.get("ts") or None,
+            source=op.get("source"),
+        ))
+    attach_normalized(response, "mongodb", common_rows)
+
+
+def explain_operation(conn_id: int, database: str, collection: str, query_filter, db: Session) -> dict:
+    """Real MongoDB `.explain("executionStats")` for a slow operation's own
+    filter — MongoDB previously only showed a `planSummary` string, never a
+    real execution plan. `query_filter` is a dict (or a JSON string the
+    caller passes as one) taken from that operation's own recorded filter;
+    nothing here invents a query."""
+    if not database or not collection:
+        return {"status": "error", "error": "database and collection are required"}
+    if isinstance(query_filter, str):
+        try:
+            query_filter = json.loads(query_filter) if query_filter.strip() else {}
+        except Exception:
+            return {"status": "error", "error": "query_filter is not valid JSON"}
+    query_filter = query_filter or {}
+
+    conn = _get_conn_or_404(conn_id, db)
+    mc = None
+    try:
+        mc = _mongo_client(conn)
+        # The `explain` MongoDB command (rather than cursor.explain(), which the
+        # agent-proxied connection's cursor wrapper doesn't implement) works
+        # identically through a direct pymongo Database.command() and through
+        # the agent-relayed _AgentDatabase.command() — one code path either way.
+        result = mc[database].command(
+            {"explain": {"find": collection, "filter": query_filter}, "verbosity": "executionStats"}
+        )
+        stats = result.get("executionStats", {}) or {}
+        return {
+            "status": "success",
+            "plan_summary": (result.get("queryPlanner", {}) or {}).get("winningPlan", {}).get("stage"),
+            "query_planner": result.get("queryPlanner", {}),
+            "execution_stats": {
+                "executionSuccess": stats.get("executionSuccess"),
+                "nReturned": stats.get("nReturned"),
+                "totalKeysExamined": stats.get("totalKeysExamined"),
+                "totalDocsExamined": stats.get("totalDocsExamined"),
+                "executionTimeMillis": stats.get("executionTimeMillis"),
+            },
+            "raw": result,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
     finally:
         if mc:
             try:

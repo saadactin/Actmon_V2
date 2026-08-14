@@ -28,13 +28,19 @@ const fromServer = (m) => ({
   icon: m.icon,
 });
 
+// Retired from the bar but still present in module_master, so the server menu
+// (GET /auth/menu) can still return them for older roles — drop them here too,
+// not just from the static MENU_ITEMS fallback, so they never reappear.
+const RETIRED_ROUTES = new Set(['/chatbot', '/ml']);
+
 /** The flat list of rows to render, in MENU_ORDER. */
 export default function useNavigation() {
   const serverMenu = useMenuStore((s) => s.serverMenu);
   const badges = useMenuStore((s) => s.badges);
 
   return useMemo(() => {
-    const items = serverMenu ? serverMenu.map(fromServer) : MENU_ITEMS;
+    const items = (serverMenu ? serverMenu.map(fromServer) : MENU_ITEMS)
+      .filter((i) => !RETIRED_ROUTES.has(i.to));
     // Help Center isn't a row in module_master yet, so the server menu never
     // reports it — force it in exactly like the static MENU_ITEMS list already
     // has it, so the bar doesn't lose the item the moment RBAC data lands.

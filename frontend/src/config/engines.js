@@ -84,7 +84,7 @@ const QUICK_LINKS = {
     { path: 'reports', label: 'Reports', icon: 'report' },
   ],
   mongodb: [
-    { path: 'slow-operations', label: 'Slow Ops', icon: 'trend' },
+    { path: 'slow-queries', label: 'Slow Queries', icon: 'trend' },
     { path: 'error-logs', label: 'Error Logs', icon: 'logs' },
     { path: 'collection-analysis', label: 'Collections', icon: 'layers' },
   ],

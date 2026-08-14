@@ -20,13 +20,9 @@ export const MENU_ITEMS = [
   { id: 'databases', label: 'Database', to: '/databases', icon: 'database' },
   { id: 'cloud', label: 'Cloud', to: '/cloud', icon: 'cloud' },
   { id: 'infrastructure', label: 'Infrastructure', to: '/infra', icon: 'settings' },
-  { id: 'ml', label: 'ML/AI', to: '/ml', icon: 'code-xml' },
   { id: 'alerts', label: 'Alerts', to: '/alerts', icon: 'alert' },
   { id: 'administration', label: 'Administration', to: '/administration', icon: 'user-cog' },
   { id: 'settings', label: 'Setting', to: '/settings', icon: 'settings' },
-  // `mark` names a full-colour brand mark to use instead of the monochrome nav
-  // glyph, where a module has one. The bar still shows `icon`.
-  { id: 'chatbot', label: 'ChatBot', to: '/chatbot', icon: 'bot', mark: 'actmon-ai' },
   { id: 'sales', label: 'Sales', to: '/sales', icon: 'chart-trend' },
   { id: 'help-center', label: 'Help Center', to: '/help-center', icon: 'help' },
 ];
@@ -107,7 +103,6 @@ export const ROUTE_LABELS = {
   'table-analysis': 'Table analysis',
   'collection-analysis': 'Collection analysis',
   'self-heal': 'Self heal',
-  backup: 'Backup',
   detail: 'Detail',
   reports: 'Reports',
   infra: 'Infrastructure',

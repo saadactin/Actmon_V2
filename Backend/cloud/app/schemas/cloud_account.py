@@ -105,5 +105,8 @@ class CloudAccountResponse(BaseModel):
     auto_discovery: bool
     last_discovery: Optional[datetime] = None
     created_at: datetime
+    # Derived from the account's most recent discovery job, not stored on the
+    # account row itself — see CloudAccountService.list_accounts().
+    last_discovery_status: Optional[str] = None  # never_scanned | scanning | failed | ok
 
     model_config = {"from_attributes": True}

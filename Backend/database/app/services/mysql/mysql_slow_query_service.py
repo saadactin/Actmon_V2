@@ -14,6 +14,8 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common.actmon_internal_tables import mysql_exclude_internal_tables_sql
+from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
 # ── ActMon-internal query classification ──────────────────────────────────────
@@ -208,6 +210,10 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
     if not live:
         cached = _get_snap(conn_id, "mysql_slow_queries", db)
         if cached is not None:
+            if "normalized" not in cached:
+                _normalize_mysql_rows(
+                    cached.get("perf_schema_queries") or cached.get("file_queries") or [], cached
+                )
             return cached
 
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
@@ -276,22 +282,26 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             # performance schema queries
             perf_queries, perf_error = [], None
             try:
-                rows = conn.execute(text("""
+                rows = conn.execute(text(f"""
                     SELECT
+                        DIGEST                                     AS digest_id,
                         IFNULL(SCHEMA_NAME,'(all)')               AS db_name,
                         DIGEST_TEXT                               AS sql_text,
                         COUNT_STAR                                AS count_calls,
                         ROUND(AVG_TIMER_WAIT / 1e12, 4)          AS avg_exec_sec,
+                        ROUND(MIN_TIMER_WAIT / 1e12, 4)          AS min_exec_sec,
                         ROUND(MAX_TIMER_WAIT / 1e12, 4)          AS max_exec_sec,
                         ROUND(SUM_TIMER_WAIT / 1e12, 4)          AS total_exec_sec,
                         SUM_ROWS_EXAMINED                        AS rows_examined,
                         SUM_ROWS_SENT                            AS rows_returned,
                         COALESCE(SUM_NO_GOOD_INDEX_USED, 0)
                           + COALESCE(SUM_NO_INDEX_USED, 0)       AS no_index_count,
+                        DATE_FORMAT(FIRST_SEEN,'%Y-%m-%d %H:%i:%s') AS first_seen,
                         DATE_FORMAT(LAST_SEEN,'%Y-%m-%d %H:%i:%s') AS last_seen
                     FROM performance_schema.events_statements_summary_by_digest
                     WHERE DIGEST_TEXT IS NOT NULL
                       AND COUNT_STAR > 0
+                      AND {mysql_exclude_internal_tables_sql("DIGEST_TEXT")}
                     ORDER BY AVG_TIMER_WAIT DESC
                     LIMIT 200
                 """)).fetchall()
@@ -301,7 +311,7 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
 
             if not perf_queries and not perf_error:
                 try:
-                    rows = conn.execute(text("""
+                    rows = conn.execute(text(f"""
                         SELECT
                             IFNULL(db,'(all)')                   AS db_name,
                             query                                AS sql_text,
@@ -314,6 +324,7 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
                             no_index_used_count                  AS no_index_count,
                             last_seen                            AS last_seen
                         FROM sys.x$statement_analysis
+                        WHERE {mysql_exclude_internal_tables_sql("query")}
                         ORDER BY avg_latency DESC
                         LIMIT 200
                     """)).fetchall()
@@ -412,7 +423,7 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             if inst:
                 srv = db.query(OsServer).filter(OsServer.id == inst.server_id).first()
                 agent_connected = bool(srv and srv.collector == "agent")
-        return {
+        response = {
             "status": "success",
             "slow_log_config": {
                 "enabled":             slow_log == "ON",
@@ -438,9 +449,39 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             "ssh_user":                rec.ssh_user or "",
             "ssh_host":                rec.ssh_host or rec.host,
         }
+        _normalize_mysql_rows(all_queries, response)
+        return response
 
     except Exception as e:
         raise HTTPException(500, f"MySQL error: {str(e)}")
+
+
+def _normalize_mysql_rows(all_queries: list, response: dict) -> None:
+    """Builds the shared cross-engine `normalized`/`capabilities` shape from
+    whichever row set (performance_schema digests or parsed slow-log-file
+    entries) this call ended up using. Both share the same field names
+    (db_name, sql_text, avg_exec_sec, ...), so one mapping covers either
+    source. Mutates `response` in place; see slow_query_normalize.py."""
+    source = response.get("source") or "performance_schema"
+    normalized = []
+    for q in all_queries:
+        avg_ms = (q.get("avg_exec_sec") or 0) * 1000
+        normalized.append(build_normalized_row(
+            query_id=str(q["digest_id"]) if q.get("digest_id") else None,
+            query_text=q.get("sql_text"),
+            database_name=q.get("db_name"),
+            execution_count=q.get("count_calls"),
+            total_execution_time=(q.get("total_exec_sec") or 0) * 1000 if q.get("total_exec_sec") is not None else None,
+            average_execution_time=avg_ms,
+            min_execution_time=(q.get("min_exec_sec") * 1000) if q.get("min_exec_sec") is not None else None,
+            max_execution_time=(q.get("max_exec_sec") or 0) * 1000,
+            rows_affected=q.get("rows_examined"),
+            rows_returned=q.get("rows_returned"),
+            first_seen=q.get("first_seen"),
+            last_seen=q.get("last_seen"),
+            source=source,
+        ))
+    attach_normalized(response, "mysql", normalized)
 
 
 def get_ssh_config_data(conn_id: int, db: Session) -> dict:
@@ -727,6 +768,7 @@ def build_export_csv(conn_id: int, period: str, db: Session) -> dict:
                     FROM performance_schema.events_statements_summary_by_digest
                     WHERE DIGEST_TEXT IS NOT NULL
                       AND COUNT_STAR > 0
+                      AND {mysql_exclude_internal_tables_sql("DIGEST_TEXT")}
                       {where_clause}
                     ORDER BY AVG_TIMER_WAIT DESC
                     LIMIT 1000

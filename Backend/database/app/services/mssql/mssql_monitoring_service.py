@@ -6,6 +6,8 @@ from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common.actmon_internal_tables import mssql_exclude_internal_tables_sql
+from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -277,7 +279,7 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
 
         top_cpu_queries = []
         try:
-            top_cpu_queries = _rows(engine, """
+            top_cpu_queries = _rows(engine, f"""
                 SELECT TOP 20
                     CAST(total_worker_time / 1000.0 / NULLIF(execution_count, 0) AS DECIMAL(10,2)) AS avg_cpu_ms,
                     execution_count,
@@ -286,6 +288,7 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
                     LEFT(t.text, 200) AS query
                 FROM sys.dm_exec_query_stats s
                 CROSS APPLY sys.dm_exec_sql_text(s.sql_handle) t
+                WHERE {mssql_exclude_internal_tables_sql('t.text')}
                 ORDER BY avg_cpu_ms DESC
             """)
             for row in top_cpu_queries:
@@ -646,14 +649,19 @@ def get_slow_queries(conn_id: int, db: Session):
     from app.utils.agent_cache import get_snapshot as _get_snap
     cached = _get_snap(conn_id, "mssql_slow_queries", db)
     if cached is not None:
+        if "normalized" not in cached:
+            _normalize_mssql_rows(cached.get("queries") or [], cached)
         return cached
 
     conn_rec = _get_conn_or_404(conn_id, db)
     try:
         engine = _mssql_engine(conn_rec)
-        queries = _rows(engine, """
+        queries = _rows(engine, f"""
             SELECT TOP 50
+                CONVERT(VARCHAR(32), qs.query_hash, 2) AS query_hash,
                 CAST(total_elapsed_time / 1000.0 / NULLIF(execution_count, 0) AS DECIMAL(10,2)) AS avg_elapsed_ms,
+                CAST(min_elapsed_time / 1000.0 AS DECIMAL(10,2)) AS min_elapsed_ms,
+                CAST(max_elapsed_time / 1000.0 AS DECIMAL(10,2)) AS max_elapsed_ms,
                 execution_count,
                 CAST(total_worker_time / 1000.0 AS DECIMAL(10,2)) AS total_cpu_ms,
                 CAST(total_logical_reads / NULLIF(execution_count, 0) AS DECIMAL(10,0)) AS avg_logical_reads,
@@ -665,6 +673,7 @@ def get_slow_queries(conn_id: int, db: Session):
             FROM sys.dm_exec_query_stats qs
             CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t
             WHERE t.text NOT LIKE '%sys.dm_exec%'
+                AND {mssql_exclude_internal_tables_sql('t.text')}
             ORDER BY avg_elapsed_ms DESC
         """)
 
@@ -680,13 +689,15 @@ def get_slow_queries(conn_id: int, db: Session):
                     clean[k] = v
             normalised.append(clean)
 
-        return {
+        response = {
             "status": "success",
             "source": "dm_exec_query_stats",
             "queries": normalised,
             "total": len(normalised),
             "error": None,
         }
+        _normalize_mssql_rows(normalised, response)
+        return response
     except Exception as e:
         return {
             "status": "error",
@@ -695,6 +706,29 @@ def get_slow_queries(conn_id: int, db: Session):
             "total": 0,
             "error": str(e),
         }
+
+
+def _normalize_mssql_rows(queries: list, response: dict) -> None:
+    """Builds the shared cross-engine `normalized`/`capabilities` shape from
+    the dm_exec_query_stats rows above. Mutates `response` in place; see
+    slow_query_normalize.py."""
+    common_rows = []
+    for q in queries:
+        avg_ms = q.get("avg_elapsed_ms")
+        execs = q.get("execution_count")
+        common_rows.append(build_normalized_row(
+            query_id=q.get("query_hash"),
+            query_text=q.get("sql_text"),
+            database_name=q.get("db_name"),
+            execution_count=execs,
+            total_execution_time=(avg_ms * execs) if (avg_ms is not None and execs is not None) else None,
+            average_execution_time=avg_ms,
+            min_execution_time=q.get("min_elapsed_ms"),
+            max_execution_time=q.get("max_elapsed_ms"),
+            last_seen=q.get("last_execution_time"),
+            source="dm_exec_query_stats",
+        ))
+    attach_normalized(response, "mssql", common_rows)
 
 
 def get_error_logs(conn_id: int, db: Session):

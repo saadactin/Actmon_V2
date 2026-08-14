@@ -1,12 +1,25 @@
 """
-ClickHouse AI Analysis Service
+ClickHouse AI Analysis Service — error-analysis plus Groq-powered slow-query
+analysis (same pattern as MySQL/PostgreSQL/MSSQL/MongoDB's existing
+`.../slow-queries/analyze-groq` endpoints — see
+`mssql_ai_analysis.analyze_slow_query_groq` for the reference shape).
+ClickHouse previously had no AI analysis for its slow queries at all.
 """
+import os
+import json
+from typing import Optional
+
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.models.connection_model import ConnectionMaster
+
 
 def analyze_clickhouse_error(error_message: str, error_code: str, engine=None) -> str:
     """Analyze ClickHouse error and provide AI-driven insights"""
-    
+
     error_msg_lower = error_message.lower()
-    
+
     analysis = f"""
 ClickHouse Error Analysis Report
 ===============================
@@ -15,7 +28,7 @@ What is error:
 ClickHouse reported error: {error_message}
 
 """
-    
+
     if "syntax error" in error_msg_lower:
         analysis += """Why it is coming:
 Invalid SQL syntax in the ClickHouse query.
@@ -120,5 +133,104 @@ Refer to ClickHouse documentation and logs for specific guidance.
 Exact variable to remove:
 No configuration change needed.
 """
-    
+
     return analysis.strip()
+
+
+# ── Groq-powered slow-query analysis ──────────────────────────────────────────
+class ClickHouseSlowQueryGroqRequest(BaseModel):
+    query_text:        str
+    databases:         Optional[str] = None
+    execution_count:   int   = 0
+    avg_duration_ms:    float = 0.0
+    read_rows:          float = 0.0
+    read_bytes:         float = 0.0
+    result_rows:        float = 0.0
+    memory_usage:       float = 0.0
+
+
+def analyze_slow_query_groq(conn_id: int, payload: ClickHouseSlowQueryGroqRequest, db: Session) -> dict:
+    rec = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id,
+        ConnectionMaster.db_type == "clickhouse",
+    ).first()
+    if not rec:
+        return {"status": "error", "error": "ClickHouse connection not found"}
+    if not (payload.query_text or "").strip():
+        return {"status": "error", "error": "No query text provided"}
+
+    try:
+        from groq import Groq
+        client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        prompt = f"""You are a world-class ClickHouse performance expert. Analyze this slow query deeply and return ONLY valid JSON — no markdown, no code fences.
+
+=== QUERY CONTEXT ===
+Server: {rec.host}:{rec.port}
+Databases touched: {payload.databases or 'unknown'}
+Query:
+{payload.query_text}
+
+=== PERFORMANCE METRICS (from system.query_log, aggregated by normalized query shape) ===
+Execution count: {payload.execution_count:,}
+Average duration: {payload.avg_duration_ms:.2f} ms
+Average rows read: {payload.read_rows:,.0f}
+Average bytes read: {payload.read_bytes:,.0f}
+Average result rows: {payload.result_rows:,.0f}
+Average memory usage: {payload.memory_usage:,.0f} bytes
+
+Return this exact JSON structure:
+{{
+  "severity": "critical|high|medium|low",
+  "severity_reason": "why this severity was assigned",
+  "summary": "one sentence: what the query does and why it is slow",
+  "root_cause": "detailed root cause — what exactly makes this query slow in ClickHouse",
+  "issues": [
+    {{
+      "type": "FULL_SCAN|TOO_MANY_PARTS|LARGE_JOIN|MISSING_PRIMARY_KEY_USE|HIGH_MEMORY|INEFFICIENT_AGGREGATION|OTHER",
+      "table": "affected table or null",
+      "description": "detailed description of the issue",
+      "severity": "critical|high|medium|low",
+      "evidence": "the metric or pattern that proves this issue"
+    }}
+  ],
+  "index_recommendations": [
+    {{
+      "table": "database.table",
+      "columns": ["col1","col2"],
+      "index_type": "ORDER BY key|skip index (minmax/set/bloom_filter)|projection",
+      "create_sql": "ALTER TABLE database.table ADD INDEX idx_name (col1) TYPE minmax GRANULARITY 4;",
+      "reason": "why this helps",
+      "estimated_improvement": "e.g. avoids a full scan of N rows"
+    }}
+  ],
+  "query_rewrite": {{
+    "applicable": true,
+    "optimized_sql": "rewritten query or empty string",
+    "changes_made": ["list","of","changes"],
+    "explanation": "what changed and why it is faster",
+    "expected_gain": "e.g. 5x-20x faster"
+  }},
+  "schema_suggestions": ["any table/ORDER BY/partitioning design changes that would help"],
+  "priority_actions": ["1. Most impactful action first","2. Second","3. Third"],
+  "business_impact": "impact on the application and users",
+  "estimated_overall_improvement": "overall expected improvement after all fixes",
+  "validation_queries": ["a query to verify the optimization worked"]
+}}"""
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=3000,
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+        analysis = json.loads(raw.strip())
+        return {"status": "success", "analysis": analysis}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}

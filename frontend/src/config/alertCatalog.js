@@ -145,23 +145,6 @@ export const SECTIONS = [
     ],
   },
   {
-    id: 'backup',
-    label: 'Backup',
-    icon: 'save',
-    color: 'var(--chart-4)',
-    desc: 'Backup jobs & point-in-time recovery',
-    groups: [
-      {
-        group: 'Backup',
-        metrics: [
-          { id: 'backup_failed', label: 'Backup failed', kind: 'event', desc: 'a backup job fails', evaluation: 'collector' },
-          { id: 'backup_overdue', label: 'Backup overdue', unit: 'h', kind: 'numeric', def: 26, evaluation: 'reserved' },
-          { id: 'pitr_not_ready', label: 'PITR not ready', kind: 'event', desc: 'point-in-time recovery is not ready', evaluation: 'reserved' },
-        ],
-      },
-    ],
-  },
-  {
     id: 'cloud',
     label: 'Cloud',
     icon: 'cloud',
@@ -245,9 +228,6 @@ const SHORT_LABELS = {
   replication_broken: 'Replication',
   replica_down: 'Replica',
   cluster_node_down: 'Cluster',
-  backup_failed: 'Backup',
-  backup_overdue: 'Backup',
-  pitr_not_ready: 'PITR',
 };
 
 /** One- or two-word name for a metric, for dense lists. */

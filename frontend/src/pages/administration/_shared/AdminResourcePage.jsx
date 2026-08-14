@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import PageHeader from '@/components/layout/PageHeader';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
-import Dialog from '@/components/ui/Dialog';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Input from '@/components/ui/Input';
 import Textarea from '@/components/ui/Textarea';
@@ -73,7 +72,8 @@ function FieldControl({ field, value, onChange, options }) {
 /**
  * The generic Administration CRUD page. One instance per `config` (see
  * @/config/adminResources.js) serves every sub-page — list/search/sort/
- * paginate, add/edit via `Dialog`, delete via `ConfirmDialog`.
+ * paginate, add/edit/view as a full page (replaces the list entirely while
+ * open, same shell as AddOsServerPage.jsx), delete via `ConfirmDialog`.
  *
  * `orgId`/`orgName` come from the Administration hub's `?org=&orgName=`
  * query params for org-scoped resources (config.orgScoped) — undefined for
@@ -210,6 +210,73 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     }
   }
 
+  // Add/Edit/View replace the whole list with a full page, same shape as
+  // AddOsServerPage.jsx (PageHeader + .card + footer bar) — not a modal.
+  if (form) {
+    const formTitle = form.mode === 'add' ? `Add ${singular}` : form.mode === 'edit' ? `Edit ${singular}` : `${singular} Details`;
+    return (
+      <>
+        <PageHeader
+          title={formTitle}
+          icon={config.icon}
+          description={orgName ? `${config.subtitle} · ${orgName}` : config.subtitle}
+          onBack={closeForm}
+          backLabel={config.title}
+        />
+
+        <div className="card overflow-hidden">
+          <div className="px-card py-card">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {config.fields.map((f) => (
+                <div key={f.key} className={f.type === 'textarea' || f.type === 'json' ? 'sm:col-span-2' : undefined}>
+                  <label className="mb-1 block text-[12px] font-semibold text-muted">
+                    {f.label}{f.required && <span className="text-danger"> *</span>}
+                  </label>
+                  {form.mode === 'view' ? (
+                    <p className="text-[13px] text-fg">
+                      {f.type === 'checkbox' ? (form.values[f.key] ? 'Active' : 'Inactive') : String(form.values[f.key] ?? '—')}
+                    </p>
+                  ) : (
+                    <FieldControl
+                      field={f}
+                      value={form.values[f.key]}
+                      onChange={(v) => setField(f.key, v)}
+                      options={dynOptions[f.key]}
+                    />
+                  )}
+                  {form.errors?.[f.key] && <p className="mt-1 text-[11px] text-danger">{form.errors[f.key]}</p>}
+                  {f.help && <p className="mt-1 text-[11px] text-subtle">{f.help}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border bg-raised px-card py-3">
+            {form.mode === 'view' ? (
+              <Button variant="secondary" onClick={closeForm}>Close</Button>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={closeForm}>Cancel</Button>
+                <Button variant="primary" loading={isCreating || isUpdating} onClick={submitForm}>
+                  {form.mode === 'add' ? 'Create' : 'Save'}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {toast && (
+          <div
+            className={`fixed right-6 bottom-6 z-[95] rounded-control px-4 py-2.5 text-[13px] font-semibold shadow-lg ${
+              toast.tone === 'danger' ? 'bg-danger text-white' : 'bg-success text-white'}`}
+          >
+            {toast.text}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -275,49 +342,6 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
             <IconButton icon="chevron-right" label="Next page" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage((p) => p + 1)} />
           </div>
         </div>
-      )}
-
-      {form && (
-        <Dialog
-          open
-          onClose={closeForm}
-          icon={config.icon}
-          title={form.mode === 'add' ? `Add ${singular}` : form.mode === 'edit' ? `Edit ${singular}` : `${singular} Details`}
-          footer={form.mode === 'view' ? (
-            <div className="flex justify-end"><Button variant="secondary" onClick={closeForm}>Close</Button></div>
-          ) : (
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="secondary" onClick={closeForm}>Cancel</Button>
-              <Button variant="primary" loading={isCreating || isUpdating} onClick={submitForm}>
-                {form.mode === 'add' ? 'Create' : 'Save'}
-              </Button>
-            </div>
-          )}
-        >
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {config.fields.map((f) => (
-              <div key={f.key} className={f.type === 'textarea' || f.type === 'json' ? 'sm:col-span-2' : undefined}>
-                <label className="mb-1 block text-[12px] font-semibold text-muted">
-                  {f.label}{f.required && <span className="text-danger"> *</span>}
-                </label>
-                {form.mode === 'view' ? (
-                  <p className="text-[13px] text-fg">
-                    {f.type === 'checkbox' ? (form.values[f.key] ? 'Active' : 'Inactive') : String(form.values[f.key] ?? '—')}
-                  </p>
-                ) : (
-                  <FieldControl
-                    field={f}
-                    value={form.values[f.key]}
-                    onChange={(v) => setField(f.key, v)}
-                    options={dynOptions[f.key]}
-                  />
-                )}
-                {form.errors?.[f.key] && <p className="mt-1 text-[11px] text-danger">{form.errors[f.key]}</p>}
-                {f.help && <p className="mt-1 text-[11px] text-subtle">{f.help}</p>}
-              </div>
-            ))}
-          </div>
-        </Dialog>
       )}
 
       <ConfirmDialog

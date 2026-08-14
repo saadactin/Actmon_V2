@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/layout/PageHeader';
 import Button from '@/components/ui/Button';
 import Tabs from '@/components/ui/Tabs';
@@ -25,7 +25,11 @@ const TOP_TABS = [
  */
 export default function SettingsPage() {
   const a = useThemeStore();
-  const [tab, setTab] = useState('appearance');
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Tab is URL-driven: /settings = Appearance, /settings/notifications = Notifications.
+  const tab = location.pathname === '/settings/notifications' ? 'notifications' : 'appearance';
+  const setTab = (t) => navigate(t !== 'appearance' ? `/settings/${t}` : '/settings');
 
   return (
     <>

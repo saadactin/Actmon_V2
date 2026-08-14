@@ -10,6 +10,7 @@ import Select from '@/components/ui/Select';
 import Input from '@/components/ui/Input';
 import Dialog from '@/components/ui/Dialog';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
+import Steps from '@/components/ui/Steps';
 import { EmptyState } from '@/components/ui/Table';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuthStore } from '@/store/authStore';
@@ -169,7 +170,11 @@ export default function GroupRolePagePermission() {
   const childCountOf = (pageId) => withParent.filter((r) => r.effParent === pageId).length;
 
   function openModule(m) { setSelectedModuleId(m.module_id); setTreeStack([]); setSearch(''); }
-  function drillInto(r) { setTreeStack((s) => [...s, { page_id: r.page_id, page_name: r.page_name }]); }
+  // Clears `search` on the way in — otherwise drilling into a search-matched
+  // card leaves stale search state that goBack()'s search-branch doesn't know
+  // to unwind, so one "back" click would silently skip past the search
+  // results the user was actually looking at.
+  function drillInto(r) { setSearch(''); setTreeStack((s) => [...s, { page_id: r.page_id, page_name: r.page_name }]); }
   function goBack() {
     if (search) { setSearch(''); return; }
     if (treeStack.length) { setTreeStack((s) => s.slice(0, -1)); return; }
@@ -180,12 +185,11 @@ export default function GroupRolePagePermission() {
 
   // ── add/edit dialog ──────────────────────────────────────────────────
   function openGrantForm(existing) {
-    const page = existing ? pageById[existing.page_id] : null;
     setForm({
       mode: existing ? 'edit' : 'add',
+      step: 0,
       moduleId: existing ? existing.module_id : selectedModuleId,
-      parentId: page?.parent_id || null,
-      childId: page && page.parent_id ? page.page_id : null,
+      pageId: existing ? existing.page_id : null,
       selectedPerms: existing ? permCatalog.filter((p) => isRealPermission(p) && (existing.permission & p.permission_value) === p.permission_value) : [],
       permOpen: false,
       existingPageId: existing?.page_id,
@@ -193,10 +197,27 @@ export default function GroupRolePagePermission() {
   }
   function closeForm() { setForm(null); }
 
-  const formPagesForModule = form ? pages.filter((p) => p.module_id === form.moduleId) : [];
-  const parentOptions = formPagesForModule.filter((p) => !p.parent_id);
-  const childOptions = form?.parentId ? formPagesForModule.filter((p) => p.parent_id === form.parentId) : [];
-  const targetPageId = form?.childId || form?.parentId || null;
+  // Every page in the module, flattened depth-first (parent immediately
+  // followed by its children) so a single dropdown can reach a page at ANY
+  // depth — not just root pages or their direct children. Some modules nest
+  // 4+ levels deep (e.g. Infrastructure: Infrastructure → Host Detail → a
+  // tab → one of that tab's own cards), so a fixed "Page" + "Sub-page" pair
+  // can never reach anything past the 2nd level.
+  const formPageTree = useMemo(() => {
+    if (!form) return [];
+    const inModule = pages.filter((p) => p.module_id === form.moduleId);
+    const byParent = {};
+    inModule.forEach((p) => { const k = p.parent_id || 0; (byParent[k] ||= []).push(p); });
+    const out = [];
+    const walk = (parentId, depth) => {
+      (byParent[parentId] || [])
+        .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0))
+        .forEach((p) => { out.push({ ...p, depth }); walk(p.page_id, depth + 1); });
+    };
+    walk(0, 0);
+    return out;
+  }, [form, pages]);
+  const targetPageId = form?.pageId || null;
   const bitmaskValue = form ? form.selectedPerms.reduce((sum, p) => sum + p.permission_value, 0) : 0;
   const availablePerms = form
     ? permCatalog.filter((p) => isRealPermission(p) && !form.selectedPerms.some((s) => s.permission_id === p.permission_id))
@@ -338,15 +359,130 @@ export default function GroupRolePagePermission() {
 
   const selectedModule = modules.find((m) => m.module_id === selectedModuleId);
 
+  // Grant-a-Page replaces this whole screen with a full page 2-step wizard —
+  // same shell as AddOsServerPage.jsx (PageHeader + .card + Steps + footer
+  // nav) — instead of a modal. Step 0 picks the page, step 1 picks
+  // permissions; Back at step 1 returns to step 0, Back at step 0 closes the
+  // form back to the tree view below.
+  if (form) {
+    const stepLabels = ['Choose Page', 'Choose Permissions'];
+    const step = form.step || 0;
+    return (
+      <>
+        <PageHeader
+          title={form.mode === 'add' ? 'Grant a Page' : 'Edit Permission'}
+          icon="shield-check"
+          description={`${role?.role_name || 'Role'} · ${selectedModule?.module_name || 'Module'}`}
+          onBack={() => (step === 0 ? closeForm() : setForm((f) => ({ ...f, step: 0 })))}
+          backLabel={step === 0 ? 'Cancel' : 'Back'}
+        />
+
+        <div className="card overflow-hidden">
+          <div className="border-b border-border px-card py-3.5">
+            <Steps steps={stepLabels} current={step} />
+          </div>
+
+          <div className="px-card py-card">
+            {step === 0 ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-[12px] font-semibold text-muted">Module</label>
+                  <Select
+                    value={String(form.moduleId ?? '')}
+                    onChange={(v) => setForm((f) => ({ ...f, moduleId: Number(v), pageId: null }))}
+                    options={modules.map((m) => ({ id: String(m.module_id), label: m.module_name }))}
+                    disabled={form.mode === 'edit'}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[12px] font-semibold text-muted">Page</label>
+                  <Select
+                    value={String(form.pageId ?? '')}
+                    onChange={(v) => setForm((f) => ({ ...f, pageId: v ? Number(v) : null }))}
+                    options={formPageTree.map((p) => ({
+                      id: String(p.page_id),
+                      label: `${'—  '.repeat(p.depth)}${grantedIds.has(p.page_id) ? `${p.page_name} (granted)` : p.page_name}`,
+                    }))}
+                    placeholder="— Select page —"
+                    disabled={form.mode === 'edit'}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="relative max-w-xl">
+                <label className="mb-1 block text-[12px] font-semibold text-muted">Permissions</label>
+                <button
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, permOpen: !f.permOpen }))}
+                  className="flex h-control w-full items-center justify-between rounded-control border border-border bg-surface px-2.5 text-[13px] text-fg"
+                >
+                  {form.selectedPerms.length ? `${form.selectedPerms.length} permission${form.selectedPerms.length !== 1 ? 's' : ''} selected` : 'Select permissions…'}
+                  <Icon name="chevron-down" size={14} className="text-subtle" />
+                </button>
+                {form.permOpen && (
+                  <div className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface py-1 shadow-lg">
+                    {availablePerms.length === 0 ? (
+                      <p className="px-3 py-2 text-[12px] text-subtle">All permissions selected.</p>
+                    ) : availablePerms.map((p) => (
+                      <button
+                        key={p.permission_id}
+                        type="button"
+                        onClick={() => addPerm(p)}
+                        className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[13px] text-fg hover:bg-sunken"
+                      >
+                        {p.permission_name}
+                        <span className="text-[11px] text-subtle">{p.permission_value}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {form.selectedPerms.map((p) => (
+                    <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text">
+                      {p.permission_name}
+                      <button type="button" onClick={() => removePerm(p.permission_id)} aria-label={`Remove ${p.permission_name}`}>
+                        <Icon name="close" size={11} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] text-subtle">Computed bitmask value: <b className="text-fg">{bitmaskValue}</b></p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-raised px-card py-3">
+            <span className="text-[12px] text-subtle">Step {step + 1} of {stepLabels.length}</span>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={closeForm}>Cancel</Button>
+              {step > 0 && (
+                <Button variant="secondary" icon="arrow-left" onClick={() => setForm((f) => ({ ...f, step: 0 }))}>Previous</Button>
+              )}
+              {step === 0 ? (
+                <Button variant="primary" iconRight="arrow-right" disabled={!form.pageId} onClick={() => setForm((f) => ({ ...f, step: 1 }))}>
+                  Next
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={submitGrant}>
+                  {form.mode === 'add' ? 'Save Permission' : 'Update Permission'}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
         title={`${role?.role_name || 'Role'} · ${selectedModule?.module_name || 'Module'}`}
         icon="shield-check"
         description={treeStack.length ? `Inside ${treeStack[treeStack.length - 1].page_name}` : 'Top-level pages for this module.'}
+        onBack={goBack}
         actions={(
           <div className="flex items-center gap-2">
-            <IconButton icon="chevron-left" label="Back" onClick={goBack} />
             {!readOnly && canHere('edit') && (
               <Button variant="secondary" icon="copy" onClick={() => setClone({ targetRoleId: '', mode: 'merge' })}>Clone to…</Button>
             )}
@@ -398,102 +534,6 @@ export default function GroupRolePagePermission() {
           );
         })}
       </div>
-
-      {form && (
-        <Dialog
-          open
-          onClose={closeForm}
-          icon="shield-check"
-          title={form.mode === 'add' ? 'Grant a Page' : 'Edit Permission'}
-          width={560}
-          footer={(
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="secondary" onClick={closeForm}>Cancel</Button>
-              <Button variant="primary" onClick={submitGrant}>{form.mode === 'add' ? 'Save Permission' : 'Update Permission'}</Button>
-            </div>
-          )}
-        >
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label className="mb-1 block text-[12px] font-semibold text-muted">Module</label>
-                <Select
-                  value={String(form.moduleId ?? '')}
-                  onChange={(v) => setForm((f) => ({ ...f, moduleId: Number(v), parentId: null, childId: null }))}
-                  options={modules.map((m) => ({ id: String(m.module_id), label: m.module_name }))}
-                  disabled={form.mode === 'edit'}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[12px] font-semibold text-muted">Page</label>
-                <Select
-                  value={String(form.parentId ?? '')}
-                  onChange={(v) => setForm((f) => ({ ...f, parentId: v ? Number(v) : null, childId: null }))}
-                  options={parentOptions.map((p) => ({
-                    id: String(p.page_id),
-                    label: grantedIds.has(p.page_id) ? `${p.page_name} ✓` : p.page_name,
-                  }))}
-                  placeholder="— Select page —"
-                  disabled={form.mode === 'edit'}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[12px] font-semibold text-muted">Sub-page (optional)</label>
-                <Select
-                  value={String(form.childId ?? '')}
-                  onChange={(v) => setForm((f) => ({ ...f, childId: v ? Number(v) : null }))}
-                  options={childOptions.map((p) => ({
-                    id: String(p.page_id),
-                    label: grantedIds.has(p.page_id) ? `${p.page_name} ✓` : p.page_name,
-                  }))}
-                  placeholder="Whole page"
-                  disabled={form.mode === 'edit' || !form.parentId}
-                />
-              </div>
-            </div>
-
-            <div className="relative">
-              <label className="mb-1 block text-[12px] font-semibold text-muted">Permissions</label>
-              <button
-                type="button"
-                onClick={() => setForm((f) => ({ ...f, permOpen: !f.permOpen }))}
-                className="flex h-control w-full items-center justify-between rounded-control border border-border bg-surface px-2.5 text-[13px] text-fg"
-              >
-                {form.selectedPerms.length ? `${form.selectedPerms.length} permission${form.selectedPerms.length !== 1 ? 's' : ''} selected` : 'Select permissions…'}
-                <Icon name="chevron-down" size={14} className="text-subtle" />
-              </button>
-              {form.permOpen && (
-                <div className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface py-1 shadow-lg">
-                  {availablePerms.length === 0 ? (
-                    <p className="px-3 py-2 text-[12px] text-subtle">All permissions selected.</p>
-                  ) : availablePerms.map((p) => (
-                    <button
-                      key={p.permission_id}
-                      type="button"
-                      onClick={() => addPerm(p)}
-                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[13px] text-fg hover:bg-sunken"
-                    >
-                      {p.permission_name}
-                      <span className="text-[11px] text-subtle">{p.permission_value}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {form.selectedPerms.map((p) => (
-                  <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text">
-                    {p.permission_name}
-                    <button type="button" onClick={() => removePerm(p.permission_id)} aria-label={`Remove ${p.permission_name}`}>
-                      <Icon name="close" size={11} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <p className="mt-2 text-[11px] text-subtle">Computed bitmask value: <b className="text-fg">{bitmaskValue}</b></p>
-            </div>
-          </div>
-        </Dialog>
-      )}
 
       {clone && (
         <Dialog

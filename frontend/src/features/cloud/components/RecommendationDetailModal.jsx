@@ -139,35 +139,35 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
   const sevStyle = (() => {
     switch ((opt.severity || '').toUpperCase()) {
       case 'CRITICAL':
-      case 'HIGH': return 'bg-red-50 text-red-700 border-red-200';
-      case 'MEDIUM': return 'bg-amber-50 text-amber-700 border-amber-200';
-      default: return 'bg-blue-50 text-blue-700 border-blue-200';
+      case 'HIGH': return 'bg-danger-soft text-danger-fg';
+      case 'MEDIUM': return 'bg-warning-soft text-warning-fg';
+      default: return 'bg-info-soft text-info-fg';
     }
   })();
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="bg-white w-full max-w-2xl max-h-[88vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        className="bg-surface w-full max-w-2xl max-h-[88vh] rounded-card shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-gray-200 shrink-0">
+        <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-border shrink-0">
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h2 className="text-lg font-bold text-gray-900">{opt.rule}</h2>
-              <span className={`rounded-full text-[11px] font-bold uppercase tracking-wide px-2.5 py-0.5 border ${sevStyle}`}>
+              <h2 className="text-lg font-bold text-fg">{opt.rule}</h2>
+              <span className={`rounded-full text-[11px] font-bold uppercase tracking-wide px-2.5 py-0.5 ${sevStyle}`}>
                 {opt.severity} Severity
               </span>
             </div>
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-muted mt-1">
               Target resource:{' '}
               <button
                 onClick={() => navigate(`/cloud/resources/${opt.resource_id}`)}
-                className="font-semibold text-blue-600 hover:text-blue-700 inline-flex items-center gap-1"
+                className="font-semibold text-accent-text hover:text-accent-hover inline-flex items-center gap-1"
               >
                 {opt.affected_resource} <ExternalLink size={12} />
               </button>
@@ -175,7 +175,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700 flex items-center justify-center shrink-0"
+            className="w-8 h-8 rounded-control border border-border bg-surface text-muted hover:bg-sunken hover:text-fg flex items-center justify-center shrink-0"
             title="Close"
           >
             <X size={18} />
@@ -186,20 +186,20 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
         <div className="overflow-y-auto px-6 py-5 space-y-6">
 
           {/* Savings headline */}
-          <div className={`rounded-xl border p-5 ${hasSavings ? 'bg-green-50/70 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">
-              <Sparkles size={14} className={hasSavings ? 'text-green-600' : 'text-gray-400'} />
+          <div className={`rounded-card border border-border p-5 ${hasSavings ? 'bg-success-soft' : 'bg-sunken'}`}>
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle mb-1">
+              <Sparkles size={14} className={hasSavings ? 'text-success-fg' : 'text-subtle'} />
               Estimated Monthly Saving
             </div>
             {hasSavings ? (
               <>
-                <div className="text-3xl font-bold text-green-600">{sym}{fmt(opt.potential_savings)}<span className="text-base font-semibold text-gray-400">/mo</span></div>
-                <div className="text-xs text-gray-500 mt-0.5">≈ {sym}{fmt(opt.potential_savings * 12)}/year</div>
+                <div className="text-3xl font-bold text-success-fg">{sym}{fmt(opt.potential_savings)}<span className="text-base font-semibold text-subtle">/mo</span></div>
+                <div className="text-xs text-muted mt-0.5">≈ {sym}{fmt(opt.potential_savings * 12)}/year</div>
               </>
             ) : (
               <>
-                <div className="text-2xl font-bold text-gray-700">Not quantified (NA)</div>
-                <div className="text-xs text-gray-500 mt-0.5">See the note below for why a rupee figure isn’t shown for this one.</div>
+                <div className="text-2xl font-bold text-fg">Not quantified (NA)</div>
+                <div className="text-xs text-muted mt-0.5">See the note below for why a rupee figure isn’t shown for this one.</div>
               </>
             )}
           </div>
@@ -207,13 +207,13 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
           {/* Savings math */}
           {(breakdown.length > 0 || assumptions.length > 0) && (
             <section>
-              <h3 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider mb-3">
-                <Calculator size={16} className="text-blue-600" /> How the number is calculated
+              <h3 className="flex items-center gap-2 text-sm font-bold text-fg uppercase tracking-wider mb-3">
+                <Calculator size={16} className="text-accent" /> How the number is calculated
               </h3>
               {breakdown.length > 0 && (
-                <div className="overflow-x-auto rounded-lg border border-gray-200 mb-3">
+                <div className="overflow-x-auto rounded-card border border-border mb-3">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
+                    <thead className="bg-sunken text-[11px] uppercase tracking-wider text-subtle">
                       <tr>
                         <th className="text-left font-semibold px-3 py-2">Component</th>
                         <th className="text-right font-semibold px-3 py-2">Quantity</th>
@@ -221,24 +221,24 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
                         <th className="text-right font-semibold px-3 py-2">Monthly</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-border">
                       {breakdown.map((b, i) => (
                         <tr key={i}>
-                          <td className="px-3 py-2 text-gray-700">
+                          <td className="px-3 py-2 text-fg">
                             {b.component}
-                            {b.note && <div className="text-[11px] text-gray-400">{b.note}</div>}
+                            {b.note && <div className="text-[11px] text-subtle">{b.note}</div>}
                           </td>
-                          <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{fmt(b.quantity)} <span className="text-gray-400">{b.unit}</span></td>
-                          <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{sym}{b.unit_price}</td>
-                          <td className="px-3 py-2 text-right font-semibold text-gray-800 whitespace-nowrap">{sym}{fmt(b.monthly_cost)}</td>
+                          <td className="px-3 py-2 text-right text-muted whitespace-nowrap">{fmt(b.quantity)} <span className="text-subtle">{b.unit}</span></td>
+                          <td className="px-3 py-2 text-right text-muted whitespace-nowrap">{sym}{b.unit_price}</td>
+                          <td className="px-3 py-2 text-right font-semibold text-fg whitespace-nowrap">{sym}{fmt(b.monthly_cost)}</td>
                         </tr>
                       ))}
                     </tbody>
                     {hasSavings && (
-                      <tfoot className="bg-green-50/60 border-t border-green-200">
+                      <tfoot className="bg-success-soft border-t border-border">
                         <tr>
-                          <td className="px-3 py-2 font-bold text-gray-700" colSpan={3}>Total saving</td>
-                          <td className="px-3 py-2 text-right font-bold text-green-700 whitespace-nowrap">{sym}{fmt(opt.potential_savings)}/mo</td>
+                          <td className="px-3 py-2 font-bold text-fg" colSpan={3}>Total saving</td>
+                          <td className="px-3 py-2 text-right font-bold text-success-fg whitespace-nowrap">{sym}{fmt(opt.potential_savings)}/mo</td>
                         </tr>
                       </tfoot>
                     )}
@@ -248,16 +248,16 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
               {assumptions.length > 0 && (
                 <ul className="space-y-1.5">
                   {assumptions.map((a, i) => (
-                    <li key={i} className="flex gap-2 text-xs text-gray-600">
-                      <Info size={13} className="text-gray-400 shrink-0 mt-0.5" />
+                    <li key={i} className="flex gap-2 text-xs text-muted">
+                      <Info size={13} className="text-subtle shrink-0 mt-0.5" />
                       <span>{a}</span>
                     </li>
                   ))}
                 </ul>
               )}
               {opt.savings_basis && (
-                <p className="flex gap-2 text-[11px] text-gray-500 mt-2 pt-2 border-t border-gray-100">
-                  <AlertTriangle size={13} className="text-amber-500 shrink-0 mt-0.5" />
+                <p className="flex gap-2 text-[11px] text-muted mt-2 pt-2 border-t border-border">
+                  <AlertTriangle size={13} className="text-warning shrink-0 mt-0.5" />
                   <span>{opt.savings_basis}</span>
                 </p>
               )}
@@ -266,13 +266,13 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
 
           {/* Why */}
           <section>
-            <h3 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider mb-3">
-              <HelpCircle size={16} className="text-purple-600" /> Why do this
+            <h3 className="flex items-center gap-2 text-sm font-bold text-fg uppercase tracking-wider mb-3">
+              <HelpCircle size={16} className="text-accent" /> Why do this
             </h3>
             <ul className="space-y-2">
               {guide.why.map((w, i) => (
-                <li key={i} className="flex gap-2.5 text-sm text-gray-600 leading-relaxed">
-                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-purple-400 shrink-0" />
+                <li key={i} className="flex gap-2.5 text-sm text-muted leading-relaxed">
+                  <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-accent shrink-0" />
                   <span>{w}</span>
                 </li>
               ))}
@@ -281,17 +281,17 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
 
           {/* How */}
           <section>
-            <h3 className="flex items-center gap-2 text-sm font-bold text-gray-700 uppercase tracking-wider mb-3">
-              <Wrench size={16} className="text-blue-600" /> How to do it
+            <h3 className="flex items-center gap-2 text-sm font-bold text-fg uppercase tracking-wider mb-3">
+              <Wrench size={16} className="text-accent" /> How to do it
             </h3>
 
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle mb-2">
               <MousePointerClick size={13} /> In the OCI Console
             </div>
             <ol className="space-y-2 mb-4">
               {guide.consoleSteps.map((s, i) => (
-                <li key={i} className="flex gap-3 text-sm text-gray-600 leading-relaxed">
-                  <span className="shrink-0 w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                <li key={i} className="flex gap-3 text-sm text-muted leading-relaxed">
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-accent-soft text-accent-text text-[11px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
                   <span>{s}</span>
                 </li>
               ))}
@@ -299,17 +299,17 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
 
             {guide.cli && guide.cli.length > 0 && (
               <>
-                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-2">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle mb-2">
                   <Terminal size={13} /> Or with the OCI CLI
                 </div>
                 <div className="space-y-2">
                   {guide.cli.map((c, i) => (
                     <div key={i}>
-                      <div className="text-[11px] text-gray-500 mb-1">{c.label}</div>
-                      <pre className="bg-slate-900 text-slate-100 text-xs rounded-lg px-3 py-2 overflow-x-auto"><code>{c.cmd}</code></pre>
+                      <div className="text-[11px] text-subtle mb-1">{c.label}</div>
+                      <pre className="bg-inverse text-on-inverse text-xs rounded-control px-3 py-2 overflow-x-auto"><code>{c.cmd}</code></pre>
                     </div>
                   ))}
-                  <p className="text-[11px] text-gray-400">Replace <code className="font-mono">&lt;…-ocid&gt;</code> placeholders with the real OCIDs (Console → resource → OCID, or the Resource Details page).</p>
+                  <p className="text-[11px] text-subtle">Replace <code className="font-mono">&lt;…-ocid&gt;</code> placeholders with the real OCIDs (Console → resource → OCID, or the Resource Details page).</p>
                 </div>
               </>
             )}
@@ -325,7 +325,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
                     href={d.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700 border border-blue-200 bg-blue-50 rounded-lg px-3 py-1.5"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent-text hover:text-accent-hover bg-accent-soft rounded-control px-3 py-1.5"
                   >
                     {d.label} <ExternalLink size={12} />
                   </a>
@@ -336,9 +336,9 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 shrink-0 bg-gray-50/60">
-          <p className="text-[11px] text-gray-400">Savings are list-price estimates — verify against your OCI invoice before acting.</p>
-          <button onClick={onClose} className="bg-gray-900 hover:bg-gray-800 text-white rounded-lg px-4 py-2 text-sm font-semibold">
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-border shrink-0 bg-raised">
+          <p className="text-[11px] text-subtle">Savings are list-price estimates — verify against your OCI invoice before acting.</p>
+          <button onClick={onClose} className="bg-inverse hover:opacity-90 text-on-inverse rounded-control px-4 py-2 text-sm font-semibold">
             Close
           </button>
         </div>

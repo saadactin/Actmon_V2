@@ -3,16 +3,16 @@ import {
 } from 'lucide-react';
 
 const CATEGORY_META = {
-  credentials: { label: 'Credentials Issue', Icon: KeyRound, tone: 'bg-red-50 text-red-700 border-red-200' },
-  permission: { label: 'Permission Denied', Icon: ShieldAlert, tone: 'bg-orange-50 text-orange-700 border-orange-200' },
-  network: { label: 'Network Error', Icon: WifiOff, tone: 'bg-blue-50 text-blue-700 border-blue-200' },
-  no_data: { label: 'No Data From Provider', Icon: Info, tone: 'bg-gray-100 text-gray-600 border-gray-200' },
-  unknown: { label: 'Unknown Error', Icon: AlertTriangle, tone: 'bg-amber-50 text-amber-700 border-amber-200' },
-  never_scanned: { label: 'Never Scanned', Icon: Info, tone: 'bg-gray-100 text-gray-600 border-gray-200' },
-  scanning: { label: 'Scan In Progress', Icon: Loader2, tone: 'bg-blue-50 text-blue-700 border-blue-200' },
-  failed: { label: 'Scan Failed', Icon: AlertTriangle, tone: 'bg-red-50 text-red-700 border-red-200' },
-  ok: { label: 'Scan Succeeded', Icon: CheckCircle2, tone: 'bg-green-50 text-green-700 border-green-200' },
-  unsupported: { label: 'Not Supported Yet', Icon: Info, tone: 'bg-purple-50 text-purple-700 border-purple-200' },
+  credentials: { label: 'Credentials Issue', Icon: KeyRound, tone: 'bg-danger-soft text-danger-fg' },
+  permission: { label: 'Permission Denied', Icon: ShieldAlert, tone: 'bg-warning-soft text-warning-fg' },
+  network: { label: 'Network Error', Icon: WifiOff, tone: 'bg-info-soft text-info-fg' },
+  no_data: { label: 'No Data From Provider', Icon: Info, tone: 'bg-neutral-soft text-muted' },
+  unknown: { label: 'Unknown Error', Icon: AlertTriangle, tone: 'bg-warning-soft text-warning-fg' },
+  never_scanned: { label: 'Never Scanned', Icon: Info, tone: 'bg-neutral-soft text-muted' },
+  scanning: { label: 'Scan In Progress', Icon: Loader2, tone: 'bg-info-soft text-info-fg' },
+  failed: { label: 'Scan Failed', Icon: AlertTriangle, tone: 'bg-danger-soft text-danger-fg' },
+  ok: { label: 'Scan Succeeded', Icon: CheckCircle2, tone: 'bg-success-soft text-success-fg' },
+  unsupported: { label: 'Not Supported Yet', Icon: Info, tone: 'bg-accent-soft text-accent-text' },
 };
 
 const SUGGESTED_FIX = {
@@ -33,45 +33,45 @@ export const DiagnosticModal = ({ title, items, onClose }) => (
     onClick={onClose}
   >
     <div
-      className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col"
+      className="bg-surface rounded-card shadow-2xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col"
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
-        <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-          <HelpCircle size={18} className="text-blue-600" />
+      <div className="flex items-center justify-between gap-3 px-card py-3.5 border-b border-border">
+        <h3 className="text-base font-bold text-fg flex items-center gap-2">
+          <HelpCircle size={18} className="text-accent" />
           {title}
         </h3>
         <button
           onClick={onClose}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          className="p-1.5 rounded-control text-subtle hover:text-fg hover:bg-sunken transition-colors"
           aria-label="Close"
         >
           <X size={18} />
         </button>
       </div>
 
-      <div className="overflow-y-auto p-5 space-y-4">
+      <div className="overflow-y-auto px-card py-card space-y-4">
         {items.length === 0 ? (
-          <p className="text-sm text-gray-500">No diagnostic information is available.</p>
+          <p className="text-sm text-muted">No diagnostic information is available.</p>
         ) : (
           items.map((item, i) => {
             const meta = CATEGORY_META[item.category] || CATEGORY_META.unknown;
             const fix = SUGGESTED_FIX[item.category];
             return (
-              <div key={i} className="border border-gray-200 rounded-xl overflow-hidden">
-                <div className={`flex items-center gap-2 px-4 py-2.5 border-b ${meta.tone}`}>
+              <div key={i} className="border border-border rounded-card overflow-hidden">
+                <div className={`flex items-center gap-2 px-4 py-2.5 ${meta.tone}`}>
                   <meta.Icon size={15} className={item.category === 'scanning' ? 'animate-spin' : ''} />
                   <span className="text-xs font-bold uppercase tracking-wide">{meta.label}</span>
                   <span className="text-xs font-semibold ml-auto">{item.scope}{item.provider ? ` · ${item.provider}` : ''}</span>
                 </div>
                 <div className="p-4 space-y-3">
-                  <p className="text-sm text-gray-700 leading-relaxed">{item.message}</p>
+                  <p className="text-sm text-fg leading-relaxed">{item.message}</p>
                   {fix && (
-                    <div className="bg-blue-50/60 border border-blue-100 rounded-lg p-3">
-                      <div className="text-[11px] font-bold text-blue-700 uppercase tracking-wider mb-1">
+                    <div className="bg-info-soft rounded-control p-3">
+                      <div className="text-[11px] font-bold text-info-fg uppercase tracking-wider mb-1">
                         What to do
                       </div>
-                      <p className="text-xs text-gray-700">{fix}</p>
+                      <p className="text-xs text-fg">{fix}</p>
                     </div>
                   )}
                 </div>
@@ -81,10 +81,10 @@ export const DiagnosticModal = ({ title, items, onClose }) => (
         )}
       </div>
 
-      <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end">
+      <div className="px-card py-3 border-t border-border bg-raised flex justify-end">
         <button
           onClick={onClose}
-          className="px-4 py-2 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-100"
+          className="px-4 py-2 text-xs font-semibold text-muted bg-surface border border-border rounded-control hover:bg-sunken"
         >
           Close
         </button>

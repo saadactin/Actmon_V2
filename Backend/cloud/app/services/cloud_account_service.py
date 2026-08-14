@@ -6,9 +6,23 @@ from typing import List
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.discovery_job import DiscoveryJob
 from app.repository.cloud_account_repo import CloudAccountRepository
+from app.repository.discovery_repo import DiscoveryRepository
 from app.schemas.cloud_account import CloudAccountCreate, CloudAccountResponse
 from app.utils.encryption import encrypt_credentials
+
+
+def _classify_discovery_status(job: DiscoveryJob | None) -> str:
+    """Same classification as ResourceService.get_scan_diagnostic, reduced to
+    just the status label — real state from the job row, never guessed."""
+    if not job:
+        return "never_scanned"
+    if job.status == "FAILED":
+        return "failed"
+    if job.status in ("RUNNING", "PENDING"):
+        return "scanning"
+    return "ok"
 
 
 class CloudAccountService:
@@ -54,7 +68,14 @@ class CloudAccountService:
 
     async def list_accounts(self) -> List[CloudAccountResponse]:
         accounts = await self.repo.list_all()
-        return [CloudAccountResponse.model_validate(a) for a in accounts]
+        disco_repo = DiscoveryRepository(self.repo.db)
+        results = []
+        for account in accounts:
+            resp = CloudAccountResponse.model_validate(account)
+            job = await disco_repo.get_latest_for_account(account.id)
+            resp.last_discovery_status = _classify_discovery_status(job)
+            results.append(resp)
+        return results
 
     async def get_account(self, account_id: uuid.UUID) -> CloudAccountResponse | None:
         account = await self.repo.get_by_id(account_id)

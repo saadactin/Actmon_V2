@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Archive, Database, GitBranch, HardDrive, Lock, Table, TrendingUp, Users, Zap,
+  Activity, Database, GitBranch, HardDrive, Lock, Table, TrendingUp, Users, Zap,
 } from 'lucide-react';
 import client from '@/api/client';
 import { mssqlTableDetail } from '@/api/drilldown';
@@ -35,25 +35,16 @@ import {
   withExtras, withHints, withoutColumns,
 } from '@/config/dbCatalog';
 
-// Backup & PITR renders inline as a tab, so the dashboard's header stays put.
-const MSSQLBackupPageEmbedded = React.lazy(() => import('./MSSQLBackupPage'));
-
 /**
  * SQL Server dashboard.
  *
- * Ported from the existing module: same ten tabs, same information in the same
- * order. Two things are deliberately different, and both are corrections rather
- * than redesign:
- *
- *  1. Every field is bound to what `/monitoring-dashboard` actually returns. The
- *     existing page reads `locks.lock_waits_sec`, `disk_io.reads`,
- *     `always_on.replicas`, `sessions.idle` and a dozen `databases[]` columns that
- *     the collector has never returned — `locks` and `disk_io` are ARRAYS, and
- *     `always_on` is `{enabled, groups}`. Those panels could only ever render
- *     "—", so here they render the arrays they are actually given.
- *  2. `backup_history` and `job_history` are in the payload and were displayed
- *     nowhere. They are on the Backup tab now, which is where someone goes
- *     looking for them.
+ * Ported from the existing module: same nine tabs, same information in the same
+ * order — every field is bound to what `/monitoring-dashboard` actually returns.
+ * The existing page used to read `locks.lock_waits_sec`, `disk_io.reads`,
+ * `always_on.replicas`, `sessions.idle` and a dozen `databases[]` columns that
+ * the collector has never returned — `locks` and `disk_io` are ARRAYS, and
+ * `always_on` is `{enabled, groups}`. Those panels could only ever render
+ * "—", so here they render the arrays they are actually given.
  */
 
 const REFRESH_INTERVAL = 15; // seconds
@@ -72,7 +63,6 @@ const TABS = [
   { id: 'replication', label: 'Replication', icon: GitBranch },
   { id: 'users', label: 'Logins', icon: Users },
   { id: 'storage', label: 'Storage', icon: HardDrive },
-  { id: 'backup', label: 'Backup & PITR', icon: Archive },
 ];
 
 /* SQL Server state vocabulary → the shared tones. Only values that carry meaning
@@ -89,14 +79,6 @@ const SYNC_TONES = {
   HEALTHY: 'success', SYNCHRONIZED: 'success', SYNCHRONIZING: 'warning',
   PARTIALLY_HEALTHY: 'warning', NOT_HEALTHY: 'danger', 'NOT SYNCHRONIZING': 'danger',
 };
-const RUN_STATUS = {
-  0: { label: 'Failed', tone: 'danger' },
-  1: { label: 'Succeeded', tone: 'success' },
-  2: { label: 'Retry', tone: 'warning' },
-  3: { label: 'Cancelled', tone: 'neutral' },
-  4: { label: 'In progress', tone: 'info' },
-};
-
 const LONG_QUERY_MS = 5000;
 const num = (v) => Number(v) || 0;
 const mb = (v) => num(v) * 1048576;
@@ -258,8 +240,6 @@ export default function MSSQLDashboard() {
       replication: p.replication || {},
       alwaysOn,
       blocking,
-      backupHistory: Array.isArray(p.backup_history) ? p.backup_history : [],
-      jobHistory: Array.isArray(p.job_history) ? p.job_history : [],
       users: Array.isArray(p.users) ? p.users : [],
 
       dbItems,
@@ -322,7 +302,7 @@ export default function MSSQLDashboard() {
 
   const {
     connection, hs, cpu, memory, serverInfo, sessions, replication, blocking,
-    backupHistory, jobHistory, users, dbItems, tableItems, waitRows, queryRows,
+    users, dbItems, tableItems, waitRows, queryRows,
     ioRows, topQueryRows, waitingRequests, connPct, cachePct, cpuPct, sqlCpuPct,
     memPct, longRunning, agGroups, hasAlwaysOn, unhealthyAg, healthScore,
     tableDbOptions, collectorErrors,
@@ -1117,90 +1097,6 @@ export default function MSSQLDashboard() {
           );
         })()}
 
-        {/* ══ BACKUP & PITR ═════════════════════════════════════════════════ */}
-        {activeTab === 'backup' && (
-          <div className="space-y-gutter">
-            {/* These two lists are in the dashboard payload and were rendered
-                nowhere — this is where someone looks for them. */}
-            <div className="grid gap-gutter xl:grid-cols-2">
-              <TablePanel title="Recent backups" icon="archive" subtitle="msdb.dbo.backupset, last 7 days">
-                <Paged rows={backupHistory} unit="backups" pageSize="10">
-                  {(page, pager) => (
-                    <>
-                      <Table2
-                        columns={[
-                          { key: 'db', label: 'Database' },
-                          { key: 'type', label: 'Type' },
-                          { key: 'finished', label: 'Finished' },
-                          { key: 'size', label: 'Size', align: 'right' },
-                        ]}
-                        rows={page.map((b, i) => ({
-                          key: `bk-${i}`,
-                          cells: {
-                            db: <span className="font-semibold text-accent-text">{b.database_name}</span>,
-                            type: <BackupTypeChip type={b.backup_type} copyOnly={b.is_copy_only} />,
-                            finished: (
-                              <span className="font-mono text-[11px] text-muted">
-                                {String(b.backup_finish_date || '').slice(0, 19) || null}
-                              </span>
-                            ),
-                            size: <span className="font-mono text-[12px]">{fmtBytes(mb(b.size_mb))}</span>,
-                          },
-                        }))}
-                        empty={<EmptyState icon="archive" title="No backups in the last 7 days"
-                          body="msdb.dbo.backupset has no rows in that window — or the login cannot read msdb." />}
-                      />
-                      {pager}
-                    </>
-                  )}
-                </Paged>
-              </TablePanel>
-
-              <TablePanel title="SQL Agent job history" icon="calendar"
-                subtitle="msdb.dbo.sysjobhistory, outcome rows only">
-                <Paged rows={jobHistory} unit="runs" pageSize="10">
-                  {(page, pager) => (
-                    <>
-                      <Table2
-                        columns={[
-                          { key: 'job', label: 'Job' },
-                          { key: 'status', label: 'Outcome' },
-                          { key: 'when', label: 'Run' },
-                          { key: 'dur', label: 'Duration', align: 'right' },
-                        ]}
-                        rows={page.map((j, i) => {
-                          const st = RUN_STATUS[Number(j.run_status)] || { label: String(j.run_status ?? '—'), tone: 'neutral' };
-                          return {
-                            key: `job-${i}`,
-                            cells: {
-                              job: (
-                                <span title={j.message}
-                                  className="truncate-safe block max-w-[220px] font-semibold text-accent-text">
-                                  {j.job_name}
-                                </span>
-                              ),
-                              status: <Badge tone={st.tone} size="xs">{st.label}</Badge>,
-                              when: <span className="font-mono text-[11px] text-muted">{fmtAgentRun(j.run_date, j.run_time)}</span>,
-                              dur: <span className="font-mono text-[12px]">{fmtAgentDuration(j.run_duration)}</span>,
-                            },
-                          };
-                        })}
-                        empty={<EmptyState icon="calendar" title="No job history"
-                          body="No SQL Agent job has recorded an outcome, or msdb is not readable by this login." />}
-                      />
-                      {pager}
-                    </>
-                  )}
-                </Paged>
-              </TablePanel>
-            </div>
-
-            <React.Suspense fallback={<PageLoading title="Loading backup & PITR…" />}>
-              <MSSQLBackupPageEmbedded embedded />
-            </React.Suspense>
-          </div>
-        )}
-
         {/* Table details — the shared ActMon Table Details UI */}
         <TableDetailsDialog
           open={!!tableDetail}
@@ -1279,48 +1175,3 @@ function ActiveSessionsPanel({ rows, title, actions, full = false }) {
 /* TableDetailDialog removed — table inspection now goes through the shared
    <TableDetailsDialog> (see openTableDetail / fetchTableDetail above),
    the same component every engine dashboard uses. */
-
-/* ── formatters local to SQL Server's msdb shapes ──────────────────────────── */
-
-/** msdb records the type as a single letter. */
-function BackupTypeChip({ type, copyOnly }) {
-  const MAP = {
-    D: { label: 'Full', tone: 'success' },
-    I: { label: 'Differential', tone: 'info' },
-    L: { label: 'Log', tone: 'accent' },
-    F: { label: 'File', tone: 'neutral' },
-    G: { label: 'File diff', tone: 'neutral' },
-    P: { label: 'Partial', tone: 'neutral' },
-    Q: { label: 'Partial diff', tone: 'neutral' },
-  };
-  const m = MAP[type] || { label: type || '—', tone: 'neutral' };
-  return (
-    <span className="flex items-center gap-1">
-      <Badge tone={m.tone} size="xs">{m.label}</Badge>
-      {Number(copyOnly) === 1 && (
-        <Badge tone="outline" size="xs" className="cursor-help"
-          title="COPY_ONLY — does not affect the backup chain">copy-only</Badge>
-      )}
-    </span>
-  );
-}
-
-/** SQL Agent stores dates as 20260730 and times as 143005, both as integers. */
-export function fmtAgentRun(runDate, runTime) {
-  const d = String(runDate || '').padStart(8, '0');
-  const t = String(runTime || '').padStart(6, '0');
-  if (d.length !== 8 || d === '00000000') return null;
-  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)} ${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}`;
-}
-
-/** run_duration is HHMMSS packed into an integer, not seconds. */
-export function fmtAgentDuration(runDuration) {
-  const v = String(runDuration ?? '').padStart(6, '0');
-  if (v.length !== 6) return null;
-  const h = Number(v.slice(0, 2));
-  const m = Number(v.slice(2, 4));
-  const s = Number(v.slice(4, 6));
-  if (h) return `${h}h ${m}m`;
-  if (m) return `${m}m ${s}s`;
-  return `${s}s`;
-}

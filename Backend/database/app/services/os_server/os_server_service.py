@@ -75,6 +75,19 @@ class SshTestRequest(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _pct_to_float(raw) -> Optional[float]:
+    """'12%' -> 12.0, 'N/A'/None/'' -> None. Metrics here are collected as
+    formatted strings (see svc_refresh_server) but AgentMetric's host_cpu/
+    host_memory/host_disk columns are Float — same conversion the agent-push
+    path does inline, pulled out since SSH needs it for three fields at once."""
+    if not raw or raw == "N/A":
+        return None
+    try:
+        return float(str(raw).rstrip("%"))
+    except ValueError:
+        return None
+
+
 def _tcp_check(ip: str, port: int, timeout: float = 3.0) -> bool:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -659,6 +672,23 @@ def svc_refresh_server(server_id: int, db: Session):
         server.ram_usage = metrics.get("ram_usage")
         server.disk_usage = metrics.get("disk_usage")
         server.uptime = metrics.get("uptime")
+
+        # Feed the SAME AgentMetric table the agent-push path writes to
+        # (infra_detail_service.svc_ingest_agent_infra) so SSH-polled hosts get
+        # real persisted history too — the after_insert hook on AgentMetric
+        # (metrics_pipeline.py) fans this out to Redis + ClickHouse for free,
+        # no separate write path needed. Keyed by server_name, same as the
+        # agent path, so the frontend's getMetricsHistory(host.server_name)
+        # call works unchanged for either collector.
+        cpu_f = _pct_to_float(metrics.get("cpu_usage"))
+        ram_f = _pct_to_float(metrics.get("ram_usage"))
+        disk_f = _pct_to_float(metrics.get("disk_usage"))
+        if cpu_f is not None or ram_f is not None or disk_f is not None:
+            from app.models.agent_model import AgentMetric
+            db.add(AgentMetric(agent_name=server.server_name, host_cpu=cpu_f or 0.0,
+                               host_memory=ram_f or 0.0, host_disk=disk_f or 0.0,
+                               kind="infra", tech="host", conn_id=0))
+
         db.commit()
 
         return {

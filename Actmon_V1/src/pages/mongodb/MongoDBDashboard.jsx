@@ -20,6 +20,7 @@ import {
 import client from '../../api/client';
 import HostResources from '../postgresql/PgHostResources';
 import Gauge from '../../components/gauges/Gauge';
+import TrendChart from '../../components/gauges/TrendChart';
 import { DashboardScopeProvider } from '../../context/DashboardAppearanceContext';
 
 /* ─── MongoDB palette ─── */
@@ -150,22 +151,11 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
         <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{title}</p>
         <span className="text-base font-black" style={{ color }}>{fmt(latest ?? 0)}</span>
       </div>
-      <ResponsiveContainer width="100%" height={68}>
-        <AreaChart data={data}>
-          <defs>
-            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor={color} stopOpacity={0.3} />
-              <stop offset="95%" stopColor={color} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <XAxis dataKey="t" hide />
-          <YAxis hide domain={['auto', 'auto']} />
-          <Tooltip contentStyle={{ fontSize: 9, padding: '2px 8px' }}
-            formatter={v => fmt(v)} labelFormatter={() => ''} />
-          <Area type="monotone" dataKey="v" stroke={color} fill={`url(#${gradId})`}
-            strokeWidth={2} dot={false} />
-        </AreaChart>
-      </ResponsiveContainer>
+      {/* Shared TrendChart so Settings → Dashboard Appearance "Chart style"
+          applies here too (this used to be a hardcoded Area chart). */}
+      <TrendChart data={data} xKey="t" height={68} showLegend={false}
+        yDomain={['auto', 'auto']}
+        series={[{ key: 'v', label: title, color }]} />
       <div className="flex justify-between text-[9px] text-slate-300 mt-1">
         <span>{fmt(data[0]?.v ?? 0)}</span>
         <span className="text-slate-400">{data.length} samples · 15s interval</span>

@@ -3,10 +3,11 @@ Oracle Monitoring routes — thin handlers only.
 All business logic lives in app/services/oracle/oracle_monitoring_service.py
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
+from app.services.oracle import oracle_ai_analysis
 from app.services.oracle.oracle_monitoring_service import (
     oracle_dashboard,
     oracle_sga_detail,
@@ -159,6 +160,25 @@ def route_oracle_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db
 @router.get("/{conn_id}/oracle-slow-queries")
 def route_oracle_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     return oracle_slow_queries(conn_id, db)
+
+
+@router.post("/{conn_id}/oracle-slow-queries/analyze-groq")
+def route_oracle_slow_query_analyze_groq(
+    conn_id: int, payload: oracle_ai_analysis.OracleSlowQueryGroqRequest, db: Session = Depends(get_db)
+):
+    return oracle_ai_analysis.analyze_slow_query_groq(conn_id, payload, db)
+
+
+@router.get("/{conn_id}/oracle-slow-queries/{query_id}")
+def route_oracle_slow_query_by_id(conn_id: int, query_id: str, db: Session = Depends(get_db)):
+    """Lets the shared Slow Query detail page re-fetch by id on a refresh or
+    direct link, instead of only working when router state carries the row."""
+    from app.services.common.slow_query_normalize import find_normalized_by_id
+    response = oracle_slow_queries(conn_id, db)
+    row = find_normalized_by_id(response, query_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Query not found in the current slow-query window")
+    return {"status": "success", "query": row}
 
 
 # 18

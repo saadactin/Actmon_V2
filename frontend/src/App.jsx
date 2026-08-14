@@ -1,5 +1,5 @@
 import { lazy, useEffect } from 'react';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
 import Placeholder from '@/pages/Placeholder';
 import { NAV_INDEX } from '@/config/navigation';
@@ -14,6 +14,12 @@ const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage'));
 const AgentsPage = lazy(() => import('@/pages/agents/AgentsPage'));
 
+// Slow Query Analysis — ONE shared list/detail page for every database
+// technology (see slowQueryCatalog.js); `tech` picks the engine, same pattern
+// as DatabaseServersPage's `tech` prop.
+const SlowQueriesPage = lazy(() => import('@/pages/_shared/SlowQueriesPage'));
+const SlowQueryDetailPage = lazy(() => import('@/pages/_shared/SlowQueryDetailPage'));
+
 // Agent setup / deploy — ported verbatim from the existing module.
 const AgentSetupPage = lazy(() => import('@/pages/agents/setup/AgentSetupPage'));
 const SetupWizard = lazy(() => import('@/pages/agents/setup/SetupWizard'));
@@ -25,20 +31,17 @@ const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const HelpCenterPage = lazy(() => import('@/pages/help/HelpCenterPage'));
 
 // Cloud (AWS/Azure/OCI discovery) — ported from the existing module's
-// features/cloud/ tree, restyled to plain JS. CloudShell is the tab-bar shell;
+// features/cloud/ tree, restyled to plain JS. CloudShell is the layout shell;
 // everything else is one of its nested routes (see the route tree below).
+// Resources/Cost/Security/Topology/Compliance/Alerts are tabs OF CloudDashboard
+// (imported directly by that file, not routed separately) — the same shape as
+// an engine dashboard's Overview/Performance/Queries/… tabs for one connection.
 const CloudShell = lazy(() => import('@/features/cloud/components/CloudShell').then((m) => ({ default: m.CloudShell })));
 const CloudProviderChooser = lazy(() => import('@/features/cloud/pages/CloudProviderChooser'));
 const CloudAccountsPage = lazy(() => import('@/features/cloud/pages/CloudAccountsPage').then((m) => ({ default: m.CloudAccountsPage })));
 const CloudProviderAccountsPage = lazy(() => import('@/features/cloud/pages/CloudProviderAccountsPage'));
 const CloudDashboard = lazy(() => import('@/features/cloud/pages/CloudDashboard').then((m) => ({ default: m.CloudDashboard })));
-const CloudResourcesPage = lazy(() => import('@/features/cloud/pages/ResourcesPage').then((m) => ({ default: m.ResourcesPage })));
 const CloudResourceDetailPage = lazy(() => import('@/features/cloud/pages/ResourceDetailPage').then((m) => ({ default: m.ResourceDetailPage })));
-const CloudCostPage = lazy(() => import('@/features/cloud/pages/CostPage').then((m) => ({ default: m.CostPage })));
-const CloudSecurityPage = lazy(() => import('@/features/cloud/pages/SecurityPosturePage').then((m) => ({ default: m.SecurityPosturePage })));
-const CloudTopologyPage = lazy(() => import('@/features/cloud/pages/CloudTopologyPage').then((m) => ({ default: m.CloudTopologyPage })));
-const CloudCompliancePage = lazy(() => import('@/features/cloud/pages/CompliancePage').then((m) => ({ default: m.CompliancePage })));
-const CloudAlertsPage = lazy(() => import('@/features/cloud/pages/AlertsPage').then((m) => ({ default: m.AlertsPage })));
 
 // Infrastructure — ported verbatim from the existing module. All three routes
 // share one host abstraction (os_servers): the overview/grid, a per-host
@@ -51,27 +54,25 @@ const InfraFileExplorer = lazy(() => import('@/pages/infra/InfraFileExplorer'));
 // per-technology server list; the technology comes in as a prop, not from state.
 const DatabaseServersPage = lazy(() => import('@/pages/databases/DatabaseServersPage'));
 const AddOsServerPage = lazy(() => import('@/pages/databases/AddOsServerPage'));
+const AddConnectionPage = lazy(() => import('@/pages/connections/AddConnectionPage'));
 
 // Diagnosis — a dedicated full-page troubleshooting workspace (not a modal).
 // Every "Diagnose" click site (per-tech dashboards, DatabaseServersPage's
 // serverTarget()) navigates here.
 const DiagnosisPage = lazy(() => import('@/pages/diagnosis/DiagnosisPage'));
 
-// MySQL — ported verbatim. The dashboard hosts 11 tabs (Backup & PITR is the
-// MySQLBackupPage embedded); the pages below are separate routes that outrank :tab.
+// MySQL — ported verbatim. The dashboard hosts 10 tabs; the pages below are
+// separate routes that outrank :tab.
 const MySQLDashboard = lazy(() => import('@/pages/mysql/MySQLDashboard'));
-const MySQLSlowQueries = lazy(() => import('@/pages/mysql/SlowQueries'));
 const MySQLErrorLogs = lazy(() => import('@/pages/mysql/ErrorLogs'));
 const MySQLErrorAnalysis = lazy(() => import('@/pages/mysql/ErrorAnalysis'));
 const MySQLSelfHeal = lazy(() => import('@/pages/mysql/MySQLSelfHeal'));
 const MySQLIndexAnalysis = lazy(() => import('@/pages/mysql/IndexAnalysis'));
 const MySQLReportsPage = lazy(() => import('@/pages/mysql/MySQLReportsPage'));
 
-// PostgreSQL — ported verbatim. Same shape as MySQL: the dashboard hosts the tabs
-// (Backup & PITR embedded), and the named pages below are their own routes.
+// PostgreSQL — ported verbatim. Same shape as MySQL: the dashboard hosts the
+// tabs, and the named pages below are their own routes.
 const PostgreSQLDashboard = lazy(() => import('@/pages/postgresql/PostgreSQLDashboard'));
-const PgSlowQueries = lazy(() => import('@/pages/postgresql/SlowQueries'));
-const PgQueryDetail = lazy(() => import('@/pages/postgresql/QueryDetailPage'));
 const PgErrorLogs = lazy(() => import('@/pages/postgresql/ErrorLogs'));
 const PgIndexAnalysis = lazy(() => import('@/pages/postgresql/IndexAnalysis'));
 const PgReportsPage = lazy(() => import('@/pages/postgresql/PostgreSQLReportsPage'));
@@ -81,35 +82,27 @@ const PgReportsPage = lazy(() => import('@/pages/postgresql/PostgreSQLReportsPag
 // fetching all sixteen on every load would load the instance for nothing.
 const OracleDashboard = lazy(() => import('@/pages/oracle/OracleDashboard'));
 const OracleLiveQueries = lazy(() => import('@/pages/oracle/LiveQueries'));
-const OracleSlowQueries = lazy(() => import('@/pages/oracle/SlowQueries'));
 const OracleErrorLogs = lazy(() => import('@/pages/oracle/ErrorLogs'));
 const OracleIndexAnalysis = lazy(() => import('@/pages/oracle/IndexAnalysis'));
 const OracleReportsPage = lazy(() => import('@/pages/oracle/OracleReportsPage'));
 
-// SQL Server. Ten tabs with Backup & PITR embedded, same shape as MySQL. Bound to
-// what /monitoring-dashboard actually returns rather than to the fields the old
+// SQL Server. Nine tabs, same shape as MySQL. Bound to what
+// /monitoring-dashboard actually returns rather than to the fields the old
 // page assumed — see the note at the top of MSSQLDashboard.
 const MSSQLDashboard = lazy(() => import('@/pages/mssql/MSSQLDashboard'));
-const MssqlSlowQueries = lazy(() => import('@/pages/mssql/SlowQueries'));
-const MssqlQueryDetail = lazy(() => import('@/pages/mssql/QueryDetailPage'));
 const MssqlErrorLogs = lazy(() => import('@/pages/mssql/ErrorLogs'));
 const MssqlIndexAnalysis = lazy(() => import('@/pages/mssql/IndexAnalysis'));
 const MssqlReportsPage = lazy(() => import('@/pages/mssql/MSSQLReportsPage'));
-const MssqlBackupPage = lazy(() => import('@/pages/mssql/MSSQLBackupPage'));
 
-// MongoDB — ported verbatim. 13 tabs; backup is its own route here rather than an
-// embedded tab, which is how the existing module has it.
+// MongoDB — ported verbatim. 13 tabs.
 const MongoDBDashboard = lazy(() => import('@/pages/mongodb/MongoDBDashboard'));
-const MongoSlowOperations = lazy(() => import('@/pages/mongodb/SlowOperations'));
 const MongoErrorLogs = lazy(() => import('@/pages/mongodb/ErrorLogs'));
 const MongoCollectionAnalysis = lazy(() => import('@/pages/mongodb/CollectionAnalysis'));
-const MongoBackupPage = lazy(() => import('@/pages/mongodb/MongoDBBackupPage'));
 
 // ClickHouse. 12 tabs, each its own `system.*` query and enabled only while its tab
 // is open. Part pressure leads the overview because that is the number that stops
 // inserts — see the note at the top of ClickHouseDashboard.
 const ClickHouseDashboard = lazy(() => import('@/pages/clickhouse/ClickHouseDashboard'));
-const ChSlowQueries = lazy(() => import('@/pages/clickhouse/SlowQueries'));
 const ChErrorLogs = lazy(() => import('@/pages/clickhouse/ErrorLogs'));
 const ChTableAnalysis = lazy(() => import('@/pages/clickhouse/TableAnalysis'));
 
@@ -126,6 +119,13 @@ const CosmosDBEditConnectionPage = lazy(() => import('@/pages/cosmosdb/CosmosDBE
 const AdminResourcePage = lazy(() => import('@/pages/administration/_shared/AdminResourcePage'));
 const AdministrationPage = lazy(() => import('@/pages/administration/AdministrationPage'));
 const GroupRolePagePermission = lazy(() => import('@/pages/administration/GroupRolePagePermission'));
+
+/** MongoDB's Slow Query page moved from /slow-operations to /slow-queries for
+ * consistency with every other engine — this keeps an old bookmark working. */
+function MongoSlowOpsRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/mongodb-dashboard/${id}/slow-queries`} replace />;
+}
 
 /**
  * Routing.
@@ -182,22 +182,35 @@ export default function App() {
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/settings/notifications" element={<SettingsPage />} />
         <Route path="/help-center" element={<HelpCenterPage />} />
 
-        {/* Cloud (AWS/Azure/OCI discovery) — CloudShell is the tab-bar shell,
-            everything below is one of its nested routes (its own <Outlet/>). */}
+        {/* Cloud (AWS/Azure/OCI discovery) — CloudShell is the layout shell,
+            everything below is one of its nested routes (its own <Outlet/>).
+            Flow: /cloud (choose provider) → /cloud/{provider}-accounts (its
+            accounts) → /cloud/{provider}-accounts/:accountId (that account's
+            full dashboard, with Resources/Cost/Security/Topology/Compliance/
+            Alerts as tabs) — the same shape as /databases → /mysql-servers →
+            /mysql-dashboard/:id, and same reason each provider gets its own
+            literal route (with a `provider` prop) rather than a dynamic
+            :provider segment: a clean, bookmarkable, tech-specific URL. */}
         <Route path="/cloud" element={<CloudShell />}>
           <Route index element={<CloudProviderChooser />} />
           <Route path="accounts" element={<CloudAccountsPage />} />
-          <Route path="resources" element={<CloudResourcesPage />} />
           <Route path="resources/:resourceId" element={<CloudResourceDetailPage />} />
-          <Route path="cost" element={<CloudCostPage />} />
-          <Route path="security" element={<CloudSecurityPage />} />
-          <Route path="topology" element={<CloudTopologyPage />} />
-          <Route path="compliance" element={<CloudCompliancePage />} />
-          <Route path="alerts" element={<CloudAlertsPage />} />
-          <Route path=":provider" element={<CloudProviderAccountsPage />} />
-          <Route path=":provider/:accountId" element={<CloudDashboard />} />
+          <Route path="resources/:resourceId/:tab" element={<CloudResourceDetailPage />} />
+
+          <Route path="aws-accounts" element={<CloudProviderAccountsPage provider="aws" />} />
+          <Route path="aws-accounts/:accountId" element={<CloudDashboard provider="aws" />} />
+          <Route path="aws-accounts/:accountId/:tab" element={<CloudDashboard provider="aws" />} />
+
+          <Route path="azure-accounts" element={<CloudProviderAccountsPage provider="azure" />} />
+          <Route path="azure-accounts/:accountId" element={<CloudDashboard provider="azure" />} />
+          <Route path="azure-accounts/:accountId/:tab" element={<CloudDashboard provider="azure" />} />
+
+          <Route path="oci-accounts" element={<CloudProviderAccountsPage provider="oci" />} />
+          <Route path="oci-accounts/:accountId" element={<CloudDashboard provider="oci" />} />
+          <Route path="oci-accounts/:accountId/:tab" element={<CloudDashboard provider="oci" />} />
         </Route>
 
         {/* Order matters: the two named wizards must be matched before :tech. */}
@@ -216,10 +229,12 @@ export default function App() {
             Flow: /databases → /{tech}-servers → /{tech}-dashboard/:id */}
         <Route path="/databases" element={<DatabaseServersPage />} />
         <Route path="/databases/add-os-server" element={<AddOsServerPage />} />
+        <Route path="/connections/add" element={<AddConnectionPage />} />
         {/* Every "Diagnose" click site (per-tech dashboards' header button,
             DatabaseServersPage's serverTarget()) navigates here — a dedicated
             full-page workspace, not a modal. */}
         <Route path="/diagnose/:connId" element={<DiagnosisPage />} />
+        <Route path="/diagnose/:connId/:tab" element={<DiagnosisPage />} />
         <Route path="/mysql-servers" element={<DatabaseServersPage tech="mysql" />} />
         <Route path="/postgresql-servers" element={<DatabaseServersPage tech="postgresql" />} />
         <Route path="/oracle-servers" element={<DatabaseServersPage tech="oracle" />} />
@@ -233,7 +248,8 @@ export default function App() {
         {/* MySQL. The named pages are declared BEFORE :tab so they win — the
             dashboard would otherwise swallow them as a tab id. */}
         <Route path="/mysql-dashboard/:id" element={<MySQLDashboard />} />
-        <Route path="/mysql-dashboard/:id/slow-queries" element={<MySQLSlowQueries />} />
+        <Route path="/mysql-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="mysql" />} />
+        <Route path="/mysql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="mysql" />} />
         <Route path="/mysql-dashboard/:id/error-logs" element={<MySQLErrorLogs />} />
         <Route path="/mysql-dashboard/:id/error-analysis" element={<MySQLErrorAnalysis />} />
         <Route path="/mysql-dashboard/:id/self-heal" element={<MySQLSelfHeal />} />
@@ -245,8 +261,8 @@ export default function App() {
             declared before :tab so the dashboard cannot swallow them, and the
             slow-query detail page before its own parent for the same reason. */}
         <Route path="/postgresql-dashboard/:id" element={<PostgreSQLDashboard />} />
-        <Route path="/postgresql-dashboard/:id/slow-queries/detail" element={<PgQueryDetail />} />
-        <Route path="/postgresql-dashboard/:id/slow-queries" element={<PgSlowQueries />} />
+        <Route path="/postgresql-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="postgresql" />} />
+        <Route path="/postgresql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="postgresql" />} />
         <Route path="/postgresql-dashboard/:id/error-logs" element={<PgErrorLogs />} />
         <Route path="/postgresql-dashboard/:id/index-analysis" element={<PgIndexAnalysis />} />
         <Route path="/postgresql-dashboard/:id/reports" element={<PgReportsPage />} />
@@ -257,7 +273,8 @@ export default function App() {
             with `embedded` deciding whether it draws a page header. */}
         <Route path="/oracle-dashboard/:id" element={<OracleDashboard />} />
         <Route path="/oracle-dashboard/:id/live-queries" element={<OracleLiveQueries />} />
-        <Route path="/oracle-dashboard/:id/slow-queries" element={<OracleSlowQueries />} />
+        <Route path="/oracle-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="oracle" />} />
+        <Route path="/oracle-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="oracle" />} />
         <Route path="/oracle-dashboard/:id/error-logs" element={<OracleErrorLogs />} />
         <Route path="/oracle-dashboard/:id/index-analysis" element={<OracleIndexAnalysis />} />
         <Route path="/oracle-dashboard/:id/reports" element={<OracleReportsPage />} />
@@ -266,25 +283,26 @@ export default function App() {
         {/* SQL Server. Named sub-pages before :tab, and the slow-query detail page
             before its own parent, for the same reason as the other engines. */}
         <Route path="/mssql-dashboard/:id" element={<MSSQLDashboard />} />
-        <Route path="/mssql-dashboard/:id/slow-queries/detail" element={<MssqlQueryDetail />} />
-        <Route path="/mssql-dashboard/:id/slow-queries" element={<MssqlSlowQueries />} />
+        <Route path="/mssql-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="mssql" />} />
+        <Route path="/mssql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="mssql" />} />
         <Route path="/mssql-dashboard/:id/error-logs" element={<MssqlErrorLogs />} />
         <Route path="/mssql-dashboard/:id/index-analysis" element={<MssqlIndexAnalysis />} />
         <Route path="/mssql-dashboard/:id/reports" element={<MssqlReportsPage />} />
-        <Route path="/mssql-dashboard/:id/backup-page" element={<MssqlBackupPage />} />
         <Route path="/mssql-dashboard/:id/:tab" element={<MSSQLDashboard />} />
 
         {/* MongoDB. Named sub-pages before :tab, as with the other engines. */}
         <Route path="/mongodb-dashboard/:id" element={<MongoDBDashboard />} />
-        <Route path="/mongodb-dashboard/:id/slow-operations" element={<MongoSlowOperations />} />
+        <Route path="/mongodb-dashboard/:id/slow-operations" element={<MongoSlowOpsRedirect />} />
+        <Route path="/mongodb-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="mongodb" />} />
+        <Route path="/mongodb-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="mongodb" />} />
         <Route path="/mongodb-dashboard/:id/error-logs" element={<MongoErrorLogs />} />
         <Route path="/mongodb-dashboard/:id/collection-analysis" element={<MongoCollectionAnalysis />} />
-        <Route path="/mongodb-dashboard/:id/backup" element={<MongoBackupPage />} />
         <Route path="/mongodb-dashboard/:id/:tab" element={<MongoDBDashboard />} />
 
         {/* ClickHouse. Named sub-pages before :tab, as with the other engines. */}
         <Route path="/clickhouse-dashboard/:id" element={<ClickHouseDashboard />} />
-        <Route path="/clickhouse-dashboard/:id/slow-queries" element={<ChSlowQueries />} />
+        <Route path="/clickhouse-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="clickhouse" />} />
+        <Route path="/clickhouse-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="clickhouse" />} />
         <Route path="/clickhouse-dashboard/:id/error-logs" element={<ChErrorLogs />} />
         <Route path="/clickhouse-dashboard/:id/table-analysis" element={<ChTableAnalysis />} />
         <Route path="/clickhouse-dashboard/:id/:tab" element={<ClickHouseDashboard />} />
@@ -299,9 +317,17 @@ export default function App() {
         <Route path="/agents/:name" element={<AgentDetailPage />} />
 
         {/* Infrastructure. /infra/:id/files before /infra/:id so the file
-            explorer isn't swallowed as a host id. */}
+            explorer isn't swallowed as a host id. The three 2-segment-:sub
+            routes (network/ip-configuration/config-files) are declared before
+            the single-segment /:tab catch-all for the same reason the MySQL
+            dashboard declares its named routes before its own /:tab. */}
         <Route path="/infra" element={<InfraPage />} />
+        <Route path="/infra/hosts" element={<InfraPage />} />
         <Route path="/infra/:id/files" element={<InfraFileExplorer />} />
+        <Route path="/infra/:id/network/:sub" element={<InfraHostDetail />} />
+        <Route path="/infra/:id/ip-configuration/:sub" element={<InfraHostDetail />} />
+        <Route path="/infra/:id/config-files/:sub" element={<InfraHostDetail />} />
+        <Route path="/infra/:id/:tab" element={<InfraHostDetail />} />
         <Route path="/infra/:id" element={<InfraHostDetail />} />
 
         {/* Administration — the hub, the bespoke Role/Page Permissions

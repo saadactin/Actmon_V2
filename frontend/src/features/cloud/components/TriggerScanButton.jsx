@@ -1,7 +1,7 @@
 import { useTriggerDiscovery } from '../hooks/useDiscovery';
-import { RefreshCw } from 'lucide-react';
 import { useCloudStore } from '../state/cloudStore';
 import { usePermissions } from '@/hooks/usePermissions';
+import Button from '@/components/ui/Button';
 
 export const TriggerScanButton = ({ accountId }) => {
   const { mutate: triggerScan, isPending } = useTriggerDiscovery();
@@ -18,14 +18,14 @@ export const TriggerScanButton = ({ accountId }) => {
   const isScanning = isPending || !!activeJobId;
 
   return (
-    <button
+    <Button
       type="button"
+      variant="primary"
+      icon="refresh"
+      loading={isScanning}
       onClick={handleScan}
-      disabled={isScanning}
-      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
     >
-      <RefreshCw className={`h-4 w-4 ${isScanning ? 'animate-spin' : ''}`} />
       {activeJobId ? 'Scan Running...' : 'Run Discovery Scan'}
-    </button>
+    </Button>
   );
 };

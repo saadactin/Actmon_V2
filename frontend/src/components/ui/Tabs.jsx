@@ -5,6 +5,10 @@ import Icon from './Icon';
  * Underline tab strip.
  *
  *   tabs  [{ id, label, icon, count, tone }]
+ * `icon` accepts either an icon-registry name string or a component (a lucide
+ * icon, say) — same dual form PageHeader's `icon` prop accepts, so callers
+ * that already hold a component (an engine dashboard's TABS array, e.g.)
+ * don't need to thread it through the registry first.
  * `count` renders as a pill; `tone` colours it (e.g. 'danger' for firing alerts).
  */
 const COUNT_TONES = {
@@ -19,6 +23,7 @@ export default function Tabs({ tabs, value, onChange, className }) {
     <div className={cn('no-scrollbar flex gap-1 overflow-x-auto border-b border-border', className)} role="tablist">
       {tabs.map((tab) => {
         const active = tab.id === value;
+        const TabIcon = typeof tab.icon === 'function' || (tab.icon && typeof tab.icon === 'object') ? tab.icon : null;
         return (
           <button
             key={tab.id}
@@ -32,7 +37,7 @@ export default function Tabs({ tabs, value, onChange, className }) {
               active ? 'text-accent-text' : 'text-muted hover:text-fg',
             )}
           >
-            {tab.icon && <Icon name={tab.icon} size={15} />}
+            {TabIcon ? <TabIcon size={15} /> : tab.icon && <Icon name={tab.icon} size={15} />}
             {tab.label}
             {tab.count !== undefined && tab.count !== null && (
               <span

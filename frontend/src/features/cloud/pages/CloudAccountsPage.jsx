@@ -1,40 +1,111 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { CloudAccountList } from '../components/CloudAccountList';
+import { useCloudAccounts } from '../hooks/useCloudAccounts';
+import { useAllResources } from '../hooks/useResources';
+import { providerKeyOf } from '../utils/providerScope';
 import { useCloudStore } from '../state/cloudStore';
-import { Cloud, Plus } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
+import CloudPageHeader from '../components/CloudPageHeader';
+import CloudToolbar from '../components/CloudToolbar';
+import CloudFilterBar from '../components/CloudFilterBar';
+import CloudSection from '../components/CloudSection';
+import Icon from '@/components/ui/Icon';
+import Button from '@/components/ui/Button';
+
+// Same pinned brand colours as CloudProviderSelector/CloudProviderChooser.
+// Each card is a link to that provider's own accounts page (/cloud/{slug}-
+// accounts) — the same relationship the tech-servers page's KPI row would
+// have to a dedicated per-tech page, if Databases had a cross-tech list too.
+const PROVIDER_KPI = [
+  { key: 'AWS', slug: 'aws', label: 'AWS', iconBg: 'bg-orange-50', iconColor: 'text-orange-500', valueColor: 'text-orange-600' },
+  { key: 'Azure', slug: 'azure', label: 'Azure', iconBg: 'bg-sky-50', iconColor: 'text-sky-500', valueColor: 'text-sky-600' },
+  { key: 'OCI', slug: 'oci', label: 'OCI', iconBg: 'bg-red-50', iconColor: 'text-red-500', valueColor: 'text-red-600' },
+];
 
 export const CloudAccountsPage = () => {
+  const navigate = useNavigate();
   const setDrawerOpen = useCloudStore((state) => state.setAddAccountDrawerOpen);
   const { canHere } = usePermissions();
+  const { data: accounts } = useCloudAccounts();
+  const { data: allResources } = useAllResources();
+  const [search, setSearch] = useState('');
+
+  const totalAccounts = accounts?.length || 0;
+  const totalResources = allResources?.length || 0;
+  const providerCounts = PROVIDER_KPI.map((p) => ({
+    ...p,
+    count: (accounts || []).filter((a) => providerKeyOf(a.provider) === p.key).length,
+  }));
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2.5">
-            <span className="p-2 rounded-lg bg-blue-50 text-blue-600">
-              <Cloud className="h-5 w-5" />
-            </span>
-            Cloud Accounts
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manage connections to AWS, Azure, and OCI.
-          </p>
-        </div>
-        {canHere('add') && (
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            Add Account
-          </button>
+    <>
+      <CloudPageHeader
+        backTo="/cloud"
+        title="Cloud Accounts"
+        description="Manage connections to AWS, Azure, and OCI."
+        actions={canHere('add') && (
+          <CloudToolbar>
+            <Button variant="primary" icon="plus" onClick={() => setDrawerOpen(true)}>
+              Add Account
+            </Button>
+          </CloudToolbar>
         )}
+      />
+
+      {/* KPI cards — AWS/Azure/OCI open that provider's own accounts page */}
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 shadow-sm">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-sunken text-subtle">
+            <Icon name="cloud" size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">Total</p>
+            <p className="text-2xl leading-none font-black text-fg">{totalAccounts}</p>
+            <p className="mt-0.5 truncate text-[10px] text-subtle">accounts</p>
+          </div>
+        </div>
+
+        {providerCounts.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => navigate(`/cloud/${p.slug}-accounts`)}
+            className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-strong hover:shadow-md"
+          >
+            <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${p.iconBg} ${p.iconColor}`}>
+              <Icon name="cloud" size={18} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">{p.label}</p>
+              <p className={`text-2xl leading-none font-black ${p.valueColor}`}>{p.count}</p>
+              <p className="mt-0.5 truncate text-[10px] text-subtle">accounts</p>
+            </div>
+          </button>
+        ))}
+
+        <div className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 shadow-sm">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent-soft text-accent-text">
+            <Icon name="boxes" size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">Resources</p>
+            <p className="text-2xl leading-none font-black text-fg">{totalResources}</p>
+            <p className="mt-0.5 truncate text-[10px] text-subtle">discovered</p>
+          </div>
+        </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-        <CloudAccountList />
-      </div>
-    </div>
+      <CloudFilterBar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Search account name…"
+        className="mb-4"
+      />
+
+      <CloudSection bodyClassName="p-0">
+        <CloudAccountList search={search} />
+      </CloudSection>
+    </>
   );
 };

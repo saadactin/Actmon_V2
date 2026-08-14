@@ -9,6 +9,7 @@ from sqlalchemy.pool import NullPool
 
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import MySQLConnectionCreate
+from app.services.common.actmon_internal_tables import mysql_exclude_internal_tables_sql
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -905,7 +906,7 @@ def get_performance_detail(conn_id: int, db: Session, live: bool = False) -> dic
 
             if ps_enabled:
                 try:
-                    for r in conn.execute(text("""
+                    for r in conn.execute(text(f"""
                         SELECT SUBSTRING(DIGEST_TEXT,1,200), COUNT_STAR,
                             ROUND(AVG_TIMER_WAIT/1e9,2), ROUND(MAX_TIMER_WAIT/1e9,2),
                             ROUND(SUM_TIMER_WAIT/1e9,2),
@@ -916,7 +917,9 @@ def get_performance_detail(conn_id: int, db: Session, live: bool = False) -> dic
                             DATE_FORMAT(LAST_SEEN,'%Y-%m-%d %H:%i'),
                             SUM_CREATED_TMP_DISK_TABLES, SUM_SORT_ROWS
                         FROM performance_schema.events_statements_summary_by_digest
-                        WHERE DIGEST_TEXT IS NOT NULL ORDER BY SUM_TIMER_WAIT DESC LIMIT 30
+                        WHERE DIGEST_TEXT IS NOT NULL
+                          AND {mysql_exclude_internal_tables_sql("DIGEST_TEXT")}
+                        ORDER BY SUM_TIMER_WAIT DESC LIMIT 30
                     """)).fetchall():
                         top_statements.append({
                             "digest_text": str(r[0] or ""), "count": ti(r[1]),

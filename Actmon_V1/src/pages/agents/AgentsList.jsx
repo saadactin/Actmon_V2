@@ -28,8 +28,26 @@ const statusInfo = (agent) => {
   if (s === 'online') return { label: 'Online', tip: 'Agent is collecting metrics', color: '#22c55e', bg: '#f0fdf4', border: '#bbf7d0' };
   if (s === 'error')  return { label: 'DB Error', tip: agent.last_error ? `Why it failed:\n${agent.last_error}` : 'Collector cannot connect to the monitored database. Check credentials and network.', color: '#ef4444', bg: '#fef2f2', border: '#fecaca' };
   if (s === 'warning') return { label: 'Warning', tip: 'Metrics are collecting but thresholds exceeded', color: '#f59e0b', bg: '#fffbeb', border: '#fde68a' };
-  // Was reporting and went silent (uninstalled / host down) -> red flag.
-  if (s === 'offline' && agent.last_heartbeat) return { label: 'Offline', tip: 'Agent stopped reporting - it was uninstalled or the host is unreachable.', color: '#ef4444', bg: '#fef2f2', border: '#fecaca' };
+  // Was reporting and went silent. The reaper asks the host's own agent service
+  // why (see agent_service_state_service) and parks the verdict in last_error —
+  // show that instead of the old guess-both-ways sentence whenever we have it.
+  if (s === 'offline' && agent.last_heartbeat) {
+    // Only claim "Service Stopped" when the backend actually concluded the
+    // service is down. "did not answer this check, but … reported data N min
+    // ago" and "is running (it answered)" both mean ALIVE — matching those was
+    // what labelled demonstrably-healthy hosts as stopped.
+    const err = agent.last_error || '';
+    const svcAlive = /did not answer this check|is running \(it answered\)|is running\./i.test(err);
+    // The agent can be installed as a Windows scheduled task instead of a
+    // service, so a not-running task counts as "stopped" here too — otherwise
+    // a genuinely-down task-installed host would read as a plain "Offline".
+    const svcDown = !svcAlive && /is not running on|is not installed|reports '(inactive|stopped|failed)'|task is (registered but not currently running|disabled)/i.test(err);
+    return {
+      label: svcDown ? 'Service Stopped' : 'Offline',
+      tip: agent.last_error || 'Agent stopped reporting - it was uninstalled or the host is unreachable.',
+      color: '#ef4444', bg: '#fef2f2', border: '#fecaca',
+    };
+  }
   // Never reported yet.
   if (!agent.has_connection) return { label: 'Push Mode', tip: 'No DB connection linked. Agent starts collecting when an external script pushes data via POST /api/v1/agents/data.', color: '#8b5cf6', bg: '#f5f3ff', border: '#ddd6fe' };
   return { label: 'Waiting…', tip: `Linked to a DB connection — collector will attempt every ${agent.collection_interval_sec || 60}s. If it stays here, the database may be unreachable.`, color: '#0ea5e9', bg: '#f0f9ff', border: '#bae6fd' };
@@ -1133,9 +1151,15 @@ export const AgentsList = () => {
                           {(agent.active_sessions ?? 0).toLocaleString()}
                         </td>
 
-                        {/* Last seen */}
+                        {/* Last seen + which agent build reported it. Hosts on a
+                            pre-1.1.0 agent report no version, so show a dash
+                            rather than implying we know. */}
                         <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                          {ago(agent.last_heartbeat)}
+                          <div>{ago(agent.last_heartbeat)}</div>
+                          <div className="text-[10px] text-slate-300 font-mono"
+                            title={agent.agent_version ? `Agent build ${agent.agent_version}` : 'This agent predates version reporting — upgrade it to see its build.'}>
+                            {agent.agent_version ? `v${agent.agent_version}` : '—'}
+                          </div>
                         </td>
 
                         {/* Arrow */}

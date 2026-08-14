@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Cloud, Plus, Server } from 'lucide-react';
+import { ChevronRight, Plus, Server, Settings } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
-import { PROVIDER_META } from '../components/CloudProviderSelector';
+import CloudPageHeader from '../components/CloudPageHeader';
+import Badge from '@/components/ui/Badge';
+import { usePermissions } from '@/hooks/usePermissions';
 
 // URL slug ↔ stored provider value ("Oracle" from the API counts as OCI's tile).
 const PROVIDERS = [
@@ -21,6 +23,7 @@ export default function CloudProviderChooser() {
   const navigate = useNavigate();
   const { data: accounts } = useCloudAccounts();
   const { data: allResources } = useAllResources();
+  const { canHere } = usePermissions();
 
   const providerStats = PROVIDERS.map((p) => {
     const provAccounts = (accounts || []).filter((a) => providerKeyOf(a.provider) === p.key);
@@ -33,85 +36,69 @@ export default function CloudProviderChooser() {
   const totalResources = allResources?.length || 0;
 
   return (
-    <div className="min-h-full bg-[#f1f4f9]">
-      {/* Hero — matches the Databases "Choose Technology" hero exactly */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-800 to-sky-700 px-6 pt-3 pb-4 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{ backgroundImage: 'linear-gradient(#fff 1px,transparent 1px),linear-gradient(90deg,#fff 1px,transparent 1px)', backgroundSize: '28px 28px' }} />
-
-        <div className="relative flex items-center gap-2 text-xs text-slate-300/70 mb-2.5">
-          <span>ActMon</span>
-          <ChevronRight size={11} />
-          <span className="text-white font-semibold">Cloud</span>
-        </div>
-
-        <div className="relative flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-sky-400/20 border border-sky-400/40 flex items-center justify-center flex-shrink-0">
-              <Cloud size={18} className="text-sky-200" />
-            </div>
-            <div>
-              <h1 className="text-lg font-black text-white tracking-tight leading-none">Cloud Infrastructure</h1>
-              <p className="text-sky-200/70 text-[11px] mt-0.5">Select a cloud provider to explore accounts &amp; resources</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2.5 flex-shrink-0">
-            <div className="hidden md:flex items-center gap-2.5 bg-white/10 border border-white/15 rounded-xl px-3 py-1.5 backdrop-blur-sm">
-              <div>
-                <p className="text-white font-black text-[13px] leading-none">{totalAccounts}</p>
-                <p className="text-sky-200/70 text-[10px] mt-0.5">accounts</p>
-              </div>
-              <div className="h-6 w-px bg-white/15" />
-              <div>
-                <p className="text-white font-black text-[13px] leading-none">{totalResources}</p>
-                <p className="text-sky-200/70 text-[10px] mt-0.5">resources</p>
-              </div>
-            </div>
+    <>
+      <CloudPageHeader
+        title="Cloud Infrastructure"
+        description="Select a cloud provider to explore its accounts, resources & cost"
+        actions={(
+          <div className="flex items-center gap-2">
+            <Badge tone="neutral" className="gap-1.5">
+              {totalAccounts} account{totalAccounts !== 1 ? 's' : ''}
+            </Badge>
+            <Badge tone="neutral" className="gap-1.5">
+              {totalResources} resource{totalResources !== 1 ? 's' : ''}
+            </Badge>
             <button
               onClick={() => navigate('/cloud/accounts')}
-              className="h-9 px-4 rounded-lg bg-white text-blue-700 font-bold flex items-center gap-1.5 hover:bg-sky-50 shadow-sm transition-all text-sm flex-shrink-0"
+              className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
             >
-              <Plus size={15} /> Add Account
+              <Settings size={13} /> Manage Accounts
             </button>
+            {canHere('add') && (
+              <button
+                onClick={() => navigate('/cloud/accounts')}
+                className="flex h-control shrink-0 items-center gap-1.5 rounded-control bg-accent px-3.5 text-[13px] font-semibold text-accent-fg transition-colors hover:bg-accent-hover"
+              >
+                <Plus size={15} /> Add Account
+              </button>
+            )}
           </div>
-        </div>
-      </div>
+        )}
+      />
 
-      {/* Provider Grid */}
-      <div className="max-w-screen-2xl mx-auto px-8 py-10">
-        <div className="flex items-center gap-3 mb-7">
-          <h2 className="text-[18px] font-black text-slate-800">Choose Cloud Provider</h2>
-          <div className="flex-1 h-px bg-slate-200" />
-          <span className="text-xs text-slate-400 font-medium">{providerStats.length} providers available</span>
+      <div className="mx-auto w-full">
+        <div className="mb-7 flex items-center gap-3">
+          <h2 className="text-[18px] font-black text-fg">Choose Cloud Provider</h2>
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-xs font-medium text-muted">{providerStats.length} providers available</span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {providerStats.map((p) => {
             const isEmpty = p.accountCount === 0;
             return (
               <button
                 key={p.slug}
-                onClick={() => navigate(isEmpty ? '/cloud/accounts' : `/cloud/${p.slug}`)}
-                className={`group relative bg-white rounded-2xl border-2 border-slate-100 p-6 text-left
-                  shadow-md hover:shadow-xl transition-all duration-200 hover:-translate-y-1 ${p.hover}`}
+                onClick={() => navigate(`/cloud/${p.slug}-accounts`)}
+                className={`group relative rounded-2xl border-2 border-border bg-surface p-6 text-left
+                  shadow-md transition-all duration-200 hover:-translate-y-1 hover:shadow-xl ${p.hover}`}
               >
-                <div className={`absolute top-0 right-0 w-28 h-28 rounded-2xl opacity-0 group-hover:opacity-[0.07] transition-opacity ${p.accent} pointer-events-none`} />
+                <div className={`pointer-events-none absolute top-0 right-0 h-28 w-28 rounded-2xl opacity-0 transition-opacity group-hover:opacity-[0.07] ${p.accent}`} />
 
                 <div className="flex items-start gap-4">
-                  <div className={`w-14 h-14 rounded-2xl ${p.accent} flex items-center justify-center flex-shrink-0 shadow-lg`}>
-                    <span className="text-2xl select-none">{p.emoji}</span>
+                  <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl shadow-lg ${p.accent}`}>
+                    <span className="select-none text-2xl">{p.emoji}</span>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-[17px] font-black text-slate-900 leading-tight">{p.name}</h3>
-                    <p className="text-xs text-slate-400 mt-0.5 font-medium">{p.subtitle}</p>
-                    <div className="flex items-center gap-3 mt-3 flex-wrap">
-                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${p.lightBg} ${p.border} border`}>
-                        <Cloud size={11} className={p.text} />
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-[17px] font-black leading-tight text-fg">{p.name}</h3>
+                    <p className="mt-0.5 text-xs font-medium text-muted">{p.subtitle}</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 ${p.lightBg} ${p.border} border`}>
+                        <Server size={11} className={p.text} />
                         <span className={`text-[12px] font-black ${p.text}`}>{p.accountCount}</span>
                         <span className={`text-[10px] ${p.text} opacity-70`}>accounts</span>
                       </div>
-                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${p.lightBg} ${p.border} border`}>
+                      <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 ${p.lightBg} ${p.border} border`}>
                         <Server size={11} className={p.text} />
                         <span className={`text-[12px] font-black ${p.text}`}>{p.resourceCount}</span>
                         <span className={`text-[10px] ${p.text} opacity-70`}>resources</span>
@@ -120,21 +107,21 @@ export default function CloudProviderChooser() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between mt-5 pt-4 border-t border-slate-100">
+                <div className="mt-5 flex items-center justify-between border-t border-border pt-4">
                   {isEmpty ? (
-                    <span className="text-[11px] text-slate-400 font-medium">No accounts yet · click to add</span>
+                    <span className="text-[11px] font-medium text-muted">No accounts yet · click to add</span>
                   ) : (
                     <span className={`text-[12px] font-bold ${p.text}`}>
                       Explore {p.accountCount} account{p.accountCount !== 1 ? 's' : ''}
                     </span>
                   )}
-                  <ChevronRight size={15} className={`${p.text} group-hover:translate-x-1 transition-transform`} />
+                  <ChevronRight size={15} className={`${p.text} transition-transform group-hover:translate-x-1`} />
                 </div>
               </button>
             );
           })}
         </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -13,6 +13,9 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { useUIStore } from '../../store/uiStore';
 import { useAuthStore } from '../../store/authStore';
 import { useDashboardAppearance, SCOPES } from '../../context/DashboardAppearanceContext';
+import {
+  listReportSchedules, toggleReportSchedule, deleteReportSchedule, disableAllReportSchedules,
+} from '../../api/reportSchedules';
 import Gauge from '../../components/gauges/Gauge';
 import TrendChart from '../../components/gauges/TrendChart';
 
@@ -495,6 +498,204 @@ function ColorField({ value, presets, clearable, onChange }) {
         <input type="color" value={value || '#ffffff'} onChange={(e) => onChange(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
         <Palette size={12} className="text-slate-400" />
       </label>
+    </div>
+  );
+}
+
+/* ─── Scheduled Reports (every engine, one screen) ───────────────────────────
+   Before this, schedules could only be listed per-engine AND per-connection, so
+   "what is scheduled to email anyone, anywhere?" could not be answered without
+   already knowing every connection id — which is precisely the question you
+   need answered when mail is going out unexpectedly. Grouped by technology,
+   with an enable/disable toggle on each row and a stop-everything button. */
+const REPORT_ENGINES = [
+  { key: 'mysql',      label: 'MySQL' },
+  { key: 'postgresql', label: 'PostgreSQL' },
+  { key: 'mssql',      label: 'SQL Server' },
+  { key: 'oracle',     label: 'Oracle' },
+];
+
+function freqLabel(s) {
+  const h = String(s.hour ?? 0).padStart(2, '0');
+  const m = String(s.minute ?? 0).padStart(2, '0');
+  const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  if (s.frequency === 'hourly') return `Every hour at :${m}`;
+  if (s.frequency === 'daily') return `Daily at ${h}:${m} UTC`;
+  if (s.frequency === 'weekly') return `Weekly on ${DOW[Number(s.day_of_week) || 0] || s.day_of_week} at ${h}:${m} UTC`;
+  if (s.frequency === 'monthly') return `Monthly on day ${s.day_of_month || 1} at ${h}:${m} UTC`;
+  return s.frequency || '—';
+}
+
+function ScheduledReportsSection() {
+  const qc = useQueryClient();
+  const [msg, setMsg] = useState(null);
+
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['report-schedules'],
+    queryFn: listReportSchedules,
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['report-schedules'] });
+  const toggleMut = useMutation({
+    mutationFn: ({ engine, id, enabled }) => toggleReportSchedule(engine, id, enabled),
+    onSuccess: (r) => { setMsg({ ok: true, text: r.message }); invalidate(); },
+    onError: (e) => setMsg({ ok: false, text: errMsg(e) }),
+  });
+  const deleteMut = useMutation({
+    mutationFn: ({ engine, id }) => deleteReportSchedule(engine, id),
+    onSuccess: () => { setMsg({ ok: true, text: 'Schedule deleted.' }); invalidate(); },
+    onError: (e) => setMsg({ ok: false, text: errMsg(e) }),
+  });
+  const disableAllMut = useMutation({
+    mutationFn: disableAllReportSchedules,
+    onSuccess: (r) => { setMsg({ ok: true, text: r.message }); invalidate(); },
+    onError: (e) => setMsg({ ok: false, text: errMsg(e) }),
+  });
+
+  const all = data?.schedules || [];
+  const enabledCount = data?.enabled_count || 0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-wrap gap-3"
+        style={{ borderLeft: '4px solid #3f6fd6' }}>
+        <div className="flex items-center gap-3">
+          <Mail size={18} className="text-blue-600" />
+          <div>
+            <h3 className="font-black text-slate-800 text-sm">Scheduled Reports</h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Every automated report email, per technology. Disabling keeps the configuration — the
+              scheduler stops sending within 60 seconds.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => refetch()} title="Refresh"
+            className="w-9 h-9 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            <RefreshCw size={15} className={isFetching ? 'animate-spin' : ''} />
+          </button>
+          <button
+            onClick={() => { if (window.confirm('Disable ALL scheduled reports? Nothing is deleted — you can re-enable them individually.')) disableAllMut.mutate(); }}
+            disabled={enabledCount === 0 || disableAllMut.isPending}
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[13px] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
+            <XCircle size={15} /> Stop all sending
+          </button>
+        </div>
+      </div>
+
+      <div className="px-6 py-5 space-y-6">
+        {msg && (
+          <p className={`text-xs font-semibold ${msg.ok ? 'text-emerald-600' : 'text-red-600'}`}>{msg.text}</p>
+        )}
+
+        {isLoading ? (
+          <div className="py-10 flex items-center justify-center text-slate-400"><RefreshCw size={18} className="animate-spin" /></div>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-3">
+              <div className="flex-1 min-w-[140px] bg-slate-50 rounded-xl border border-slate-100 p-3.5">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Total schedules</p>
+                <p className="text-xl font-black text-slate-800 mt-1">{data?.total ?? 0}</p>
+              </div>
+              <div className="flex-1 min-w-[140px] bg-slate-50 rounded-xl border border-slate-100 p-3.5">
+                <p className="text-[10px] font-bold text-slate-400 uppercase">Actively sending</p>
+                <p className={`text-xl font-black mt-1 ${enabledCount ? 'text-emerald-600' : 'text-slate-400'}`}>{enabledCount}</p>
+              </div>
+            </div>
+
+            {data?.errors && (
+              <p className="text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5">
+                Some engines could not be read: {Object.entries(data.errors).map(([k, v]) => `${k} (${v})`).join(', ')}
+              </p>
+            )}
+
+            {/* One block per technology, always shown — an empty engine is a
+                useful answer ("nothing is scheduled here"), not a row to hide. */}
+            {REPORT_ENGINES.map(({ key, label }) => {
+              const rows = all.filter((s) => s.engine === key);
+              return (
+                <div key={key}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</p>
+                    <span className="text-[11px] text-slate-400">
+                      {rows.length === 0 ? 'no schedules' : `${rows.length} schedule${rows.length > 1 ? 's' : ''}`}
+                    </span>
+                  </div>
+                  {rows.length === 0 ? (
+                    <p className="text-[12px] text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3.5 py-3">
+                      Nothing scheduled — no {label} report emails are being sent.
+                    </p>
+                  ) : (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 text-[10px] uppercase text-slate-400 font-black">
+                          <tr>
+                            <th className="px-4 py-2.5 text-left">Schedule</th>
+                            <th className="px-4 py-2.5 text-left">When</th>
+                            <th className="px-4 py-2.5 text-left">Recipients</th>
+                            <th className="px-4 py-2.5 text-left">Last / Next</th>
+                            <th className="px-4 py-2.5 text-center">Sending</th>
+                            <th className="px-4 py-2.5"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((s) => (
+                            <tr key={`${s.engine}-${s.id}`} className="border-t border-slate-100">
+                              <td className="px-4 py-3">
+                                <p className="font-bold text-slate-800">{s.schedule_name}</p>
+                                <p className="text-[11px] text-slate-400">conn #{s.conn_id} · {s.report_period}</p>
+                              </td>
+                              <td className="px-4 py-3 text-slate-600 text-[12px]">{freqLabel(s)}</td>
+                              <td className="px-4 py-3">
+                                <p className="text-[12px] text-slate-700">{s.recipient_count} recipient{s.recipient_count === 1 ? '' : 's'}</p>
+                                <p className="text-[11px] text-slate-400 truncate max-w-[200px]" title={(s.recipients || []).join(', ')}>
+                                  {(s.recipients || []).join(', ') || '—'}
+                                </p>
+                              </td>
+                              <td className="px-4 py-3 text-[11px] text-slate-500">
+                                <p>last: {s.last_sent_at ? new Date(s.last_sent_at).toLocaleString() : 'never'}</p>
+                                <p>next: {s.next_run_at ? new Date(s.next_run_at).toLocaleString() : '—'}</p>
+                                {s.last_status && <p className={s.last_status.startsWith('error') ? 'text-rose-600 font-bold' : 'text-slate-400'}>{s.last_status}</p>}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <button
+                                  onClick={() => toggleMut.mutate({ engine: s.engine, id: s.id, enabled: !s.enabled })}
+                                  disabled={toggleMut.isPending}
+                                  title={s.enabled ? 'Click to disable (stops sending)' : 'Click to enable'}
+                                  className={`relative w-11 h-[22px] rounded-full transition-colors disabled:opacity-50 ${s.enabled ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                                  <span className={`absolute top-[3px] w-4 h-4 rounded-full bg-white transition-all ${s.enabled ? 'left-[25px]' : 'left-[3px]'}`} />
+                                </button>
+                                <p className={`text-[10px] font-bold mt-1 ${s.enabled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                  {s.enabled ? 'ON' : 'OFF'}
+                                </p>
+                              </td>
+                              <td className="px-3 py-3 text-right">
+                                <button
+                                  onClick={() => { if (window.confirm(`Delete "${s.schedule_name}" permanently? Use the toggle instead if you only want to pause it.`)) deleteMut.mutate({ engine: s.engine, id: s.id }); }}
+                                  title="Delete permanently"
+                                  className="w-8 h-8 rounded-md flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                                  <Trash2 size={14} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {all.length === 0 && (
+              <p className="text-[12px] text-slate-500 bg-blue-50 border border-blue-200 rounded-lg px-3.5 py-3">
+                No report schedules exist on this system, so <b>no report emails are being sent at all</b>.
+                Create one from a technology&apos;s <b>Reports</b> page (Email → Schedule).
+              </p>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1369,6 +1570,21 @@ function DashboardAppearanceSection() {
             <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">Chart style</p>
             <p className="text-[11px] text-slate-400">Select a style to preview it on {selectedWidget?.kind === 'chart' ? `"${selectedWidget.name}"` : 'a sample trend panel'}</p>
           </div>
+          {/* Chart style only governs TREND panels. A gauge widget (Host
+              Resources, Connection Pool, …) renders as a dial/ring and is
+              controlled by Indicator style, so say that plainly here — picking
+              a gauge widget above and then a chart style below otherwise looks
+              like it should change that widget, and never does. */}
+          {selectedWidget?.kind === 'gauges' && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5">
+              <p className="text-[12px] text-amber-800">
+                <b>{selectedWidget.name}</b> is a gauge widget — it shows dials, not a trend line, so the
+                chart style below won&apos;t change it. Chart style applies to the trend panels on each
+                dashboard (sparklines, Query Operations, size charts). Pick a chart widget above to
+                preview it on real data.
+              </p>
+            </div>
+          )}
           <ChartTypeGallery categories={CHART_CATEGORIES} selectedKey={draftChart} onSelect={setDraftChart}
             renderPreview={(key) => {
               const typeName = CHART_CATEGORIES.flatMap((c) => c.options).find((o) => o.key === key)?.name || key;
@@ -1477,6 +1693,7 @@ export const SettingsPage = () => {
     { id: 'appearance', title: 'Appearance', icon: Palette },
     { id: 'dashboard',  title: 'Dashboard',  icon: LayoutDashboard },
     { id: 'smtp',       title: 'SMTP Email',  icon: Mail },
+    { id: 'reports',    title: 'Scheduled Reports', icon: Clock },
     ...(isSuperAdmin ? [{ id: 'monitoring', title: 'Detection Speed', icon: Sliders }] : []),
     { id: 'data',       title: 'Data & Telemetry', icon: Database },
     { id: 'about',      title: 'About',       icon: ShieldAlert },
@@ -1658,6 +1875,7 @@ export const SettingsPage = () => {
                   <h2 className="text-lg font-black text-brand-text-primary">{activeGroup?.title}</h2>
                 </div>
                 {active === 'smtp' ? <SmtpConfigSection />
+                  : active === 'reports' ? <ScheduledReportsSection />
                   : active === 'monitoring' && isSuperAdmin ? <MonitoringSettingsSection />
                   : active === 'about' ? <AboutCards />
                   : active === 'appearance' ? APPEARANCE.map(AccordionSection)

@@ -3,7 +3,7 @@ PostgreSQL Monitoring routes — thin handlers only.
 All business logic lives in app/services/postgres/postgres_monitoring_service.py
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -62,6 +62,18 @@ def route_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/pg-slow-queries")
 def route_pg_slow_queries(conn_id: int, db: Session = Depends(get_db)):
     return svc_pg_slow_queries(conn_id, db)
+
+
+@router.get("/{conn_id}/pg-slow-queries/{query_id}")
+def route_pg_slow_query_by_id(conn_id: int, query_id: str, db: Session = Depends(get_db)):
+    """Lets the shared Slow Query detail page re-fetch by id on a refresh or
+    direct link, instead of only working when router state carries the row."""
+    from app.services.common.slow_query_normalize import find_normalized_by_id
+    response = svc_pg_slow_queries(conn_id, db)
+    row = find_normalized_by_id(response, query_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Query not found in the current slow-query window")
+    return {"status": "success", "query": row}
 
 
 # ── 3. Enable pg_stat_statements ─────────────────────────────────────────────

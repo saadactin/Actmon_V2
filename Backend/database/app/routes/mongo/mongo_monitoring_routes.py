@@ -48,6 +48,19 @@ def mongo_slow_operations(conn_id: int, db: Session = Depends(get_db)):
     return mongo_monitoring_service.get_slow_operations(conn_id, db)
 
 
+class MongoExplainRequest(BaseModel):
+    database: str
+    collection: str
+    query_filter: dict = {}
+
+
+@router.post("/{conn_id}/mongo-slow-ops/explain")
+def mongo_slow_ops_explain(conn_id: int, payload: MongoExplainRequest, db: Session = Depends(get_db)):
+    return mongo_monitoring_service.explain_operation(
+        conn_id, payload.database, payload.collection, payload.query_filter, db
+    )
+
+
 @router.get("/{conn_id}/mongo-collections")
 def mongo_collections(conn_id: int, db: Session = Depends(get_db)):
     return mongo_monitoring_service.get_collections(conn_id, db)

@@ -52,6 +52,7 @@ export default function HelpCenterPage() {
   useEffect(() => {
     if (activeId.startsWith('db-')) setOpenGroups((s) => new Set(s).add('mod-dashboard'));
     if (activeId.startsWith('agt-')) setOpenGroups((s) => new Set(s).add('mod-agents'));
+    if (activeId.startsWith('dbm-')) setOpenGroups((s) => new Set(s).add('mod-databases'));
   }, [activeId]);
 
   const searchIndex = useMemo(() => Object.keys(DOCS).map((id) => {
@@ -90,7 +91,7 @@ export default function HelpCenterPage() {
         <PageHeader
           icon="help"
           title="Help Center"
-          description="ActMon product documentation, guides, and reference — Dashboard and Agents chapters are complete; every other module is on the roadmap below."
+          description="ActMon product documentation, guides, and reference — Dashboard, Agents, and Database chapters are complete; every other module is on the roadmap below."
           actions={(
             <div className="relative w-64">
               <Icon name="search" size={14} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-subtle" />
