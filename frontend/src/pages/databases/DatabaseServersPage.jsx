@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import {
   Server, CheckCircle2, AlertTriangle, XCircle, Database, GitBranch,
   Terminal, ArrowRight, RefreshCw, Trash2, Plus, Loader2, Search, X,
@@ -13,6 +13,7 @@ import {
 import { listConnections } from '@/api/connections';
 import { usePermissions } from '@/hooks/usePermissions';
 import PageHeader from '@/components/layout/PageHeader';
+import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import { engineColor } from '@/config/agents';
 
 /* ══════════════════════════════════════════════════════
@@ -244,21 +245,18 @@ function OnlineBadge({ connected = 0, total = 0, pct }) {
   const tone = percent > 80 ? 'var(--status-good)'
     : percent > 50 ? 'var(--status-warning)'
       : 'var(--status-critical)';
+  // Same h-control height as every button/pill beside it in the header — one
+  // line, not two stacked lines, which is what made this taller than its
+  // neighbours (padding-based sizing instead of the shared height token).
   return (
-    <span className="hidden items-center gap-2.5 rounded-control border border-border px-3 py-1.5 md:flex">
-      <span>
-        <span className="block text-[13px] leading-none font-bold text-fg tabular-nums">
-          {connected}/{total}
-        </span>
-        <span className="mt-0.5 block text-[10px] text-subtle">online</span>
-      </span>
-      <span className="flex items-center gap-1.5">
-        <span
-          className="h-2 w-2 rounded-full"
-          style={{ background: total > 0 && connected > 0 ? tone : 'var(--status-unknown)' }}
-        />
-        <span className="text-[11px] font-semibold text-muted tabular-nums">{percent}%</span>
-      </span>
+    <span className="hidden h-control items-center gap-2 rounded-control border border-border px-3 text-[13px] font-semibold text-fg md:flex">
+      <span className="tabular-nums">{connected}/{total}</span>
+      <span className="font-normal text-subtle">online</span>
+      <span
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ background: total > 0 && connected > 0 ? tone : 'var(--status-unknown)' }}
+      />
+      <span className="text-muted tabular-nums">{percent}%</span>
     </span>
   );
 }
@@ -266,7 +264,7 @@ function OnlineBadge({ connected = 0, total = 0, pct }) {
 /* ══════════════════════════════════════════════════════
    TECH SELECTOR SCREEN
 ══════════════════════════════════════════════════════ */
-function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true, cosmosCount = 0 }) {
+function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true, cosmosCount = 0, countdown, onRefresh, refreshing }) {
   return (
     <>
       {/* Shared app header — same on every page. The breadcrumb the old hero
@@ -274,10 +272,12 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
       <PageHeader
         title="Database Infrastructure"
         icon="database"
+        hideBreadcrumbs
         description="Select a database technology to explore servers, clusters &amp; connections"
         actions={(
           <div className="flex items-center gap-2">
             <OnlineBadge connected={summary.connected} total={summary.total} />
+            <HeaderRefreshButton seconds={countdown} onClick={onRefresh} spinning={refreshing} />
             {canAdd && (
               <button
                 onClick={() => navigate('/databases/add-os-server')}
@@ -496,6 +496,33 @@ export default function DatabaseServersPage({ tech = null }) {
     staleTime: 60000,
   });
 
+  // Same countdown-pill header refresh as Agents/Dashboard/Infrastructure/
+  // Alerts. This page has no single polling interval (30s/60s/15s across its
+  // four queries) — 15s (liveData, the source of the "N/M online" badge) is
+  // the one shown, and a manual refresh invalidates all four at once rather
+  // than waiting out whichever interval is slowest.
+  const REFRESH_SECONDS = 15;
+  const [countdown, setCountdown] = useState(REFRESH_SECONDS);
+  useEffect(() => {
+    const t = setInterval(() => setCountdown((c) => (c <= 1 ? REFRESH_SECONDS : c - 1)), 1000);
+    return () => clearInterval(t);
+  }, []);
+  // Three separate calls, not chained with `||` — that would short-circuit
+  // and skip later hooks once an earlier one returns truthy, which is a
+  // conditional hook call (exactly the crash this once caused).
+  const fetchingSummary = useIsFetching({ queryKey: ['serverSummary'] });
+  const fetchingServers = useIsFetching({ queryKey: ['osServers'] });
+  const fetchingLive = useIsFetching({ queryKey: ['liveStatus'] });
+  const isFetchingAny = fetchingSummary || fetchingServers || fetchingLive;
+  const refreshNow = () => {
+    qc.invalidateQueries({ queryKey: ['serverSummary'] });
+    qc.invalidateQueries({ queryKey: ['osServers'] });
+    qc.invalidateQueries({ queryKey: ['liveStatus'] });
+    qc.invalidateQueries({ queryKey: ['allConnections'] });
+    qc.invalidateQueries({ queryKey: ['cosmosdbConnections'] });
+    setCountdown(REFRESH_SECONDS);
+  };
+
   const refreshMutation = useMutation({
     mutationFn: refreshServerStatus,
     onSuccess: () => qc.invalidateQueries(['osServers']),
@@ -558,6 +585,9 @@ export default function DatabaseServersPage({ tech = null }) {
         techs={allowedTechs}
         canAdd={canHere('add')}
         cosmosCount={cosmosConnections.length}
+        countdown={countdown}
+        onRefresh={refreshNow}
+        refreshing={!!isFetchingAny}
       />
     );
   }

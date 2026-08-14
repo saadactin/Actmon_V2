@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
+import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import Button from '@/components/ui/Button';
@@ -308,15 +309,7 @@ export default function AgentsPage() {
             <Button variant="secondary" icon="download" onClick={() => navigate('/agents/deploy')}>
               Deploy
             </Button>
-            <button
-              type="button"
-              onClick={refreshNow}
-              title="Refresh now"
-              className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[0.75rem] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
-            >
-              <Icon name="refresh" size={13} className={api.isFetching ? 'animate-spin' : undefined} />
-              <span className="tabular-nums">{countdown}s</span>
-            </button>
+            <HeaderRefreshButton seconds={countdown} onClick={refreshNow} spinning={api.isFetching} />
           </div>
         }
       />

@@ -74,7 +74,10 @@ export default function AppShell({ user, onSignOut }) {
           bot on every screen" gap) and a page navigation never remounts it,
           which would otherwise drop the conversation and any in-flight stream. */}
       <AppearanceDrawer />
-      {APP.features.chatbot && <ChatWidget />}
+      {/* Suppressed on the full-page chat itself — that page already renders the
+          conversation, so the floating launcher would just be a redundant second
+          entry point to the same store overlapping its own content. */}
+      {APP.features.chatbot && pathname !== '/ai-assistant' && <ChatWidget />}
     </div>
   );
 }

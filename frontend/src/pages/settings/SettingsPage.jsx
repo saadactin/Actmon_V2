@@ -36,6 +36,7 @@ export default function SettingsPage() {
       <PageHeader
         title="Settings"
         icon="settings"
+        hideBreadcrumbs
         description={
           tab === 'appearance'
             ? 'Appearance, charts and dashboard styles — applied instantly, saved to this browser'

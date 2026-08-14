@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import PageHeader from '@/components/layout/PageHeader';
+import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import Icon from '@/components/ui/Icon';
-import IconButton from '@/components/ui/IconButton';
 import Tabs from '@/components/ui/Tabs';
 import { useActiveAlerts, useAlertRules } from '@/hooks/useAlerts';
 import { useMenuStore } from '@/hooks/useNavigation';
@@ -12,6 +12,7 @@ import AlertRules from './AlertRules';
 import NotificationHistoryPage from './NotificationHistoryPage';
 
 const TAB_PARAM = 'tab';
+const REFRESH_SECONDS = 15; // matches useActiveAlerts' own refetchInterval
 
 /**
  * Alerts.
@@ -44,11 +45,14 @@ export default function AlertsPage() {
     setBadge('alerts', feed.summary.total || undefined);
   }, [feed.summary.total, setBadge]);
 
-  const [clock, setClock] = useState(() => new Date());
+  // Same countdown-pill pattern as Agents/Dashboard/Infrastructure — ticks
+  // down to 0 and resets on every refresh, manual or automatic.
+  const [countdown, setCountdown] = useState(REFRESH_SECONDS);
   useEffect(() => {
-    const t = setInterval(() => setClock(new Date()), 1000);
+    const t = setInterval(() => setCountdown((c) => (c <= 1 ? REFRESH_SECONDS : c - 1)), 1000);
     return () => clearInterval(t);
   }, []);
+  const refreshNow = () => { feed.refresh(); rulesApi.refresh(); setCountdown(REFRESH_SECONDS); };
 
   const busy = feed.isFetching || rulesApi.isFetching;
   const error = feed.error || rulesApi.error;
@@ -58,50 +62,38 @@ export default function AlertsPage() {
       <PageHeader
         title="Alerts"
         icon="alert"
+        hideBreadcrumbs
         description="What's firing now, and the rules that decide it"
-        actions={
-          <div className="flex items-center gap-2">
-            <span className="hidden text-right sm:block">
-              <span className="block font-mono text-[13px] leading-none font-semibold text-fg tabular-nums">
-                {clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })}
-              </span>
-              <span className="mt-0.5 block text-[10px] text-subtle">refreshes every 15s</span>
-            </span>
-            <IconButton
-              icon="refresh"
-              label="Refresh now"
-              onClick={() => { feed.refresh(); rulesApi.refresh(); }}
-              iconClassName={busy ? 'animate-spin' : undefined}
-            />
-          </div>
-        }
-        tabs={
-          <Tabs
-            value={tab}
-            onChange={setTab}
-            tabs={[
-              {
-                id: 'active',
-                label: 'Active',
-                icon: 'bell-ring',
-                count: feed.summary.total,
-                tone: feed.summary.critical ? 'danger' : feed.summary.total ? 'warning' : 'neutral',
-              },
-              {
-                id: 'rules',
-                label: 'Rules',
-                icon: 'settings',
-                count: rulesApi.stats.total,
-                tone: 'neutral',
-              },
-              {
-                id: 'history',
-                label: 'Notification History',
-                icon: 'history',
-              },
-            ]}
-          />
-        }
+        actions={<HeaderRefreshButton seconds={countdown} onClick={refreshNow} spinning={busy} />}
+      />
+
+      {/* Below the header, not inside it — PageHeader's own `tabs` slot renders
+          them inside the coloured band; moved out to a plain strip underneath. */}
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        className="mb-gutter"
+        tabs={[
+          {
+            id: 'active',
+            label: 'Active',
+            icon: 'bell-ring',
+            count: feed.summary.total,
+            tone: feed.summary.critical ? 'danger' : feed.summary.total ? 'warning' : 'neutral',
+          },
+          {
+            id: 'rules',
+            label: 'Rules',
+            icon: 'settings',
+            count: rulesApi.stats.total,
+            tone: 'neutral',
+          },
+          {
+            id: 'history',
+            label: 'Notification History',
+            icon: 'history',
+          },
+        ]}
       />
 
       {error && (

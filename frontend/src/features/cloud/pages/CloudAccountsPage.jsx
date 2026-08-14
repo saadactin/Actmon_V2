@@ -9,7 +9,6 @@ import { usePermissions } from '@/hooks/usePermissions';
 import CloudPageHeader from '../components/CloudPageHeader';
 import CloudToolbar from '../components/CloudToolbar';
 import CloudFilterBar from '../components/CloudFilterBar';
-import CloudSection from '../components/CloudSection';
 import Icon from '@/components/ui/Icon';
 import Button from '@/components/ui/Button';
 
@@ -44,6 +43,7 @@ export const CloudAccountsPage = () => {
         backTo="/cloud"
         title="Cloud Accounts"
         description="Manage connections to AWS, Azure, and OCI."
+        hideBreadcrumbs
         actions={canHere('add') && (
           <CloudToolbar>
             <Button variant="primary" icon="plus" onClick={() => setDrawerOpen(true)}>
@@ -103,9 +103,10 @@ export const CloudAccountsPage = () => {
         className="mb-4"
       />
 
-      <CloudSection bodyClassName="p-0">
-        <CloudAccountList search={search} />
-      </CloudSection>
+      {/* No outer .card wrapper — same reason as AgentsPage.jsx/InfraPage.jsx's
+          own list tables: darkHeader mode already renders each row as its own
+          floating rounded card on a plain backdrop. */}
+      <CloudAccountList search={search} />
     </>
   );
 };

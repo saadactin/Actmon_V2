@@ -1,15 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import ActmonAiMark from '@/components/brand/ActmonAiMark';
 import FormatMessage from './formatMessage';
+import ActionProposalCard from './ActionProposalCard';
 import { useChatStore, LAUNCHER_SIZE } from '@/store/chatStore';
 import { APP } from '@/config/app.config';
 
-const SUGGESTIONS = [
+export const SUGGESTIONS = [
   'Is anything unhealthy right now?',
   'Summarise today’s alerts',
   'Which host has the highest CPU?',
@@ -126,6 +127,7 @@ function usePanelPlacement(launcherPos) {
  */
 export default function ChatWidget() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const open = useChatStore((s) => s.open);
   const messages = useChatStore((s) => s.messages);
   const streaming = useChatStore((s) => s.streaming);
@@ -134,6 +136,13 @@ export default function ChatWidget() {
   const clear = useChatStore((s) => s.clear);
   const stop = useChatStore((s) => s.stop);
   const send = useChatStore((s) => s.send);
+  const resumeLastSession = useChatStore((s) => s.resumeLastSession);
+
+  /** The floating panel is a small, always-on-top affordance — for a longer
+   * session the full page (same store, so the conversation carries over) is
+   * easier to read and to act on action proposals in, and is where the
+   * sidebar/history/search live (see AiAssistantPage + ChatSidebar). */
+  const expand = () => { close(); navigate('/ai-assistant'); };
 
   const [draft, setDraft] = useState('');
   const listRef = useRef(null);
@@ -141,6 +150,10 @@ export default function ChatWidget() {
 
   const launcher = useDraggableLauncher();
   const panelStyle = usePanelPlacement(launcher.position);
+
+  // Reopens wherever the user last left off, once, on first mount — the
+  // widget lives for the whole signed-in session (see AppShell).
+  useEffect(() => { resumeLastSession(); }, [resumeLastSession]);
 
   // Follows new content unless the reader has scrolled up to look at history —
   // a streaming reply shouldn't yank them back down mid-read.
@@ -241,6 +254,7 @@ export default function ChatWidget() {
             {messages.length > 0 && (
               <IconButton icon="refresh" label="Clear conversation" size="sm" onClick={clear} />
             )}
+            <IconButton icon="expand" label="Open full chat" size="sm" onClick={expand} />
             <IconButton icon="close" label="Close" size="sm" onClick={close} />
           </header>
 
@@ -252,7 +266,7 @@ export default function ChatWidget() {
             {messages.length === 0 ? (
               <Welcome onPick={submit} />
             ) : (
-              messages.map((m) => <Bubble key={m.id} message={m} />)
+              messages.map((m) => <Bubble key={m.id} message={m} onPick={submit} />)
             )}
           </div>
 
@@ -291,7 +305,7 @@ export default function ChatWidget() {
   );
 }
 
-function Welcome({ onPick }) {
+export function Welcome({ onPick }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 px-2 text-center">
       <ActmonAiMark size={56} />
@@ -317,30 +331,49 @@ function Welcome({ onPick }) {
   );
 }
 
-function Bubble({ message }) {
+export function Bubble({ message, onPick }) {
   const mine = message.role === 'user';
   return (
     <div className={cn('flex items-end gap-2', mine && 'flex-row-reverse')}>
       {!mine && <ActmonAiMark size={24} glow={false} animated={false} className="mb-0.5" />}
-      <div
-        className={cn(
-          'max-w-[85%] rounded-2xl px-3 py-2',
-          mine ? 'rounded-br-md bg-accent text-accent-fg'
-            : message.error ? 'rounded-bl-md bg-danger-soft text-danger-fg'
-              : 'rounded-bl-md bg-sunken',
+      <div className="max-w-[85%]">
+        <div
+          className={cn(
+            'rounded-2xl px-3 py-2',
+            mine ? 'rounded-br-md bg-accent text-accent-fg'
+              : message.error ? 'rounded-bl-md bg-danger-soft text-danger-fg'
+                : 'rounded-bl-md bg-sunken',
+          )}
+        >
+          {mine
+            ? <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
+            : message.content
+              ? <FormatMessage text={message.content} />
+              : <TypingDots />}
+        </div>
+        {!mine && message.actionProposal && (
+          <ActionProposalCard messageId={message.id} proposal={message.actionProposal} />
         )}
-      >
-        {mine
-          ? <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
-          : message.content
-            ? <FormatMessage text={message.content} />
-            : <TypingDots />}
+        {!mine && !message.actionProposal && message.suggestions?.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {message.suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => onPick?.(s)}
+                className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function TypingDots() {
+export function TypingDots() {
   return (
     <span className="flex items-center gap-1 py-0.5">
       {[0, 1, 2].map((i) => (

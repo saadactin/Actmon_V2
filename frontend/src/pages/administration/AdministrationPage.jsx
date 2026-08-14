@@ -9,8 +9,9 @@ import { useAuthStore } from '@/store/authStore';
 import { organizationsApi } from '@/api/admin';
 
 /**
- * The 13 sub-pages, fixed (not server-driven — same as the production
- * reference). `scope` decides how the click target is built:
+ * The sub-pages, fixed (not server-driven — mostly matches the production
+ * reference; AI Chat Sessions is new for the ActMon AI feature).
+ * `scope` decides how the click target is built:
  *   org    → the resource needs an org context: `{to}?org=&orgName=`
  *   global → app-wide catalog, no org context: bare `{to}`
  *   grpp   → the bespoke Role/Page Permissions screen: `/role-permissions/{orgId}`
@@ -29,6 +30,7 @@ const MODULES = [
   { title: 'Login History', to: '/login-history', icon: 'history', scope: 'global', desc: 'Every sign-in attempt, successful or not.' },
   { title: 'User Sessions', to: '/user-sessions', icon: 'activity', scope: 'global', desc: 'Active and expired sessions issued to users.' },
   { title: 'Password History', to: '/password-history', icon: 'lock', scope: 'global', desc: 'When each user’s password was last changed.' },
+  { title: 'AI Chat Sessions', to: '/ai-chat-sessions', icon: 'chat', scope: 'global', desc: 'Every ActMon AI conversation across your users, for audit and support.' },
 ];
 
 function moduleHref(m, orgId, orgName) {
@@ -112,6 +114,7 @@ export default function AdministrationPage() {
           title="Administration"
           icon="user-cog"
           description="Select an organization to manage its access control & masters."
+          hideBreadcrumbs
         />
         <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {isLoading || orgs.length === 0 ? (

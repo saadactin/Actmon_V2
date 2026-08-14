@@ -73,7 +73,7 @@ export const DEFAULT_APPEARANCE = {
   sidebarWidth: 260,
   contentWidth: 'full',
   showNavLabels: true,
-  showBreadcrumbs: true,
+  showBreadcrumbs: false,
   stickyTopbar: true,
 
   /* accessibility */

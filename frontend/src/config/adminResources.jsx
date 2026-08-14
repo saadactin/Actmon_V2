@@ -35,6 +35,14 @@ import {
 const statusCol = { key: 'is_active', label: 'Status', width: 100, type: 'status' };
 const statusField = { key: 'is_active', label: 'Active', type: 'checkbox' };
 
+/** Same 16px/500/18px-lh pill text as AdminResourcePage's own Status column
+    and the Agents list's Status badge — set via inline style since Badge's
+    size classes are same-specificity Tailwind utilities that a plain
+    className override isn't guaranteed to beat. Used by every hand-rolled
+    status-like Badge below (Account lock, Action type, Login/Session status)
+    so they read as the same system as the generic Status column. */
+const PILL_STYLE = { paddingTop: '0.25rem', paddingRight: '0.5rem', paddingBottom: '0.25rem', paddingLeft: '0.5rem', fontSize: '1rem', lineHeight: '1.125rem', fontWeight: 500 };
+
 const orgOptions = async () => (await organizationsApi.list())
   .map((o) => ({ id: o.org_id, label: o.org_name }));
 
@@ -315,8 +323,8 @@ export const ADMIN_RESOURCES = {
       {
         key: 'account_locked', label: 'Account', width: 100,
         render: (row) => (row.account_locked
-          ? <Badge tone="danger" size="xs">Locked</Badge>
-          : <Badge tone="success" size="xs">OK</Badge>),
+          ? <Badge tone="danger" style={PILL_STYLE}>Locked</Badge>
+          : <Badge tone="success" style={PILL_STYLE}>OK</Badge>),
       },
       statusCol,
     ],
@@ -353,7 +361,7 @@ export const ADMIN_RESOURCES = {
       {
         key: 'action_type', label: 'Action', width: 100,
         render: (row) => (
-          <Badge tone={row.action_type === 'INSERT' ? 'success' : row.action_type === 'DELETE' ? 'danger' : 'warning'} size="xs">
+          <Badge tone={row.action_type === 'INSERT' ? 'success' : row.action_type === 'DELETE' ? 'danger' : 'warning'} style={PILL_STYLE}>
             {row.action_type}
           </Badge>
         ),
@@ -390,7 +398,7 @@ export const ADMIN_RESOURCES = {
       {
         key: 'login_status', label: 'Status', width: 100,
         render: (row) => (
-          <Badge tone={row.login_status === 'Success' ? 'success' : 'danger'} size="xs">{row.login_status}</Badge>
+          <Badge tone={row.login_status === 'Success' ? 'success' : 'danger'} style={PILL_STYLE}>{row.login_status}</Badge>
         ),
       },
       { key: 'ip_address', label: 'IP Address' },
@@ -423,7 +431,7 @@ export const ADMIN_RESOURCES = {
       { key: 'expiry_time', label: 'Expires', render: (row) => dt(row.expiry_time) },
       {
         key: 'is_live', label: 'Status', width: 90,
-        render: (row) => <Badge tone={row.is_live ? 'success' : 'neutral'} size="xs">{row.is_live ? 'Live' : 'Ended'}</Badge>,
+        render: (row) => <Badge tone={row.is_live ? 'success' : 'neutral'} style={PILL_STYLE}>{row.is_live ? 'Live' : 'Ended'}</Badge>,
       },
       { key: 'ip_address', label: 'IP Address' },
     ],

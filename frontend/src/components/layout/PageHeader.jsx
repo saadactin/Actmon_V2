@@ -87,7 +87,12 @@ export default function PageHeader({
             </div>
           ))}
           <div className="min-w-0">
-            <h1 className="truncate-safe text-[1.75rem] leading-[1.2] font-semibold tracking-[-0.01em] text-muted">{title}</h1>
+            {/* No leading-[…] override here — truncate-safe's own line-height
+                (1.35) is what stops descenders (the tail of g/p/y/q/j) from
+                being clipped by this element's overflow:hidden; a competing
+                Tailwind leading utility of equal-or-higher cascade priority
+                previously won and silently re-introduced that exact bug. */}
+            <h1 className="truncate-safe text-[1.75rem] font-semibold tracking-[-0.01em] text-muted">{title}</h1>
             {sub && (
               <p className="mt-0.5 text-[0.8125rem] leading-snug text-muted">{sub}</p>
             )}

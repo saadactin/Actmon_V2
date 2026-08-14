@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import Pagination, { pageCountOf, paginate } from '@/components/ui/Pagination';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Input from '@/components/ui/Input';
 import Textarea from '@/components/ui/Textarea';
@@ -12,19 +14,36 @@ import IconButton from '@/components/ui/IconButton';
 import Badge from '@/components/ui/Badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import useAdminResource from '@/hooks/useAdminResource';
+import { useThemeStore } from '@/theme/themeStore';
 
-const PAGE_SIZES = [10, 20, 50, 100];
+/** Same 16px/500/18px-lh body-cell size as the Agents list's dark-header
+    table (AgentsPage.jsx's CELL_TEXT) — kept as its own copy rather than a
+    shared import since the two pages don't share a module today, but the
+    literal values must stay identical for the two tables to read as one
+    system. */
+const CELL_TEXT = 'whitespace-nowrap text-[1rem] leading-[1.125rem] font-medium';
 
 /** "Roles" → "Role", "Organizations" → "Organization" — for "Add {singular}" etc. */
 const singularOf = (title) => (title.endsWith('ies') ? `${title.slice(0, -3)}y`
   : title.endsWith('s') ? title.slice(0, -1) : title);
 
-/** One cell, driven by the column's `type` or a custom `render`. */
-function Cell({ col, row }) {
+/** One cell, driven by the column's `type` or a custom `render`. `identity`
+    (the row's primary name field, column index 1 in every resource) renders
+    bold — matching how the Agents list bolds its own identity column
+    (the name half of "Agent/Host"), while every other column stays the
+    regular CELL_TEXT weight. */
+function Cell({ col, row, identity }) {
   if (col.render) return col.render(row);
   const v = row[col.key];
   if (col.type === 'status') {
-    return v ? <Badge tone="success" size="xs">Active</Badge> : <Badge tone="neutral" size="xs">Inactive</Badge>;
+    // Same 16px/500/18px-lh text as every other cell (CELL_TEXT) and as the
+    // Agents list's own Status pill — set via inline style, not a size prop,
+    // since Badge's own xs/sm classes are same-specificity Tailwind
+    // utilities that aren't guaranteed to lose to an override class.
+    const pillStyle = { paddingTop: '0.25rem', paddingRight: '0.5rem', paddingBottom: '0.25rem', paddingLeft: '0.5rem', fontSize: '1rem', lineHeight: '1.125rem', fontWeight: 500 };
+    return v
+      ? <Badge tone="success" style={pillStyle}>Active</Badge>
+      : <Badge tone="neutral" style={pillStyle}>Inactive</Badge>;
   }
   if (col.type === 'json') {
     return (
@@ -33,8 +52,8 @@ function Cell({ col, row }) {
       </pre>
     );
   }
-  if (v === null || v === undefined || v === '') return <span className="text-subtle">—</span>;
-  return String(v);
+  if (v === null || v === undefined || v === '') return <span className={CELL_TEXT}>—</span>;
+  return <span className={cn(CELL_TEXT, identity && 'font-bold text-fg')}>{String(v)}</span>;
 }
 
 /** One form control, driven by the field's `type`. */
@@ -99,16 +118,20 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     create, update, remove, isCreating, isUpdating, isRemoving,
   } = useAdminResource(config.key, config.api, config.orgScoped ? orgId : undefined);
 
-  const [search, setSearch] = useState('');
   const [sort, setSort] = useState({ key: config.columns[0].key, dir: 'asc' });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  // Same pattern as AgentsPage.jsx/ObjectTable.jsx: the app-wide rowsPerPage
+  // appearance setting is the default, overridable per-session by the
+  // pager's own page-size control — so this table's pager behaves exactly
+  // like every other paged list in the app, not just visually.
+  const appPageSize = useThemeStore((s) => s.rowsPerPage);
+  const [ownPageSize, setOwnPageSize] = useState(null);
+  const pageSize = ownPageSize ?? appPageSize;
   const [form, setForm] = useState(null); // { mode: 'add'|'edit'|'view', values, errors }
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [dynOptions, setDynOptions] = useState({});
   const [toast, setToast] = useState(null);
 
-  const searchKeys = config.searchKeys || config.columns.map((c) => c.key);
   const singular = singularOf(config.title);
 
   const flash = (text, tone = 'success') => {
@@ -116,21 +139,25 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     setTimeout(() => setToast(null), 2500);
   };
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => searchKeys.some((k) => String(r[k] ?? '').toLowerCase().includes(q)));
-  }, [rows, search, searchKeys]);
-
   const tableColumns = useMemo(() => [
-    ...config.columns.map((c) => ({ key: c.key, label: c.label, width: c.width, align: c.align, sortable: true })),
+    // Every resource's column list is [ID, primary name/label field, …others].
+    // The ID centers (short, like Agents' "Sr. No.") and the primary field
+    // stays left (the row's identity, like Agents' "Agent/Host") — everything
+    // after that defaults to centered so it lines up under the dark header's
+    // always-centered label, unless a column explicitly wants otherwise
+    // (e.g. permission_value/display_order stay right-aligned as numbers).
+    ...config.columns.map((c, i) => ({
+      key: c.key, label: c.label, width: c.width,
+      align: c.align || (i === 1 ? 'left' : 'center'),
+      sortable: true,
+    })),
     ...(!config.readOnly || allowEdit || allowDelete ? [{ key: '__actions', label: 'Action', align: 'right', width: 120 }] : []),
   ], [config.columns, config.readOnly, allowEdit, allowDelete]);
 
-  const allTableRows = useMemo(() => filtered.map((row) => ({
+  const allTableRows = useMemo(() => rows.map((row) => ({
     key: row[config.idKey],
     cells: {
-      ...Object.fromEntries(config.columns.map((c) => [c.key, <Cell key={c.key} col={c} row={row} />])),
+      ...Object.fromEntries(config.columns.map((c, i) => [c.key, <Cell key={c.key} col={c} row={row} identity={i === 1} />])),
       __actions: (
         <div className="flex items-center justify-end gap-1">
           <IconButton icon="eye" label="View" size="sm" onClick={() => openView(row)} />
@@ -141,12 +168,12 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     },
     sort: Object.fromEntries(config.columns.map((c) => [c.key, row[c.key]])),
     // eslint-disable-next-line no-use-before-define
-  })), [filtered, config.columns, config.idKey, allowEdit, allowDelete]);
+  })), [rows, config.columns, config.idKey, allowEdit, allowDelete]);
 
   const sortedRows = sortRows(allTableRows, sort);
-  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const pageCount = pageCountOf(sortedRows.length, pageSize);
   const currentPage = Math.min(page, pageCount);
-  const pageRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const pageRows = paginate(sortedRows, currentPage, pageSize);
 
   const onSort = (key) => { setSort((s) => nextSort(s, key)); setPage(1); };
 
@@ -293,54 +320,44 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
         )}
       />
 
-      <div className="card mt-6 flex flex-wrap items-center gap-2 px-card py-3">
-        <Input
-          icon="search"
-          placeholder={`Search ${config.title.toLowerCase()}…`}
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          onClear={() => setSearch('')}
-          wrapperClassName="w-full min-w-0 sm:w-auto sm:max-w-72 sm:flex-1"
-        />
-        <span className="ml-auto text-[12px] whitespace-nowrap text-subtle">
-          {filtered.length} of {rows.length} {config.title.toLowerCase()}
-        </span>
-      </div>
-
-      <section className="card mt-6 overflow-hidden">
+      {/* No outer .card wrapper — matches AgentsPage.jsx's list view: darkHeader
+          mode already renders each row as its own floating rounded card on a
+          plain backdrop, so an enclosing bordered card would double the chrome.
+          Negative margin pulls the table up against PageHeader's own bottom
+          spacing plus darkHeader's own internal top padding (Table.jsx's
+          `rounded-2xl bg-sunken p-3` wrapper) — both are shared/app-wide, so
+          rather than touch either, this page (the only one with nothing in
+          between) compensates locally for a genuinely minimal gap. */}
+      <div className="-mt-4">
         <Table
           columns={tableColumns}
           rows={pageRows}
           sort={sort}
           onSort={onSort}
+          rowHeight={64}
           loading={isLoading || isFetching}
           empty={(
             <EmptyState
               icon={config.icon}
-              title={search ? `No matches for "${search}"` : `No ${config.title.toLowerCase()} yet`}
-              body={!search && allowAdd ? `Click "Add ${singular}" to create the first one.` : undefined}
+              title={`No ${config.title.toLowerCase()} yet`}
+              body={allowAdd ? `Click "Add ${singular}" to create the first one.` : undefined}
             />
           )}
+          darkHeader
         />
-      </section>
+      </div>
 
       {sortedRows.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted">
-          <span>
-            Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sortedRows.length)} of {sortedRows.length}
-          </span>
-          <div className="flex items-center gap-2">
-            <Select
-              width="auto"
-              size="sm"
-              value={String(pageSize)}
-              onChange={(v) => { setPageSize(Number(v)); setPage(1); }}
-              options={PAGE_SIZES.map((n) => ({ id: String(n), label: `${n} / page` }))}
-            />
-            <IconButton icon="chevron-left" label="Previous page" size="sm" disabled={currentPage <= 1} onClick={() => setPage((p) => p - 1)} />
-            <span className="tabular-nums">{currentPage} / {pageCount}</span>
-            <IconButton icon="chevron-right" label="Next page" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage((p) => p + 1)} />
-          </div>
+        <div className="card mt-4">
+          <Pagination
+            page={currentPage}
+            pageCount={pageCount}
+            total={sortedRows.length}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setOwnPageSize}
+            unit={config.title.toLowerCase()}
+          />
         </div>
       )}
 

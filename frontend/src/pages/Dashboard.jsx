@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/layout/PageHeader';
+import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import ChartCard from '@/components/charts/ChartCard';
@@ -113,15 +114,8 @@ export default function Dashboard() {
     <>
       <PageHeader
         title="Monitoring Overview"
-        actions={
-          <IconButton
-            icon="refresh"
-            label={`Refresh now (auto in ${countdown}s)`}
-            size="sm"
-            onClick={refreshNow}
-            iconClassName={d.isFetching ? 'animate-spin' : undefined}
-          />
-        }
+        hideBreadcrumbs
+        actions={<HeaderRefreshButton seconds={countdown} onClick={refreshNow} spinning={d.isFetching} />}
       />
 
       {(d.offline || d.unauthorised) && (

@@ -239,7 +239,10 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
         </div>
       </div>
 
-      <CloudSection bodyClassName="p-0">
+      {/* darkHeader's list view is its own floating-row cards on a plain
+          backdrop (see AgentsPage.jsx/CloudAccountList.jsx) — only the grid
+          view still wants CloudSection's card frame around it. */}
+      {view === 'list' ? (
         <CloudAccountList
           search={search}
           providerFilter={providerKey}
@@ -247,7 +250,17 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
           statusFilter={statusFilter}
           view={view}
         />
-      </CloudSection>
+      ) : (
+        <CloudSection bodyClassName="p-0">
+          <CloudAccountList
+            search={search}
+            providerFilter={providerKey}
+            environmentFilter={envFilter}
+            statusFilter={statusFilter}
+            view={view}
+          />
+        </CloudSection>
+      )}
     </>
   );
 }

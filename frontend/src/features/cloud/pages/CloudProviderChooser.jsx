@@ -3,7 +3,6 @@ import { ChevronRight, Plus, Server, Settings } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
 import CloudPageHeader from '../components/CloudPageHeader';
-import Badge from '@/components/ui/Badge';
 import { usePermissions } from '@/hooks/usePermissions';
 
 // URL slug ↔ stored provider value ("Oracle" from the API counts as OCI's tile).
@@ -40,14 +39,18 @@ export default function CloudProviderChooser() {
       <CloudPageHeader
         title="Cloud Infrastructure"
         description="Select a cloud provider to explore its accounts, resources & cost"
+        hideBreadcrumbs
         actions={(
           <div className="flex items-center gap-2">
-            <Badge tone="neutral" className="gap-1.5">
+            {/* Same h-control height as the buttons beside them — Badge's own
+                size="sm" (the default) is a much shorter pill, which made
+                these look visibly smaller than Manage Accounts/Add Account. */}
+            <span className="flex h-control items-center rounded-control border border-border px-3 text-[13px] font-semibold text-fg">
               {totalAccounts} account{totalAccounts !== 1 ? 's' : ''}
-            </Badge>
-            <Badge tone="neutral" className="gap-1.5">
+            </span>
+            <span className="flex h-control items-center rounded-control border border-border px-3 text-[13px] font-semibold text-fg">
               {totalResources} resource{totalResources !== 1 ? 's' : ''}
-            </Badge>
+            </span>
             <button
               onClick={() => navigate('/cloud/accounts')}
               className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"

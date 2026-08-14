@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import Button from '@/components/ui/Button';
@@ -8,14 +8,22 @@ import Switch from '@/components/ui/Switch';
 import Badge from '@/components/ui/Badge';
 import Dialog from '@/components/ui/Dialog';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
-import { severityOf, StatusKey } from '@/components/charts/status';
+import Pagination, { pageCountOf, paginate } from '@/components/ui/Pagination';
+import { severityOf } from '@/components/charts/status';
 import {
   EVALUATION, SECTIONS, describeCondition, describeScope, metricOf, sectionMeta, sectionOf,
 } from '@/config/alertCatalog';
 import { duration } from '@/lib/format';
+import { useThemeStore } from '@/theme/themeStore';
 import RuleEditor from './RuleEditor';
 
 const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 };
+
+/** Same 16px/500/18px-lh body-cell size as the Agents list's dark-header
+    table — the rule name and severity get it; the smaller secondary lines
+    (description, condition detail, scope, timing) stay as they are, same
+    reasoning as ActiveAlerts.jsx. */
+const CELL_TEXT = 'text-[1rem] leading-[1.125rem] font-medium';
 
 /**
  * Rule management — section-driven, matching the existing module.
@@ -39,6 +47,10 @@ export default function AlertRules({ rules: api }) {
   const [sort, setSort] = useState({ key: 'severity', dir: 'asc' });
   const [editing, setEditing] = useState(null); // null = closed, {} = new
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [page, setPage] = useState(1);
+  const appPageSize = useThemeStore((s) => s.rowsPerPage);
+  const [ownPageSize, setOwnPageSize] = useState(null);
+  const pageSize = ownPageSize ?? appPageSize;
 
   const meta = sectionMeta(section);
 
@@ -81,13 +93,14 @@ export default function AlertRules({ rules: api }) {
   const clearFilters = () => { setSearch(''); setSeverity('all'); setState('all'); };
 
   const columns = [
+    { key: 'srNo', label: 'Sr. No.', align: 'center', width: 64 },
     { key: 'rule', label: 'Rule', sortable: true, sortKey: 'name' },
-    { key: 'condition', label: 'Condition', sortable: true, sortKey: 'metric' },
-    { key: 'severity', label: 'Severity', sortable: true, width: 106 },
-    { key: 'scope', label: 'Scope', sortable: true, width: 148 },
-    { key: 'timing', label: 'For / re-notify', align: 'right', width: 118 },
-    { key: 'enabled', label: 'On', align: 'right', width: 56 },
-    { key: 'actions', label: '', align: 'right', width: 70 },
+    { key: 'condition', label: 'Condition', align: 'center', sortable: true, sortKey: 'metric' },
+    { key: 'severity', label: 'Severity', align: 'center', sortable: true, width: 106 },
+    { key: 'scope', label: 'Scope', align: 'center', sortable: true, width: 148 },
+    { key: 'timing', label: 'For / re-notify', align: 'center', width: 118 },
+    { key: 'enabled', label: 'On', align: 'center', width: 56 },
+    { key: 'actions', label: 'Action', align: 'center', width: 90 },
   ];
 
   const rows = filtered.map((r) => {
@@ -107,14 +120,14 @@ export default function AlertRules({ rules: api }) {
       cells: {
         rule: (
           <div className={cn('min-w-0', dim)}>
-            <span className="truncate-safe block font-semibold text-fg">{r.name}</span>
+            <span className={cn(CELL_TEXT, 'truncate-safe block font-semibold text-fg')}>{r.name}</span>
             {r.description && (
               <span className="truncate-safe block text-[11px] text-subtle">{r.description}</span>
             )}
           </div>
         ),
         condition: (
-          <div className={cn('flex min-w-0 items-center gap-1.5', dim)}>
+          <div className={cn('flex min-w-0 items-center justify-center gap-1.5', dim)}>
             <span className="truncate-safe text-[12px] text-muted">{describeCondition(r)}</span>
             {/* a rule on a metric nothing can raise is the top cause of
                 "my alert never fired" — say so on the row */}
@@ -123,14 +136,24 @@ export default function AlertRules({ rules: api }) {
             )}
           </div>
         ),
-        severity: <span className={cn(dim)}><StatusKey status={sev} /></span>,
+        severity: (
+          <span className={cn(CELL_TEXT, 'inline-flex items-center justify-center gap-1.5 whitespace-nowrap', dim)}>
+            <span
+              className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-white"
+              style={{ background: sev.color }}
+            >
+              <Icon name={sev.icon} size={10} strokeWidth={3.5} />
+            </span>
+            {sev.label}
+          </span>
+        ),
         scope: (
-          <span className={cn('truncate-safe block text-[12px] text-muted', dim)}>
+          <span className={cn('truncate-safe block text-center text-[12px] text-muted', dim)}>
             {describeScope(r)}
           </span>
         ),
         timing: (
-          <span className={cn('block text-[11px] text-muted', dim)}>
+          <span className={cn('block text-center text-[11px] text-muted', dim)}>
             {duration(r.duration_seconds)}
             <span className="block text-[10px] text-subtle">
               {r.cooldown_seconds ? `then ${duration(r.cooldown_seconds)}` : 'every time'}
@@ -138,7 +161,7 @@ export default function AlertRules({ rules: api }) {
           </span>
         ),
         enabled: (
-          <div className="flex justify-end">
+          <div className="flex justify-center">
             <Switch
               size="sm"
               checked={r.enabled}
@@ -148,7 +171,7 @@ export default function AlertRules({ rules: api }) {
           </div>
         ),
         actions: (
-          <div className="flex items-center justify-end gap-0.5">
+          <div className="flex items-center justify-center gap-0.5">
             <Button
               variant="ghost" size="sm" icon="settings" className="px-1.5"
               aria-label={`Edit ${r.name}`} title="Edit"
@@ -164,6 +187,18 @@ export default function AlertRules({ rules: api }) {
       },
     };
   });
+
+  const sorted = sortRows(rows, sort);
+  // Numbered in the table's own display order, before paging, so page 2
+  // reads 11, 12, … instead of resetting to 1 — same as AgentsPage.jsx.
+  const numberedRows = sorted.map((r, i) => ({
+    ...r, cells: { ...r.cells, srNo: <span className={cn(CELL_TEXT, 'tabular-nums text-muted')}>{i + 1}</span> },
+  }));
+
+  const pageCount = pageCountOf(numberedRows.length, pageSize);
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = paginate(numberedRows, currentPage, pageSize);
 
   return (
     <div className="space-y-gutter">
@@ -245,12 +280,14 @@ export default function AlertRules({ rules: api }) {
       </div>
 
       {/* ── the table ── */}
-      <section className="card overflow-hidden">
+      <div>
         <Table
           columns={columns}
-          rows={sortRows(rows, sort)}
+          rows={pageRows}
           sort={sort}
           onSort={(key) => setSort((s) => nextSort(s, key))}
+          rowHeight={64}
+          darkHeader
           loading={isFetching && !isLoading}
           empty={
             hasFilters ? (
@@ -273,7 +310,20 @@ export default function AlertRules({ rules: api }) {
             )
           }
         />
-      </section>
+      </div>
+      {sorted.length > 0 && (
+        <div className="card">
+          <Pagination
+            page={currentPage}
+            pageCount={pageCount}
+            total={sorted.length}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setOwnPageSize}
+            unit="rules"
+          />
+        </div>
+      )}
 
       <RuleEditor
         open={editing !== null}

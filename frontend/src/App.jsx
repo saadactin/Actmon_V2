@@ -29,6 +29,7 @@ const DeployAgentWizard = lazy(() => import('@/pages/agents/setup/deploy/DeployA
 const AgentDetailPage = lazy(() => import('@/pages/agents/AgentDetailPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const HelpCenterPage = lazy(() => import('@/pages/help/HelpCenterPage'));
+const AiAssistantPage = lazy(() => import('@/pages/chat/AiAssistantPage'));
 
 // Cloud (AWS/Azure/OCI discovery) — ported from the existing module's
 // features/cloud/ tree, restyled to plain JS. CloudShell is the layout shell;
@@ -119,6 +120,7 @@ const CosmosDBEditConnectionPage = lazy(() => import('@/pages/cosmosdb/CosmosDBE
 const AdminResourcePage = lazy(() => import('@/pages/administration/_shared/AdminResourcePage'));
 const AdministrationPage = lazy(() => import('@/pages/administration/AdministrationPage'));
 const GroupRolePagePermission = lazy(() => import('@/pages/administration/GroupRolePagePermission'));
+const AiChatSessionsPage = lazy(() => import('@/pages/administration/AiChatSessionsPage'));
 
 /** MongoDB's Slow Query page moved from /slow-operations to /slow-queries for
  * consistency with every other engine — this keeps an old bookmark working. */
@@ -184,6 +186,7 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/settings/notifications" element={<SettingsPage />} />
         <Route path="/help-center" element={<HelpCenterPage />} />
+        <Route path="/ai-assistant" element={<AiAssistantPage />} />
 
         {/* Cloud (AWS/Azure/OCI discovery) — CloudShell is the layout shell,
             everything below is one of its nested routes (its own <Outlet/>).
@@ -350,6 +353,7 @@ export default function App() {
         <Route path="/login-history" element={<AdminResourcePage config={ADMIN_RESOURCES['login-history']} />} />
         <Route path="/user-sessions" element={<AdminResourcePage config={ADMIN_RESOURCES['user-sessions']} />} />
         <Route path="/password-history" element={<AdminResourcePage config={ADMIN_RESOURCES['password-history']} />} />
+        <Route path="/ai-chat-sessions" element={<AiChatSessionsPage />} />
 
         {generated.map((n) => (
           <Route

@@ -1,11 +1,17 @@
+import { useState } from 'react';
+import cn from '@/lib/cn';
+import Icon from '@/components/ui/Icon';
+
 /**
  * Markdown-lite for chat bubbles: escape everything first, then re-introduce
- * only the handful of constructs the AI actually uses (the backend's health-
- * report prompt asks for `###` headings, bullets and bold; code comes fenced).
+ * only the constructs the AI actually uses (headings, bold/italic/inline code,
+ * bullet/numbered lists, fenced code, and pipe tables) plus a copy button on
+ * code blocks — the same handful of things ChatGPT/Cursor render, kept
+ * dependency-free since it's five regexes' worth of surface, not a markdown
+ * engine's worth.
  *
  * Escaping BEFORE any substitution is what keeps this safe — a reply that
- * contained `<img onerror=...>` renders as literal text, never as markup. No
- * dependency pulled in for what is, in practice, five regexes.
+ * contained `<img onerror=...>` renders as literal text, never as markup.
  */
 const escapeHtml = (s) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -41,59 +47,143 @@ export default function FormatMessage({ text }) {
   );
 }
 
+const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+const isSeparatorRow = (line) => isTableRow(line) && /^[\s|:-]+$/.test(line);
+const splitRow = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+
 function Prose({ text }) {
-  // Blank-line-separated paragraphs; inside each, a leading "- " or "* " line
-  // becomes a bullet and a leading "### " becomes a small heading — the only
-  // two block-level forms the system prompt is told to use.
+  // Blank-line-separated blocks; inside each, a leading "### " becomes a small
+  // heading, "- "/"* " a bullet, "1. " a numbered item, and a run of "|...|"
+  // rows (with a "|---|" separator) a table — the block forms the system
+  // prompt is told to use, plus tables for anything comparison/list-shaped.
   const lines = text.split('\n');
   const nodes = [];
   let list = null;
+  let listOrdered = false;
 
   const flushList = () => {
-    if (list) nodes.push(<ul key={nodes.length} className="ml-4 list-disc space-y-0.5">{list}</ul>);
+    if (list) {
+      const Tag = listOrdered ? 'ol' : 'ul';
+      nodes.push(
+        <Tag key={nodes.length} className={cn('ml-4 space-y-0.5', listOrdered ? 'list-decimal' : 'list-disc')}>
+          {list}
+        </Tag>,
+      );
+    }
     list = null;
   };
 
-  lines.forEach((raw, i) => {
-    const line = raw.trimEnd();
-    if (!line.trim()) { flushList(); return; }
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trimEnd();
+
+    if (!line.trim()) { flushList(); i += 1; continue; }
+
+    if (isTableRow(line) && isSeparatorRow(lines[i + 1] || '')) {
+      flushList();
+      const header = splitRow(line);
+      let j = i + 2;
+      const rows = [];
+      while (j < lines.length && isTableRow(lines[j])) { rows.push(splitRow(lines[j])); j += 1; }
+      nodes.push(<MarkdownTable key={nodes.length} header={header} rows={rows} />);
+      i = j;
+      continue;
+    }
 
     if (/^#{1,4}\s+/.test(line)) {
       flushList();
       const heading = line.replace(/^#{1,4}\s+/, '');
       nodes.push(
-        <p key={i} className="mt-1 text-[11px] font-bold tracking-wide text-subtle uppercase"
+        <p key={nodes.length} className="mt-1 text-[11px] font-bold tracking-wide text-subtle uppercase"
           dangerouslySetInnerHTML={{ __html: inline(heading) }} />,
       );
-      return;
+      i += 1; continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      if (list && !listOrdered) flushList();
+      listOrdered = true;
+      list = list || [];
+      list.push(<li key={nodes.length + list.length} dangerouslySetInnerHTML={{ __html: inline(line.replace(/^\d+\.\s+/, '')) }} />);
+      i += 1; continue;
     }
 
     if (/^[-*]\s+/.test(line)) {
+      if (list && listOrdered) flushList();
+      listOrdered = false;
       list = list || [];
-      list.push(
-        <li key={i} dangerouslySetInnerHTML={{ __html: inline(line.replace(/^[-*]\s+/, '')) }} />,
-      );
-      return;
+      list.push(<li key={nodes.length + list.length} dangerouslySetInnerHTML={{ __html: inline(line.replace(/^[-*]\s+/, '')) }} />);
+      i += 1; continue;
     }
 
     flushList();
-    nodes.push(<p key={i} dangerouslySetInnerHTML={{ __html: inline(line) }} />);
-  });
+    nodes.push(<p key={nodes.length} dangerouslySetInnerHTML={{ __html: inline(line) }} />);
+    i += 1;
+  }
   flushList();
 
   return <>{nodes}</>;
 }
 
+/** Same visual language as the app's data tables (border/sunken header), scaled
+ * down for an inline chat bubble rather than a full page — a chat reply's table
+ * is read, not sorted/paginated, so the heavier Table component would be overkill. */
+function MarkdownTable({ header, rows }) {
+  return (
+    <div className="overflow-x-auto rounded-control border border-border">
+      <table className="w-full border-collapse text-[12px]">
+        <thead>
+          <tr className="bg-sunken">
+            {header.map((h, i) => (
+              <th key={i} className="border-b border-border px-2.5 py-1.5 text-left font-bold text-muted"
+                dangerouslySetInnerHTML={{ __html: inline(h) }} />
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri} className={ri % 2 ? 'bg-sunken/40' : undefined}>
+              {r.map((c, ci) => (
+                <td key={ci} className="border-b border-border px-2.5 py-1.5 text-fg last:border-b-0"
+                  dangerouslySetInnerHTML={{ __html: inline(c) }} />
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function CodeBlock({ lang, code }) {
+  const [copied, setCopied] = useState(false);
+  const body = code.replace(/\n$/, '');
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable (permissions/non-secure context) — silently no-op */
+    }
+  };
+
   return (
     <div className="overflow-hidden rounded-control border border-border">
-      {lang && (
-        <div className="border-b border-border bg-sunken px-2.5 py-1 font-mono text-[10px] font-bold tracking-wide text-subtle uppercase">
-          {lang}
-        </div>
-      )}
+      <div className="flex items-center justify-between border-b border-border bg-sunken px-2.5 py-1">
+        <span className="font-mono text-[10px] font-bold tracking-wide text-subtle uppercase">{lang || 'text'}</span>
+        <button
+          type="button"
+          onClick={copy}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-subtle hover:bg-surface hover:text-fg"
+        >
+          <Icon name={copied ? 'check' : 'copy'} size={11} />
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
       <pre className="overflow-x-auto bg-inverse px-3 py-2 text-[12px] leading-relaxed text-on-inverse">
-        <code>{code.replace(/\n$/, '')}</code>
+        <code>{body}</code>
       </pre>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Icon from '@/components/ui/Icon';
 import Button from '@/components/ui/Button';
@@ -6,10 +6,12 @@ import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Badge from '@/components/ui/Badge';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import Pagination, { pageCountOf, paginate } from '@/components/ui/Pagination';
 import { listNotificationHistory } from '@/api/notifications';
 import { organizationsApi } from '@/api/admin';
 import { CHANNEL_DEFS, CHANNEL_ORDER } from '@/config/notificationChannels';
 import { fullTime, responseTime } from '@/lib/format';
+import { useThemeStore } from '@/theme/themeStore';
 
 const STATUS_TONE = { sent: 'success', pending: 'warning', failed: 'danger' };
 const SEVERITY_TONE = { Critical: 'danger', critical: 'danger', Warning: 'warning', warning: 'warning', Information: 'info', information: 'info' };
@@ -28,6 +30,10 @@ export default function NotificationHistoryPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sort, setSort] = useState({ key: 'sent_at', dir: 'desc' });
+  const [page, setPage] = useState(1);
+  const appPageSize = useThemeStore((s) => s.rowsPerPage);
+  const [ownPageSize, setOwnPageSize] = useState(null);
+  const pageSize = ownPageSize ?? appPageSize;
 
   const { data: orgs = [] } = useQuery({ queryKey: ['organizations'], queryFn: () => organizationsApi.list() });
   const orgName = (id) => orgs.find((o) => String(o.org_id) === String(id))?.org_name || `Org ${id}`;
@@ -77,7 +83,7 @@ export default function NotificationHistoryPage() {
     },
     cells: {
       sent_at: <span className="text-[12px] text-muted whitespace-nowrap">{h.sent_at ? fullTime(h.sent_at) : '—'}</span>,
-      alert_name: <span className="font-semibold text-fg">{h.alert_name || '—'}</span>,
+      alert_name: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{h.alert_name || '—'}</span>,
       org: <span className="text-muted">{orgName(h.org_id)}</span>,
       server_name: h.server_name || <span className="text-subtle">—</span>,
       database_name: h.database_name || <span className="text-subtle">—</span>,
@@ -100,6 +106,10 @@ export default function NotificationHistoryPage() {
   }));
 
   const sorted = sortRows(rows, sort);
+  const pageCount = pageCountOf(sorted.length, pageSize);
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = paginate(sorted, currentPage, pageSize);
 
   return (
     <div className="space-y-gutter">
@@ -178,12 +188,14 @@ export default function NotificationHistoryPage() {
         <span className="ml-auto shrink-0 text-[12px] whitespace-nowrap text-subtle">{history.length} deliveries</span>
       </div>
 
-      <section className="card overflow-hidden">
+      <div>
         <Table
           columns={columns}
-          rows={sorted}
+          rows={pageRows}
           sort={sort}
           onSort={(key) => setSort((s) => nextSort(s, key))}
+          rowHeight={64}
+          darkHeader
           loading={isFetching}
           empty={
             hasFilters ? (
@@ -202,7 +214,20 @@ export default function NotificationHistoryPage() {
             )
           }
         />
-      </section>
+      </div>
+      {sorted.length > 0 && (
+        <div className="card">
+          <Pagination
+            page={currentPage}
+            pageCount={pageCount}
+            total={sorted.length}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setOwnPageSize}
+            unit="deliveries"
+          />
+        </div>
+      )}
     </div>
   );
 }

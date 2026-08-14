@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
+import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import Badge from '@/components/ui/Badge';
@@ -268,18 +269,9 @@ export default function InfraPage() {
       <PageHeader
         title="Infrastructure"
         icon="server"
+        hideBreadcrumbs
         description={`${counts.total} host${counts.total !== 1 ? 's' : ''} · ${healthPct}% online · live OS monitoring`}
-        actions={
-          <button
-            type="button"
-            onClick={refreshAll}
-            title="Refresh now"
-            className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
-          >
-            <Icon name="refresh" size={13} className={isFetching ? 'animate-spin' : undefined} />
-            <span className="tabular-nums">{countdown}s</span>
-          </button>
-        }
+        actions={<HeaderRefreshButton seconds={countdown} onClick={refreshAll} spinning={isFetching} />}
       />
 
       {/* Outside the header — one line shared by both tabs: the Overview-only

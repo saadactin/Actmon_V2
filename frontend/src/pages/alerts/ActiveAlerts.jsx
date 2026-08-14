@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
@@ -6,13 +6,21 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
-import ChartCard from '@/components/charts/ChartCard';
-import { severityOf, StatusKey } from '@/components/charts/status';
-import { isAckable } from '@/api/alerts';
+import Pagination, { pageCountOf, paginate } from '@/components/ui/Pagination';
+import { severityOf } from '@/components/charts/status';
 import { metricOf, sectionMeta } from '@/config/alertCatalog';
 import { ageSeconds, ago, fullTime, num } from '@/lib/format';
+import { useThemeStore } from '@/theme/themeStore';
 
 const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 };
+
+/** Same 16px/500/18px-lh body-cell size as the Agents list's dark-header
+    table (AgentsPage.jsx's CELL_TEXT) — this table's own primary values
+    (severity, alert title, source name, value, age) get this; the secondary
+    detail lines (message, tech/environment, threshold) stay smaller since
+    that two-tier hierarchy is real content structure, not an inconsistency —
+    Agents has no equivalent two-line cell to compare against. */
+const CELL_TEXT = 'text-[1rem] leading-[1.125rem] font-medium';
 
 /**
  * The live alert feed.
@@ -29,9 +37,14 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
   const [severity, setSeverity] = useState('all');
   const [source, setSource] = useState('all');
   const [metric, setMetric] = useState('all');
-  const [selected, setSelected] = useState([]);
   const [sort, setSort] = useState({ key: 'severity', dir: 'asc' });
   const [expanded, setExpanded] = useState(null);
+  // Same pager as every other list in the app (Agents, Infrastructure,
+  // Administration) — this table had none at all before.
+  const [page, setPage] = useState(1);
+  const appPageSize = useThemeStore((s) => s.rowsPerPage);
+  const [ownPageSize, setOwnPageSize] = useState(null);
+  const pageSize = ownPageSize ?? appPageSize;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -51,10 +64,15 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
   };
 
   /* ── rows ─────────────────────────────────────────────────────────────── */
+  // Same shape as AgentsPage.jsx: a numbered column first, the identity
+  // column (Alert) second, then everything else — Severity sits alongside
+  // Value/Age rather than leading, same as Agents' Status column never being
+  // the first column either.
   const columns = [
-    { key: 'severity', label: 'Severity', sortable: true, width: 108 },
+    { key: 'srNo', label: 'Sr. No.', align: 'center', width: 64 },
     { key: 'alert', label: 'Alert', sortable: true, sortKey: 'name' },
     { key: 'source', label: 'Source', sortable: true },
+    { key: 'severity', label: 'Severity', align: 'center', sortable: true, width: 108 },
     { key: 'value', label: 'Value', align: 'right', sortable: true, width: 128 },
     { key: 'age', label: 'Age', align: 'right', sortable: true, width: 88 },
     { key: 'actions', label: '', align: 'right', width: 64 },
@@ -79,12 +97,22 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
       },
       onClick: () => setExpanded(isOpen ? null : a.id),
       cells: {
-        severity: <StatusKey status={sev} />,
+        severity: (
+          <span className={cn(CELL_TEXT, 'inline-flex items-center gap-1.5 whitespace-nowrap')}>
+            <span
+              className="grid h-4 w-4 shrink-0 place-items-center rounded-full text-white"
+              style={{ background: sev.color }}
+            >
+              <Icon name={sev.icon} size={10} strokeWidth={3.5} />
+            </span>
+            {sev.label}
+          </span>
+        ),
         alert: (
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <Icon name={sec.icon} size={13} className="shrink-0" style={{ color: sec.color }} />
-              <span className="truncate-safe font-semibold text-fg">{a.rule_name || m.label}</span>
+              <span className={cn(CELL_TEXT, 'truncate-safe font-semibold text-fg')}>{a.rule_name || m.label}</span>
             </div>
             <p className={cn('mt-0.5 text-[12px] text-muted', isOpen ? '' : 'truncate-safe')}>
               {a.message}
@@ -107,7 +135,7 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
         ),
         source: (
           <div className="min-w-0">
-            <span className="truncate-safe block font-medium text-fg">{a.source || '—'}</span>
+            <span className={cn(CELL_TEXT, 'truncate-safe block text-fg')}>{a.source || '—'}</span>
             {(a.technology || a.environment) && (
               <span className="truncate-safe block text-[11px] text-subtle">
                 {[a.technology, a.environment].filter(Boolean).join(' · ')}
@@ -116,16 +144,16 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
           </div>
         ),
         value: a.value === null || a.value === undefined ? (
-          <span className="text-subtle">—</span>
+          <span className={CELL_TEXT}>—</span>
         ) : (
           <span>
-            <span className="font-bold text-fg">{num(a.value, m.unit)}</span>
+            <span className={cn(CELL_TEXT, 'font-bold text-fg')}>{num(a.value, m.unit)}</span>
             {a.threshold !== null && a.threshold !== undefined && (
               <span className="block text-[10px] text-subtle">of {num(a.threshold, m.unit)}</span>
             )}
           </span>
         ),
-        age: <span className="text-[12px] text-muted" title={fullTime(a.created_at)}>{ago(a.created_at)}</span>,
+        age: <span className={cn(CELL_TEXT, 'text-muted')} title={fullTime(a.created_at)}>{ago(a.created_at)}</span>,
         actions: (
           <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
             {a.source && (
@@ -154,23 +182,22 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
   });
 
   const sorted = sortRows(rows, sort);
-  const selectedAlerts = filtered.filter((a) => selected.includes(String(a.id)));
+  // Numbered in the table's own display order, before paging, so page 2
+  // reads 11, 12, … instead of resetting to 1 — same as AgentsPage.jsx.
+  const numberedRows = sorted.map((r, i) => ({
+    ...r, cells: { ...r.cells, srNo: <span className={cn(CELL_TEXT, 'tabular-nums text-muted')}>{i + 1}</span> },
+  }));
+
+  const pageCount = pageCountOf(numberedRows.length, pageSize);
+  // Clamp rather than reset to 1 — a filter/refresh that merely shrinks the
+  // list a little keeps the reader's position, same as AgentsPage.jsx.
+  useEffect(() => { if (page > pageCount) setPage(pageCount); }, [page, pageCount]);
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = paginate(numberedRows, currentPage, pageSize);
 
   const doAck = async (list) => {
     await acknowledge(list);
-    setSelected([]);
   };
-
-  /* ── chart datasets (form is the reader's choice) ────────────────────── */
-  const severityItems = [
-    { key: 'critical', label: 'Critical', value: summary.critical, status: severityOf('critical') },
-    { key: 'warning', label: 'Warning', value: summary.warning, status: severityOf('warning') },
-    { key: 'info', label: 'Info', value: summary.info, status: severityOf('info') },
-  ];
-  const metricItems = summary.byMetric.slice(0, 8).map((m) => ({
-    ...m,
-    label: metricOf(m.key).label,
-  }));
 
   return (
     <div className="space-y-gutter">
@@ -222,6 +249,18 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
           </Button>
         )}
 
+        {summary.ackableCount > 0 && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="check"
+            loading={isAcknowledging}
+            onClick={() => doAck(alerts)}
+          >
+            Acknowledge all {summary.ackableCount} events
+          </Button>
+        )}
+
         <span className="ml-auto shrink-0 text-[12px] whitespace-nowrap text-subtle">
           {filtered.length === alerts.length
             ? `${alerts.length} firing`
@@ -229,121 +268,17 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
         </span>
       </div>
 
-      {/* ── severity chips: summary that is also the filter ── */}
-      <div className="flex flex-wrap gap-2">
-        {severityItems.map((s) => {
-          const on = severity === s.key;
-          return (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => setSeverity(on ? 'all' : s.key)}
-              aria-pressed={on}
-              className={cn(
-                'card flex items-center gap-2.5 px-3 py-2 transition-colors',
-                on ? 'border-accent-border bg-accent-softer' : 'hover:border-strong hover:bg-raised',
-              )}
-            >
-              <span
-                className="grid h-7 w-7 place-items-center rounded-md text-white"
-                style={{ background: s.status.color }}
-              >
-                <Icon name={s.status.icon} size={14} strokeWidth={2.8} />
-              </span>
-              <span className="text-left">
-                <span className="block text-[17px] leading-none font-bold text-fg">{s.value}</span>
-                <span className="mt-0.5 block text-[10px] font-semibold text-muted">{s.label}</span>
-              </span>
-            </button>
-          );
-        })}
-
-        {summary.ackableCount > 0 && (
-          <Button
-            variant="secondary"
-            icon="check"
-            loading={isAcknowledging}
-            onClick={() => doAck(alerts)}
-            className="self-center"
-          >
-            Acknowledge all {summary.ackableCount} events
-          </Button>
-        )}
-      </div>
-
-      {/* ── overview charts (type switchable per card) ── */}
-      {summary.total > 0 && (
-        <div className="grid gap-gutter lg:grid-cols-2">
-          <ChartCard
-            cardId="alerts-by-severity"
-            family="flat"
-            items={severityItems}
-            chartProps={{ labelWidth: 60 }}
-            title="By severity"
-            icon="alert"
-            loading={isFetching && !isLoading}
-            tableColumns={[
-              { key: 'severity', label: 'Severity' },
-              { key: 'count', label: 'Alerts', align: 'right' },
-            ]}
-            tableRows={severityItems.map((s) => ({ key: s.key, cells: { severity: s.label, count: s.value } }))}
-          />
-          <ChartCard
-            cardId="alerts-by-metric"
-            family="flat"
-            items={metricItems}
-            chartProps={{ labelWidth: 128 }}
-            title="By metric"
-            icon="trend"
-            subtitle={summary.byMetric.length > 8 ? 'Top 8' : undefined}
-            loading={isFetching && !isLoading}
-            tableColumns={[
-              { key: 'metric', label: 'Metric' },
-              { key: 'count', label: 'Alerts', align: 'right' },
-            ]}
-            tableRows={summary.byMetric.map((m) => ({
-              key: m.key,
-              cells: { metric: metricOf(m.key).label, count: m.value },
-            }))}
-          />
-        </div>
-      )}
-
-      {/* ── the feed ── */}
-      <section className="card overflow-hidden">
-        {selected.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 border-b border-border bg-accent-softer px-card py-2.5">
-            <span className="text-[12px] font-semibold text-fg">{selected.length} selected</span>
-            <Button
-              size="sm"
-              variant="primary"
-              icon="check"
-              loading={isAcknowledging}
-              disabled={!selectedAlerts.some(isAckable)}
-              onClick={() => doAck(selectedAlerts)}
-            >
-              Acknowledge
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setSelected([])}>Clear</Button>
-            {!selectedAlerts.some(isAckable) && (
-              <span className="text-[11px] text-subtle">
-                Rule-evaluated alerts clear on their own — nothing here to acknowledge.
-              </span>
-            )}
-          </div>
-        )}
-
+      {/* No outer .card wrapper — matches AgentsPage.jsx's list view: darkHeader
+          mode already renders each row as its own floating rounded card on a
+          plain backdrop. */}
+      <div>
         <Table
           columns={columns}
-          rows={sorted}
+          rows={pageRows}
           sort={sort}
           onSort={(key) => setSort((s) => nextSort(s, key))}
-          selectable
-          selectedKeys={selected}
-          onSelectionChange={setSelected}
-          /* Only collector events have something to mark read; live rule alerts
-             are recomputed each poll, so a checkbox on them would do nothing. */
-          isSelectable={(row) => isAckable({ id: row.key })}
+          rowHeight={64}
+          darkHeader
           loading={isFetching && !isLoading}
           empty={
             hasFilters ? (
@@ -363,7 +298,20 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
             )
           }
         />
-      </section>
+      </div>
+      {sorted.length > 0 && (
+        <div className="card">
+          <Pagination
+            page={currentPage}
+            pageCount={pageCount}
+            total={sorted.length}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={setOwnPageSize}
+            unit="alerts"
+          />
+        </div>
+      )}
     </div>
   );
 }

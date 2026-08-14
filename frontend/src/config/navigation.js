@@ -138,6 +138,8 @@ export const ROUTE_LABELS = {
   settings: 'Settings',
   sales: 'Sales',
   'help-center': 'Help Center',
+  'ai-assistant': 'ActMon AI',
+  'ai-chat-sessions': 'AI Chat Sessions',
 };
 
 export default MENU_ITEMS;

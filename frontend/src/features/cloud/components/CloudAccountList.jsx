@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import cn from '@/lib/cn';
 import { useCloudAccounts, useDeleteCloudAccount } from '../hooks/useCloudAccounts';
 import { useCloudScope } from '../hooks/useCloudScope';
 import { useCloudStore } from '../state/cloudStore';
@@ -11,6 +12,19 @@ import Table, { EmptyState } from '@/components/ui/Table';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Icon from '@/components/ui/Icon';
+
+// Same list-view cell system as AgentsPage.jsx's own darkHeader table — kept
+// identical (font size/weight/colour, not just the header band) so every
+// darkHeader list in the app reads as one consistent pattern.
+const CELL_SIZE = 'whitespace-nowrap text-[1rem] leading-[1.125rem]';
+const CELL_TEXT = cn(CELL_SIZE, 'font-medium');
+const CELL_TEXT_STYLE = { color: 'var(--agent-gray)' };
+const STATUS_BADGE_COLORS = {
+  success: { bg: 'var(--agent-green-soft)', fg: 'var(--agent-green-fg)' },
+  danger: { bg: 'var(--agent-red-soft)', fg: 'var(--agent-red-fg)' },
+  warning: { bg: 'var(--agent-yellow-soft)', fg: 'var(--agent-yellow-fg)' },
+  info: { bg: 'var(--info-soft)', fg: 'var(--info-fg)' },
+};
 
 // Provider brand colours are pinned (external identity), not theme tokens —
 // same badge look CloudProviderSelector uses for these same three providers.
@@ -36,13 +50,14 @@ const STATUS_META = {
 const statusMetaOf = (acc) => STATUS_META[acc.last_discovery_status] || STATUS_META.never_scanned;
 
 const COLUMNS = [
-  { key: 'account', label: 'Account' },
-  { key: 'environment', label: 'Environment' },
-  { key: 'region', label: 'Region' },
-  { key: 'status', label: 'Status' },
-  { key: 'resources', label: 'Resources' },
-  { key: 'lastScan', label: 'Last Scan' },
-  { key: 'actions', label: '', align: 'right', width: 84 },
+  { key: 'srNo', label: 'Sr. No.', align: 'center', width: 64 },
+  { key: 'account', label: 'Account', width: 280 },
+  { key: 'environment', label: 'Environment', align: 'center' },
+  { key: 'region', label: 'Region', align: 'center' },
+  { key: 'status', label: 'Status', align: 'center', width: 150 },
+  { key: 'resources', label: 'Resources', align: 'center' },
+  { key: 'lastScan', label: 'Last Scan', align: 'center' },
+  { key: 'actions', label: 'Action', align: 'center', width: 90 },
 ];
 
 export const CloudAccountList = ({
@@ -108,7 +123,7 @@ export const CloudAccountList = ({
   };
 
   const rowActions = (acc) => (
-    <div className="flex items-center justify-end gap-1">
+    <div className="flex items-center justify-center gap-1">
       {canHere('execute') && (
         <Button
           variant="ghost"
@@ -176,16 +191,19 @@ export const CloudAccountList = ({
     );
   }
 
-  const rows = (accounts || []).map((acc) => {
+  const rows = (accounts || []).map((acc, i) => {
     const isSelected = selectedAccountId === acc.id;
     const meta = statusMetaOf(acc);
     return {
       key: acc.id,
       onClick: () => goToAccount(acc),
       cells: {
+        srNo: <span className={cn(CELL_TEXT, 'tabular-nums')} style={CELL_TEXT_STYLE}>{i + 1}</span>,
+        // Single line — "Name PROVIDER", bold name / badge suffix — same
+        // shape as AgentsPage.jsx's Agent/Host column.
         account: (
           <div className="flex items-center gap-2">
-            <span className={`text-[13px] ${isSelected ? 'font-bold text-accent-text' : 'font-semibold text-fg'}`}>
+            <span className={cn(CELL_SIZE, isSelected ? 'font-bold text-accent-text' : 'font-bold text-fg')}>
               {acc.account_name}
             </span>
             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold uppercase ${providerBadgeClass(acc.provider)}`}>
@@ -193,12 +211,34 @@ export const CloudAccountList = ({
             </span>
           </div>
         ),
-        environment: acc.environment ? <span className="text-muted">{acc.environment}</span> : null,
-        region: <span className="text-muted">{acc.tenant_or_region || 'NA'}</span>,
-        status: <Badge tone={meta.tone}><Icon name={meta.icon} size={11} />{meta.label}</Badge>,
-        resources: <span className="text-muted">{resourceCountOf(acc.id)}</span>,
+        environment: <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.environment || '—'}</span>,
+        region: <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.tenant_or_region || 'NA'}</span>,
+        // Fixed 178×48 pill, same dimensions/typography as AgentsPage.jsx's
+        // own Status column (Figma spec), just wearing this account's tone.
+        status: (
+          <span className="inline-flex justify-center">
+            <Badge
+              tone={meta.tone}
+              size="xs"
+              className="w-[11.125rem] justify-center gap-[0.625rem]"
+              style={{
+                height: '3rem',
+                paddingTop: '0.25rem', paddingRight: '0.5rem', paddingBottom: '0.25rem', paddingLeft: '0.5rem',
+                fontSize: '1rem', lineHeight: '1.125rem', fontWeight: 500,
+                ...(STATUS_BADGE_COLORS[meta.tone] && {
+                  background: STATUS_BADGE_COLORS[meta.tone].bg,
+                  color: STATUS_BADGE_COLORS[meta.tone].fg,
+                }),
+              }}
+            >
+              <Icon name={meta.icon} size={11} />
+              {meta.label}
+            </Badge>
+          </span>
+        ),
+        resources: <span className={cn(CELL_TEXT, 'tabular-nums')} style={CELL_TEXT_STYLE}>{resourceCountOf(acc.id)}</span>,
         lastScan: (
-          <span className="text-muted">{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</span>
+          <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</span>
         ),
         actions: rowActions(acc),
       },
@@ -210,6 +250,8 @@ export const CloudAccountList = ({
       columns={COLUMNS}
       rows={rows}
       selectedKeys={selectedAccountId ? [selectedAccountId] : []}
+      rowHeight={64}
+      darkHeader
       empty={emptyState}
     />
   );

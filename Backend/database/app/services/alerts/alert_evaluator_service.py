@@ -87,7 +87,18 @@ def _resolve_channels(db, rule: AlertRule) -> list:
         )
         .all()
     }
-    return [c for c in wanted if c in enabled]
+    resolved = [c for c in wanted if c in enabled]
+
+    # Email has no org-wide default recipient — send_via_channel() rejects it
+    # outright ("no recipient configured for this alert rule", see
+    # email_channel_service.py's own docstring on why there's no fallback
+    # mailbox). Enqueueing it anyway just means a job that's guaranteed to
+    # fail, retried three times, then a permanent "failed" row in Notification
+    # History — for every breach, forever. Drop it here instead: nothing to
+    # send it to means nothing gets attempted.
+    if "email" in resolved and not (rule.notification_recipients or rule.notification_cc or rule.notification_bcc):
+        resolved = [c for c in resolved if c != "email"]
+    return resolved
 
 
 def _enqueue(db, rule: AlertRule, server, value, threshold, message, channels: list, breach_started_at):

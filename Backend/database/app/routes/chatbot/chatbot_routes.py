@@ -2,10 +2,19 @@
 ActMon AI Chatbot Routes
 Folder: Backend/database/app/routes/chatbot/
 Purpose: Handle all chatbot API endpoints — streaming chat, context, and report downloads.
-"""
 
-import os, json, io, csv
-from fastapi import APIRouter, Depends, Query
+`/chat/stream`'s orchestrator implements the Phase 4 pipeline: intent classification
+-> ActMon knowledge injection OR resource resolution + tool dispatch OR a guarded
+action proposal -> reasoning/response. This replaces the old single
+`health_tool.detect_health_intent()` keyword flag, which fired on ANY message
+containing a word like "health" and silently guessed a connection to ground on.
+See `Backend/database/docs/ai_assistant_architecture.md` for the full analysis this
+implements.
+"""
+import os, json, io, csv, re, asyncio
+from functools import partial
+from anyio import to_thread
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -13,6 +22,7 @@ from typing import Optional, List
 
 from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
+from app.routes.auth.auth_routes import current_claims
 from app.services.auth.tenant_context import tenant_ctx, scope_org_id
 from app.services.chatbot.ai_engine import (
     build_system_prompt,
@@ -21,6 +31,7 @@ from app.services.chatbot.ai_engine import (
     generate_connections_csv,
     generate_health_summary_csv,
 )
+from app.services.chatbot import intent_service, knowledge_base, resource_resolver, tools, action_rbac
 
 router = APIRouter(prefix="/api/v1/chatbot", tags=["ActMon AI Chatbot"])
 
@@ -58,6 +69,14 @@ class QuickQueryRequest(BaseModel):
     params: Optional[dict] = {}  # free-form params for the template
 
 
+class ActionConfirmRequest(BaseModel):
+    action: str
+    resource_id: int
+    module: str = "infra"
+    params: Optional[dict] = {}
+    password: str
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
@@ -89,57 +108,402 @@ def _build_messages(system: str, history: List[ChatMessageItem], user_msg: str) 
     return msgs
 
 
+def _sse(obj: dict) -> str:
+    return "data: " + json.dumps(obj, default=str) + "\n\n"
+
+
+def _sse_stream(*events) -> StreamingResponse:
+    """A short-circuit reply (clarify / denial / action proposal) — one or two
+    SSE frames, no LLM call needed, in the same protocol the streamed answers use."""
+    def gen():
+        for e in events:
+            yield _sse(e)
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*",
+    })
+
+
+_TOOL_TIMEOUT = 20   # seconds — a live dashboard fetch for an agent-proxied connection
+                     # can chain many sequential queries, each with its own long
+                     # per-query timeout on the agent-proxy path; without a ceiling
+                     # here a single unreachable/slow connection can hang an entire
+                     # chat turn for minutes with the user staring at "Thinking…"
+                     # and zero bytes sent (see [[project_ai_assistant_phase4]]).
+_INTENT_TIMEOUT = 15  # seconds — bounds a hung/slow Groq classification call.
+
+
+async def _with_timeout(fn, *args, timeout: float, unavailable_reason: str = None, **kwargs):
+    """Runs a blocking (non-async) call off the event loop with a hard wall-clock
+    ceiling. On timeout, returns `unavailable_reason` shaped as a tool result (so
+    the caller can feed it straight into `_grounding_block`) if given, else re-raises
+    so a non-tool caller (e.g. intent classification) can apply its own fallback.
+    The underlying thread is not forcibly killed — Python cannot do that — it keeps
+    running in the background and is simply abandoned by the response path."""
+    try:
+        # `cancellable=True` is required — anyio's default (False) makes the await
+        # ignore cancellation and block until the thread finishes regardless, which
+        # would make asyncio.wait_for's timeout below a complete no-op (found by
+        # direct testing: a deliberately-slow call did not return until it actually
+        # finished, even past the timeout).
+        return await asyncio.wait_for(
+            to_thread.run_sync(partial(fn, *args, **kwargs), cancellable=True), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        if unavailable_reason is not None:
+            return {"available": False, "reason": unavailable_reason}
+        raise
+
+
+def _llm_stream(messages: list) -> StreamingResponse:
+    def generate():
+        yield from stream_chat(messages)
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*",
+    })
+
+
+_RESOURCE_LABEL = {"database": "connection", "infra": "host", "alerts": "alert rule"}
+
+# `build_system_prompt()` (ai_engine.py) is a generic "expert DBA" persona that
+# actively pushes SQL generation as a default capability ("SQL Response Rules
+# ... Always use triple backtick code blocks") — the opposite of the Phase 1-3
+# rule that ActMon AI must not treat every question as SQL-generation and must
+# not expose SQL/commands unless explicitly asked. Every branch that builds a
+# system prompt MUST go through this wrapper, not call build_system_prompt()
+# directly, or that default leaks through — as it did for the "recommendation
+# without a named resource" branch before this rule existed (e.g. "review disk
+# space usage" produced a `SHOW VARIABLES` query and a `df -h` suggestion
+# instead of routing through ActMon's own data).
+_BEHAVIOR_RULES = (
+    "\n\n## ActMon AI Behavior Rules (always apply, override anything above that conflicts)\n"
+    "- You are ActMon's own monitoring assistant, not a general SQL/DBA chatbot — ground answers "
+    "in ActMon's real modules, metrics and data, never in generic textbook advice.\n"
+    "- Do NOT write, suggest, or output SQL, shell commands, or code fences of any kind unless the "
+    "user explicitly asks for a query or command to run themselves.\n"
+    "- Never tell the user to go run a command or check something manually when ActMon already has "
+    "that data available — only suggest a manual step when ActMon genuinely has no way to see it.\n"
+    "- Never invent a metric, status, or capability ActMon does not actually have.\n"
+    "- If a specific server/connection would sharpen the answer, ask for its name rather than "
+    "guessing or dumping the full connection list.\n"
+)
+
+
+def _base_system(connections: list, context: dict) -> str:
+    return build_system_prompt(connections, context or {}) + _BEHAVIOR_RULES
+
+
+# intent_service classifies `module` against its 13-value knowledge taxonomy
+# (for picking a knowledge_base slice) — several of those values describe a
+# database concern without being the literal string "database" (health,
+# metrics, slow_query, cluster_ha, logs), or an infra concern without being
+# "infra" (agent). resource_resolver only knows 3 target tables, so every
+# resolve()/tools dispatch call must go through this normalization first, or
+# a module like "health" silently falls through resolver's `if` chain to
+# not_found even when the named resource clearly exists.
+_RESOLVER_TARGET = {
+    "database": "database", "health": "database", "metrics": "database",
+    "slow_query": "database", "cluster_ha": "database", "logs": "database",
+    "infra": "infra", "agent": "infra",
+    "alerts": "alerts",
+}
+
+
+def _resolver_module(module: str) -> str:
+    return _RESOLVER_TARGET.get(module, module)
+
+
+def _clarify_resource(resolved: dict, module: str, resource_hint) -> dict:
+    label = _RESOURCE_LABEL.get(module, "resource")
+    if resolved["outcome"] == "ambiguous":
+        names = ", ".join(c.get("name") or str(c.get("id")) for c in resolved["candidates"])
+        text = f"I found more than one {label} matching that — which one did you mean: {names}?"
+        return {"type": "clarify", "text": text, "suggestions": [c.get("name") for c in resolved["candidates"][:4] if c.get("name")]}
+    if resource_hint:
+        text = f"I don't see a {label} matching \"{resource_hint}\" in ActMon. Could you check the name?"
+    else:
+        text = f"Which {label} did you mean? I don't see one named in your message."
+    return {"type": "clarify", "text": text, "suggestions": []}
+
+
+def _minutes_for(message: str) -> int:
+    m = (message or "").lower()
+    if "month" in m:
+        return 30 * 24 * 60
+    if "week" in m:
+        return 7 * 24 * 60
+    if "hour" in m:
+        return 180
+    return 24 * 60  # default: a day — covers "today"/"yesterday"/unspecified
+
+
+_UNIT_RE = re.compile(r"restart(?:\s+the)?\s+([a-zA-Z0-9_.\-]+)(?:\s+service)?", re.I)
+_PID_RE = re.compile(r"\b(?:pid|process)\D{0,10}?(\d+)", re.I)
+
+
+def _extract_action_params(action: str, message: str) -> dict:
+    if action == "restart_service":
+        m = _UNIT_RE.search(message or "")
+        return {"unit": m.group(1)} if m else {}
+    if action == "kill_process":
+        m = _PID_RE.search(message or "")
+        return {"pid": int(m.group(1))} if m else {}
+    return {}
+
+
+def _unavailable_dashboard_history() -> dict:
+    return {
+        "available": False,
+        "reason": "The Dashboard/Monitoring Overview has no stored trend for the fleet as a "
+                  "whole — every widget on it is a live snapshot, refreshed on demand, with no "
+                  "history of its own aggregate numbers. Historical trends exist only per "
+                  "individual host or connection (Infrastructure/Database modules), not rolled "
+                  "up across the whole environment.",
+    }
+
+
+def _grounding_block(category: str, module: str, result: dict) -> str:
+    knowledge = knowledge_base.knowledge_for([module])
+    if not result.get("available"):
+        return (
+            f"{knowledge}\n\n"
+            f"IMPORTANT: The live/historical data needed to answer this could not be retrieved — "
+            f"reason: {result.get('reason')}. Tell the user this plainly and do not invent a "
+            f"value or a status. Do not output SQL or code fences."
+        )
+    return (
+        f"{knowledge}\n\n"
+        "Answer using ONLY the REAL data captured below — never invent a number or a status "
+        "the data doesn't contain. Do not output SQL or code fences unless the user explicitly "
+        f"asked for a query. Be concise and specific.\n"
+        f"Question category: {category}\n"
+        f"DATA:\n{json.dumps(result, default=str)[:6500]}"
+    )
+
+
+def _dispatch_tool(db: Session, org_id, intent: dict, resolved: dict, message: str) -> dict:
+    category, module, engine = intent["category"], intent["module"], intent.get("engine")
+    resource = resolved.get("resource")
+
+    if module == "alerts":
+        if category == "historical":
+            return tools.alert_history(db, org_id, resource)
+        return tools.active_alerts(db, org_id, resource)
+
+    if category == "historical":
+        return tools.history(module, resource, engine, minutes=_minutes_for(message))
+
+    # current_state / analytical / recommendation / comparison (single-resource case)
+    return tools.dashboard_snapshot(db, module, resource)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. Streaming chat endpoint (SSE)
+# 1. Streaming chat endpoint (SSE) — Phase 4 intent-routed orchestrator
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post("/chat/stream")
 async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: dict = Depends(tenant_ctx)):
     """
     Main SSE streaming chat. Frontend reads this with fetch + ReadableStream.
-    Events: {type:"token", text:"..."} | {type:"done", suggestions:[...], actions:[...]} | {type:"error"}
+    Events:
+      {type:"token", text:"..."}
+      {type:"done", suggestions:[...], actions:[...]}
+      {type:"error", error:"..."}
+      {type:"clarify", text:"...", suggestions:[...]}          — ask, don't guess
+      {type:"action_proposal", action, resource, params, summary}  — never auto-executed
     """
-    connections = _conn_list(db, scope_org_id(ctx))
-    system_prompt = build_system_prompt(connections, payload.context or {})
-    messages = _build_messages(system_prompt, payload.history, payload.message)
+    org_id = scope_org_id(ctx)
+    connections = _conn_list(db, org_id)
+    try:
+        intent = await _with_timeout(intent_service.classify, payload.message, payload.history,
+                                      payload.context or {}, timeout=_INTENT_TIMEOUT)
+    except asyncio.TimeoutError:
+        intent = dict(intent_service._FALLBACK)  # a hung classifier call must still resolve to "ask, don't guess"
+    category, module = intent["category"], intent["module"]
 
-    # ── Live grounding: if the user asks about a node's health/status, fetch its
-    #    real-time dashboard data and feed it to the model so it reports actual numbers. ──
-    from app.services.chatbot import health_tool
-    ctx_conn = None
-    if payload.context and payload.context.get("connection_id"):
-        ctx_conn = next((c for c in connections if c["id"] == payload.context["connection_id"]), None)
-    if health_tool.detect_health_intent(payload.message):
-        conn = health_tool.find_connection(db, payload.message, scope_org_id(ctx))
-        if conn is None and ctx_conn:  # fall back to the node the user is currently viewing
-            conn = db.query(ConnectionMaster).filter(ConnectionMaster.id == ctx_conn["id"]).first()
-        if conn is not None:
-            live = health_tool.compact(health_tool.get_live_health(db, conn))
-            live_block = (
-                "You are answering with LIVE REAL-TIME DATA for the requested node — captured just now. "
-                "Use ONLY these numbers; never invent values. Do NOT output any SQL, code blocks, or ``` fences. "
-                "Reply as a real-time DB HEALTH REPORT in markdown with these sections and nothing else:\n"
-                "### Overall Status\n(healthy / degraded / critical — one line)\n"
-                "### Key Metrics\n(bullet list using the actual values: uptime, connections, cache hit, slow queries, sizes, replication, etc.)\n"
-                "### Concerns\n(anything risky, or 'None')\n"
-                "### Recommendations\n(actionable bullets, or 'None — operating normally')\n"
-                f"Node: {conn.connection_name} — {(conn.db_type or '').upper()} @ {conn.host}\n"
-                f"LIVE DATA JSON:\n{json.dumps(live, default=str)[:6500]}"
+    # ── Ambiguous: ask, don't guess. No LLM call, no tool call. ──
+    if category == "ambiguous":
+        return _sse_stream({
+            "type": "clarify",
+            "text": "Could you tell me a bit more — are you asking about a concept, a specific "
+                     "server/connection's current status, its history, or do you want me to do "
+                     "something (like restart a service)?",
+            "suggestions": [],
+        })
+
+    # ── Conceptual / config-info: knowledge answer only, zero tool calls. ──
+    if category in ("conceptual", "config_info"):
+        knowledge = knowledge_base.knowledge_for([module])
+        system = _base_system(connections, payload.context) + (
+            "\n\n## ActMon Knowledge (ground your answer in this, not generic DBA trivia)\n"
+            f"{knowledge}\n\n"
+            "This is a conceptual/configuration question — explain from the knowledge above. "
+            "Do NOT fetch or claim any live data, do NOT output SQL or code fences unless "
+            "explicitly asked, and never invent an ActMon feature, metric, or status that "
+            "isn't described above."
+        )
+        messages = _build_messages(system, payload.history, payload.message)
+        return _llm_stream(messages)
+
+    # ── Action requests: resolve target, RBAC-gate, propose — never execute here. ──
+    if category == "action":
+        action = intent.get("action_hint")
+        if not action or action not in action_rbac.ACTIONS:
+            return _sse_stream({
+                "type": "clarify",
+                "text": "I can restart a service, kill a process, reboot a host, trigger an "
+                         "agent update, or acknowledge alerts — which one did you want, and on "
+                         "which host?",
+                "suggestions": [],
+            })
+        target_module = action_rbac.ACTIONS[action]["module"]
+        resolved = resource_resolver.resolve(db, org_id, intent.get("resource_hint"), target_module,
+                                              intent.get("engine"), payload.context)
+        if resolved["outcome"] != "resolved":
+            return _sse_stream(_clarify_resource(resolved, target_module, intent.get("resource_hint")))
+
+        ok, reason = action_rbac.allowed(ctx, db, action)
+        if not ok:
+            return _sse_stream({"type": "clarify", "text": f"I can't do that: {reason}", "suggestions": []})
+
+        params = _extract_action_params(action, payload.message)
+        missing = action_rbac.missing_params(action, params)
+        if missing:
+            return _sse_stream({
+                "type": "clarify",
+                "text": f"Which {', '.join(missing)} did you mean for that action?",
+                "suggestions": [],
+            })
+
+        resource = resolved["resource"]
+        summary = action_rbac.describe(action, resource.get("name"), params)
+        return _sse_stream({
+            "type": "action_proposal",
+            "action": action,
+            "module": target_module,
+            "resource": resource,
+            "params": params,
+            "summary": summary + " This requires your password to confirm and cannot be undone automatically.",
+        })
+
+    # ── Comparison: resolve to possibly-multiple resources, snapshot each. ──
+    if category == "comparison":
+        # A fleet-wide comparison ("which server has the highest CPU") has no single
+        # resource to resolve at all — it's answered from the Dashboard's own rollup
+        # (top-N lists, per-engine breakdowns), not a per-connection dashboard_snapshot.
+        if module == "dashboard":
+            result = await _with_timeout(
+                tools.fleet_dashboard, db, org_id, timeout=_TOOL_TIMEOUT,
+                unavailable_reason=f"Timed out retrieving the fleet-wide dashboard ({_TOOL_TIMEOUT}s).",
             )
-            messages.insert(0, {"role": "system", "content": live_block})
+            grounding = _grounding_block(category, module, result)
+            messages = _build_messages(
+                _base_system(connections, payload.context) + "\n\n" + grounding,
+                payload.history, payload.message,
+            )
+            return _llm_stream(messages)
 
-    def generate():
-        yield from stream_chat(messages)
+        resolver_module = _resolver_module(module)
+        resolved = resource_resolver.resolve(db, org_id, intent.get("resource_hint"), resolver_module,
+                                              intent.get("engine"), payload.context)
+        if resolved["outcome"] == "not_found":
+            return _sse_stream(_clarify_resource(resolved, resolver_module, intent.get("resource_hint")))
+        # Sequential, not gathered concurrently: every call shares this request's one
+        # SQLAlchemy Session, which is not safe to use from more than one thread at a time.
+        targets = resolved["candidates"] if resolved["outcome"] == "ambiguous" else [resolved["resource"]]
+        snapshots = []
+        for t in targets[:5]:
+            snap = await _with_timeout(
+                tools.dashboard_snapshot, db, resolver_module, t, timeout=_TOOL_TIMEOUT,
+                unavailable_reason=f"Timed out reaching {t.get('name') or t.get('id')} within {_TOOL_TIMEOUT}s.",
+            )
+            snapshots.append({"resource": t, **snap})
+        result = {"available": any(s.get("available") for s in snapshots), "comparison": snapshots}
+        grounding = _grounding_block(category, module, result)
+        messages = _build_messages(
+            _base_system(connections, payload.context) + "\n\n" + grounding,
+            payload.history, payload.message,
+        )
+        return _llm_stream(messages)
 
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Access-Control-Allow-Origin": "*",
-        },
+    # ── current_state / historical / analytical / recommendation: need a resource, ──
+    # ── except recommendation without one named, which stays a knowledge answer.   ──
+    resource_hint = intent.get("resource_hint")
+    if category == "recommendation" and not resource_hint:
+        knowledge = knowledge_base.knowledge_for([module])
+        system = _base_system(connections, payload.context) + (
+            f"\n\n## ActMon Knowledge\n{knowledge}\n\n"
+            "No specific server/connection was named — give general, ActMon-consistent guidance "
+            "without claiming a live number. If a specific resource would sharpen the answer, ask for one."
+        )
+        return _llm_stream(_build_messages(system, payload.history, payload.message))
+
+    # Fleet-wide dashboard questions (current-state summary, "which X has the most Y"
+    # analysis, recommendation naming no specific host) have no single resource to
+    # resolve — skip straight to the same rollup the Dashboard page itself shows.
+    # Historical is the one thing this page genuinely cannot answer: there is no
+    # stored trend for the fleet as a whole, only per-host history (Infrastructure/
+    # Database modules) — say so plainly rather than fabricating a trend.
+    if module == "dashboard":
+        if category == "historical":
+            result = _unavailable_dashboard_history()
+        else:
+            result = await _with_timeout(
+                tools.fleet_dashboard, db, org_id, timeout=_TOOL_TIMEOUT,
+                unavailable_reason=f"Timed out retrieving the fleet-wide dashboard ({_TOOL_TIMEOUT}s).",
+            )
+        grounding = _grounding_block(category, module, result)
+        system = _base_system(connections, payload.context) + "\n\n" + grounding
+        messages = _build_messages(system, payload.history, payload.message)
+        return _llm_stream(messages)
+
+    resolver_module = _resolver_module(module)
+    resolved = resource_resolver.resolve(db, org_id, resource_hint, resolver_module, intent.get("engine"), payload.context)
+    if resolved["outcome"] != "resolved":
+        return _sse_stream(_clarify_resource(resolved, resolver_module, resource_hint))
+
+    result = await _with_timeout(
+        _dispatch_tool, db, org_id, {**intent, "module": resolver_module}, resolved, payload.message,
+        timeout=_TOOL_TIMEOUT,
+        unavailable_reason=f"Timed out waiting for a response ({_TOOL_TIMEOUT}s) — the database or "
+                            f"agent may be slow, unreachable, or offline right now.",
     )
+    grounding = _grounding_block(category, module, result)
+    system = _base_system(connections, payload.context) + "\n\n" + grounding
+    messages = _build_messages(system, payload.history, payload.message)
+    return _llm_stream(messages)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1b. Action confirmation — the ONLY place an AI-proposed action actually runs
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.post("/action/confirm")
+def confirm_action(payload: ActionConfirmRequest, db: Session = Depends(get_db),
+                    claims: dict = Depends(current_claims)):
+    """Re-verifies RBAC + password server-side (never trusts the client-echoed
+    proposal alone) and calls the exact same service function the Infra page's
+    own action buttons use — no parallel execution path."""
+    ok, reason = action_rbac.allowed(claims, db, payload.action)
+    if not ok:
+        raise HTTPException(status_code=403, detail=reason)
+    try:
+        result = action_rbac.execute(payload.action, payload.resource_id, payload.params,
+                                      payload.password, claims.get("user_id"), db)
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        from app.models.admin_models import AuditLog
+        db.add(AuditLog(org_id=claims.get("org_id"), user_id=claims.get("user_id"),
+                         table_name="actmon_ai_action", record_id=payload.resource_id,
+                         action_type=payload.action, new_data={"params": payload.params, "result": result}))
+        db.commit()
+    except Exception:  # noqa: BLE001 — the action already ran; audit failure must not mask its result
+        db.rollback()
+
+    return result
 
 
 # ──────────────────────────────────────────────────────────────────────────────

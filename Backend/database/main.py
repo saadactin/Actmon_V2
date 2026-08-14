@@ -83,6 +83,8 @@ from app.routes.agent.agent_routes import router as agent_router
 from app.routes.agent.db_agent_routes import router as db_agent_router
 from app.routes.agent.agent_install_routes import router as agent_install_router
 from app.routes.chatbot.chatbot_routes import router as chatbot_router
+from app.routes.chatbot.chat_session_routes import router as chat_session_router
+from app.routes.admin.ai_chat_audit_routes import router as ai_chat_audit_router
 from app.routes.alerts.alert_routes import router as alerts_router
 from app.routes.logs.logs_routes import router as logs_router
 from app.routes.download.download_routes import router as download_router
@@ -251,6 +253,8 @@ app.include_router(agent_install_router)
 
 # ActMon AI Chatbot
 app.include_router(chatbot_router)
+app.include_router(chat_session_router)
+app.include_router(ai_chat_audit_router)
 app.include_router(alerts_router)
 app.include_router(notification_router)
 app.include_router(logs_router)
