@@ -76,18 +76,35 @@
   font-family: var(--font-mono); font-size: 0.72rem;
 }
 
-.help-article .note, .help-article .warnbox, .help-article .imp {
+.help-article .note, .help-article .warnbox, .help-article .imp, .help-article .tip {
   display: flex; gap: 0.6rem; padding: 0.75rem 0.875rem; border-radius: var(--radius-card);
   margin: 0 0 1.125rem; font-size: 0.8125rem; border: 1px solid; max-width: 70ch;
 }
 .help-article .note { background: var(--accent-soft); border-color: var(--accent); color: var(--fg); }
 .help-article .warnbox { background: var(--warning-soft); border-color: var(--warning); color: var(--fg); }
 .help-article .imp { background: var(--danger-soft); border-color: var(--danger); color: var(--fg); }
-.help-article .note svg, .help-article .warnbox svg, .help-article .imp svg { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 0.125rem; }
-.help-article .note b, .help-article .warnbox b, .help-article .imp b {
+.help-article .tip { background: var(--success-soft); border-color: var(--success); color: var(--fg); }
+.help-article .note svg, .help-article .warnbox svg, .help-article .imp svg, .help-article .tip svg { flex: 0 0 auto; width: 15px; height: 15px; margin-top: 0.125rem; }
+.help-article .note b, .help-article .warnbox b, .help-article .imp b, .help-article .tip b {
   display: block; font-family: var(--font-mono); font-size: 0.59rem; letter-spacing: 0.06em;
   text-transform: uppercase; margin-bottom: 0.2rem; color: var(--fg);
 }
+
+/* ── Figure: a screenshot (or, until captured, an honest placeholder) ── */
+.help-article .help-figure {
+  margin: 0 0 1.25rem; border: 1px solid var(--border); border-radius: var(--radius-card);
+  overflow: hidden; background: var(--surface); max-width: 70ch;
+}
+.help-article .help-figure img { display: block; width: 100%; height: auto; }
+.help-article .help-figure-pending {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem;
+  aspect-ratio: 16/9; background: var(--surface-sunken); color: var(--fg-subtle);
+  font-family: var(--font-mono); font-size: 0.72rem; text-align: center; padding: 1rem;
+}
+.help-article .help-figure figcaption {
+  padding: 0.7rem 0.95rem; border-top: 1px solid var(--border); font-size: 0.76rem; color: var(--fg-muted);
+}
+.help-article .help-figure figcaption b { display: block; color: var(--fg); font-weight: 600; margin-bottom: 0.15rem; }
 
 /* ── Getting Started: one detailed card per topic ── */
 .help-article .gs-cardgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0.875rem; margin: 1rem 0 2rem; }

@@ -11,6 +11,7 @@ export const ICONS = {
   cloud:'<path d="M7 18a4 4 0 01-1-7.87A5 5 0 0116 8a4.5 4.5 0 011 8.9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>',
   infra:'<rect x="4" y="4" width="16" height="6" rx="1" stroke="currentColor" stroke-width="1.6" fill="none"/><rect x="4" y="14" width="16" height="6" rx="1" stroke="currentColor" stroke-width="1.6" fill="none"/>',
   ml:'<path d="M9 4h6l1 4-4 3 4 3-1 6H9l-1-6 4-3-4-3 1-4z" stroke="currentColor" stroke-width="1.4" fill="none"/>',
+  ai:'<path d="M12 3l1.6 4.9L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.1L12 3z" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linejoin="round"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8L18 15z" stroke="currentColor" stroke-width="1.1" fill="none" stroke-linejoin="round"/>',
   alerts:'<path d="M12 3l9 16H3l9-16z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/><path d="M12 10v4M12 17h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
   admin:'<circle cx="12" cy="8" r="3" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>',
   settings:'<circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.5-2-3.4-2.3.9a7 7 0 00-2-1.2L14.2 3H9.8l-.4 2.6a7 7 0 00-2 1.2l-2.3-.9-2 3.4 2 1.5A7 7 0 005 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.3-1a7 7 0 002 1.2l.4 2.6h4.4l.4-2.6a7 7 0 002-1.2l2.3 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z" stroke="currentColor" stroke-width="1.1" fill="none"/>',
@@ -18,23 +19,55 @@ export const ICONS = {
   sales:'<path d="M4 17l5-6 4 3 7-9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
   profile:'<circle cx="12" cy="8" r="3.4" stroke="currentColor" stroke-width="1.6" fill="none"/><path d="M5 20c1.2-4.2 4.3-6.4 7-6.4s5.8 2.2 7 6.4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>',
   book:'<path d="M4 5c2-1 5-1 8 0 3-1 6-1 8 0v13c-2-1-5-1-8 0-3-1-6-1-8 0V5z" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M12 5v13" stroke="currentColor" stroke-width="1.5"/>',
+  tip:'<path d="M9 18h6M10 21h4M12 3a6 6 0 00-3.5 10.9c.5.4.8 1 .8 1.6V16h5.4v-.5c0-.6.3-1.2.8-1.6A6 6 0 0012 3z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  cert:'<path d="M12 3l7 3v5c0 5-3 8-7 10-4-2-7-5-7-10V6l7-3z" stroke="currentColor" stroke-width="1.4" fill="none"/><path d="M9.5 11l1.8 1.8L15 9" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  troubleshoot:'<path d="M12 3l9 16H3l9-16z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linejoin="round"/><path d="M9.5 10.5l1.5 1.5-1.5 1.5M14.5 10.5L13 12l1.5 1.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  image:'<rect x="3.5" y="4.5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.4" fill="none"/><circle cx="8.5" cy="9.5" r="1.5" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M4 16l4.5-4.5 3 3L16.5 9 20 12.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 export const icon = (name, size=14) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none">${ICONS[name]||ICONS.book}</svg>`;
 
-/* ---- module bar (real, from src/config/navigation.js — module_master) ---- */
+/**
+ * A screenshot figure inside an article body. `src` is optional and
+ * deliberately so — until a real ActMon screenshot is captured and dropped
+ * in, this renders an honest "Screenshot pending" placeholder (never a
+ * broken image, never a stand-in stock photo) so articles can be written
+ * and shipped with the figure slot already in place, then upgraded to a
+ * real capture later by adding `src` alone — no article text changes.
+ */
+export const figure = (alt, caption, src = null) => `
+  <figure class="help-figure">
+    ${src
+      ? `<img src="${src}" alt="${alt}" loading="lazy" />`
+      : `<div class="help-figure-pending">${icon('image', 22)}<span>Screenshot pending — ${alt}</span></div>`}
+    <figcaption><b>${alt}</b>${caption ? `<span>${caption}</span>` : ''}</figcaption>
+  </figure>`;
+
+/* ---- module bar (real, from src/config/navigation.js — module_master, and
+   frontend/src/hooks/useNavigation.js's RETIRED_ROUTES/MENU_ITEMS, verified
+   against the live top-nav-bar component, TopNav.jsx). This replaces an
+   earlier, stale version of this array that still listed 'ML/AI' and
+   'ChatBot' as top-nav items — both routes were retired
+   (RETIRED_ROUTES = new Set(['/chatbot','/ml'])) before this array was last
+   updated. AI Assistant is real (route /ai-assistant) but is reached via the
+   floating chat widget / account menu, not a top-nav-bar icon — it still gets
+   a documentation category here since it's a real, documented feature. ---- */
+/* Icon names below are real keys from components/ui/Icon.jsx's registry
+   (the app's ONE icon system) — not the hand-rolled ICONS map above, which
+   only backs the old inline-SVG `icon()` helper used inside article HTML
+   strings. HOME_CATEGORIES/HomePage.jsx render these through the real
+   <Icon> component. */
 export const MODULES = [
-  {id:'mod-dashboard', label:'Dashboard', icon:'dashboard', route:'/dashboard', available:true},
-  {id:'mod-agents', label:'Agents', icon:'agents', route:'/agents', available:true},
-  {id:'mod-databases', label:'Database', icon:'db', route:'/databases', available:true},
-  {id:'mod-cloud', label:'Cloud', icon:'cloud', route:'/cloud', available:false},
-  {id:'mod-infrastructure', label:'Infrastructure', icon:'infra', route:'/infra', available:false},
-  {id:'mod-mlai', label:'ML/AI', icon:'ml', route:'/ml', available:false},
-  {id:'mod-alerts', label:'Alerts', icon:'alerts', route:'/alerts', available:false},
-  {id:'mod-administration', label:'Administration', icon:'admin', route:'/administration', available:false},
-  {id:'mod-settings', label:'Setting', icon:'settings', route:'/settings', available:false},
-  {id:'mod-chatbot', label:'ChatBot', icon:'chatbot', route:'/chatbot', available:false},
-  {id:'mod-sales', label:'Sales', icon:'sales', route:'/sales', available:false},
-  {id:'mod-profile', label:'Profile', icon:'profile', route:'(account menu)', available:false},
+  {id:'mod-dashboard', label:'Dashboard', icon:'layout-grid', route:'/dashboard', available:true},
+  {id:'mod-agents', label:'Agents', icon:'shield', route:'/agents', available:true},
+  {id:'mod-databases', label:'Database', icon:'database', route:'/databases', available:true},
+  {id:'mod-cloud', label:'Cloud', icon:'cloud', route:'/cloud', available:true},
+  {id:'mod-infrastructure', label:'Infrastructure', icon:'server', route:'/infra', available:true},
+  {id:'mod-alerts', label:'Alerts', icon:'alert', route:'/alerts', available:true},
+  {id:'mod-ai', label:'AI Assistant', icon:'sparkles', route:'/ai-assistant', available:true},
+  {id:'mod-administration', label:'Administration', icon:'user-cog', route:'/administration', available:true},
+  {id:'mod-settings', label:'Setting', icon:'settings', route:'/settings', available:true},
+  {id:'mod-sales', label:'Sales', icon:'chart-trend', route:'/sales', available:false},
+  {id:'mod-profile', label:'Profile', icon:'user', route:'(account menu)', available:false},
 ];
 
 export const DASH_TOPICS = [
@@ -1343,7 +1376,7 @@ DOCS['agt-checks'] = {
   title:'Database Monitoring Checks', dek:'The real, per-technology check catalogue behind Connection Health, Permission Status, and the Error Log.',
   crumbs:['ActMon Documentation','Agents','Database Monitoring Checks'], module:'Agents', status:'Complete',
   body:`
-    <p>Every database agent's checks come from one shared catalogue, keyed by technology. Eight technologies
+    <p>Every database agent's checks come from one shared catalogue, keyed by technology. Seven technologies
     are supported: MySQL, MariaDB, PostgreSQL, MSSQL, Oracle, MongoDB, and ClickHouse.</p>
     <h2>Baseline — every supported technology gets these three</h2>
     <div class="tblwrap"><table class="doc">
@@ -1930,16 +1963,19 @@ DOCS['dbm-connections'] = {
 };
 
 DOCS['dbm-mysql'] = {
-  title:'MySQL Dashboard', dek:'The MySQL dashboard\'s 11 tabs, Overview content, and what each sub-page adds.',
+  title:'MySQL Dashboard', dek:'The MySQL dashboard\'s 13 tabs, Overview content, and what each sub-page adds.',
   crumbs:['ActMon Documentation','Database','MySQL Dashboard'], module:'Database', status:'Complete',
   body:`
     <h2>Route and tabs</h2>
     <p><code>/mysql-dashboard/:id</code> (Overview) and <code>/mysql-dashboard/:id/:tab</code> for the other tabs,
-    which are URL-driven, not local state. Exactly 10 tabs:
-    <strong>Overview, Performance, Queries, Databases, Tables, Locks, Replication, Users, Storage, Logs</strong>.
-    Four further pages have their own dedicated routes rather than being tabs: <code>/slow-queries</code>,
-    <code>/error-logs</code>, <code>/error-analysis</code>, <code>/self-heal</code>, <code>/index-analysis</code>,
-    <code>/reports</code>.</p>
+    which are URL-driven, not local state (<code>config/mysqlDashboardNav.js</code>). Exactly 13 tabs share one
+    strip: nine render in-page — <strong>Overview, Performance, Queries, Databases, Tables, Locks, Replication,
+    Users, Storage</strong> — and four route to their own dedicated pages instead of switching in place —
+    <strong>Indexes, Binary Logs, Error Logs, Slow Queries</strong> (<code>/index-analysis</code>,
+    <code>/binary-logs</code>, <code>/error-logs</code>, <code>/slow-queries</code>). There is no single "Logs" tab
+    — Binary Logs and Error Logs are separate. Two further pages exist outside the tab strip entirely:
+    <code>/error-analysis</code> (a standalone AI utility, not linked from the dashboard) and <code>/self-heal</code>,
+    plus <code>/reports</code>.</p>
     <h2>Overview tab</h2>
     <p>An 8-tile KPI strip (Uptime, Version, Databases, Tables, DB Size, Questions, Connections, Slow Queries —
     every tile except Uptime/Version links to its related tab), the shared Host Resources panel, status badges
@@ -1973,6 +2009,12 @@ DOCS['dbm-mysql'] = {
     detection requires <code>performance_schema = ON</code>; when it's off, the page explains exactly what's
     unavailable and shows the config line and restart command needed. "All Indexes" works regardless, since it
     reads from <code>information_schema</code>.</p>
+    <h2>Binary Logs</h2>
+    <p>A status strip (Binary Logging ON/OFF, Format, Server ID, Retention, Current File/Position, Log Files count,
+    Total Size) above a searchable, sortable, paginated file list (File Name, Size, First Position, Active/Rotated
+    badge). Clicking a file opens its event list — <code>SHOW BINLOG EVENTS</code>, server-paginated 100 rows at a
+    time (Position, End Position, Event Type, Server ID, Info) with Previous/Next paging. Read-only: nothing on
+    either page purges, flushes, or downloads a binlog file.</p>
     <h2>Reports</h2>
     <p>A single-page report assembled from ten parallel endpoint calls, exportable as a client-captured PDF (and
     optionally emailed/scheduled) — CSV export is <strong>not</strong> on this page, it lives on Slow Queries and
@@ -1981,7 +2023,7 @@ DOCS['dbm-mysql'] = {
 };
 
 DOCS['dbm-postgresql'] = {
-  title:'PostgreSQL Dashboard', dek:'The PostgreSQL dashboard\'s 11 tabs and how its Query Analysis detail page works.',
+  title:'PostgreSQL Dashboard', dek:'The PostgreSQL dashboard\'s 10 tabs and how its Query Analysis detail page works.',
   crumbs:['ActMon Documentation','Database','PostgreSQL Dashboard'], module:'Database', status:'Complete',
   body:`
     <h2>Route and tabs</h2>
@@ -1997,8 +2039,16 @@ DOCS['dbm-postgresql'] = {
     DISABLED" warning when applicable, and its own health-score formula (connection %, cache-hit %,
     long-running-query count — no replication/lock penalty in this particular score).</p>
     <h2>Replication tab</h2>
-    <p>Role (Primary/Standby), topology, per-standby byte/time lag with color-coded severity, replication slots,
-    WAL senders, publications/subscriptions, conflicts, and recovery state.</p>
+    <p>What renders here depends on whether Patroni is detected on the connection. If it is, a full 10-tab Patroni
+    console takes over the whole tab (Overview, Patroni Status, Topology, Replication, Replication Slots,
+    Configuration, patroni.yml, Recovery, Logs, History) — including the actual HA actions (Switchover, Failover,
+    Reinitialize Replica, Restart/Reload/Pause/Resume Patroni). If Patroni is <em>not</em> detected, the tab instead
+    shows PostgreSQL's own raw <code>pg_stat_replication</code>/WAL-receiver view: role (Primary/Standby), topology,
+    per-standby byte/time lag with color-coded severity, replication slots, WAL senders, publications/subscriptions,
+    conflicts, and recovery state — read-only, no HA actions. Full detail on both modes, every recovery action's
+    exact risk/confirmation text, and the underlying replication concepts (LSN, WAL, timeline, streaming, leader/
+    replica, cascading) in
+    <button onclick="go('pg-patroni-overview')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">PostgreSQL Replication &amp; Patroni HA</button>.</p>
     <h2>Slow Queries and its detail page</h2>
     <p>PostgreSQL was the reference implementation the shared Slow Queries page was built to match — every engine
     now shares the exact same list and detail page. Clicking a row in the Query Explorer navigates to the shared
