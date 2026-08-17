@@ -55,11 +55,42 @@ class OCIAuth:
             pass_phrase=self.passphrase,
         )
 
+    # Fail fast while validating credentials. The SDK's default retry strategy
+    # uses long exponential backoff, so an unroutable endpoint (e.g. a mistyped
+    # region) left "Add Account" spinning for minutes before reporting anything.
+    _VALIDATE_TIMEOUT = (10, 30)  # (connect, read) seconds
+
+    def _validate_region(self) -> None:
+        """Reject an unknown region before any network call.
+
+        The region becomes part of every OCI endpoint hostname, so a bad value
+        doesn't produce an auth error — it produces DNS failures against a host
+        that cannot exist, which the SDK then retries. Checking the name up
+        front turns a multi-minute hang into an instant, actionable message.
+        """
+        known = set(getattr(oci.regions, "REGIONS", []) or [])
+        if not known or self.region in known:
+            return
+        # Surface a few plausible corrections rather than 85 region names.
+        head = self.region.split("-")[0].lower()
+        hints = sorted(r for r in known if r.startswith(head))[:6] or sorted(known)[:6]
+        raise ValueError(
+            f"'{self.region}' is not a valid OCI region. Use the full region "
+            f"identifier, e.g. {', '.join(hints)}. "
+            "You can find it in the OCI console URL or under Regions in the top bar."
+        )
+
     async def validate(self) -> bool:
         import asyncio
 
+        self._validate_region()
+
         def _check():
-            identity = oci.identity.IdentityClient(self.get_config())
+            identity = oci.identity.IdentityClient(
+                self.get_config(),
+                timeout=self._VALIDATE_TIMEOUT,
+                retry_strategy=oci.retry.NoneRetryStrategy(),
+            )
             tenancy = identity.get_tenancy(self.tenancy_ocid).data
             logger.info("OCI auth OK — Tenancy: %s", tenancy.name)
             return True

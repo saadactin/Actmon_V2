@@ -1,6 +1,7 @@
 """Service layer for Cloud Account operations."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import List
 
@@ -9,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repository.cloud_account_repo import CloudAccountRepository
 from app.schemas.cloud_account import CloudAccountCreate, CloudAccountResponse
 from app.utils.encryption import encrypt_credentials
+
+# Longest "Add Account" will wait on a provider before reporting failure.
+_VALIDATE_TIMEOUT_SECONDS = 45
 
 
 class CloudAccountService:
@@ -34,7 +38,22 @@ class CloudAccountService:
         cls = provider_map.get((provider or "").upper())
         if not cls:
             raise ValueError(f"Unknown provider: {provider}")
-        await cls(credentials).authenticate()
+
+        # Hard ceiling on validation. Each SDK has its own retry behaviour, and a
+        # request aimed at an endpoint that cannot resolve (a mistyped region, a
+        # blocked network) can retry with backoff for minutes — leaving the
+        # "Add Account" dialog on "Connecting…" with nothing to act on. Better to
+        # give up and say so than to spin silently.
+        try:
+            await asyncio.wait_for(
+                cls(credentials).authenticate(), _VALIDATE_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            raise ValueError(
+                f"Timed out after {_VALIDATE_TIMEOUT_SECONDS}s trying to reach {provider}. "
+                "Check the region/endpoint is correct and that outbound HTTPS to the "
+                "provider is not blocked, then try again."
+            ) from None
 
     async def create_account(self, payload: CloudAccountCreate) -> CloudAccountResponse:
         credentials = payload.extract_credentials()

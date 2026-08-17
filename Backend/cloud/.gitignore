@@ -21,3 +21,5 @@ htmlcov/
 
 # Local credential drops (never commit)
 *.local.json
+*.local.py
+*.local.txt
