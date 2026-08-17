@@ -3,6 +3,8 @@ PostgreSQL Monitoring routes — thin handlers only.
 All business logic lives in app/services/postgres/postgres_monitoring_service.py
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,7 @@ from app.services.postgres.postgres_monitoring_service import (
     svc_pg_index_analysis,
     svc_replication_detail,
     svc_queries_detail,
+    svc_pg_queries_filtered,
     svc_tables_detail,
     svc_table_structure,
     svc_config_detail,
@@ -98,6 +101,21 @@ def route_replication_detail(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/queries-detail")
 def route_queries_detail(conn_id: int, db: Session = Depends(get_db)):
     return svc_queries_detail(conn_id, db)
+
+
+# ── 6b. Queries Detail, filtered (hide-ActMon + Database/User/Type/Search) ────
+@router.get("/{conn_id}/queries-detail-filtered")
+def route_queries_detail_filtered(
+    conn_id: int,
+    hide_actmon: bool = True,
+    database: Optional[str] = None,
+    user: Optional[str] = None,
+    query_type: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    return svc_pg_queries_filtered(conn_id, db, hide_actmon=hide_actmon, database=database,
+                                   user=user, query_type=query_type, search=search)
 
 
 # ── 7. Tables Detail ──────────────────────────────────────────────────────────

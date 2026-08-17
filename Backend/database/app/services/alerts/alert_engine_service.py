@@ -56,6 +56,15 @@ def infer_metric(message):
     """Best-effort map a collector notification message → (metric_id, short label)
     so the feed can show a sensible icon/section for real alerts."""
     m = (message or "").lower()
+    # Oracle RAC/Data-Guard/ASM — checked before the generic catch-alls below
+    # so "RAC node 2 (host2) is down" resolves to rac_node_down, not host_down.
+    if "rac node" in m or "rac instance" in m: return "rac_node_down", "RAC Node"
+    if "oracle service" in m:                  return "service_down", "Oracle Service"
+    if "data guard" in m and "transport" in m:  return "dg_transport_failure", "Data Guard Transport"
+    if "data guard" in m and "apply" in m:      return "dg_apply_failure", "Data Guard Apply"
+    if "data guard" in m and "lag" in m:        return "dg_transport_lag", "Data Guard Lag"
+    if "archive gap" in m:                      return "dg_archive_gap", "Data Guard Archive Gap"
+    if "asm" in m or "disk group" in m:          return "asm_diskgroup_critical", "ASM"
     if "cache" in m or "buffer" in m: return "cache_hit", "Cache / buffer hit ratio"
     if "cpu" in m:                    return "cpu", "CPU usage"
     if "memory" in m or "ram" in m:   return "memory", "Memory usage"

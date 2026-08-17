@@ -299,8 +299,8 @@ def _build_provider(account):
         creds = decrypt_credentials(account.credentials_enc)
     except Exception as exc:
         logger.error(
-            "Cannot decrypt credentials for account %s (%s) — was FERNET_KEY changed "
-            "after this account was added? Re-add the account. Error: %s",
+            "Cannot decrypt credentials for account %s (%s) — was ACTMON_ENCRYPTION_KEY "
+            "changed after this account was added? Re-add the account. Error: %s",
             account.account_name, account.id, exc,
         )
         return None

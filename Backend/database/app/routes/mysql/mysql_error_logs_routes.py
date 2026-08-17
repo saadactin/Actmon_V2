@@ -1,7 +1,7 @@
 import json
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -48,8 +48,22 @@ class SelfHealStreamPayload(BaseModel):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/{conn_id}/error-logs")
-def get_error_logs(conn_id: int, db: Session = Depends(get_db)):
-    return mysql_log_service.get_error_logs(conn_id, db)
+def get_error_logs(
+    conn_id: int,
+    severity: Optional[str] = Query(None, description="ALL, CRITICAL, ERROR, WARNING, or INFO"),
+    search: Optional[str] = Query(None, description="Substring search over message/subsystem"),
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    page: int = Query(1, ge=1),
+    # Default matches the old unfiltered behavior for any caller that
+    # doesn't pass paging params (e.g. DiagnosisCenter's own quick read).
+    page_size: int = Query(500, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    return mysql_log_service.list_error_logs_filtered(
+        conn_id, db, severity=severity, search=search,
+        date_from=date_from, date_to=date_to, page=page, page_size=page_size,
+    )
 
 
 @router.post("/{conn_id}/analyze-error")

@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import cn from '@/lib/cn';
 import Icon from './Icon';
 
@@ -35,7 +36,27 @@ export default function Table({
   /** Opt-in dark header band (Agents list is specced to match a reference
       design with one) — every other table keeps the default light header. */
   darkHeader = false,
+  /** Opt-in windowed rendering for very large row sets. Only actually engages
+      once `rows.length` clears `virtualizeThreshold` and `rowHeight` is set
+      (the window math is fixed-height) — small/medium tables render exactly
+      as before, untouched. Everything else (sorting, selection, empty state)
+      is identical; only which <tr>s exist in the DOM changes. */
+  virtualize = false,
+  virtualizeThreshold = 200,
+  maxBodyHeight = 560,
 }) {
+  const scrollRef = useRef(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const isVirtual = virtualize && !!rowHeight && rows.length > virtualizeThreshold;
+  const overscan = 6;
+  const viewportRowCount = isVirtual ? Math.ceil(maxBodyHeight / rowHeight) : rows.length;
+  const startIndex = isVirtual ? Math.max(0, Math.floor(scrollTop / rowHeight) - overscan) : 0;
+  const endIndex = isVirtual
+    ? Math.min(rows.length, startIndex + viewportRowCount + overscan * 2)
+    : rows.length;
+  const topSpacerHeight = isVirtual ? startIndex * rowHeight : 0;
+  const bottomSpacerHeight = isVirtual ? (rows.length - endIndex) * rowHeight : 0;
+
   const selectableRows = rows.filter(isSelectable);
   const allSelected = selectableRows.length > 0
     && selectableRows.every((r) => selectedKeys.includes(r.key));
@@ -65,8 +86,12 @@ export default function Table({
 
   return (
     <div
+      ref={scrollRef}
+      onScroll={isVirtual ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+      style={isVirtual ? { maxHeight: maxBodyHeight } : undefined}
       className={cn(
         'overflow-x-auto',
+        isVirtual && 'overflow-y-auto',
         darkHeader && 'rounded-2xl bg-sunken p-3',
         loading && 'opacity-55 transition-opacity',
         className,
@@ -78,7 +103,13 @@ export default function Table({
           darkHeader ? 'border-separate border-spacing-x-0 border-spacing-y-2' : 'border-collapse',
         )}
       >
-        <thead className={darkHeader ? 'bg-[var(--agent-slate-900)]' : undefined}>
+        <thead
+          className={cn(
+            darkHeader ? 'bg-[var(--agent-slate-900)]' : undefined,
+            isVirtual && 'sticky top-0 z-10',
+            isVirtual && !darkHeader && 'bg-surface',
+          )}
+        >
           <tr className={cn(darkHeader ? 'h-[4.5rem] border-b-2 border-transparent' : 'border-b border-border')}>
             {selectable && (
               <th scope="col" className="w-9 py-2 pr-1 pl-card">
@@ -150,7 +181,12 @@ export default function Table({
         </thead>
 
         <tbody>
-          {rows.map((row) => {
+          {topSpacerHeight > 0 && (
+            <tr aria-hidden style={{ height: topSpacerHeight }}>
+              <td colSpan={columns.length + (selectable ? 1 : 0)} style={{ padding: 0, border: 'none' }} />
+            </tr>
+          )}
+          {(isVirtual ? rows.slice(startIndex, endIndex) : rows).map((row) => {
             const selected = selectedKeys.includes(row.key);
             return (
               <tr
@@ -226,6 +262,11 @@ export default function Table({
               </tr>
             );
           })}
+          {bottomSpacerHeight > 0 && (
+            <tr aria-hidden style={{ height: bottomSpacerHeight }}>
+              <td colSpan={columns.length + (selectable ? 1 : 0)} style={{ padding: 0, border: 'none' }} />
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import PageHeader from '@/components/layout/PageHeader';
@@ -68,6 +69,129 @@ function GridCard({ icon, title, subtitle, badge, image, onClick }) {
 }
 
 /**
+ * Multi-select permission picker. Renders its open panel into a `document.body`
+ * portal with `position: fixed` (measured from the trigger's own bounding
+ * rect) — same technique Tooltip.jsx already uses for exactly the same reason:
+ * this field sits inside a `.card overflow-hidden` wrapper (the app-wide
+ * pattern that lets a card's bg-raised footer band clip to the card's own
+ * rounded corners), and an in-flow `position: absolute` panel gets silently
+ * cut off at that ancestor's edge the moment it's taller than the sliver of
+ * space between the button and the footer — which, on this single-field step,
+ * is almost always true for more than 1-2 items. A portal escapes that
+ * ancestor entirely, so the panel is never clipped regardless of the card's
+ * own size.
+ *
+ * Shows EVERY selectable permission with a checkbox-style selected state
+ * (rather than removing picked ones from the list) so what's already granted
+ * stays visible while the list is open, and stays open across multiple picks
+ * — both are what the "picking permissions" flow should always have done.
+ */
+function PermissionPicker({ options, selected, onToggle }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const panelRef = useRef(null);
+
+  // Panel height is capped at max-h-72 (18rem); estimate against that so the
+  // flip decision doesn't need a post-render measurement pass.
+  const PANEL_MAX_HEIGHT = 288;
+  const GAP = 6;
+
+  const reposition = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom;
+    const spaceAbove = r.top;
+    // Below is the default and strongly preferred — only flip to above when
+    // there's genuinely more usable room there (not just "some"), so a panel
+    // near the middle of the screen doesn't flip on a technicality.
+    const openUpward = spaceBelow < PANEL_MAX_HEIGHT && spaceAbove > spaceBelow;
+    setPos(openUpward
+      ? { bottom: window.innerHeight - r.top + GAP, left: r.left, width: r.width, maxHeight: Math.max(120, spaceAbove - GAP * 2) }
+      : { top: r.bottom + GAP, left: r.left, width: r.width, maxHeight: Math.max(120, spaceBelow - GAP * 2) });
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (btnRef.current?.contains(e.target) || panelRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    // A portal-positioned panel doesn't move with the page, so rather than
+    // tracking scroll continuously (unnecessary complexity for a short-lived
+    // picker), closing on scroll avoids it drifting away from its trigger —
+    // the same trade-off Tooltip.jsx makes.
+    const onScroll = () => setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [open]);
+
+  const selectedIds = useMemo(() => new Set(selected.map((p) => p.permission_id)), [selected]);
+
+  return (
+    <>
+      <button
+        type="button"
+        ref={btnRef}
+        onClick={() => { if (!open) reposition(); setOpen((o) => !o); }}
+        className="flex h-control w-full items-center justify-between rounded-control border border-border bg-surface px-2.5 text-[13px] text-fg"
+      >
+        {selected.length ? `${selected.length} permission${selected.length !== 1 ? 's' : ''} selected` : 'Select permissions…'}
+        <Icon name="chevron-down" size={14} className={`text-subtle transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && pos && createPortal(
+        <div
+          ref={panelRef}
+          role="listbox"
+          aria-multiselectable="true"
+          className="fixed z-[100] max-h-72 overflow-y-auto rounded-control border border-border bg-surface py-1 shadow-lg"
+          style={{
+            top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width,
+            maxHeight: Math.min(288, pos.maxHeight),
+          }}
+        >
+          {options.length === 0 ? (
+            <p className="px-3 py-2 text-[12px] text-subtle">No permissions available.</p>
+          ) : options.map((p) => {
+            const isSelected = selectedIds.has(p.permission_id);
+            return (
+              <button
+                key={p.permission_id}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => onToggle(p)}
+                className={`flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-sunken ${isSelected ? 'bg-accent-soft' : ''}`}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${isSelected ? 'border-accent bg-accent text-on-accent' : 'border-strong'}`}>
+                    {isSelected && <Icon name="check" size={10} />}
+                  </span>
+                  <span className={`truncate ${isSelected ? 'font-semibold text-accent-text' : 'text-fg'}`}>{p.permission_name}</span>
+                </span>
+                <span className="shrink-0 text-[11px] text-subtle">{p.permission_value}</span>
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+/**
  * Group Role → Page Permissions. Three drill levels:
  *   /role-permissions              organizations (super-admins only)
  *   /role-permissions/:orgId       roles in that org
@@ -89,7 +213,7 @@ export default function GroupRolePagePermission() {
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [treeStack, setTreeStack] = useState([]); // [{page_id, page_name}]
   const [search, setSearch] = useState('');
-  const [form, setForm] = useState(null); // { mode, values, selectedPerms, permOpen }
+  const [form, setForm] = useState(null); // { mode, step, moduleId, pageId, selectedPerms, existingPageId }
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [clone, setClone] = useState(null); // { targetRoleId, mode }
   const [toast, setToast] = useState(null);
@@ -189,41 +313,59 @@ export default function GroupRolePagePermission() {
       mode: existing ? 'edit' : 'add',
       step: 0,
       moduleId: existing ? existing.module_id : selectedModuleId,
+      parentId: existing ? (pageById[existing.page_id]?.parent_id || null) : null,
       pageId: existing ? existing.page_id : null,
       selectedPerms: existing ? permCatalog.filter((p) => isRealPermission(p) && (existing.permission & p.permission_value) === p.permission_value) : [],
-      permOpen: false,
       existingPageId: existing?.page_id,
     });
   }
   function closeForm() { setForm(null); }
 
-  // Every page in the module, flattened depth-first (parent immediately
-  // followed by its children) so a single dropdown can reach a page at ANY
-  // depth — not just root pages or their direct children. Some modules nest
-  // 4+ levels deep (e.g. Infrastructure: Infrastructure → Host Detail → a
-  // tab → one of that tab's own cards), so a fixed "Page" + "Sub-page" pair
-  // can never reach anything past the 2nd level.
-  const formPageTree = useMemo(() => {
-    if (!form) return [];
-    const inModule = pages.filter((p) => p.module_id === form.moduleId);
+  /** Top-level pages (no parent) belonging to one module — the "Parent Page" options. */
+  const parentPagesOf = (moduleId) => pages.filter((p) => p.module_id === moduleId && !p.parent_id);
+
+  /** Every descendant of one parent page, flattened depth-first with an
+   * indent depth — the "Sub Page" options. Not just DIRECT children: some
+   * modules nest 4+ levels deep (e.g. Infrastructure: Infrastructure → Host
+   * Detail → a tab → one of that tab's own cards), so this still reaches a
+   * page at any depth below the chosen parent, just presented as one
+   * indented list instead of a 4th/5th dropdown. */
+  const subPagesOf = (parentId) => {
+    if (!parentId) return [];
     const byParent = {};
-    inModule.forEach((p) => { const k = p.parent_id || 0; (byParent[k] ||= []).push(p); });
+    pages.forEach((p) => { const k = p.parent_id || 0; (byParent[k] ||= []).push(p); });
     const out = [];
-    const walk = (parentId, depth) => {
-      (byParent[parentId] || [])
+    const walk = (id, depth) => {
+      (byParent[id] || [])
         .sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0))
         .forEach((p) => { out.push({ ...p, depth }); walk(p.page_id, depth + 1); });
     };
-    walk(0, 0);
+    walk(parentId, 0);
     return out;
-  }, [form, pages]);
+  };
+
+  /** Granted anywhere in this role (any module) — matches the "(granted)"
+   * hint against the role's full grant set, not just the module currently
+   * being drilled into on the page behind this form. */
+  const isGrantedPage = (pageId) => roleRecords.some((r) => r.page_id === pageId);
+
   const targetPageId = form?.pageId || null;
   const bitmaskValue = form ? form.selectedPerms.reduce((sum, p) => sum + p.permission_value, 0) : 0;
-  const availablePerms = form
-    ? permCatalog.filter((p) => isRealPermission(p) && !form.selectedPerms.some((s) => s.permission_id === p.permission_id))
-    : [];
+  // Every selectable permission stays in the picker's list (selection state
+  // is shown via a checkmark, not by removing the row) — see PermissionPicker.
+  const selectablePerms = useMemo(() => permCatalog.filter(isRealPermission), [permCatalog]);
 
-  function addPerm(p) { setForm((f) => ({ ...f, selectedPerms: [...f.selectedPerms, p], permOpen: false })); }
+  function togglePerm(p) {
+    setForm((f) => {
+      const isSelected = f.selectedPerms.some((s) => s.permission_id === p.permission_id);
+      return {
+        ...f,
+        selectedPerms: isSelected
+          ? f.selectedPerms.filter((s) => s.permission_id !== p.permission_id)
+          : [...f.selectedPerms, p],
+      };
+    });
+  }
   function removePerm(id) { setForm((f) => ({ ...f, selectedPerms: f.selectedPerms.filter((p) => p.permission_id !== id) })); }
 
   async function submitGrant() {
@@ -372,7 +514,7 @@ export default function GroupRolePagePermission() {
         <PageHeader
           title={form.mode === 'add' ? 'Grant a Page' : 'Edit Permission'}
           icon="shield-check"
-          description={`${role?.role_name || 'Role'} · ${selectedModule?.module_name || 'Module'}`}
+          description={`${role?.role_name || 'Role'} · ${modules.find((m) => m.module_id === form.moduleId)?.module_name || selectedModule?.module_name || 'Module'}`}
           onBack={() => (step === 0 ? closeForm() : setForm((f) => ({ ...f, step: 0 })))}
           backLabel={step === 0 ? 'Cancel' : 'Back'}
         />
@@ -384,58 +526,69 @@ export default function GroupRolePagePermission() {
 
           <div className="px-card py-card">
             {step === 0 ? (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-[12px] font-semibold text-muted">Module</label>
-                  <Select
-                    value={String(form.moduleId ?? '')}
-                    onChange={(v) => setForm((f) => ({ ...f, moduleId: Number(v), pageId: null }))}
-                    options={modules.map((m) => ({ id: String(m.module_id), label: m.module_name }))}
-                    disabled={form.mode === 'edit'}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-[12px] font-semibold text-muted">Page</label>
-                  <Select
-                    value={String(form.pageId ?? '')}
-                    onChange={(v) => setForm((f) => ({ ...f, pageId: v ? Number(v) : null }))}
-                    options={formPageTree.map((p) => ({
-                      id: String(p.page_id),
-                      label: `${'—  '.repeat(p.depth)}${grantedIds.has(p.page_id) ? `${p.page_name} (granted)` : p.page_name}`,
-                    }))}
-                    placeholder="— Select page —"
-                    disabled={form.mode === 'edit'}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="relative max-w-xl">
-                <label className="mb-1 block text-[12px] font-semibold text-muted">Permissions</label>
-                <button
-                  type="button"
-                  onClick={() => setForm((f) => ({ ...f, permOpen: !f.permOpen }))}
-                  className="flex h-control w-full items-center justify-between rounded-control border border-border bg-surface px-2.5 text-[13px] text-fg"
-                >
-                  {form.selectedPerms.length ? `${form.selectedPerms.length} permission${form.selectedPerms.length !== 1 ? 's' : ''} selected` : 'Select permissions…'}
-                  <Icon name="chevron-down" size={14} className="text-subtle" />
-                </button>
-                {form.permOpen && (
-                  <div className="absolute z-10 mt-1 w-full rounded-control border border-border bg-surface py-1 shadow-lg">
-                    {availablePerms.length === 0 ? (
-                      <p className="px-3 py-2 text-[12px] text-subtle">All permissions selected.</p>
-                    ) : availablePerms.map((p) => (
-                      <button
-                        key={p.permission_id}
-                        type="button"
-                        onClick={() => addPerm(p)}
-                        className="flex w-full items-center justify-between px-3 py-1.5 text-left text-[13px] text-fg hover:bg-sunken"
-                      >
-                        {p.permission_name}
-                        <span className="text-[11px] text-subtle">{p.permission_value}</span>
-                      </button>
-                    ))}
+              form.mode === 'edit' ? (
+                // Which page a grant belongs to isn't editable — only the
+                // permission set is (re-targeting to a different page is a
+                // delete + re-grant, not an edit). Shown as a plain read-only
+                // summary instead of three disabled-looking dropdowns, which
+                // reads as broken rather than "locked on purpose."
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-muted">Module</label>
+                    <p className="flex h-control items-center rounded-control border border-border bg-sunken px-2.5 text-[13px] text-muted">
+                      {modules.find((m) => m.module_id === form.moduleId)?.module_name || '—'}
+                    </p>
                   </div>
-                )}
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-muted">Page</label>
+                    <p className="flex h-control items-center rounded-control border border-border bg-sunken px-2.5 text-[13px] text-muted">
+                      {pageById[form.pageId]?.page_name || '—'}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-muted">Module <span className="text-danger">*</span></label>
+                    <Select
+                      value={String(form.moduleId ?? '')}
+                      onChange={(v) => setForm((f) => ({ ...f, moduleId: Number(v), parentId: null, pageId: null }))}
+                      options={modules.map((m) => ({ id: String(m.module_id), label: m.module_name }))}
+                      placeholder="— Select module —"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-muted">Parent Page <span className="text-danger">*</span></label>
+                    <Select
+                      value={String(form.parentId ?? '')}
+                      onChange={(v) => setForm((f) => ({ ...f, parentId: v ? Number(v) : null, pageId: v ? Number(v) : null }))}
+                      options={parentPagesOf(form.moduleId).map((p) => ({
+                        id: String(p.page_id),
+                        label: isGrantedPage(p.page_id) ? `${p.page_name} (granted)` : p.page_name,
+                      }))}
+                      placeholder={form.moduleId ? '— Select parent page —' : 'Select module first'}
+                      disabled={!form.moduleId}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[12px] font-semibold text-muted">Sub Page</label>
+                    <Select
+                      value={form.pageId && form.pageId !== form.parentId ? String(form.pageId) : ''}
+                      onChange={(v) => setForm((f) => ({ ...f, pageId: v ? Number(v) : f.parentId }))}
+                      options={subPagesOf(form.parentId).map((p) => ({
+                        id: String(p.page_id),
+                        label: `${'—  '.repeat(p.depth)}${isGrantedPage(p.page_id) ? `${p.page_name} (granted)` : p.page_name}`,
+                      }))}
+                      placeholder={form.parentId ? '↳ Whole parent + all children' : 'Select parent first'}
+                      disabled={!form.parentId}
+                    />
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="max-w-xl">
+                <label className="mb-1 block text-[12px] font-semibold text-muted">Permissions</label>
+                <PermissionPicker options={selectablePerms} selected={form.selectedPerms} onToggle={togglePerm} />
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {form.selectedPerms.map((p) => (
                     <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text">

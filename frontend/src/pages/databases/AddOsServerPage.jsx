@@ -10,11 +10,14 @@ import Input from '@/components/ui/Input';
 import Switch from '@/components/ui/Switch';
 import Badge from '@/components/ui/Badge';
 import Steps from '@/components/ui/Steps';
+import client from '@/api/client';
 import { createOsServer, getOsServer, linkDbInstance, listOsServers, testSshConnection } from '@/api/servers';
 import { createConnection, testConnection } from '@/api/connections';
+import { QK } from '@/api/queryKeys';
 import {
-  AGENT_STEPS, DATABASE_SERVICES, ENVIRONMENTS, NODE_TYPES, OPERATING_SYSTEMS,
-  SERVER_FORM_DEFAULTS, SSH_STEPS, TECH_ROUTE, serviceColor, toServerPayload,
+  AGENT_STEPS, DATABASE_SERVICES, ENVIRONMENTS, NODE_TYPES, MYSQL_NODE_TYPES,
+  POSTGRESQL_NODE_TYPES, ORACLE_MANUAL_TOPOLOGY, OPERATING_SYSTEMS,
+  SERVER_FORM_DEFAULTS, SSH_STEPS, TECH_ROUTE, serviceColor, toServerPayload, topologyEngineFor,
 } from '@/config/servers';
 import { engineMeta } from '@/config/engines';
 import ConnectionFieldsForm from '@/components/connections/ConnectionFieldsForm';
@@ -23,11 +26,16 @@ import { defaultsForEngine, requiredFieldsForEngine, toConnectionPayload } from 
 /**
  * Add OS Server.
  *
- * The FLOW is the existing one, unchanged: pick a connection method, then either
+ * The FLOW is the existing one, unchanged apart from Services now coming
+ * BEFORE Node Role: Node Role / Database Topology needs to know which engine
+ * was selected in Services before it can show the right topology options
+ * (Oracle RAC/Data Guard vs. MySQL replication roles vs. PostgreSQL roles vs.
+ * the generic list). Registration (registerServer()) now fires from the Node
+ * Role step, since that's the step immediately before Add Connection.
  *   • Agent → hand off to the Add Data catalogue (/databases/add-data), which is
  *     the ported agent module. Nothing is registered here; that path is untouched.
- *   • SSH  → Operating System · Server Identity · SSH Access · Node Role ·
- *            Services · Review, then createOsServer().
+ *   • SSH  → Operating System · Server Identity · SSH Access · Services ·
+ *            Node Role · Add Connection · Review, then createOsServer().
  *
  * Field names, validation, the SSH test call and the request payload are identical
  * (payload built by config/servers.js → toServerPayload). The SSH screens are
@@ -63,21 +71,41 @@ export default function AddOsServerPage() {
   const [connSaving, setConnSaving] = useState(false);
   const [connResults, setConnResults] = useState({}); // { [dbName]: {status:'saved'|'skipped', connectionId?} }
 
+  /* ── Oracle topology (Node Role step, Oracle-specific) ──────────────────
+     Oracle's topology lives on the connection itself, not node_type/cluster_name
+     (see servers.js's ORACLE_MANUAL_TOPOLOGY comment) — reuses the existing
+     oracle_topology_detect endpoint and PUT /deployment-type, applied once the
+     Oracle connection is actually created (Add Connection step), since real
+     detection needs a live connection to query. */
+  const [oracleDetectMode, setOracleDetectMode] = useState('auto'); // 'auto' | 'manual'
+  const [oracleManualTopologyId, setOracleManualTopologyId] = useState(null);
+  const [oracleDetectedInfo, setOracleDetectedInfo] = useState(null); // { label, is_rac, is_dataguard, instance_count, role } | null
+  const [oracleDetectError, setOracleDetectError] = useState(null);
+
   const { register, getValues, setValue, watch, formState: { errors } } = useForm({
     defaultValues: SERVER_FORM_DEFAULTS,
   });
 
   const nodeType = watch('node_type');
   const watchCluster = watch('cluster_name');
+
+  // Which topology list Node Role shows — decided by what was selected in
+  // Services, one step earlier now. Oracle takes priority (richest, most
+  // consequential topology), then PostgreSQL, then MySQL/MariaDB, else the
+  // generic list unchanged from before.
+  const topologyEngine = topologyEngineFor(selectedDbs);
+  const nodeTypeOptions = topologyEngine === 'mysql' ? MYSQL_NODE_TYPES
+    : topologyEngine === 'postgresql' ? POSTGRESQL_NODE_TYPES
+    : NODE_TYPES;
   const wName = watch('server_name');
   const wIp = watch('ip_address');
   const wSsh = watch('ssh_username');
 
   const { data: serversData } = useQuery({
-    queryKey: ['osServers'], queryFn: () => listOsServers(), staleTime: 30000,
+    queryKey: QK.osServers(), queryFn: () => listOsServers(), staleTime: 30000,
   });
   const existingClusters = [
-    ...new Set((serversData?.data || serversData || []).map((s) => s.cluster_name).filter(Boolean)),
+    ...new Set((serversData || []).map((s) => s.cluster_name).filter(Boolean)),
   ];
 
   const toggleDb = (db) => setSelectedDbs((prev) =>
@@ -92,7 +120,12 @@ export default function AddOsServerPage() {
   const canNext = () => {
     if (name === 'Server Identity') return !!(wName?.trim() && wIp?.trim());
     if (name === 'SSH Access') return !!wSsh?.trim();
-    if (name === 'Node Role') return nodeType === 'Standalone' ? true : !!watchCluster?.trim();
+    if (name === 'Node Role') {
+      if (topologyEngine === 'oracle') {
+        return oracleDetectMode === 'auto' ? true : !!oracleManualTopologyId;
+      }
+      return nodeType === 'Standalone' ? true : !!watchCluster?.trim();
+    }
     return true;
   };
 
@@ -129,8 +162,8 @@ export default function AddOsServerPage() {
       const res = await createOsServer(toServerPayload({ data, selectedOs, selectedDbs, collector }));
       const newId = res?.data?.id ?? res?.id;
       setServerId(newId);
-      qc.invalidateQueries({ queryKey: ['osServers'] });
-      qc.invalidateQueries({ queryKey: ['serverSummary'] });
+      qc.invalidateQueries({ queryKey: QK.osServers() });
+      qc.invalidateQueries({ queryKey: QK.osServersSummary });
 
       if (selectedDbs.length > 0) {
         const detail = await getOsServer(newId);
@@ -206,6 +239,51 @@ export default function AddOsServerPage() {
     }
   };
 
+  /* Oracle's topology can only be genuinely detected once a real connection
+     exists to query (GV$INSTANCE/V$DATABASE) — so Auto Detect, chosen back at
+     Node Role, actually runs here, right after the connection is created.
+     Manual Selection just applies the pair the user already picked. Reuses
+     the existing oracle_topology_detect + deployment-type endpoints — no
+     duplicate detection logic. Failure never blocks the wizard (§ "If Auto
+     Detect fails, do not block the user"). */
+  const applyOracleTopology = async (connectionId) => {
+    if (oracleDetectMode === 'manual') {
+      const opt = ORACLE_MANUAL_TOPOLOGY.find((o) => o.id === oracleManualTopologyId);
+      if (!opt) return;
+      try {
+        await client.put(`/connections/oracle/${connectionId}/deployment-type`, {
+          deployment_type: opt.deployment_type, role: opt.role,
+        });
+      } catch {
+        // Non-fatal — the user already made an explicit choice; it can be
+        // corrected any time from the Oracle dashboard.
+      }
+      return;
+    }
+    try {
+      const { data: topo } = await client.get(`/connections/oracle/${connectionId}/oracle-topology`);
+      const isRac = !!topo?.is_rac;
+      const isDg = !!topo?.is_dataguard;
+      const roleUpper = String(topo?.role || '').toUpperCase();
+      const dgRole = roleUpper.includes('STANDBY') ? 'standby' : 'primary';
+      const deployment_type = isRac && isDg ? 'rac_dg' : isRac ? 'rac' : isDg ? 'data_guard' : 'standalone';
+      const role = isDg ? dgRole : null;
+      const label = isRac && isDg ? `RAC + Data Guard ${dgRole === 'primary' ? 'Primary' : 'Standby'}`
+        : isRac ? 'Oracle RAC'
+        : isDg ? `Data Guard ${dgRole === 'primary' ? 'Primary' : 'Standby'}`
+        : 'Standalone Oracle';
+      await client.put(`/connections/oracle/${connectionId}/deployment-type`, { deployment_type, role });
+      setOracleDetectedInfo({
+        label, is_rac: isRac, is_dataguard: isDg,
+        instance_count: topo?.instance_count || 1, role: topo?.role || null,
+      });
+    } catch (err) {
+      setOracleDetectError(
+        `Auto Detect could not reach the instance yet (${err?.message || 'connection error'}).`,
+      );
+    }
+  };
+
   const saveCurrentConnection = async () => {
     if (!validateCurrentConn()) return;
     setConnSaving(true);
@@ -216,6 +294,9 @@ export default function AddOsServerPage() {
       const instance = dbInstances.find((i) => i.db_type === currentDbName);
       if (instance?.id && connectionId) {
         await linkDbInstance(serverId, instance.id, connectionId);
+      }
+      if (currentEngineKey === 'oracle' && connectionId) {
+        await applyOracleTopology(connectionId);
       }
       setConnResults((r) => ({ ...r, [currentDbName]: { status: 'saved', connectionId } }));
       advanceConnection();
@@ -400,10 +481,90 @@ export default function AddOsServerPage() {
     </StepBody>
   );
 
-  const nodeStep = (
+  const nodeStep = topologyEngine === 'oracle' ? (
+    <StepBody title="Node Role / Database Topology" hint="Oracle's deployment topology — Standalone, RAC, Data Guard, or both.">
+      <div className="grid gap-gutter-sm sm:grid-cols-2">
+        <ChoiceCard
+          selected={oracleDetectMode === 'auto'}
+          onClick={() => setOracleDetectMode('auto')}
+          icon="activity"
+          tone="success"
+          title="Auto Detect ⭐ Recommended"
+          body="ActMon queries GV$INSTANCE / V$DATABASE once the connection is added and selects the real topology automatically."
+        />
+        <ChoiceCard
+          selected={oracleDetectMode === 'manual'}
+          onClick={() => setOracleDetectMode('manual')}
+          icon="settings"
+          tone="info"
+          title="Manual Selection"
+          body="Pick the topology yourself — useful if Auto Detect can't reach the instance yet."
+        />
+      </div>
+
+      {oracleDetectMode === 'manual' && (
+        <div className="mt-gutter grid grid-cols-2 gap-gutter-sm lg:grid-cols-3">
+          {ORACLE_MANUAL_TOPOLOGY.map((opt) => {
+            const on = oracleManualTopologyId === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setOracleManualTopologyId(opt.id)}
+                aria-pressed={on}
+                className={cn(
+                  'rounded-lg border p-3 text-left transition-colors',
+                  on ? 'border-accent-border bg-accent-soft' : 'border-border hover:border-strong hover:bg-raised',
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="text-lg leading-none" style={{ color: TONE_COLORS[opt.tone] }}>{opt.icon}</span>
+                  <span className={cn(
+                    'truncate-safe text-[11px] font-bold tracking-wide uppercase',
+                    on ? 'text-accent-text' : 'text-fg',
+                  )}>
+                    {opt.label}
+                  </span>
+                  {on && <Icon name="check" size={12} className="ml-auto shrink-0 text-accent-text" strokeWidth={3} />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {oracleDetectMode === 'auto' && (
+        <p className="mt-gutter flex items-start gap-2 rounded-control bg-info-soft px-3 py-2.5 text-[12px] leading-relaxed text-info-fg">
+          <Icon name="info" size={14} className="mt-px shrink-0" />
+          <span>
+            Detection runs right after the Oracle connection is added (it needs a live connection to
+            query). If it fails for any reason, you can switch to Manual Selection here, or set it
+            later from the Oracle dashboard.
+          </span>
+        </p>
+      )}
+
+      {oracleDetectedInfo && (
+        <div className="mt-gutter max-w-xl rounded-lg border border-success bg-success-soft p-card text-[12px]">
+          <p className="mb-1.5 font-bold text-success-fg">Detected configuration</p>
+          <p className="text-fg">Database: Oracle</p>
+          <p className="text-fg">Deployment: {oracleDetectedInfo.is_rac ? `RAC (${oracleDetectedInfo.instance_count} instances)` : 'Standalone'}</p>
+          {oracleDetectedInfo.is_dataguard && <p className="text-fg">Database Role: {(oracleDetectedInfo.role || '').toUpperCase() || 'UNKNOWN'}</p>}
+          <p className="text-fg">Data Guard: {oracleDetectedInfo.is_dataguard ? 'Configured' : 'Not Configured'}</p>
+          <p className="mt-1.5 font-bold text-success-fg">Automatically selected: {oracleDetectedInfo.label}</p>
+        </div>
+      )}
+      {oracleDetectError && (
+        <p className="mt-gutter flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2.5 text-[12px] leading-relaxed text-warning-fg">
+          <Icon name="alert" size={14} className="mt-px shrink-0" />
+          <span>{oracleDetectError} You can set the topology manually from the Oracle dashboard afterward.</span>
+        </p>
+      )}
+    </StepBody>
+  ) : (
     <StepBody title="Node Role" hint="Define this server's role in your topology.">
       <div className="grid grid-cols-2 gap-gutter-sm lg:grid-cols-4">
-        {NODE_TYPES.map((nt) => {
+        {nodeTypeOptions.map((nt) => {
           const on = nodeType === nt.value;
           return (
             <button
@@ -562,8 +723,20 @@ export default function AddOsServerPage() {
         <SummaryRow label="Server Name" value={wName} />
         <SummaryRow label="Host IP" value={wIp} />
         {collector === 'ssh' && <SummaryRow label="SSH User" value={wSsh} />}
-        <SummaryRow label="Node Role" value={nodeType} />
-        {nodeType !== 'Standalone' && <SummaryRow label="Cluster" value={watchCluster} />}
+        {topologyEngine === 'oracle' ? (
+          <SummaryRow
+            label="Oracle Topology"
+            value={oracleDetectedInfo?.label
+              || (oracleDetectMode === 'manual'
+                ? ORACLE_MANUAL_TOPOLOGY.find((o) => o.id === oracleManualTopologyId)?.label
+                : oracleDetectError ? 'Auto Detect failed — set manually from the Oracle dashboard' : 'Auto Detect')}
+          />
+        ) : (
+          <>
+            <SummaryRow label="Node Role" value={nodeType} />
+            {nodeType !== 'Standalone' && <SummaryRow label="Cluster" value={watchCluster} />}
+          </>
+        )}
         <SummaryRow label="Environment" value={watch('environment')} last={selectedDbs.length === 0} />
         {selectedDbs.length > 0 && (
           <div className="border-t border-border px-card py-2.5">
@@ -660,8 +833,8 @@ export default function AddOsServerPage() {
               <Button variant="primary" iconRight="arrow-right" onClick={() => navigate('/databases/add-data')}>
                 Next
               </Button>
-            ) : name === 'Services' ? (
-              <Button variant="primary" icon="shield" loading={registering} onClick={registerServer}>
+            ) : name === 'Node Role' ? (
+              <Button variant="primary" icon="shield" loading={registering} disabled={!canNext()} onClick={registerServer}>
                 {registering ? 'Registering…' : 'Register & Continue'}
               </Button>
             ) : name === 'Add Connection' ? (

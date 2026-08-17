@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Paged } from '@/components/ui/Pagination';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, RefreshCw, Database, AlertTriangle, CheckCircle2,
@@ -8,8 +8,9 @@ import {
   Layers, Trash2, Zap, BarChart2, Search, XCircle,
 } from 'lucide-react';
 import client from '@/api/client';
-import PageHeader from '@/components/layout/PageHeader';
+import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import { PageLoading } from '@/components/ui/Loading';
+import { MYSQL_DASHBOARD_TABS, mysqlTabRoute } from '@/config/mysqlDashboardNav';
 
 const fetchIndexAnalysis = (id) =>
   client.get(`/connections/mysql/${id}/index-analysis`).then(r => r.data);
@@ -145,16 +146,23 @@ export default function IndexAnalysis() {
 
       <div className="py-5 space-y-5">
 
-        {/* ── Performance Schema OFF banner ── */}
+        {/* ── Performance Schema OFF banner ──
+             Only "Unused Indexes" genuinely needs performance_schema (real
+             per-index read/write counters — there is no other way to know
+             whether an index has ever been used). Full-Scan Queries and
+             Missing Index Hints are sourced from the Slow Query Log + live
+             EXPLAIN + information_schema instead, so they work regardless. */}
         {perfSchemaOff && (
           <div className="bg-orange-50 border border-orange-300 rounded-2xl p-4 space-y-2">
             <div className="flex items-center gap-2 font-bold text-orange-800">
-              <AlertTriangle size={16} /> Performance Schema is DISABLED — index analysis requires it
+              <AlertTriangle size={16} /> Performance Schema is DISABLED — "Unused Indexes" needs it
             </div>
             <p className="text-xs text-orange-700">
-              Unused-index tracking, full-scan query detection, and missing-index hints all require
-              <code className="mx-1">performance_schema = ON</code> in MariaDB/MySQL config.
-              Information Schema indexes (All Indexes tab) are available without it.
+              Only unused-index tracking requires <code className="mx-1">performance_schema = ON</code> in
+              MariaDB/MySQL config (it's the only way to know whether an index has ever been read/written).
+              Full-Scan Queries and Missing Index Hints are sourced from the Slow Query Log and EXPLAIN
+              instead, and All Indexes / Duplicate Indexes come from Information Schema — none of those
+              three need this setting.
             </p>
             <div className="bg-white border border-orange-200 rounded-xl p-3 text-xs font-mono text-slate-700 space-y-1">
               <p className="text-slate-400 font-sans font-bold mb-1">Add to <code>/etc/mysql/mariadb.conf.d/50-server.cnf</code>:</p>
@@ -244,21 +252,22 @@ export default function IndexAnalysis() {
 
 /* ── Header ── */
 function Header({ id, refetch }) {
+  const navigate = useNavigate();
   return (
-    <PageHeader
-      icon={Layers}
-      title="Index Recommendation Engine"
-      subtitle="Unused · Duplicate · Missing · Full-Scan Query Detection"
-      accent="mysql"
-      backTo={`/mysql-dashboard/${id}`}
-      crumbs={[{ label: 'Databases', to: '/databases' }, { label: 'MySQL', to: `/mysql-dashboard/${id}` }, { label: 'Index Analysis' }]}
-      actions={(
-        <button onClick={refetch}
-          className="flex items-center gap-2 px-4 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-sm font-semibold text-white">
-          <RefreshCw size={13} /> Refresh
-        </button>
-      )}
-    />
+    <>
+      <EngineDashboardHeader
+        tech="mysql"
+        connectionId={id}
+        tabs={MYSQL_DASHBOARD_TABS}
+        activeTab="indexes"
+        onTabChange={(t) => navigate(mysqlTabRoute(id, t))}
+        onRefresh={refetch}
+      />
+      <div className="mb-2">
+        <h1 className="text-lg font-black text-slate-800">Index Recommendation Engine</h1>
+        <p className="text-xs text-slate-500">Unused · Duplicate · Missing · Full-Scan Query Detection</p>
+      </div>
+    </>
   );
 }
 
@@ -404,7 +413,7 @@ function MissingTab({ missing, q, err }) {
     !q || m.table_name?.toLowerCase().includes(q) || m.db_name?.toLowerCase().includes(q)
   );
   if (err) return <ErrBox msg={err} />;
-  if (!filtered.length) return <Empty icon={CheckCircle2} msg={missing.length ? 'No matches' : 'No missing index candidates detected'} good={!missing.length} />;
+  if (!filtered.length) return <Empty icon={CheckCircle2} msg={missing.length ? 'No matches' : 'No missing-index candidates detected.'} good={!missing.length} />;
 
   return (
     <div className="overflow-auto">
@@ -467,7 +476,7 @@ function MissingTab({ missing, q, err }) {
                   </div>
                 </div>
               }>
-              <td className="px-3 py-2 text-slate-500">{m.db_name}</td>
+              <td className="px-3 py-2 text-slate-500">{m.db_name || <span className="italic text-slate-300">No Database</span>}</td>
               <td className="px-3 py-2 font-mono font-bold text-amber-700">{m.table_name}</td>
               <td className="px-3 py-2 text-right font-mono text-red-600 font-bold">{m.no_index_count?.toLocaleString()}</td>
               <td className="px-3 py-2 text-right font-mono text-slate-500">{m.rows_examined?.toLocaleString()}</td>
@@ -492,7 +501,7 @@ function NoIndexQueriesTab({ queries, q, err }) {
   if (err) return <ErrBox msg={err} />;
   if (!filtered.length) return (
     <Empty icon={CheckCircle2}
-      msg={queries.length ? 'No matches' : 'No full-scan queries found in performance_schema'}
+      msg={queries.length ? 'No matches' : 'No application full-scan queries detected.'}
       good={!queries.length} />
   );
 
@@ -545,7 +554,7 @@ function NoIndexQueriesTab({ queries, q, err }) {
                   </div>
                 </div>
               }>
-              <td className="px-3 py-2 text-slate-500">{qr.db_name}</td>
+              <td className="px-3 py-2 text-slate-500">{qr.db_name || <span className="italic text-slate-300">No Database</span>}</td>
               <td className="px-3 py-2 font-mono text-slate-600 max-w-xs truncate">
                 {(qr.sql_text || '').slice(0, 80)}{(qr.sql_text || '').length > 80 ? '…' : ''}
               </td>

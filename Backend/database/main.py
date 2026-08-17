@@ -1,5 +1,24 @@
-﻿from fastapi import FastAPI
+﻿import logging
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Installed FIRST, before any other app module can log anything. No handler
+# was ever configured on the root logger anywhere in this app, so every
+# `logging.getLogger("some_module")` call was propagating to Python's
+# internal "lastResort" handler with no redaction whatsoever — this gives
+# root a real handler and attaches the redaction filter TO THAT HANDLER
+# (not just the logger: a Filter attached to a Logger object only runs for
+# records that logger itself emits, not ones propagating up from a child
+# logger — attaching to the handler is what actually makes this apply
+# app-wide, to every named logger's propagated records). Scrubs password/
+# token/api_key/Authorization-shaped values and embedded URL credentials,
+# via the ONE centralized CredentialEncryptionService — never a second
+# redaction implementation.
+from app.services.common.credential_encryption_service import RedactingLogFilter
+logging.basicConfig(level=logging.INFO)
+for _h in logging.getLogger().handlers:
+    _h.addFilter(RedactingLogFilter())
 
 from app.database.connection import engine
 from app.database.base import Base
@@ -13,6 +32,7 @@ from app.models.agent_model import (                              # noqa: F401
     AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
 )
 from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
+from app.models.oracle_topology_model import OracleTopologyLink           # noqa: F401
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
@@ -22,6 +42,8 @@ from app.models.monitoring_settings_model import MonitoringSettings       # noqa
 from app.models.dashboard_appearance_model import DashboardAppearanceSettings  # noqa: F401
 from app.models.diagnosis_run_model import DiagnosisRun                   # noqa: F401
 from app.models.db_check_run_model import DbCheckRun                       # noqa: F401
+from app.models.patroni_config_history_model import PatroniConfigHistory   # noqa: F401
+from app.models.postgres_patroni_ch_retention_settings_model import PostgresPatroniChRetentionSettings  # noqa: F401
 # Access-Control / Administration (RBAC) schema — organization, employee, role,
 # module, page, permission, user, sessions, audit, etc.
 from app.models.admin_models import (                                # noqa: F401
@@ -43,6 +65,7 @@ from app.routes.cosmosdb.cosmosdb_routes import router as cosmosdb_router
 
 from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
 from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
+from app.routes.postgres.patroni_routes import router as patroni_router
 from app.routes.postgres.postgres_drilldown_routes import router as postgres_drilldown_router
 from app.routes.drilldown_routes import router as drilldown_router
 from app.routes.mongo.mongo_error_analysis_routes import router as mongo_error_router
@@ -57,6 +80,8 @@ from app.routes.mysql.mysql_error_logs_routes import router as mysql_error_logs_
 from app.routes.mysql.mysql_index_analysis_routes import router as mysql_index_analysis_router
 from app.routes.mysql.mysql_table_routes import router as mysql_table_router
 from app.routes.mysql.mysql_replication_routes import router as mysql_replication_router
+from app.routes.mysql.mysql_binlog_routes import router as mysql_binlog_router
+from app.routes.mysql.mysql_report_routes import router as mysql_report_router
 
 from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
 from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
@@ -66,6 +91,8 @@ from app.routes.mssql.mssql_report_email_routes import router as mssql_report_em
 from app.routes.smtp.smtp_config_routes import router as smtp_config_router
 from app.routes.notifications.notification_routes import router as notification_router
 from app.routes.settings.monitoring_settings_routes import router as monitoring_settings_router
+from app.routes.settings.mysql_ch_retention_routes import router as mysql_ch_retention_router
+from app.routes.settings.oracle_ch_retention_routes import router as oracle_ch_retention_router
 from app.routes.settings.dashboard_appearance_routes import router as dashboard_appearance_router
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
@@ -195,6 +222,7 @@ app.include_router(server_router)
 # Error analysis routes
 app.include_router(postgres_error_router)
 app.include_router(postgres_monitoring_router)
+app.include_router(patroni_router)
 app.include_router(postgres_drilldown_router)
 app.include_router(drilldown_router)
 app.include_router(mongo_error_router)
@@ -210,6 +238,8 @@ app.include_router(mysql_error_logs_router)
 app.include_router(mysql_index_analysis_router)
 app.include_router(mysql_table_router)
 app.include_router(mysql_replication_router)
+app.include_router(mysql_binlog_router)
+app.include_router(mysql_report_router)
 
 app.include_router(db_diagnose_router)
 
@@ -221,6 +251,8 @@ app.include_router(postgres_report_email_router)
 app.include_router(mssql_report_email_router)
 app.include_router(smtp_config_router)
 app.include_router(monitoring_settings_router)
+app.include_router(mysql_ch_retention_router)
+app.include_router(oracle_ch_retention_router)
 app.include_router(dashboard_appearance_router)
 app.include_router(mongo_monitoring_router)
 

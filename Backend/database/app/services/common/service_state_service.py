@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
+from app.models.os_server_model import OsServer, DatabaseInstance
 from app.services.common.db_diagnose_service import _agent_shell
 from app.services.common.db_proxy_service import agent_host_for_conn
 
@@ -197,17 +198,23 @@ def _classify_mssql_windows(run, port, instance_name):
 
 
 def _ssh_host_for_conn(conn_id, db: Session):
-    """SSH-monitored counterpart of db_proxy_service.agent_host_for_conn."""
+    """SSH-monitored counterpart of db_proxy_service.agent_host_for_conn.
+    Goes through the ORM (not raw SQL) specifically so `ssh_password` passes
+    through `EncryptedString`'s transparent decryption — a raw-SQL SELECT of
+    that column would return ciphertext instead of a usable password."""
     if not conn_id:
         return None
-    return db.execute(text(
-        "SELECT s.ip_address AS ip_address, s.ssh_port AS ssh_port, "
-        "s.ssh_username AS ssh_username, s.ssh_password AS ssh_password, "
-        "s.os_type AS os_type "
-        "FROM database_instances di JOIN os_servers s ON s.id = di.server_id "
-        "WHERE di.connection_id = :c AND s.collector = 'ssh' "
-        "AND s.ssh_username IS NOT NULL AND s.ssh_password IS NOT NULL LIMIT 1"
-    ), {"c": conn_id}).first()
+    return (
+        db.query(OsServer)
+        .join(DatabaseInstance, DatabaseInstance.server_id == OsServer.id)
+        .filter(
+            DatabaseInstance.connection_id == conn_id,
+            OsServer.collector == "ssh",
+            OsServer.ssh_username.isnot(None),
+            OsServer.ssh_password.isnot(None),
+        )
+        .first()
+    )
 
 
 def _ssh_shell(server, cmd, timeout=10):

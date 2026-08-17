@@ -16,8 +16,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from fastapi import HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from app.services.notifications.email_channel_service import get_default_smtp_config, resolve_password
 
 log = logging.getLogger("actmon.otp")
 
@@ -45,18 +46,18 @@ def _purge() -> None:
 
 
 def _smtp_config(db: Session) -> dict:
-    row = db.execute(text(
-        "SELECT smtp_host, smtp_port, smtp_user, smtp_password, smtp_tls, sender_email, sender_name "
-        "FROM smtp_configs WHERE is_default = true ORDER BY id LIMIT 1"
-    )).mappings().first()
-    if not row:
-        row = db.execute(text(
-            "SELECT smtp_host, smtp_port, smtp_user, smtp_password, smtp_tls, sender_email, sender_name "
-            "FROM smtp_configs ORDER BY id LIMIT 1"
-        )).mappings().first()
-    if not row:
+    """Goes through the ORM (not raw SQL) specifically so the password is
+    decrypted correctly regardless of which column it's stored in — reuses
+    the same lookup + password-resolution every report-email service already
+    uses, instead of a second, encryption-unaware SMTP config reader."""
+    cfg = get_default_smtp_config(db)
+    if not cfg:
         raise HTTPException(status_code=500, detail="No SMTP configuration found. Configure SMTP first.")
-    return dict(row)
+    return {
+        "smtp_host": cfg.smtp_host, "smtp_port": cfg.smtp_port, "smtp_user": cfg.smtp_user,
+        "smtp_password": resolve_password(cfg), "smtp_tls": cfg.smtp_tls,
+        "sender_email": cfg.sender_email, "sender_name": cfg.sender_name,
+    }
 
 
 def _send_email(cfg: dict, to_email: str, subject: str, html: str) -> None:

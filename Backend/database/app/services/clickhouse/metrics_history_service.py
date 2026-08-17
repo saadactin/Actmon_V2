@@ -182,6 +182,257 @@ def _ensure_extra(cli, table):
         return False
 
 
+# ── MySQL historical EVENT/snapshot tables (Reports architecture) ─────────────
+# One source of truth for slow queries / error logs / binlog & replication
+# history so the Reports page and the Slow Queries/Error Logs pages never
+# diverge again. Retention is admin-configurable (mysql_ch_retention_service)
+# rather than the hardcoded METRICS_CH_TTL_DAYS the generic metrics_* tables use.
+
+MYSQL_SLOWQ_COLUMNS = ["ts", "agent", "conn_id", "db_name", "query_hash", "query_text",
+                       "execution_time", "lock_time", "rows_sent", "rows_examined",
+                       "user", "host", "severity", "source_log_file"]
+MYSQL_ERRLOG_COLUMNS = ["ts", "agent", "conn_id", "severity", "error_code", "source", "message", "log_file"]
+MYSQL_BINLOG_COLUMNS = ["ts", "agent", "conn_id", "binary_logging", "log_bin", "binlog_format",
+                        "server_id", "current_log_file", "current_position",
+                        "number_of_log_files", "total_size_bytes"]
+MYSQL_REPL_COLUMNS = ["ts", "agent", "conn_id", "configured", "role", "io_thread_running",
+                      "sql_thread_running", "seconds_behind_source", "last_error"]
+
+_MYSQL_EXTRA_DDL = {
+    "actmon_mysql_slow_queries": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_slow_queries (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            db_name LowCardinality(String), query_hash String, query_text String,
+            execution_time Float64, lock_time Float64, rows_sent UInt32, rows_examined UInt32,
+            user LowCardinality(String), host LowCardinality(String),
+            severity LowCardinality(String), source_log_file String
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_mysql_error_logs": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_error_logs (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            severity LowCardinality(String), error_code String,
+            source LowCardinality(String), message String, log_file String
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_mysql_binlog_history": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_binlog_history (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            binary_logging UInt8, log_bin UInt8, binlog_format LowCardinality(String),
+            server_id UInt32, current_log_file String, current_position UInt64,
+            number_of_log_files UInt32, total_size_bytes Int64
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_mysql_replication_history": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_replication_history (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            configured UInt8, role LowCardinality(String),
+            io_thread_running UInt8, sql_thread_running UInt8,
+            seconds_behind_source Int64, last_error String
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+}
+
+_MYSQL_TTL_TABLE = {
+    "actmon_mysql_slow_queries": "events_days",
+    "actmon_mysql_error_logs": "events_days",
+    "actmon_mysql_binlog_history": "events_days",
+    "actmon_mysql_replication_history": "events_days",
+}
+
+
+def _mysql_retention_days(table):
+    try:
+        from app.services.mysql.mysql_ch_retention_service import get_retention
+        r = get_retention()
+        return getattr(r, _MYSQL_TTL_TABLE.get(table, "events_days"))
+    except Exception:  # noqa: BLE001
+        return TTL_DAYS
+
+
+def _ensure_mysql_table(cli, table):
+    """Same idempotent create as _ensure_extra, plus a MODIFY TTL on every call
+    (cheap — gated by the same cooldown/_tables_ready cache as everything else)
+    so an admin-changed retention setting actually takes effect on an
+    already-created table, not just on tables created after the change."""
+    global _db_ready
+    try:
+        if not _db_ready:
+            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            _db_ready = True
+        days = _mysql_retention_days(table)
+        if table not in _tables_ready:
+            cli.command(_MYSQL_EXTRA_DDL[table] % {"days": int(days)})
+            _tables_ready.add(table)
+        else:
+            cli.command(f"ALTER TABLE actmon.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] schema (%s): %s", table, e)
+        mark_down()
+        return False
+
+
+def flush_mysql_slow_queries(rows):
+    """rows: list of dicts matching MYSQL_SLOWQ_COLUMNS (minus 'ts' resolved here).
+    Never raises — caller (collector) just logs+drops on failure, matching the
+    rest of this file's degrade-gracefully contract."""
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_mysql_table(cli, "actmon_mysql_slow_queries"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in MYSQL_SLOWQ_COLUMNS[1:]] for r in rows]
+        cli.insert("actmon.actmon_mysql_slow_queries", data, column_names=MYSQL_SLOWQ_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_mysql_slow_queries: %s", e)
+        mark_down()
+
+
+def flush_mysql_error_logs(rows):
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_mysql_table(cli, "actmon_mysql_error_logs"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in MYSQL_ERRLOG_COLUMNS[1:]] for r in rows]
+        cli.insert("actmon.actmon_mysql_error_logs", data, column_names=MYSQL_ERRLOG_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_mysql_error_logs: %s", e)
+        mark_down()
+
+
+def flush_mysql_binlog_snapshot(row):
+    cli = get_client()
+    if cli is None or not _ensure_mysql_table(cli, "actmon_mysql_binlog_history"):
+        return
+    try:
+        import datetime
+        data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in MYSQL_BINLOG_COLUMNS[1:]]]
+        cli.insert("actmon.actmon_mysql_binlog_history", data, column_names=MYSQL_BINLOG_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_mysql_binlog_snapshot: %s", e)
+        mark_down()
+
+
+def flush_mysql_replication_snapshot(row):
+    """Caller should simply NOT call this for a cycle where replication isn't
+    configured — absence of rows in the window is how the report layer tells
+    'Standalone / Not Configured' apart from a real outage (§8/§29)."""
+    cli = get_client()
+    if cli is None or not _ensure_mysql_table(cli, "actmon_mysql_replication_history"):
+        return
+    try:
+        import datetime
+        data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in MYSQL_REPL_COLUMNS[1:]]]
+        cli.insert("actmon.actmon_mysql_replication_history", data, column_names=MYSQL_REPL_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_mysql_replication_snapshot: %s", e)
+        mark_down()
+
+
+def _window_where(conn_id, minutes=None, since=None, until=None):
+    """Same style as history()'s WHERE builder: a relative `minutes` window is
+    resolved against ClickHouse's OWN now() (server-local, same clock the
+    inserts used — see flush_sample's note on why UTC-from-Python would be
+    wrong here); `since`/`until` give an absolute range for custom reports."""
+    where, params = ["conn_id = %(c)s"], {"c": int(conn_id)}
+    if minutes is not None:
+        where.append("ts > now() - INTERVAL %(m)s MINUTE")
+        params["m"] = int(minutes)
+    else:
+        if since:
+            where.append("ts >= %(since)s"); params["since"] = since
+        if until:
+            where.append("ts < %(until)s"); params["until"] = until
+    return where, params
+
+
+def query_mysql_slow_queries(conn_id, minutes=None, since=None, until=None, limit=5000):
+    """Raw slow-query events for one connection, newest first."""
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, db_name, query_hash, query_text, execution_time, "
+            "lock_time, rows_sent, rows_examined, user, host, severity, source_log_file "
+            "FROM actmon.actmon_mysql_slow_queries WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "db_name", "query_hash", "query_text", "execution_time", "lock_time",
+                "rows_sent", "rows_examined", "user", "host", "severity", "source_log_file"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_mysql_slow_queries: %s", e)
+        mark_down()
+        return []
+
+
+def query_mysql_error_logs(conn_id, minutes=None, since=None, until=None, limit=2000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, severity, error_code, source, message, log_file "
+            "FROM actmon.actmon_mysql_error_logs WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "severity", "error_code", "source", "message", "log_file"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_mysql_error_logs: %s", e)
+        mark_down()
+        return []
+
+
+def query_mysql_binlog_history(conn_id, minutes=None, since=None, until=None, limit=1000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, binary_logging, log_bin, binlog_format, server_id, "
+            "current_log_file, current_position, number_of_log_files, total_size_bytes "
+            "FROM actmon.actmon_mysql_binlog_history WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "binary_logging", "log_bin", "binlog_format", "server_id",
+                "current_log_file", "current_position", "number_of_log_files", "total_size_bytes"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_mysql_binlog_history: %s", e)
+        mark_down()
+        return []
+
+
+def query_mysql_replication_history(conn_id, minutes=None, since=None, until=None, limit=1000):
+    """Empty list means 'no rows in this window' — caller must render that as
+    Standalone/Not-Configured-or-no-data, never as fabricated zero metrics."""
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, configured, role, io_thread_running, sql_thread_running, "
+            "seconds_behind_source, last_error "
+            "FROM actmon.actmon_mysql_replication_history WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "configured", "role", "io_thread_running", "sql_thread_running",
+                "seconds_behind_source", "last_error"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_mysql_replication_history: %s", e)
+        mark_down()
+        return []
+
+
 def _f(v):
     try:
         return float(v or 0)
@@ -358,3 +609,405 @@ def list_tables():
 def is_up():
     cli = get_client()
     return bool(cli) and ensure_table(cli, "metrics_infra")
+
+
+# ── Oracle topology historical tables (RAC / Data Guard / ASM) ────────────────
+# One source of truth for RAC node/instance history, per-instance Oracle
+# Services, Data Guard role/transport/apply lag, ASM diskgroup usage, and
+# role-transition (switchover/failover) events. Retention is admin-configurable
+# (oracle_ch_retention_service) rather than a hardcoded constant, mirroring the
+# actmon_mysql_* tables above exactly. The existing generic metrics_db_oracle
+# table (CPU/sessions/uptime) is untouched — these are new, topology-shaped
+# tables because a single Oracle connection can now report on MULTIPLE
+# instances/services/diskgroups per cycle, which the generic single-row-per-
+# connection metrics schema cannot represent.
+
+ORACLE_RAC_NODE_COLUMNS = ["ts", "agent", "conn_id", "instance_number", "instance_name",
+                           "host_name", "instance_status", "database_status", "thread_status"]
+ORACLE_SERVICE_COLUMNS = ["ts", "agent", "conn_id", "service_name", "instance_number", "status"]
+ORACLE_DATAGUARD_COLUMNS = ["ts", "agent", "conn_id", "role", "protection_mode", "protection_level",
+                            "open_mode", "transport_status", "apply_status", "transport_lag_sec",
+                            "apply_lag_sec", "last_received_seq", "last_applied_seq",
+                            "archive_gap", "last_error"]
+ORACLE_ASM_COLUMNS = ["ts", "agent", "conn_id", "diskgroup_name", "state", "total_mb", "used_mb",
+                      "free_mb", "offline_disks", "rebalance_active"]
+ORACLE_ROLE_TRANSITION_COLUMNS = ["ts", "agent", "conn_id", "previous_role", "new_role", "reason"]
+
+_ORACLE_EXTRA_DDL = {
+    "actmon_oracle_rac_nodes": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_rac_nodes (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            instance_number UInt16, instance_name LowCardinality(String),
+            host_name LowCardinality(String), instance_status LowCardinality(String),
+            database_status LowCardinality(String), thread_status LowCardinality(String)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, instance_number, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_services": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_services (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            service_name LowCardinality(String), instance_number UInt16,
+            status LowCardinality(String)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, service_name, instance_number, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_dataguard_history": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_dataguard_history (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            role LowCardinality(String), protection_mode LowCardinality(String),
+            protection_level LowCardinality(String), open_mode LowCardinality(String),
+            transport_status LowCardinality(String), apply_status LowCardinality(String),
+            transport_lag_sec Int64, apply_lag_sec Int64,
+            last_received_seq Int64, last_applied_seq Int64,
+            archive_gap Int64, last_error String
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_asm_history": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_asm_history (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            diskgroup_name LowCardinality(String), state LowCardinality(String),
+            total_mb Int64, used_mb Int64, free_mb Int64,
+            offline_disks UInt32, rebalance_active UInt8
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, diskgroup_name, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_role_transitions": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_role_transitions (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            previous_role LowCardinality(String), new_role LowCardinality(String), reason String
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+}
+
+
+def _oracle_retention_days():
+    try:
+        from app.services.oracle.oracle_ch_retention_service import get_retention
+        return get_retention().events_days
+    except Exception:  # noqa: BLE001
+        return TTL_DAYS
+
+
+def _ensure_oracle_table(cli, table):
+    """Same idempotent create + MODIFY TTL pattern as _ensure_mysql_table."""
+    global _db_ready
+    try:
+        if not _db_ready:
+            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            _db_ready = True
+        days = _oracle_retention_days()
+        if table not in _tables_ready:
+            cli.command(_ORACLE_EXTRA_DDL[table] % {"days": int(days)})
+            _tables_ready.add(table)
+        else:
+            cli.command(f"ALTER TABLE actmon.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] schema (%s): %s", table, e)
+        mark_down()
+        return False
+
+
+def flush_oracle_rac_nodes(rows):
+    """rows: list of dicts matching ORACLE_RAC_NODE_COLUMNS (minus 'ts'). One
+    row per instance per cycle — never raises, matching this file's
+    degrade-gracefully contract."""
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_rac_nodes"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_RAC_NODE_COLUMNS[1:]] for r in rows]
+        cli.insert("actmon.actmon_oracle_rac_nodes", data, column_names=ORACLE_RAC_NODE_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_rac_nodes: %s", e)
+        mark_down()
+
+
+def flush_oracle_services(rows):
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_services"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_SERVICE_COLUMNS[1:]] for r in rows]
+        cli.insert("actmon.actmon_oracle_services", data, column_names=ORACLE_SERVICE_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_services: %s", e)
+        mark_down()
+
+
+def flush_oracle_dataguard_snapshot(row):
+    """Caller should simply NOT call this when Data Guard isn't configured —
+    absence of rows in the window is how the report layer tells
+    'Standalone / Not Configured' apart from a real outage."""
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_dataguard_history"):
+        return
+    try:
+        import datetime
+        data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in ORACLE_DATAGUARD_COLUMNS[1:]]]
+        cli.insert("actmon.actmon_oracle_dataguard_history", data, column_names=ORACLE_DATAGUARD_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_dataguard_snapshot: %s", e)
+        mark_down()
+
+
+def flush_oracle_asm(rows):
+    """Caller should simply NOT call this when ASM isn't configured."""
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_asm_history"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_ASM_COLUMNS[1:]] for r in rows]
+        cli.insert("actmon.actmon_oracle_asm_history", data, column_names=ORACLE_ASM_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_asm: %s", e)
+        mark_down()
+
+
+def flush_oracle_role_transition(row):
+    """Written only when the collector detects an ACTUAL role change since
+    the last cycle (see oracle_history_flush_service) — satisfies §12's
+    "generate an event: Oracle Data Guard role transition detected" requirement
+    as a real historical record, not a derived/inferred one."""
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_role_transitions"):
+        return
+    try:
+        import datetime
+        data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in ORACLE_ROLE_TRANSITION_COLUMNS[1:]]]
+        cli.insert("actmon.actmon_oracle_role_transitions", data, column_names=ORACLE_ROLE_TRANSITION_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_role_transition: %s", e)
+        mark_down()
+
+
+def query_oracle_rac_nodes(conn_id, minutes=None, since=None, until=None, limit=5000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, instance_number, instance_name, host_name, "
+            "instance_status, database_status, thread_status "
+            "FROM actmon.actmon_oracle_rac_nodes WHERE " + " AND ".join(where) +
+            " ORDER BY instance_number, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "instance_number", "instance_name", "host_name",
+                "instance_status", "database_status", "thread_status"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_rac_nodes: %s", e)
+        mark_down()
+        return []
+
+
+def query_oracle_services(conn_id, minutes=None, since=None, until=None, limit=5000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, service_name, instance_number, status "
+            "FROM actmon.actmon_oracle_services WHERE " + " AND ".join(where) +
+            " ORDER BY service_name, instance_number, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "service_name", "instance_number", "status"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_services: %s", e)
+        mark_down()
+        return []
+
+
+def query_oracle_dataguard_history(conn_id, minutes=None, since=None, until=None, limit=1000):
+    """Empty list means 'no rows in this window' — caller must render that as
+    Standalone/Not-Configured-or-no-data, never as fabricated zero metrics."""
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, role, protection_mode, protection_level, open_mode, "
+            "transport_status, apply_status, transport_lag_sec, apply_lag_sec, "
+            "last_received_seq, last_applied_seq, archive_gap, last_error "
+            "FROM actmon.actmon_oracle_dataguard_history WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "role", "protection_mode", "protection_level", "open_mode",
+                "transport_status", "apply_status", "transport_lag_sec", "apply_lag_sec",
+                "last_received_seq", "last_applied_seq", "archive_gap", "last_error"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_dataguard_history: %s", e)
+        mark_down()
+        return []
+
+
+def query_oracle_asm(conn_id, minutes=None, since=None, until=None, limit=1000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, diskgroup_name, state, total_mb, used_mb, "
+            "free_mb, offline_disks, rebalance_active "
+            "FROM actmon.actmon_oracle_asm_history WHERE " + " AND ".join(where) +
+            " ORDER BY diskgroup_name, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "diskgroup_name", "state", "total_mb", "used_mb",
+                "free_mb", "offline_disks", "rebalance_active"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_asm: %s", e)
+        mark_down()
+        return []
+
+
+def query_oracle_role_transitions(conn_id, minutes=None, since=None, until=None, limit=200):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, previous_role, new_role, reason "
+            "FROM actmon.actmon_oracle_role_transitions WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "previous_role", "new_role", "reason"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_role_transitions: %s", e)
+        mark_down()
+        return []
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  PostgreSQL Patroni — cluster/member history + leader-transition events
+#  Same _ensure_*/flush_*/query_* pattern as the Oracle RAC/DG tables above.
+# ═════════════════════════════════════════════════════════════════════════════
+
+POSTGRES_PATRONI_MEMBER_COLUMNS = ["ts", "agent", "conn_id", "member_name", "role", "state",
+                                   "timeline", "receive_lag", "replay_lag", "patroni_state"]
+POSTGRES_PATRONI_TRANSITION_COLUMNS = ["ts", "agent", "conn_id", "event_type",
+                                       "previous_leader", "new_leader", "reason"]
+
+_POSTGRES_PATRONI_DDL = {
+    "actmon_postgres_patroni_members": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_postgres_patroni_members (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            member_name LowCardinality(String), role LowCardinality(String),
+            state LowCardinality(String), timeline UInt32,
+            receive_lag Int64, replay_lag Int64, patroni_state LowCardinality(String)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, member_name, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_postgres_patroni_transitions": """
+        CREATE TABLE IF NOT EXISTS actmon.actmon_postgres_patroni_transitions (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            event_type LowCardinality(String), previous_leader LowCardinality(String),
+            new_leader LowCardinality(String), reason String
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+}
+
+
+def _postgres_patroni_retention_days():
+    try:
+        from app.services.postgres.postgres_patroni_ch_retention_service import get_retention
+        return get_retention().events_days
+    except Exception:  # noqa: BLE001
+        return TTL_DAYS
+
+
+def _ensure_postgres_patroni_table(cli, table):
+    global _db_ready
+    try:
+        if not _db_ready:
+            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            _db_ready = True
+        days = _postgres_patroni_retention_days()
+        if table not in _tables_ready:
+            cli.command(_POSTGRES_PATRONI_DDL[table] % {"days": int(days)})
+            _tables_ready.add(table)
+        else:
+            cli.command(f"ALTER TABLE actmon.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] schema (%s): %s", table, e)
+        mark_down()
+        return False
+
+
+def flush_postgres_patroni_members(rows):
+    """rows: list of dicts matching POSTGRES_PATRONI_MEMBER_COLUMNS (minus 'ts').
+    One row per member per cycle."""
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_postgres_patroni_table(cli, "actmon_postgres_patroni_members"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in POSTGRES_PATRONI_MEMBER_COLUMNS[1:]] for r in rows]
+        cli.insert("actmon.actmon_postgres_patroni_members", data, column_names=POSTGRES_PATRONI_MEMBER_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_postgres_patroni_members: %s", e)
+        mark_down()
+
+
+def flush_postgres_patroni_transition(row):
+    """Written only when the collector detects an ACTUAL leader change since
+    the last cycle — a real event, not an inferred one (same discipline as
+    flush_oracle_role_transition)."""
+    cli = get_client()
+    if cli is None or not _ensure_postgres_patroni_table(cli, "actmon_postgres_patroni_transitions"):
+        return
+    try:
+        import datetime
+        data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in POSTGRES_PATRONI_TRANSITION_COLUMNS[1:]]]
+        cli.insert("actmon.actmon_postgres_patroni_transitions", data, column_names=POSTGRES_PATRONI_TRANSITION_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_postgres_patroni_transition: %s", e)
+        mark_down()
+
+
+def query_postgres_patroni_members(conn_id, minutes=None, since=None, until=None, limit=5000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, member_name, role, state, timeline, "
+            "receive_lag, replay_lag, patroni_state "
+            "FROM actmon.actmon_postgres_patroni_members WHERE " + " AND ".join(where) +
+            " ORDER BY member_name, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "member_name", "role", "state", "timeline", "receive_lag", "replay_lag", "patroni_state"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_postgres_patroni_members: %s", e)
+        mark_down()
+        return []
+
+
+def query_postgres_patroni_transitions(conn_id, minutes=None, since=None, until=None, limit=200):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, event_type, previous_leader, new_leader, reason "
+            "FROM actmon.actmon_postgres_patroni_transitions WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "event_type", "previous_leader", "new_leader", "reason"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_postgres_patroni_transitions: %s", e)
+        mark_down()
+        return []

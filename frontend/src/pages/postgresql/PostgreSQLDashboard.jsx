@@ -20,6 +20,7 @@ import client from '@/api/client';
 
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import HostResources from './PgHostResources';
+import PatroniPanel from './PatroniPanel';
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
@@ -103,13 +104,6 @@ export default function PostgreSQLDashboard() {
     queryFn:  () => client.get(`/connections/postgresql/${id}/replication-detail`).then(r => r.data),
     enabled:  activeTab === 'replication',
     refetchInterval: activeTab === 'replication' ? 8000 : false,
-  });
-
-  const { data: queriesDetail, isLoading: queriesLoading, refetch: refetchQueries } = useQuery({
-    queryKey: ['pgQueriesDetail', id],
-    queryFn:  () => client.get(`/connections/postgresql/${id}/queries-detail`).then(r => r.data),
-    enabled:  activeTab === 'queries',
-    refetchInterval: activeTab === 'queries' ? 8000 : false,
   });
 
   const [tablesDb, setTablesDb] = useState('__all__');   // selected DB to drill into Tables
@@ -571,7 +565,7 @@ export default function PostgreSQLDashboard() {
 
         {/* ══ QUERIES ══ */}
         {activeTab === 'queries' && (
-          <AdvancedQueriesTab detail={queriesDetail} isLoading={queriesLoading} refetch={refetchQueries} connId={id} />
+          <AdvancedQueriesTab connId={id} active={activeTab === 'queries'} />
         )}
 
         {/* ══ DATABASES ══ */}
@@ -703,6 +697,7 @@ export default function PostgreSQLDashboard() {
         {/* ══ REPLICATION ══ */}
         {activeTab === 'replication' && (
           <AdvancedReplicationTab
+            connId={id}
             replDetail={replDetail}
             replLoading={replLoading}
             refetchRepl={refetchRepl}
@@ -896,7 +891,21 @@ function LSNCell({ label, value, accent }) {
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED REPLICATION TAB
 ══════════════════════════════════════════════════════════════════════════ */
-function AdvancedReplicationTab({ replDetail, replLoading, refetchRepl, replication, replication_slots, health_summary }) {
+function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, replication, replication_slots, health_summary }) {
+
+  // Same queryKey shape PatroniPanel's own internal usePatroniQuery('/status')
+  // uses — shares its cache entry rather than firing a second request, and
+  // decides whether the OLD raw pg_stat_replication view below even renders.
+  // A Patroni-managed cluster gets the full tabbed console ONLY: no more
+  // "too much information mixed together" on one long page.
+  const { data: patroniStatusGate } = useQuery({
+    queryKey: ['patroni', connId, '/status', undefined],
+    queryFn: () => client.get(`/connections/postgresql/${connId}/patroni/status`).then((r) => r.data),
+    enabled: !!connId,
+    refetchInterval: 12000,
+    retry: false,
+  });
+  const patroniDetected = !!patroniStatusGate?.patroni_detected;
 
   const rd      = replDetail || {};
   const topo    = rd.topology      || {};
@@ -916,11 +925,17 @@ function AdvancedReplicationTab({ replDetail, replLoading, refetchRepl, replicat
   const isStandby = role === 'STANDBY';
   const isLoading = replLoading && !rd.status;
 
-  if (isLoading) return (
-    <div className="flex items-center justify-center py-32">
-      <div className="text-center">
-        <div className="w-14 h-14 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-slate-500 font-semibold text-sm">Loading replication data…</p>
+  // Never block the new Patroni console on the OLD raw-replication query — a
+  // Patroni-managed cluster doesn't need that data at all (see patroniDetected
+  // below), so it must render immediately regardless of this fetch's state.
+  if (isLoading && !patroniDetected) return (
+    <div className="space-y-5">
+      <PatroniPanel connId={connId} />
+      <div className="flex items-center justify-center py-32">
+        <div className="text-center">
+          <div className="w-14 h-14 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
+          <p className="text-slate-500 font-semibold text-sm">Loading replication data…</p>
+        </div>
       </div>
     </div>
   );
@@ -931,6 +946,15 @@ function AdvancedReplicationTab({ replDetail, replLoading, refetchRepl, replicat
   return (
     <div className="space-y-5">
 
+      <PatroniPanel connId={connId} />
+
+      {/* The raw pg_stat_replication view below is the pre-Patroni fallback —
+          a genuinely non-Patroni PostgreSQL cluster still needs it, but a
+          Patroni-managed one now gets ONLY the tabbed console above; showing
+          both was exactly the "everything mixed together on one page"
+          problem this redesign fixes. */}
+      {!patroniDetected && (
+      <>
       {/* ── Role banner ── */}
       <div className={`rounded-2xl border-2 p-5 ${isStandby
         ? 'bg-gradient-to-r from-cyan-50 to-indigo-50 border-cyan-200'
@@ -1295,8 +1319,9 @@ function AdvancedReplicationTab({ replDetail, replLoading, refetchRepl, replicat
                 </span>
               )}
               {slots.some(s=>!s.active) && (
-                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200">
-                  {slots.filter(s=>!s.active).length} inactive
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold border border-slate-200"
+                  title="A slot with no replica currently connected — NOT the same as this node's own upstream replication being down (see the Patroni panel above for that).">
+                  {slots.filter(s=>!s.active).length} unused (cascading)
                 </span>
               )}
             </div>
@@ -1310,7 +1335,8 @@ function AdvancedReplicationTab({ replDetail, replLoading, refetchRepl, replicat
             <div className="px-5 py-3 bg-slate-50/70 border-b border-slate-100 flex items-start gap-2.5">
               <Info size={13} className="text-slate-400 mt-0.5 flex-shrink-0"/>
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                <span className="font-bold text-slate-600">Inactive</span> slots mean no replica is currently connected via that slot —
+                <span className="font-bold text-slate-600">Unused</span> slots mean no replica is currently connected via that slot —
+                this is separate from this node's own upstream replication, shown in the Patroni panel above —
                 {isStandby
                   ? ' this standby acts as an intermediate node for cascading replication. Downstream replicas appear inactive when they are not currently streaming from this node.'
                   : ' the replica may be down, restarting, or replicating via a different path (e.g. Patroni switchover). The slot is preserved so WAL is not discarded.'}
@@ -1722,6 +1748,8 @@ function AdvancedReplicationTab({ replDetail, replLoading, refetchRepl, replicat
           ))}
         </div>
       )}
+      </>
+      )}
     </div>
   );
 }
@@ -1758,7 +1786,11 @@ const METRIC_VIEWS = [
 const METRIC_KEYS = { mean:'top_by_mean_time', total:'top_by_total_time', calls:'top_by_calls', io:'top_by_io', rows:'top_by_rows', temp:'top_by_temp' };
 
 function AiQueryAnalysis({ res }) {
-  if (res.err) return <div className="mt-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-[12px] text-red-700">AI analysis failed: {res.err}</div>;
+  if (res.err) return (
+    <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-[12px] text-amber-700">
+      {res.err === 'AI suggestions are temporarily unavailable.' ? res.err : `AI analysis failed: ${res.err}`}
+    </div>
+  );
   const a = res.data;
   if (!a) return null;
   const SEV = { critical: 'bg-red-100 text-red-700', high: 'bg-orange-100 text-orange-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-emerald-100 text-emerald-700' };
@@ -1820,18 +1852,45 @@ function AiQueryAnalysis({ res }) {
   );
 }
 
-function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
+function AdvancedQueriesTab({ connId, active: tabActive }) {
   const [view,    setView]    = React.useState('mean');
-  const [search,  setSearch]  = React.useState('');
+  const [searchInput, setSearchInput] = React.useState('');
+  const [search,  setSearch]  = React.useState('');   // debounced — server-side search param
   const [expand,  setExpand]  = React.useState(null);
   const [showAll, setShowAll] = React.useState(false);
   const [modalQuery, setModalQuery] = React.useState(null);   // clicked statement → analysis window
 
+  // Filters (§1B) — all server-side, combinable. Hide ActMon Queries is ON by
+  // default (§1A): ActMon's own monitoring traffic runs as the exact credential
+  // configured for THIS connection, never a hard-coded username/OID.
+  const [hideActmon, setHideActmon] = React.useState(true);
+  const [dbFilter, setDbFilter]     = React.useState('');
+  const [userFilter, setUserFilter] = React.useState('');
+  const [typeFilter, setTypeFilter] = React.useState('');
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 350);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const filterParams = {
+    hide_actmon: hideActmon,
+    database: dbFilter || undefined,
+    user: userFilter || undefined,
+    query_type: typeFilter || undefined,
+    search: search || undefined,
+  };
+
+  const { data: detail, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['pgQueriesDetailFiltered', connId, filterParams],
+    queryFn: () => client.get(`/connections/postgresql/${connId}/queries-detail-filtered`, { params: filterParams }).then(r => r.data),
+    enabled: !!connId && tabActive,
+    refetchInterval: tabActive ? 8000 : false,
+  });
+
   const d = detail || {};
   const mv = METRIC_VIEWS.find(m=>m.id===view) || METRIC_VIEWS[0];
-  const stmts = (d[METRIC_KEYS[view]] || []).filter(s =>
-    !search || s.query?.toLowerCase().includes(search.toLowerCase()) || s.usename?.toLowerCase().includes(search.toLowerCase())
-  );
+  const stmts = d[METRIC_KEYS[view]] || [];
   const active  = d.active_queries  || [];
   const longRun = d.long_running    || [];
   const byType  = d.by_type         || {};
@@ -1969,19 +2028,49 @@ function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
             <div className="flex items-center gap-2">
               <Database size={14} className="text-indigo-500"/>
               <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">pg_stat_statements</h3>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">{d.total_statements ?? 0} stmts</span>
+              <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold">
+                {d.total_statements ?? 0} stmts
+                {hideActmon && d.total_statements_unfiltered > d.total_statements && (
+                  <span className="opacity-70"> · {d.total_statements_unfiltered - d.total_statements} ActMon hidden</span>
+                )}
+              </span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <div className="relative">
                 <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search query / user…"
+                <input value={searchInput} onChange={e=>setSearchInput(e.target.value)} placeholder="Search query text…"
                   className="h-8 pl-7 pr-3 rounded-xl border border-slate-200 text-[12px] outline-none focus:border-indigo-400 bg-white w-44"/>
               </div>
               <button onClick={refetch} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 hover:bg-slate-50">
-                <RefreshCw size={12} className={isLoading?'animate-spin':''}/>
+                <RefreshCw size={12} className={isFetching?'animate-spin':''}/>
               </button>
             </div>
           </div>
+
+          {/* Filters (§1B) — Database / User / Query Type / Hide ActMon, all server-side and combinable */}
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            <select value={dbFilter} onChange={e=>setDbFilter(e.target.value)}
+              className="h-8 px-2.5 rounded-xl border border-slate-200 text-[11px] font-bold text-slate-600 bg-white">
+              <option value="">All Databases</option>
+              {(d.available_databases||[]).map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <select value={userFilter} onChange={e=>setUserFilter(e.target.value)}
+              className="h-8 px-2.5 rounded-xl border border-slate-200 text-[11px] font-bold text-slate-600 bg-white">
+              <option value="">All Users</option>
+              {(d.available_users||[]).map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <select value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}
+              className="h-8 px-2.5 rounded-xl border border-slate-200 text-[11px] font-bold text-slate-600 bg-white">
+              <option value="">All Query Types</option>
+              {['SELECT','INSERT','UPDATE','DELETE','WITH','CREATE','DROP','ALTER','VACUUM','OTHER'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <label className="flex items-center gap-1.5 h-8 px-2.5 rounded-xl border border-slate-200 bg-white text-[11px] font-bold text-slate-600 cursor-pointer"
+              title={d.actmon_user ? `ActMon's own monitoring queries run as "${d.actmon_user}" on this connection` : undefined}>
+              <input type="checkbox" checked={hideActmon} onChange={e=>setHideActmon(e.target.checked)} />
+              {hideActmon ? 'Hide ActMon Queries' : 'Show ActMon Queries'}
+            </label>
+          </div>
+
           {/* Metric selector */}
           <div className="flex gap-1.5 mt-3 flex-wrap">
             {METRIC_VIEWS.map(mv => (
@@ -2026,7 +2115,7 @@ function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
                           ${isSlow?'bg-red-50/40':''}`}>
                         <td className="px-3 py-2.5 text-slate-400 font-mono">{i+1}</td>
                         <td className="px-3 py-2.5 font-bold text-indigo-700 truncate max-w-[80px]">{s.usename||'—'}</td>
-                        <td className="px-3 py-2.5 text-slate-500 font-mono">{s.dbid||'—'}</td>
+                        <td className="px-3 py-2.5 text-slate-500 font-mono">{s.datname||s.dbid||'—'}</td>
                         <td className="px-3 py-2.5">
                           <span className="px-2 py-0.5 rounded-full text-[9px] font-black border" style={{background:qc.bg,borderColor:qc.border,color:qc.text}}>{qt}</span>
                         </td>
@@ -2169,19 +2258,23 @@ function AdvancedQueriesTab({ detail, isLoading, refetch, connId }) {
 
 function QueryAnalysisModal({ stmt, connId, onClose }) {
   const s = stmt;
-  const [res, setRes] = React.useState({ loading: true });
-  React.useEffect(() => {
-    let alive = true;
+  // AI Suggestion (§3A) is explicit and lazy — the DBA clicks it, it is never
+  // fired automatically just because a query row was opened.
+  const [res, setRes] = React.useState(null);
+  const runAiSuggestion = () => {
+    setRes({ loading: true });
     client.post(`/connections/postgresql/${connId}/pg-slow-queries/analyze-groq`, {
-      sql_text: s.query, user_name: s.usename,
-      calls: s.calls, mean_exec_time_ms: s.mean_exec_time, max_exec_time_ms: s.max_exec_time,
-      total_exec_time_ms: s.total_exec_time, rows: s.rows,
+      sql_text: s.query, user_name: s.usename, database: s.datname, query_type: s.query_type,
+      calls: s.calls, mean_exec_time_ms: s.mean_exec_time, min_exec_time_ms: s.min_exec_time,
+      max_exec_time_ms: s.max_exec_time, total_exec_time_ms: s.total_exec_time, rows: s.rows,
       shared_blks_hit: s.shared_blks_hit, shared_blks_read: s.shared_blks_read,
+      temp_blks_read: s.temp_blks_read, temp_blks_written: s.temp_blks_written,
       cache_hit_pct: s.cache_hit_pct,
-    }).then(r => { if (alive) setRes({ loading: false, data: r.data?.analysis, err: r.data?.status === 'error' ? r.data.error : null }); })
-      .catch(e => { if (alive) setRes({ loading: false, err: e?.response?.data?.detail || e.message }); });
-    return () => { alive = false; };
-  }, []);
+    }).then(r => setRes({ loading: false, data: r.data?.analysis, err: r.data?.status === 'error' ? r.data.error : null }))
+      // §3E: a down/unreachable AI backend must never break the page — show a
+      // plain, honest message and leave the rest of the modal fully usable.
+      .catch(() => setRes({ loading: false, err: 'AI suggestions are temporarily unavailable.' }));
+  };
   const stat = (l, v, warn) => (
     <div className="bg-white rounded-xl border border-slate-200 px-3 py-2">
       <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide">{l}</p>
@@ -2192,7 +2285,7 @@ function QueryAnalysisModal({ stmt, connId, onClose }) {
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex sm:items-center sm:justify-center sm:p-6" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="bg-white w-full h-full sm:h-[92vh] sm:max-w-4xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-900 to-violet-900 text-white">
-          <div className="flex items-center gap-2.5"><Zap size={20} className="text-violet-300" /><span className="font-black text-sm">Query Analysis · {s.usename || '—'} · db {s.dbid || '—'}</span></div>
+          <div className="flex items-center gap-2.5"><Zap size={20} className="text-violet-300" /><span className="font-black text-sm">Query Analysis · {s.usename || '—'} · db {s.datname || s.dbid || '—'}</span></div>
           <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-white/70 hover:bg-white/15 text-2xl leading-none">×</button>
         </div>
         <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5 space-y-4">
@@ -2210,9 +2303,17 @@ function QueryAnalysisModal({ stmt, connId, onClose }) {
             <p className="text-[9px] font-black text-slate-400 uppercase tracking-wide mb-1.5">SQL</p>
             <pre className="font-mono text-[11px] text-indigo-900 bg-white border border-indigo-200 rounded-xl p-3 max-h-44 overflow-auto whitespace-pre-wrap break-all">{s.query}</pre>
           </div>
-          {res.loading
-            ? <div className="flex items-center justify-center py-16 text-slate-400"><RefreshCw size={20} className="animate-spin mr-2" /> Analyzing with ActMon AI…</div>
-            : <AiQueryAnalysis res={res} />}
+
+          {!res && (
+            <button onClick={runAiSuggestion}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[12px] font-black shadow-sm hover:shadow-md transition-all">
+              <Zap size={14} /> AI Suggestion
+            </button>
+          )}
+          {res?.loading && (
+            <div className="flex items-center justify-center py-16 text-slate-400"><RefreshCw size={20} className="animate-spin mr-2" /> Analyzing with ActMon AI…</div>
+          )}
+          {res && !res.loading && <AiQueryAnalysis res={res} />}
         </div>
       </div>
     </div>

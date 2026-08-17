@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import ClickHouseConnectionCreate
+from app.services.common.credential_encryption_service import credential_encryption
 
 
 def list_connections(db: Session, org_id=None) -> dict:
@@ -12,7 +13,7 @@ def list_connections(db: Session, org_id=None) -> dict:
     if org_id is not None:
         query = query.filter(ConnectionMaster.org_id == org_id)
     connections = query.all()
-    return {"status": "success", "data": connections}
+    return {"status": "success", "data": [credential_encryption.mask_connection_fields(c) for c in connections]}
 
 
 def create_connection(request: ClickHouseConnectionCreate, db: Session, org_id=1) -> dict:
@@ -31,7 +32,8 @@ def create_connection(request: ClickHouseConnectionCreate, db: Session, org_id=1
         db.add(new_conn)
         db.commit()
         db.refresh(new_conn)
-        return {"status": "success", "message": "ClickHouse connection created successfully", "data": new_conn}
+        return {"status": "success", "message": "ClickHouse connection created successfully",
+                "data": credential_encryption.mask_connection_fields(new_conn)}
     except Exception as e:
         db.rollback()
         raise HTTPException(400, str(e))
@@ -44,7 +46,7 @@ def get_connection(connection_id: int, db: Session) -> dict:
     ).first()
     if not conn:
         raise HTTPException(404, "ClickHouse connection not found")
-    return {"status": "success", "data": conn}
+    return {"status": "success", "data": credential_encryption.mask_connection_fields(conn)}
 
 
 def update_connection(connection_id: int, request: ClickHouseConnectionCreate, db: Session) -> dict:
@@ -59,12 +61,14 @@ def update_connection(connection_id: int, request: ClickHouseConnectionCreate, d
         conn.host                 = request.host
         conn.port                 = request.port
         conn.username             = request.username
-        conn.password             = request.password
+        if not credential_encryption.looks_like_mask(request.password):
+            conn.password = request.password
         conn.database_name        = request.database_name
         conn.clickhouse_protocol  = getattr(request, "clickhouse_protocol", "native")
         db.commit()
         db.refresh(conn)
-        return {"status": "success", "message": "ClickHouse connection updated successfully", "data": conn}
+        return {"status": "success", "message": "ClickHouse connection updated successfully",
+                "data": credential_encryption.mask_connection_fields(conn)}
     except Exception as e:
         db.rollback()
         raise HTTPException(400, str(e))

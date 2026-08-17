@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal
 from app.models.smtp_config_model import SmtpConfig
 from app.services.common.crypto_service import encrypt_secret, decrypt_secret
+from app.services.common.credential_encryption_service import credential_encryption
 
 router = APIRouter(prefix="/api/v1/settings/smtp", tags=["smtp-config"])
 log = logging.getLogger("smtp_config")
@@ -184,7 +185,7 @@ def update_config(cfg_id: int, req: SmtpUpdate, db: Session = Depends(get_db)):
     # plaintext column is cleared (this is the migration point for configs
     # saved before the encryption retrofit).
     new_password = data.pop("smtp_password", None)
-    if new_password and set(new_password) != {"•"}:
+    if not credential_encryption.looks_like_mask(new_password):
         cfg.smtp_password_enc = encrypt_secret(new_password)
         cfg.smtp_password = None
     for k, v in data.items():

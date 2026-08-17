@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, Text, JSON
 from app.database.base import Base
+from app.models._encrypted_type import EncryptedString
 
 
 class ConnectionMaster(Base):
@@ -18,15 +19,40 @@ class ConnectionMaster(Base):
     host = Column(String(500))
     port = Column(Integer)
     username = Column(String(255))
-    password = Column(String(500))
+    # Encrypted at rest (AES-256-GCM, see CredentialEncryptionService) — reads
+    # via the ORM (conn.password) transparently get plaintext back, exactly as
+    # before; only the raw database row holds ciphertext.
+    password = Column(EncryptedString)
     database_name = Column(String(255))
-    connection_uri = Column(Text)
+    # Encrypted at rest — a full connection URI (mongodb://user:pass@host/...)
+    # can embed credentials inline; `mongo_connection_service` writes username/
+    # password to their own dedicated columns and never populates this one
+    # today, but a legacy/manually-seeded row can still hold a live URI, so it
+    # gets the same protection as every other credential column.
+    connection_uri = Column(EncryptedString)
 
     # ORACLE
     service_name = Column(String(255))
     sid = Column(String(255))
-    tns_descriptor = Column(Text)
-    oracle_connect_string = Column(Text)
+    # Encrypted at rest for the same reason as `connection_uri` — in normal use
+    # these are bare EZConnect/TNS descriptors (host:port/service, no
+    # credentials; oracledb.connect() is always given `user`/`password`
+    # separately, see agent_collector_service.py), but a user can paste a full
+    # `user/pass@host` string here, and oracle_connection_service strips any
+    # embedded credential into the dedicated username/password columns before
+    # save (see _extract_embedded_credentials) — this is defense in depth for
+    # whatever text remains.
+    tns_descriptor = Column(EncryptedString)
+    oracle_connect_string = Column(EncryptedString)
+    # Topology: `oracle_deployment_type` is the user's selection at registration
+    # time (standalone|rac|data_guard|rac_dg) — a hint, not a source of truth;
+    # actual topology is always re-detected live from GV$INSTANCE/V$DATABASE
+    # (see oracle_monitoring_service.oracle_topology_detect). `oracle_role` is
+    # collector-maintained (primary|standby|farsync|unknown), compared against
+    # the freshly-detected role every cycle to catch switchover/failover role
+    # transitions (see oracle_history_flush_service).
+    oracle_deployment_type = Column(String(50))
+    oracle_role = Column(String(50))
 
     # MSSQL
     windows_authentication = Column(Boolean)
@@ -47,7 +73,7 @@ class ConnectionMaster(Base):
     ssh_host     = Column(String(500))
     ssh_port     = Column(Integer)
     ssh_user     = Column(String(255))
-    ssh_password = Column(String(500))
+    ssh_password = Column(EncryptedString)  # encrypted at rest, same as `password` above
 
     # CLOUD-BASED DATABASES (Azure Cosmos DB, and future providers — DynamoDB,
     # Firestore, Bigtable, etc.). `cloud_provider` marks a row as belonging to

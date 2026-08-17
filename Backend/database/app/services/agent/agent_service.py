@@ -177,7 +177,10 @@ def svc_sync_connections_to_agents(db: Session):
             # since that row is shared (may collect more than this one DB).
             target = db.query(AgentDbTarget).filter(AgentDbTarget.connection_id == c.id).first()
             if target:
-                server = db.query(OsServer).filter(OsServer.agent_token == target.token).first()
+                from app.services.common.credential_encryption_service import credential_encryption
+                server = db.query(OsServer).filter(
+                    OsServer.agent_token_hash == credential_encryption.hash_token(target.token)
+                ).first()
                 if server and db.query(Agent).filter(Agent.agent_name == server.server_name).first():
                     skipped.append(name)
                     continue

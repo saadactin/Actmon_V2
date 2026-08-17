@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import PostgreSQLConnectionCreate
+from app.services.common.credential_encryption_service import credential_encryption
 
 
 # ──────────────────────────────────────────────────────────────
@@ -123,7 +124,7 @@ def svc_list_connections(db: Session, org_id=None):
     if org_id is not None:
         query = query.filter(ConnectionMaster.org_id == org_id)
     connections = query.all()
-    return {"status": "success", "data": connections}
+    return {"status": "success", "data": [credential_encryption.mask_connection_fields(c) for c in connections]}
 
 
 def svc_create_connection(request: PostgreSQLConnectionCreate, db: Session, org_id=1):
@@ -151,7 +152,7 @@ def svc_create_connection(request: PostgreSQLConnectionCreate, db: Session, org_
         return {
             "status": "success",
             "message": "PostgreSQL connection created successfully",
-            "data": new_conn,
+            "data": credential_encryption.mask_connection_fields(new_conn),
         }
     except Exception as exc:
         db.rollback()
@@ -160,7 +161,7 @@ def svc_create_connection(request: PostgreSQLConnectionCreate, db: Session, org_
 
 def svc_get_connection(connection_id: int, db: Session):
     conn = _get_conn_or_404(connection_id, db)
-    return {"status": "success", "data": conn}
+    return {"status": "success", "data": credential_encryption.mask_connection_fields(conn)}
 
 
 def svc_update_connection(connection_id: int, request: PostgreSQLConnectionCreate, db: Session):
@@ -170,7 +171,10 @@ def svc_update_connection(connection_id: int, request: PostgreSQLConnectionCreat
         conn.host            = request.host
         conn.port            = request.port
         conn.username        = request.username
-        conn.password        = request.password
+        # A masked/blank submission means "unchanged" — never persist the
+        # literal placeholder over the real stored password.
+        if not credential_encryption.looks_like_mask(request.password):
+            conn.password = request.password
         conn.database_name   = request.database_name
         conn.ssl_mode        = request.ssl_mode
         db.commit()
@@ -178,7 +182,7 @@ def svc_update_connection(connection_id: int, request: PostgreSQLConnectionCreat
         return {
             "status": "success",
             "message": "PostgreSQL connection updated successfully",
-            "data": conn,
+            "data": credential_encryption.mask_connection_fields(conn),
         }
     except Exception as exc:
         db.rollback()

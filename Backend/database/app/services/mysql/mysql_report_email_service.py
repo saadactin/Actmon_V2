@@ -99,7 +99,13 @@ def _fetch(base_url: str, path: str) -> dict:
     return {}
 
 
-def _collect_report_data(conn_id: int, base_url: str) -> dict:
+_REPORT_MODE_MAP = {
+    "live": "live", "1h": "2h", "24h": "daily",
+    "7d": "weekly", "30d": "monthly", "90d": "monthly", "1y": "monthly",
+}
+
+
+def _collect_report_data(conn_id: int, base_url: str, report_period: str = "24h") -> dict:
     b = base_url.rstrip("/")
     p = f"/api/v1/connections/mysql/{conn_id}"
     return {
@@ -110,6 +116,11 @@ def _collect_report_data(conn_id: int, base_url: str) -> dict:
         "performance":  _fetch(b, f"{p}/performance-detail"),
         "replication":  _fetch(b, f"{p}/replication"),
         "slow_queries": _fetch(b, f"{p}/slow-queries"),
+        # Single source of truth for slow-query counts (§16) — the same
+        # mysql_report_service.build_report() the Reports page itself calls,
+        # NOT the legacy `health_summary.slow_queries` field below (which is
+        # never actually set by get_dashboard(), so always silently read as 0).
+        "reports": _fetch(b, f"{p}/reports?mode={_REPORT_MODE_MAP.get(report_period, 'live')}"),
     }
 
 
@@ -155,7 +166,7 @@ def generate_mysql_pdf(db_name: str, report_period: str, data: dict,
     active_conn  = str(int(hs.get("active_connections") or 0))
     max_conn     = str(int(hs.get("max_connections") or 0))
     buf_pool_pct = f'{float(hs.get("buffer_pool_hit_pct") or 0):.1f}%'
-    slow_q_cnt   = str(int(hs.get("slow_queries") or 0))
+    slow_q_cnt   = str(int((data.get("reports", {}) or {}).get("slow_queries", {}).get("summary", {}).get("total") or 0))
 
     bkp_info = backup.get("last_backup") or {}
     last_bkp = _s(bkp_info.get("status") or bkp_info.get("backup_date"), "No data")
@@ -311,7 +322,7 @@ def build_email_body(db_name: str, report_period: str, data: dict, has_pdf: bool
     db_label   = conn_db or db_name
     active_conn = str(int(hs.get("active_connections") or 0))
     buf_pct    = f'{float(hs.get("buffer_pool_hit_pct") or 0):.1f}%'
-    slow_q     = str(int(hs.get("slow_queries") or 0))
+    slow_q     = str(int((data.get("reports", {}) or {}).get("slow_queries", {}).get("summary", {}).get("total") or 0))
 
     backup     = data.get("backup", {}) or {}
     bkp_info   = backup.get("last_backup") or {}
@@ -540,7 +551,7 @@ def send_mysql_report_email(
 ) -> dict:
     import socket
 
-    data     = _collect_report_data(conn_id, base_url)
+    data     = _collect_report_data(conn_id, base_url, report_period)
     has_pdf  = False
     pdf_size = 0
     db_label = db_name or f"MySQL DB #{conn_id}"

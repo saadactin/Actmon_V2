@@ -23,6 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.agent_model import Agent, AgentToken
+from app.services.common.credential_encryption_service import credential_encryption
 
 # Backend/agent/dist/* (this file: Backend/database/app/services/agent/…)
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), *([os.pardir] * 4)))
@@ -30,6 +31,9 @@ MSI_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.msi")
 EXE_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.exe")
 DEB_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.deb")
 RPM_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.rpm")
+
+
+_token_match = credential_encryption.token_match_filter
 
 
 def msi_available() -> bool:
@@ -135,13 +139,15 @@ class AgentInfraIngest(BaseModel):
 def svc_create_install_token(req: InstallTokenRequest, db: Session):
     """Upsert the ingestion token issued by the wizard."""
     base = (req.token_name or "actmon-agent").strip() or "actmon-agent"
-    rec = db.query(AgentToken).filter(AgentToken.token == req.token).first()
+    rec = db.query(AgentToken).filter(_token_match(AgentToken.token_hash, AgentToken.token, req.token)).first()
     if rec:
         rec.token_name = base
         rec.agent_name = rec.agent_name or base
         rec.os_type = req.os_type
+        rec.token_hash = rec.token_hash or credential_encryption.hash_token(req.token)
     else:
-        rec = AgentToken(token=req.token, token_name=base, agent_name=base, os_type=req.os_type)
+        rec = AgentToken(token=req.token, token_hash=credential_encryption.hash_token(req.token),
+                         token_name=base, agent_name=base, os_type=req.os_type)
         db.add(rec)
     db.commit()
     db.refresh(rec)
@@ -150,7 +156,7 @@ def svc_create_install_token(req: InstallTokenRequest, db: Session):
 
 def svc_enroll_agent(req: EnrollRequest, db: Session):
     """Resolve (and auto-register) the agent identity for a token."""
-    rec = db.query(AgentToken).filter(AgentToken.token == req.token).first()
+    rec = db.query(AgentToken).filter(_token_match(AgentToken.token_hash, AgentToken.token, req.token)).first()
     if not rec:
         raise HTTPException(status_code=404, detail="Unknown or expired ingestion token.")
 
@@ -184,6 +190,7 @@ def svc_enroll_agent(req: EnrollRequest, db: Session):
 
     existing.last_heartbeat = func.now()   # DB clock — matches the reaper's now()
     rec.agent_name = desired
+    rec.token_hash = rec.token_hash or credential_encryption.hash_token(req.token)
     db.commit()
     return {"status": "success", "agent_name": desired}
 
@@ -219,16 +226,23 @@ def svc_save_db_target(req: DbConfigRequest, db: Session):
     port = req.port or _DEFAULT_DB_PORT.get(ldbt, 0)
 
     tgt = (db.query(AgentDbTarget)
-             .filter(AgentDbTarget.token == req.token, AgentDbTarget.db_type == dbt)
+             .filter(_token_match(AgentDbTarget.token_hash, AgentDbTarget.token, req.token),
+                     AgentDbTarget.db_type == dbt)
              .first())
     if not tgt:
-        tgt = AgentDbTarget(token=req.token, db_type=dbt)
+        tgt = AgentDbTarget(token=req.token, token_hash=credential_encryption.hash_token(req.token), db_type=dbt)
         db.add(tgt)
+    else:
+        tgt.token_hash = tgt.token_hash or credential_encryption.hash_token(req.token)
     tgt.connection_name = req.connection_name or f"{dbt} on agent"
     tgt.host = req.host or "localhost"
     tgt.port = port
     tgt.username = req.username
-    tgt.password = req.password
+    # A masked/blank submission means "keep the stored password" — never
+    # overwrite a real credential with the literal placeholder.
+    new_password = None if credential_encryption.looks_like_mask(req.password) else req.password
+    if new_password is not None:
+        tgt.password = new_password
     tgt.database_name = req.database_name
     tgt.environment = req.environment or "Production"
     tgt.enabled = True
@@ -239,7 +253,7 @@ def svc_save_db_target(req: DbConfigRequest, db: Session):
         conn = ConnectionMaster(
             connection_name=tgt.connection_name, db_type=ldbt, registration_mode="agent",
             environment=tgt.environment, host=tgt.host, port=port,
-            username=req.username, password=req.password, database_name=req.database_name,
+            username=req.username, password=new_password, database_name=req.database_name,
         )
         db.add(conn)
         db.flush()
@@ -247,11 +261,13 @@ def svc_save_db_target(req: DbConfigRequest, db: Session):
     else:
         conn.db_type = ldbt
         conn.host, conn.port = tgt.host, port
-        conn.username, conn.password = req.username, req.password
+        conn.username = req.username
+        if new_password is not None:
+            conn.password = new_password
         conn.database_name = req.database_name
 
     # Reflect on the agent's host so the Databases page shows it + links the dashboard.
-    server = db.query(OsServer).filter(OsServer.agent_token == req.token).first()
+    server = db.query(OsServer).filter(_token_match(OsServer.agent_token_hash, OsServer.agent_token, req.token)).first()
     if server:
         svcs = set(server.database_services or [])
         svcs.add(dbt)
@@ -309,7 +325,7 @@ def svc_get_db_targets(token: str, db: Session):
     zero Delivery stats, forever "Waiting for samples" on their own pages."""
     from app.models.agent_model import Agent, AgentDbTarget
     rows = db.query(AgentDbTarget).filter(
-        AgentDbTarget.token == token, AgentDbTarget.enabled.is_(True)).all()
+        _token_match(AgentDbTarget.token_hash, AgentDbTarget.token, token), AgentDbTarget.enabled.is_(True)).all()
     conn_ids = [r.connection_id for r in rows if r.connection_id]
     agent_by_conn = {}
     if conn_ids:

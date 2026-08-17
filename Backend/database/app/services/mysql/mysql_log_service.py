@@ -5,6 +5,7 @@ import re
 import socket
 import threading
 import time
+from datetime import datetime
 from typing import List, Optional
 from urllib.parse import quote_plus
 
@@ -556,6 +557,74 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
     except Exception as e:
         return {"status": "error", "mysql_down": mysql_is_down,
                 "message": str(e), "logs": [], "error_log_path": mysql_error_path}
+
+
+def _parse_logged_at(value) -> Optional[datetime]:
+    """`logged` comes back in a couple of different shapes depending on
+    source (performance_schema's own DATE_FORMAT string vs. whatever a raw
+    log line's own timestamp looked like) — try the common ones, give up to
+    None (never raises) rather than let one unparsable row break filtering
+    for every other row."""
+    if not value:
+        return None
+    text_ = str(value).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text_[: len(fmt) + 8], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def list_error_logs_filtered(
+    conn_id: int, db: Session,
+    severity: str = None, search: str = None,
+    date_from: str = None, date_to: str = None,
+    page: int = 1, page_size: int = 50,
+) -> dict:
+    """Wraps `get_error_logs` with real server-side filter/sort/pagination —
+    same pattern as `mysql_slow_query_service.list_slow_queries_filtered`.
+    Doesn't change `get_error_logs` or its source-detection chain at all;
+    this only reshapes what's returned from the SAME already-fetched
+    (already-bounded — at most ~500 rows) log list, so the frontend never
+    has to filter client-side or hold the full response just to show one
+    page."""
+    response = get_error_logs(conn_id, db)
+    all_logs = response.get("logs") or []
+    logs = list(all_logs)
+
+    if severity and severity.upper() != "ALL":
+        logs = [l for l in logs if (l.get("severity") or "").upper() == severity.upper()]
+    if search:
+        q = search.strip().lower()
+        logs = [l for l in logs if q in (l.get("message") or "").lower() or q in (l.get("subsystem") or "").lower()]
+    if date_from or date_to:
+        df = _parse_logged_at(date_from) if date_from else None
+        dt = _parse_logged_at(date_to) if date_to else None
+        def _in_range(l):
+            ts = _parse_logged_at(l.get("logged"))
+            if ts is None:
+                return False
+            if df and ts < df:
+                return False
+            if dt and ts > dt.replace(hour=23, minute=59, second=59):
+                return False
+            return True
+        logs = [l for l in logs if _in_range(l)]
+
+    total_filtered = len(logs)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    start = (page - 1) * page_size
+    page_logs = logs[start:start + page_size]
+
+    out = dict(response)
+    out["logs"] = page_logs
+    out["total_filtered"] = total_filtered
+    out["total_unfiltered"] = len(all_logs)
+    out["page"] = page
+    out["page_size"] = page_size
+    return out
 
 
 def analyze_error_with_ai(conn_id: int, message: str, db: Session) -> dict:

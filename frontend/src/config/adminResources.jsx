@@ -66,13 +66,17 @@ export const ADMIN_RESOURCES = {
       statusCol,
     ],
     fields: [
-      { key: 'role_name', label: 'Role Name', type: 'text', required: true },
-      { key: 'role_description', label: 'Description', type: 'textarea' },
+      // Organization first, full-width — it's the scope everything else is
+      // defined within, so picking it before naming the role matches how an
+      // admin actually thinks through this form (org, then what to call the
+      // role inside it), not an arbitrary field order.
       {
-        key: 'org_id', label: 'Organization', type: 'select', loadOptions: orgOptions,
+        key: 'org_id', label: 'Organization', type: 'select', loadOptions: orgOptions, fullWidth: true,
         help: 'Only needed for a super-admin creating a role outside their own organization.',
       },
+      { key: 'role_name', label: 'Role Name', type: 'text', required: true },
       statusField,
+      { key: 'role_description', label: 'Description', type: 'textarea' },
     ],
   },
 
@@ -340,7 +344,7 @@ export const ADMIN_RESOURCES = {
         loadOptions: async (orgId) => (await employeesApi.list(orgId))
           .map((e) => ({ id: e.employee_id, label: e.employee_name })),
       },
-      { key: 'password_hash', label: 'Password', type: 'text', help: 'Leave blank to default to "Admin@123".' },
+      { key: 'password_hash', label: 'Password', type: 'password', editPlaceholder: 'Leave blank to keep the current password' },
       { key: 'org_id', label: 'Organization', type: 'select', loadOptions: orgOptions },
       statusField,
     ],

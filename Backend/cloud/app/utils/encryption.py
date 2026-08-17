@@ -1,45 +1,60 @@
-"""Encryption utilities using Fernet symmetric encryption."""
+"""Encryption utilities for `cloud_accounts.credentials_enc`, using Fernet
+(AES-128-CBC + HMAC) keyed off the SAME master secret as the database
+service's `CredentialEncryptionService` (`ACTMON_ENCRYPTION_KEY`) — not a
+second, independently-generated encryption key.
+
+This service can't just `import` that service's module directly: it's a
+separately-deployed FastAPI app with its own venv, and both services happen
+to use `app` as their top-level package name, so a cross-service import would
+silently resolve to whichever `app` package sys.path finds first and break
+the OTHER service's own `app.*` imports. Porting just the key-loading logic
+here (a few lines) avoids that collision while still deriving the exact same
+key bytes the database service's own legacy-Fernet bridge uses
+(`Fernet(base64.urlsafe_b64encode(raw_key))` — see
+`credential_encryption_service.py`'s `_legacy_fernet_decrypt`), so this is a
+port of the shared algorithm/key, not a second encryption mechanism.
+
+Previously this module read a separate `FERNET_KEY` env var and, if unset,
+silently generated one, PRINTED it to stdout, and persisted it to `.env` —
+the exact "ephemeral key with no recovery path" anti-pattern the rest of the
+app explicitly forbids (and the reason an earlier real account's credentials
+were once orphaned by a process restart). A missing/malformed key now fails
+fast instead.
+"""
 from __future__ import annotations
 
+import base64
 import json
-import os
 
 from cryptography.fernet import Fernet
 
-from app.core.config import _ENV_PATH, settings
+from app.core.config import settings
 
 
-def _persist_key_to_env(key: str) -> None:
-    """Append FERNET_KEY=<key> to .env so a freshly generated key survives
-    the next restart. Without this, every account's credentials silently and
-    permanently stop decrypting the moment the process restarts — this is
-    the exact bug that orphaned the AWS 'suyash' account's credentials."""
+class CloudEncryptionKeyError(RuntimeError):
+    """ACTMON_ENCRYPTION_KEY is missing or malformed. Never caught and
+    downgraded to plaintext or an auto-generated key anywhere in this
+    service."""
+
+
+def _load_key_bytes() -> bytes:
+    raw = settings.ACTMON_ENCRYPTION_KEY
+    if not raw:
+        raise CloudEncryptionKeyError(
+            "ACTMON_ENCRYPTION_KEY is not set. Use the SAME value as the database "
+            "service's .env (generate one there with: python -c \"import base64, os; "
+            "print(base64.b64encode(os.urandom(32)).decode())\" if neither service has "
+            "one yet). Refusing to encrypt/decrypt cloud account credentials without it."
+        )
     try:
-        with open(_ENV_PATH, "a", encoding="utf-8") as f:
-            f.write(f"\nFERNET_KEY={key}\n")
-    except Exception as exc:
-        print(f"[CLOUD-SVC] WARNING: could not persist FERNET_KEY to {_ENV_PATH}: {exc}")
-
-
-def _get_or_create_key() -> bytes:
-    """Return the configured Fernet key, auto-generating and persisting one
-    to .env if absent. NEVER regenerate a key once real accounts have been
-    saved under it — that permanently orphans their stored credentials with
-    no way to recover them. If .env's FERNET_KEY is ever lost or changed,
-    every existing cloud account must be deleted and re-added."""
-    key = settings.FERNET_KEY
-    if key:
-        return key.encode()
-
-    generated = Fernet.generate_key()
-    print(
-        "[CLOUD-SVC] WARNING: FERNET_KEY not set. Generated a new key and "
-        f"saved it to {_ENV_PATH} so it survives restarts.\n"
-        f"  FERNET_KEY={generated.decode()}"
-    )
-    os.environ["FERNET_KEY"] = generated.decode()
-    _persist_key_to_env(generated.decode())
-    return generated
+        key = base64.urlsafe_b64decode(raw)
+    except Exception as e:
+        raise CloudEncryptionKeyError(f"ACTMON_ENCRYPTION_KEY is not valid base64: {e}") from e
+    if len(key) != 32:
+        raise CloudEncryptionKeyError(
+            f"ACTMON_ENCRYPTION_KEY must decode to exactly 32 bytes for AES-256 (got {len(key)})."
+        )
+    return key
 
 
 _fernet: Fernet | None = None
@@ -48,7 +63,7 @@ _fernet: Fernet | None = None
 def _cipher() -> Fernet:
     global _fernet
     if _fernet is None:
-        _fernet = Fernet(_get_or_create_key())
+        _fernet = Fernet(base64.urlsafe_b64encode(_load_key_bytes()))
     return _fernet
 
 

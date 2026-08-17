@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, BigInteger
 from sqlalchemy.sql import func
 from app.database.base import Base
+from app.models._encrypted_type import EncryptedString
 
 
 class Agent(Base):
@@ -63,7 +64,10 @@ class AgentToken(Base):
     __tablename__ = "agent_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Bearer credential — hashed for lookup, not encrypted (see os_servers.agent_token_hash
+    # for the rationale). `token` is kept present-but-unread as the rollback path.
     token = Column(String(128), unique=True, index=True, nullable=False)
+    token_hash = Column(String(64), unique=True, index=True, nullable=True)
     token_name = Column(String(255), nullable=True)
     agent_name = Column(String(255), nullable=True)
     os_type = Column(String(50), nullable=True)
@@ -78,12 +82,13 @@ class AgentDbTarget(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     token = Column(String(128), index=True, nullable=False)
+    token_hash = Column(String(64), index=True, nullable=True)
     db_type = Column(String(50), nullable=False, default="MySQL")
     connection_name = Column(String(255), nullable=True)
     host = Column(String(255), nullable=True, default="localhost")
     port = Column(Integer, nullable=True)
     username = Column(String(255), nullable=True)
-    password = Column(String(500), nullable=True)
+    password = Column(EncryptedString, nullable=True)  # encrypted at rest
     database_name = Column(String(255), nullable=True)
     environment = Column(String(100), default="Production")
     enabled = Column(Boolean, default=True)

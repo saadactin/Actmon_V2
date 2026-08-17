@@ -22,6 +22,7 @@ import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
 import { STATUS, bandFor } from '@/components/charts/status';
 import { engineColor } from '@/config/agents';
 import { listOsServers, getServerSummary, getLiveStatus, refreshServerStatus } from '@/api/servers';
+import { QK } from '@/api/queryKeys';
 import { usePermissions } from '@/hooks/usePermissions';
 import InfraHostCard, { hostLevel, hostStatus, osLabel, pctOf } from './InfraHostCard';
 
@@ -102,26 +103,26 @@ export default function InfraPage() {
   }, []);
 
   const { data: serversData, isLoading, isFetching } = useQuery({
-    queryKey: ['osServers', 'infra'], queryFn: () => listOsServers(), refetchInterval: 60000,
+    queryKey: QK.osServers(), queryFn: () => listOsServers(), refetchInterval: 60000,
   });
   const { data: liveData } = useQuery({
     queryKey: ['liveStatus'], queryFn: getLiveStatus, refetchInterval: 15000, staleTime: 10000,
   });
-  useQuery({ queryKey: ['serverSummary'], queryFn: getServerSummary, refetchInterval: 30000 });
+  useQuery({ queryKey: QK.osServersSummary, queryFn: getServerSummary, refetchInterval: 30000 });
 
   const refreshMutation = useMutation({
-    mutationFn: refreshServerStatus, onSuccess: () => qc.invalidateQueries(['osServers']),
+    mutationFn: refreshServerStatus, onSuccess: () => qc.invalidateQueries({ queryKey: QK.osServers() }),
   });
   const refreshAll = () => {
-    qc.invalidateQueries(['osServers']);
-    qc.invalidateQueries(['liveStatus']);
+    qc.invalidateQueries({ queryKey: QK.osServers() });
+    qc.invalidateQueries({ queryKey: ['liveStatus'] });
     setCountdown(REFRESH_SECONDS);
   };
 
   /* ── merge live status onto the last full snapshot ─────────────────────── */
   const liveMap = {};
   for (const r of (liveData?.data || [])) liveMap[r.id] = r;
-  const hosts = (serversData?.data || []).map((s) => (liveMap[s.id] ? { ...s, status: liveMap[s.id].os_status } : s));
+  const hosts = (serversData || []).map((s) => (liveMap[s.id] ? { ...s, status: liveMap[s.id].os_status } : s));
 
   const counts = {
     total: hosts.length,

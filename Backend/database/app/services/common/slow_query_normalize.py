@@ -99,7 +99,7 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
     },
     "mysql": {
         "aggregation": "digest", "query_id": True, "schema_name": False,
-        "user_name": False, "host": False, "execution_count": True,
+        "user_name": True, "host": True, "execution_count": True,
         "min_execution_time": True, "rows_returned": True, "rows_affected": True,
         "first_seen": True, "cache_hit": False,
     },

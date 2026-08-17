@@ -32,6 +32,17 @@ class Settings:
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
 
     # ── Encryption ───────────────────────────────────────────────────────────
+    # Same master key as the database service's CredentialEncryptionService —
+    # ONE key for the whole application, not a separately-generated per-service
+    # secret. See app/utils/encryption.py for why this service can't just
+    # import that service's module directly (separate venv, colliding `app`
+    # top-level package name between the two services).
+    ACTMON_ENCRYPTION_KEY: str = os.getenv("ACTMON_ENCRYPTION_KEY", "")
+    # Deprecated — no longer read by app/utils/encryption.py. Kept only so a
+    # rollback can still find the old key value if ever needed; every
+    # `cloud_accounts.credentials_enc` row was re-encrypted under
+    # ACTMON_ENCRYPTION_KEY by app/scripts/migrate_cloud_account_key.py
+    # (Backend/database) before this cutover shipped.
     FERNET_KEY: str = os.getenv("FERNET_KEY", "")
 
     # ── Service ───────────────────────────────────────────────

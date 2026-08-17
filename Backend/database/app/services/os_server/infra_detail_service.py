@@ -16,6 +16,7 @@ import json
 import paramiko
 
 from app.models.os_server_model import OsServer
+from app.services.common.credential_encryption_service import credential_encryption
 
 # ── Windows collector: one PowerShell script that emits the SAME JSON shape as
 #    the Linux parser. Sent via -EncodedCommand (UTF-16LE base64) to dodge quoting. ──
@@ -605,11 +606,15 @@ def svc_ingest_agent_infra(payload, db) -> dict:
     from sqlalchemy import func, text
     from app.models.agent_model import Agent, AgentMetric, AgentToken
 
-    server = db.query(OsServer).filter(OsServer.agent_token == payload.token).first()
+    server = db.query(OsServer).filter(
+        credential_encryption.token_match_filter(OsServer.agent_token_hash, OsServer.agent_token, payload.token)
+    ).first()
     tok = None
     if not server:
         # Token must be a known deploy token (per-deployment OR the universal MSI token).
-        tok = db.query(AgentToken).filter(AgentToken.token == payload.token).first()
+        tok = db.query(AgentToken).filter(
+            credential_encryption.token_match_filter(AgentToken.token_hash, AgentToken.token, payload.token)
+        ).first()
         if not tok:
             return {"status": "error", "message": "Unknown agent token."}
 
@@ -713,7 +718,8 @@ def svc_ingest_agent_infra(payload, db) -> dict:
     from app.models.os_server_model import DatabaseInstance
     from app.models.agent_model import AgentDbTarget
     targets = db.query(AgentDbTarget).filter(
-        AgentDbTarget.token == payload.token, AgentDbTarget.enabled.is_(True)).all()
+        credential_encryption.token_match_filter(AgentDbTarget.token_hash, AgentDbTarget.token, payload.token),
+        AgentDbTarget.enabled.is_(True)).all()
     current = set(server.database_services or [])
     merged = current | {t.db_type for t in targets}
     if merged != current:

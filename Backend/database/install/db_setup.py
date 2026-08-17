@@ -400,6 +400,14 @@ END; $_$""",
          org_id      INTEGER PRIMARY KEY DEFAULT 1,
          timezone    VARCHAR(64) NOT NULL DEFAULT 'Asia/Kolkata',
          updated_at  TIMESTAMP)""",
+    # Oracle topology (RAC/Data Guard) — user-selected deployment type +
+    # collector-maintained role, used to detect switchover/failover role
+    # transitions. See app/models/oracle_topology_model.py for the
+    # accompanying oracle_topology_links join table (created via ORM
+    # create_all since it's a brand-new table, not an existing one).
+    """ALTER TABLE connection_master
+         ADD COLUMN IF NOT EXISTS oracle_deployment_type VARCHAR(50),
+         ADD COLUMN IF NOT EXISTS oracle_role             VARCHAR(50)""",
 ]
 
 

@@ -1,9 +1,17 @@
+import os
+
 from app.services.os_server.ssh_service import (
     execute_ssh_command
 )
 
-SSH_USERNAME = "actmon"
-SSH_PASSWORD = "Actmon@123"
+# ActMon's own dedicated OS account for these maintenance operations — read
+# from .env (ACTMON_MYSQL_SSH_USERNAME/_PASSWORD) instead of a source literal.
+# The fallback below matches the account this app has always shipped with, so
+# existing installs keep working with zero config changes required; set the
+# env vars to override it, and rotate the actual OS account's password on any
+# host where this default was ever used (it's in git history either way).
+SSH_USERNAME = os.getenv("ACTMON_MYSQL_SSH_USERNAME", "actmon")
+SSH_PASSWORD = os.getenv("ACTMON_MYSQL_SSH_PASSWORD", "Actmon@123")
 
 MYSQL_CONFIG_PATH = (
     r"C:\ProgramData\MySQL\MySQL Server 8.0\my.ini"

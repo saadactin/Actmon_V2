@@ -645,6 +645,16 @@ html[data-header-scroll='off'][data-header='plain'] .page-header {
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
+/* Content padding never shrank below 20px/side at any width — on a phone-width
+   viewport that's a meaningfully bigger bite out of the available content
+   width than on desktop. `--content-max` is already fluid (100%); this is the
+   one layout token that had no responsive variant at all. */
+@media (max-width: 640px) {
+  :root {
+    --content-pad-x: 12px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-motion='system'] *,
   [data-motion='system'] *::before,

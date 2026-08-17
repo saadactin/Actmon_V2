@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
@@ -29,7 +29,15 @@ import { useThemeStore } from '@/theme/themeStore';
  *   tableRows     [{ key, cells: { [columnKey]: value } }]
  *   children      optional content rendered ABOVE the chart (hero number, etc.)
  */
-export default function ChartCard({
+/**
+ * Memoized: a page with several cards (Dashboard has 6) re-renders whenever
+ * ANY of its polled queries refetches — without this, all 6 re-render on
+ * every tick even when only one card's underlying data actually changed.
+ * Only pays off when callers pass stable (useMemo'd) `items`/`rows`/
+ * `chartProps`/`tableRows` — a fresh object/array literal every render
+ * defeats this regardless, since the shallow-equality check would still fail.
+ */
+export default memo(function ChartCard({
   cardId,
   family,
   items,
@@ -198,7 +206,7 @@ export default function ChartCard({
       {footer && <div className="border-t border-border px-card py-2.5">{footer}</div>}
     </section>
   );
-}
+});
 
 /** The table twin. tabular-nums is correct here — these digits align in columns. */
 function DataTable({ columns, rows }) {

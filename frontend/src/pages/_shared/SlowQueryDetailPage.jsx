@@ -12,7 +12,7 @@ import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading, InlineLoading } from '@/components/ui/Loading';
 import { Panel, SqlBlock, StatCell } from '@/pages/_shared/enginePanels';
 import { fmtNumber, fmtDateTime } from '@/config/dbCatalog';
-import { engineFor, fmtMs } from '@/config/slowQueryCatalog';
+import { engineFor, fmtMs, SEVERITY_TONES, SEVERITY_LABELS } from '@/config/slowQueryCatalog';
 import { SeverityBadge, AiAnalysisResult } from './SlowQueriesPage';
 
 /**
@@ -237,6 +237,388 @@ function PlanStep({ engine, id, row }) {
   );
 }
 
+/* ── MySQL analysis workspace ─────────────────────────────────────────────
+ * §4-12 of the Slow Query spec: EXPLAIN → execution-plan analysis → tables
+ * used → indexes used → missing/duplicate index analysis → statistics →
+ * performance diagnosis → Groq explanation → prioritized recommendations →
+ * optional query rewrite. One `analyze-full` call gathers everything
+ * deterministic in one pass (so EXPLAIN only ever runs once per click, not
+ * once per section); the Groq call is a SEPARATE, explicitly user-triggered
+ * step so opening a query never blocks on an LLM round-trip. MySQL-only for
+ * now (`engine.hasFullAnalysis`) — every other engine keeps the simpler
+ * PlanStep/AI flow above, unchanged. */
+
+function IssueSeverityBadge({ severity }) {
+  const s = String(severity || 'low').toLowerCase();
+  return <Badge tone={SEVERITY_TONES[s] || 'neutral'} size="xs">{SEVERITY_LABELS[s] || severity}</Badge>;
+}
+
+function ExecutionPlanSection({ data, mode, onRunAnalyze, analyzing }) {
+  const explain = data.explain || {};
+  const flags = explain.flags || {};
+  const declined = explain.analyze_declined_reason;
+
+  return (
+    <Panel title="Execution plan" icon="terminal"
+      subtitle={mode === 'analyze' ? 'Actual execution plan — the statement was really run' : 'Estimated plan — the statement was NOT executed'}
+      actions={mode !== 'analyze' && (
+        <Button variant="secondary" size="sm" icon="play" loading={analyzing} onClick={onRunAnalyze}>
+          Run EXPLAIN ANALYZE
+        </Button>
+      )}
+    >
+      <div className="space-y-gutter-sm">
+        {declined && (
+          <Notice tone="info" title="EXPLAIN ANALYZE was not run.">{declined} Showing the estimated plan instead.</Notice>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {flags.has_full_scan && <Badge tone="danger" size="xs">Full table scan</Badge>}
+          {flags.has_full_index_scan && <Badge tone="warning" size="xs">Full index scan</Badge>}
+          {flags.has_ignored_index && <Badge tone="warning" size="xs">Available index ignored</Badge>}
+          {flags.has_filesort && <Badge tone="warning" size="xs">Filesort</Badge>}
+          {flags.has_temp_table && <Badge tone="warning" size="xs">Temporary table</Badge>}
+          {flags.has_dedup && <Badge tone="neutral" size="xs">Duplicate removal</Badge>}
+          {Object.keys(flags).length === 0 && <span className="text-[12px] text-subtle">No warning flags in this plan.</span>}
+        </div>
+        <Table
+          columns={[
+            { key: 'table', label: 'Table' },
+            { key: 'type', label: 'Access type' },
+            { key: 'possible', label: 'Possible keys' },
+            { key: 'key', label: 'Key used' },
+            { key: 'len', label: 'Key length', align: 'right' },
+            { key: 'rows', label: mode === 'analyze' ? 'Rows examined' : 'Est. rows', align: 'right' },
+            { key: 'filtered', label: 'Filtered %', align: 'right' },
+            { key: 'extra', label: 'Extra' },
+          ]}
+          rows={(explain.tables || []).map((t, i) => ({
+            key: i,
+            cells: {
+              table: <span className="font-mono text-[11px] font-semibold">{t.table_name}</span>,
+              type: (
+                <span className="font-mono text-[11px]">
+                  {t.access_type}
+                  {t.access_type === 'ALL' && <Badge tone="danger" size="xs" className="ml-1.5">scan</Badge>}
+                </span>
+              ),
+              possible: <span className="font-mono text-[10px] text-muted">{(t.possible_keys || []).join(', ') || '—'}</span>,
+              key: t.key
+                ? <span className="font-mono text-[11px] text-success-fg">{t.key}</span>
+                : <span className="font-mono text-[11px] text-danger-fg">none</span>,
+              len: <span className="font-mono text-muted">{t.key_length ?? '—'}</span>,
+              rows: <span className="font-mono">{fmtNumber(t.rows_examined_per_scan)}</span>,
+              filtered: <span className="font-mono">{t.filtered != null ? `${t.filtered}%` : '—'}</span>,
+              extra: (
+                <span className="flex flex-wrap gap-1">
+                  {t.using_index && <Badge tone="success" size="xs">using index</Badge>}
+                  {t.using_where && <Badge tone="neutral" size="xs">using where</Badge>}
+                  {t.using_join_buffer && <Badge tone="warning" size="xs">join buffer</Badge>}
+                </span>
+              ),
+            },
+          }))}
+          empty={<EmptyState icon="terminal" title="No plan rows" />}
+        />
+      </div>
+    </Panel>
+  );
+}
+
+function TablesIndexesSection({ data }) {
+  const tables = data.tables || [];
+  const duplicates = data.duplicate_indexes || [];
+  const coverage = data.index_coverage || [];
+
+  if (!tables.length) {
+    return (
+      <Panel title="Tables & indexes" icon="database">
+        <p className="text-[12px] text-subtle">No table metadata could be resolved for this query's tables.</p>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title="Tables & indexes" icon="database" subtitle="Real metadata from information_schema, scoped to this query's own tables">
+      <div className="space-y-gutter">
+        {tables.map((t) => {
+          const dupesHere = duplicates.filter((d) => d.table_name === t.table_name);
+          const coverageHere = coverage.filter((c) => c.table_name === t.table_name);
+          return (
+            <div key={t.table_name} className="rounded-card border border-border p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-[13px] font-bold text-fg">{t.table_name}</p>
+                  <p className="text-[11px] text-muted">
+                    {t.engine || '—'} · {fmtNumber(t.row_estimate)} rows (approx.) · {t.total_mb != null ? `${t.total_mb} MB` : '—'}
+                    {t.primary_key?.length ? ` · PK: ${t.primary_key.join(', ')}` : ''}
+                  </p>
+                </div>
+              </div>
+
+              {t.columns?.length > 0 && (
+                <>
+                  <p className="mb-1.5 text-[10px] font-bold tracking-wide text-subtle uppercase">Table structure</p>
+                  <Table
+                    className="mb-3"
+                    columns={[
+                      { key: 'name', label: 'Column' },
+                      { key: 'type', label: 'Type' },
+                      { key: 'nullable', label: 'Nullable' },
+                    ]}
+                    rows={t.columns.map((c) => ({
+                      key: c.name,
+                      cells: {
+                        name: (
+                          <span className="font-mono text-[11px]">
+                            {c.name}
+                            {t.primary_key?.includes(c.name) && <Badge tone="accent" size="xs" className="ml-1.5">PK</Badge>}
+                          </span>
+                        ),
+                        type: <span className="font-mono text-[11px] text-muted">{c.type}</span>,
+                        nullable: c.nullable ? <span className="text-subtle">yes</span> : <Badge tone="neutral" size="xs">not null</Badge>,
+                      },
+                    }))}
+                    empty={<EmptyState icon="database" title="No column metadata" />}
+                  />
+                </>
+              )}
+
+              <p className="mb-1.5 text-[10px] font-bold tracking-wide text-subtle uppercase">Existing indexes</p>
+              <Table
+                columns={[
+                  { key: 'name', label: 'Index' },
+                  { key: 'cols', label: 'Columns' },
+                  { key: 'unique', label: 'Unique' },
+                  { key: 'card', label: 'Cardinality', align: 'right' },
+                ]}
+                rows={(t.indexes || []).map((idx) => ({
+                  key: idx.index_name,
+                  cells: {
+                    name: (
+                      <span className="font-mono text-[11px]">
+                        {idx.index_name}
+                        {idx.primary && <Badge tone="accent" size="xs" className="ml-1.5">PK</Badge>}
+                      </span>
+                    ),
+                    cols: <span className="font-mono text-[11px] text-muted">{idx.columns.join(', ')}</span>,
+                    unique: idx.unique ? <Badge tone="success" size="xs">unique</Badge> : <span className="text-subtle">—</span>,
+                    card: <span className="font-mono">{fmtNumber(idx.cardinality)}</span>,
+                  },
+                }))}
+                empty={<EmptyState icon="database" title="No indexes found on this table" />}
+              />
+
+              {dupesHere.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {dupesHere.map((d, i) => (
+                    <Notice key={i} tone="warning" title={`\`${d.redundant_index}\` may be redundant`}>
+                      Its columns ({d.columns.join(', ')}) are a leading prefix of `{d.covered_by}` ({d.covered_columns.join(', ')}).
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <SqlBlock sql={d.drop_statement} className="flex-1" />
+                        <CopyButton text={d.drop_statement} />
+                      </div>
+                    </Notice>
+                  ))}
+                </div>
+              )}
+
+              {coverageHere.map((c, i) => (
+                <Notice key={i} tone={c.verdict === 'covered' ? 'success' : 'info'} className="mt-2"
+                  title={c.verdict === 'covered' ? 'Existing index already covers this query' : 'No existing index covers this'}>
+                  {c.explanation}
+                </Notice>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
+function DiagnosisSection({ data }) {
+  const issues = data.diagnosis?.issues || [];
+  return (
+    <Panel title={`Performance diagnosis (${issues.length})`} icon="alert"
+      subtitle="Every issue below is backed by a specific signal from the plan or metadata above — nothing is flagged just because it exists">
+      {issues.length === 0 ? (
+        <p className="text-[12px] text-success-fg">No rule-based issues detected from this plan and metadata.</p>
+      ) : (
+        <ul className="space-y-2.5">
+          {issues.map((is, i) => (
+            <li key={i} className="rounded-card border border-border p-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <IssueSeverityBadge severity={is.severity} />
+                <span className="font-mono text-[11px] font-bold text-fg">{is.type}</span>
+                {is.table && <Badge tone="neutral" size="xs">{is.table}</Badge>}
+              </div>
+              <p className="mt-1 text-[12px] text-fg">{is.description}</p>
+              <p className="mt-0.5 text-[11px] text-subtle">Evidence: {is.evidence}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+function RecommendationsSection({ ai, onRunAi }) {
+  const a = ai?.result;
+  return (
+    <Panel title="ActMon AI analysis & recommendations" icon="brain"
+      subtitle="Reasons only from the evidence gathered above — the query, plan, real table/index metadata, coverage check, and diagnosis">
+      {!ai && (
+        <Button variant="primary" icon="brain" onClick={onRunAi}>Get AI explanation & recommendations</Button>
+      )}
+      {ai?.loading && <InlineLoading label="Analysing with the evidence gathered above…" />}
+      {ai?.err && (
+        <>
+          <Notice tone="danger" title="Analysis failed.">{ai.err}</Notice>
+          <Button variant="secondary" icon="refresh" onClick={onRunAi}>Try again</Button>
+        </>
+      )}
+      {a && (
+        <div className="space-y-gutter-sm">
+          {a.summary && <p className="text-[13px] text-fg"><b>Summary:</b> {a.summary}</p>}
+          {a.root_cause && (
+            <Panel title="Root cause" icon="info"><p className="text-[12px] text-fg">{a.root_cause}</p></Panel>
+          )}
+
+          {(a.recommendations || []).length > 0 && (
+            <Panel title={`Recommendations (${a.recommendations.length})`} icon="check">
+              <div className="space-y-gutter-sm">
+                {a.recommendations.map((r, i) => (
+                  <div key={i} className="rounded-card border border-border p-3">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <IssueSeverityBadge severity={r.priority} />
+                      <span className="text-[13px] font-bold text-fg">{r.problem}</span>
+                    </div>
+                    <p className="text-[12px] text-muted"><b>Evidence:</b> {r.evidence}</p>
+                    <p className="mt-1 text-[12px] text-fg"><b>Recommendation:</b> {r.recommendation}</p>
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-subtle">
+                      {r.expected_benefit && <span><b className="text-success-fg">Expected benefit:</b> {r.expected_benefit}</span>}
+                      {r.risk && <span><b className="text-warning-fg">Risk:</b> {r.risk}</span>}
+                    </div>
+                    {r.existing_index_considered && r.existing_index_considered !== 'none applicable' && (
+                      <p className="mt-1 text-[11px] text-subtle"><b>Existing index considered:</b> {r.existing_index_considered}</p>
+                    )}
+                    {r.example && (
+                      <div className="mt-1.5 flex items-start gap-2">
+                        <SqlBlock sql={r.example} className="flex-1" />
+                        <CopyButton text={r.example} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {a.query_rewrite?.applicable && a.query_rewrite.optimized_sql && (
+            <Panel title="Query rewrite" icon="terminal" subtitle="Optional — nothing is changed automatically">
+              <div className="space-y-2">
+                <div>
+                  <p className="mb-1 text-[11px] font-bold tracking-wide text-subtle uppercase">Suggested query</p>
+                  <div className="flex items-start gap-2">
+                    <SqlBlock sql={a.query_rewrite.optimized_sql} className="flex-1" />
+                    <CopyButton text={a.query_rewrite.optimized_sql} />
+                  </div>
+                </div>
+                {(a.query_rewrite.changes_made || []).length > 0 && (
+                  <ul className="ml-4 list-disc space-y-0.5 text-[12px] text-fg">
+                    {a.query_rewrite.changes_made.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                )}
+                {a.query_rewrite.explanation && <p className="text-[11px] text-subtle">{a.query_rewrite.explanation}</p>}
+              </div>
+            </Panel>
+          )}
+
+          {(a.risks_and_testing || []).length > 0 && (
+            <Panel title="Test before production" icon="shield">
+              <ul className="ml-4 list-disc space-y-1 text-[12px] text-fg">
+                {a.risks_and_testing.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            </Panel>
+          )}
+
+          {a.estimated_overall_improvement && (
+            <p className="text-[12px] text-muted"><b>Estimated overall improvement:</b> {a.estimated_overall_improvement}</p>
+          )}
+
+          <Button variant="secondary" icon="refresh" size="sm" onClick={onRunAi}>Re-analyse</Button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function MysqlAnalysisWorkspace({ engine, id, row }) {
+  const [analysis, setAnalysis] = useState(null); // null | {loading} | {data} | {error}
+  const [ai, setAi] = useState(null);
+
+  const runAnalysis = async (mode) => {
+    setAnalysis({ loading: true });
+    try {
+      const res = await client.post(engine.api.analyzeFull(id), {
+        sql_text: row.query_text,
+        db_name: row.database_name,
+        mode,
+        rows_examined: row._raw?.rows_examined ?? row.rows_affected ?? 0,
+        rows_returned: row.rows_returned ?? 0,
+        count_calls: row.execution_count ?? 0,
+        avg_exec_ms: row.average_execution_time ?? 0,
+        total_exec_ms: row.total_execution_time ?? 0,
+      }).then((r) => r.data);
+      if (res.status !== 'success') throw new Error(res.error || 'Analysis failed.');
+      setAnalysis({ data: res });
+    } catch (e) {
+      setAnalysis({ error: e?.message || String(e) });
+    }
+  };
+
+  const runAi = async () => {
+    setAi({ loading: true });
+    try {
+      const payload = engine.buildAiPayload(row, row._raw);
+      const res = await client.post(engine.api.analyzeContext(id), { ...payload, analysis: analysis?.data || {} }).then((r) => r.data);
+      setAi(res.status === 'success' ? { result: res.analysis } : { err: res.error || 'The analyser returned no result.' });
+    } catch (e) {
+      setAi({ err: e?.message || String(e) });
+    }
+  };
+
+  return (
+    <div className="space-y-gutter">
+      {!analysis && (
+        <Button variant="primary" size="lg" icon="terminal" onClick={() => runAnalysis('estimate')}>
+          Run analysis
+        </Button>
+      )}
+      {analysis?.loading && <InlineLoading label="Running EXPLAIN and gathering table/index metadata…" />}
+      {analysis?.error && (
+        <>
+          <Notice tone="danger" title="Analysis failed.">{analysis.error}</Notice>
+          <Button variant="secondary" icon="refresh" onClick={() => runAnalysis('estimate')}>Try again</Button>
+        </>
+      )}
+      {analysis?.data && (
+        <>
+          <ExecutionPlanSection
+            data={analysis.data}
+            mode={analysis.data.explain?.mode || 'estimate'}
+            analyzing={analysis.loading}
+            onRunAnalyze={() => runAnalysis('analyze')}
+          />
+          <TablesIndexesSection data={analysis.data} />
+          <DiagnosisSection data={analysis.data} />
+          <RecommendationsSection ai={ai} onRunAi={runAi} />
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SlowQueryDetailPage({ tech }) {
   const engine = engineFor(tech);
   const { id } = useParams();
@@ -320,33 +702,43 @@ export default function SlowQueryDetailPage({ tech }) {
               tone={row.severity === 'critical' ? 'bad' : row.severity === 'high' ? 'warn' : 'neutral'} />
             {row.execution_count != null && <StatCell label="Executions" value={fmtNumber(row.execution_count)} />}
             {row.max_execution_time != null && <StatCell label="Max time" value={fmtMs(row.max_execution_time)} />}
-            {row.rows_returned != null && <StatCell label="Rows returned" value={fmtNumber(row.rows_returned)} />}
+            {row.rows_returned != null && <StatCell label="Rows sent" value={fmtNumber(row.rows_returned)} />}
+            {row.rows_affected != null && <StatCell label="Rows examined" value={fmtNumber(row.rows_affected)} />}
             {row.user_name && <StatCell label="User" value={row.user_name} />}
             {row.host && <StatCell label="Host" value={row.host} />}
             {row.last_seen && <StatCell label="Last seen" value={fmtDateTime(row.last_seen) || row.last_seen} />}
           </div>
         </Step>
 
-        <Step n={2} title="Execution plan" subtitle={`Native to ${engine.label} — read on demand, never cached stale`}>
-          <PlanStep engine={engine} id={id} row={row} />
-        </Step>
+        {engine.hasFullAnalysis ? (
+          <Step n={2} title="Analysis workspace"
+            subtitle="EXPLAIN, then tables, indexes, and a rule-based diagnosis — one pass, run on demand">
+            <MysqlAnalysisWorkspace engine={engine} id={id} row={row} />
+          </Step>
+        ) : (
+          <>
+            <Step n={2} title="Execution plan" subtitle={`Native to ${engine.label} — read on demand, never cached stale`}>
+              <PlanStep engine={engine} id={id} row={row} />
+            </Step>
 
-        <Step n={3} title="How to make it faster" subtitle="The model reads the statement together with its cost figures">
-          {!ai && <Button variant="primary" size="lg" icon="brain" onClick={runAi}>Analyse this query</Button>}
-          {ai?.loading && <InlineLoading label="Analysing…" />}
-          {ai?.err && (
-            <>
-              <Notice tone="danger" title="Analysis failed.">{ai.err}</Notice>
-              <Button variant="secondary" icon="refresh" onClick={runAi}>Try again</Button>
-            </>
-          )}
-          {ai?.result && (
-            <>
-              <AiAnalysisResult a={ai.result} />
-              <Button variant="secondary" icon="refresh" className="mt-gutter-sm" onClick={runAi}>Re-analyse</Button>
-            </>
-          )}
-        </Step>
+            <Step n={3} title="How to make it faster" subtitle="The model reads the statement together with its cost figures">
+              {!ai && <Button variant="primary" size="lg" icon="brain" onClick={runAi}>Analyse this query</Button>}
+              {ai?.loading && <InlineLoading label="Analysing…" />}
+              {ai?.err && (
+                <>
+                  <Notice tone="danger" title="Analysis failed.">{ai.err}</Notice>
+                  <Button variant="secondary" icon="refresh" onClick={runAi}>Try again</Button>
+                </>
+              )}
+              {ai?.result && (
+                <>
+                  <AiAnalysisResult a={ai.result} />
+                  <Button variant="secondary" icon="refresh" className="mt-gutter-sm" onClick={runAi}>Re-analyse</Button>
+                </>
+              )}
+            </Step>
+          </>
+        )}
       </div>
     </>
   );

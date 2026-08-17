@@ -1,15 +1,17 @@
+import os
 
 from app.services.os_server.ssh_service import (
     execute_ssh_command
 )
 
 # =====================================================
-# SSH CONFIG
+# SSH CONFIG — read from .env, not a source literal (see mysql_config_service.py
+# for the same account/rationale; kept in sync across all 3 files).
 # =====================================================
 
-SSH_USERNAME = "actmon"
+SSH_USERNAME = os.getenv("ACTMON_MYSQL_SSH_USERNAME", "actmon")
 
-SSH_PASSWORD = "Actmon@123"
+SSH_PASSWORD = os.getenv("ACTMON_MYSQL_SSH_PASSWORD", "Actmon@123")
 
 SSH_PORT = 22
 
@@ -88,6 +90,12 @@ def check_mysql_database_health(
         password=SSH_PASSWORD,
         command=command
     )
+
+    # execute_ssh_command echoes the executed command verbatim (used
+    # elsewhere for legitimate debugging) — this one embeds the real DB
+    # password, so redact it before it can reach an API response or log.
+    if isinstance(result, dict) and "command" in result:
+        result["command"] = result["command"].replace(f'-p"{password}"', '-p"********"')
 
     return result
 

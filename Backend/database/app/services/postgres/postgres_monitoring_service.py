@@ -3,7 +3,7 @@ PostgreSQL Monitoring Service — all business logic for monitoring endpoints.
 Route file: app/routes/postgres/postgres_monitoring_routes.py
 """
 
-import csv, io, json, os, re
+import csv, io, json, logging, os, re
 from typing import Optional, List, Any
 
 from fastapi import HTTPException
@@ -381,13 +381,18 @@ def _pg_explain_hints(nodes, planning_time, execution_time):
 class PgSlowQueryGroqRequest(BaseModel):
     sql_text:           str
     user_name:          Optional[str] = None
+    database:           Optional[str] = None
+    query_type:         Optional[str] = None
     calls:              int   = 0
     mean_exec_time_ms:  float = 0.0
+    min_exec_time_ms:   float = 0.0
     max_exec_time_ms:   float = 0.0
     total_exec_time_ms: float = 0.0
     rows:               int   = 0
     shared_blks_hit:    int   = 0
     shared_blks_read:   int   = 0
+    temp_blks_read:     int   = 0
+    temp_blks_written:  int   = 0
     cache_hit_pct:      float = 100.0
     explain_rows:       Optional[List[Any]] = []
 
@@ -1475,55 +1480,62 @@ def svc_replication_detail(conn_id: int, db: Session):
         except Exception as e:
             errors.append(f"wal_receiver: {e}")
 
+    # pg_stat_replication is queried unconditionally — NOT gated behind
+    # "not is_recovery". A standby in a cascading chain (e.g. pg-node1
+    # streaming from the Leader while pg-node3 streams from pg-node1) is
+    # itself a sender for its own downstream, and its pg_stat_replication
+    # view correctly reflects that (valid on any server since PG 9.2+).
+    # Gating this to primaries only was the root cause of cascading replicas
+    # reading as unhealthy: a cascading node's OWN downstream connections
+    # were never visible to this function at all.
     replicas = []
-    if not is_recovery:
-        try:
-            rows = _rows(
-                engine,
-                "SELECT "
-                "  pid::text AS pid, usename, application_name, "
-                "  COALESCE(client_addr::text, 'local') AS client_addr, "
-                "  COALESCE(client_hostname, '')         AS client_hostname, "
-                "  COALESCE(state, 'streaming')          AS state, "
-                "  COALESCE(sent_lsn::text,   '')        AS sent_lsn, "
-                "  COALESCE(write_lsn::text,  '')        AS write_lsn, "
-                "  COALESCE(flush_lsn::text,  '')        AS flush_lsn, "
-                "  COALESCE(replay_lsn::text, '')        AS replay_lsn, "
-                "  COALESCE(write_lag::text,  '0')       AS write_lag, "
-                "  COALESCE(flush_lag::text,  '0')       AS flush_lag, "
-                "  COALESCE(replay_lag::text, '0')       AS replay_lag, "
-                "  COALESCE(EXTRACT(EPOCH FROM write_lag)::bigint,  0) AS write_lag_ms, "
-                "  COALESCE(EXTRACT(EPOCH FROM flush_lag)::bigint,  0) AS flush_lag_ms, "
-                "  COALESCE(EXTRACT(EPOCH FROM replay_lag)::bigint, 0) AS replay_lag_ms, "
-                "  CASE WHEN sent_lsn IS NOT NULL AND replay_lsn IS NOT NULL "
-                "       THEN pg_wal_lsn_diff(sent_lsn, replay_lsn) ELSE 0 "
-                "  END AS byte_lag, "
-                "  CASE WHEN sent_lsn IS NOT NULL AND write_lsn IS NOT NULL "
-                "       THEN pg_wal_lsn_diff(sent_lsn, write_lsn) ELSE 0 "
-                "  END AS write_byte_lag, "
-                "  CASE WHEN write_lsn IS NOT NULL AND flush_lsn IS NOT NULL "
-                "       THEN pg_wal_lsn_diff(write_lsn, flush_lsn) ELSE 0 "
-                "  END AS flush_byte_lag, "
-                "  CASE WHEN flush_lsn IS NOT NULL AND replay_lsn IS NOT NULL "
-                "       THEN pg_wal_lsn_diff(flush_lsn, replay_lsn) ELSE 0 "
-                "  END AS apply_byte_lag, "
-                "  sync_state, "
-                "  backend_start::text AS backend_start "
-                "FROM pg_stat_replication "
-                "ORDER BY byte_lag DESC "
-                "LIMIT 20"
-            )
-            replicas = [dict(r) for r in rows]
-            for r in replicas:
-                r["write_lag_ms"]   = int(r.get("write_lag_ms")   or 0)
-                r["flush_lag_ms"]   = int(r.get("flush_lag_ms")   or 0)
-                r["replay_lag_ms"]  = int(r.get("replay_lag_ms")  or 0)
-                r["byte_lag"]       = int(r.get("byte_lag")       or 0)
-                r["write_byte_lag"] = int(r.get("write_byte_lag") or 0)
-                r["flush_byte_lag"] = int(r.get("flush_byte_lag") or 0)
-                r["apply_byte_lag"] = int(r.get("apply_byte_lag") or 0)
-        except Exception as e:
-            errors.append(f"replicas: {e}")
+    try:
+        rows = _rows(
+            engine,
+            "SELECT "
+            "  pid::text AS pid, usename, application_name, "
+            "  COALESCE(client_addr::text, 'local') AS client_addr, "
+            "  COALESCE(client_hostname, '')         AS client_hostname, "
+            "  COALESCE(state, 'streaming')          AS state, "
+            "  COALESCE(sent_lsn::text,   '')        AS sent_lsn, "
+            "  COALESCE(write_lsn::text,  '')        AS write_lsn, "
+            "  COALESCE(flush_lsn::text,  '')        AS flush_lsn, "
+            "  COALESCE(replay_lsn::text, '')        AS replay_lsn, "
+            "  COALESCE(write_lag::text,  '0')       AS write_lag, "
+            "  COALESCE(flush_lag::text,  '0')       AS flush_lag, "
+            "  COALESCE(replay_lag::text, '0')       AS replay_lag, "
+            "  COALESCE(EXTRACT(EPOCH FROM write_lag)::bigint,  0) AS write_lag_ms, "
+            "  COALESCE(EXTRACT(EPOCH FROM flush_lag)::bigint,  0) AS flush_lag_ms, "
+            "  COALESCE(EXTRACT(EPOCH FROM replay_lag)::bigint, 0) AS replay_lag_ms, "
+            "  CASE WHEN sent_lsn IS NOT NULL AND replay_lsn IS NOT NULL "
+            "       THEN pg_wal_lsn_diff(sent_lsn, replay_lsn) ELSE 0 "
+            "  END AS byte_lag, "
+            "  CASE WHEN sent_lsn IS NOT NULL AND write_lsn IS NOT NULL "
+            "       THEN pg_wal_lsn_diff(sent_lsn, write_lsn) ELSE 0 "
+            "  END AS write_byte_lag, "
+            "  CASE WHEN write_lsn IS NOT NULL AND flush_lsn IS NOT NULL "
+            "       THEN pg_wal_lsn_diff(write_lsn, flush_lsn) ELSE 0 "
+            "  END AS flush_byte_lag, "
+            "  CASE WHEN flush_lsn IS NOT NULL AND replay_lsn IS NOT NULL "
+            "       THEN pg_wal_lsn_diff(flush_lsn, replay_lsn) ELSE 0 "
+            "  END AS apply_byte_lag, "
+            "  sync_state, "
+            "  backend_start::text AS backend_start "
+            "FROM pg_stat_replication "
+            "ORDER BY byte_lag DESC "
+            "LIMIT 20"
+        )
+        replicas = [dict(r) for r in rows]
+        for r in replicas:
+            r["write_lag_ms"]   = int(r.get("write_lag_ms")   or 0)
+            r["flush_lag_ms"]   = int(r.get("flush_lag_ms")   or 0)
+            r["replay_lag_ms"]  = int(r.get("replay_lag_ms")  or 0)
+            r["byte_lag"]       = int(r.get("byte_lag")       or 0)
+            r["write_byte_lag"] = int(r.get("write_byte_lag") or 0)
+            r["flush_byte_lag"] = int(r.get("flush_byte_lag") or 0)
+            r["apply_byte_lag"] = int(r.get("apply_byte_lag") or 0)
+    except Exception as e:
+        errors.append(f"replicas: {e}")
 
     slots = []
     try:
@@ -1945,6 +1957,116 @@ def svc_queries_detail(conn_id: int, db: Session):
         "long_running":      long_running,
         "all_backends":      all_backends,
         "errors":            errors,
+        # Purely additive — existing consumers of this snapshot only ever read
+        # the keys above. svc_pg_queries_filtered() re-derives every top_by_*
+        # view from this raw set after applying its own filters, so the SAME
+        # cached snapshot (agent-pushed or freshly queried) serves both the
+        # unfiltered legacy view and the new filtered one — no second fetch.
+        "all_stmts":         all_stmts,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  6b. Filtered Queries view (hide-ActMon toggle + Database/User/Type/Search)
+#      Reuses svc_queries_detail's existing fetch+cache verbatim — no second
+#      SQL round trip, no second snapshot type. Every filter is applied here,
+#      server-side, to the SAME raw statement set that function already
+#      fetched/cached, before any top_by_* view is (re)computed and before
+#      anything is sent to the browser.
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _db_oid_name_map(conn_rec) -> dict:
+    """oid -> datname for the whole cluster (pg_database is a shared catalog,
+    visible from any database) — resolves pg_stat_statements.dbid into
+    something a human (and a filter dropdown) can actually read."""
+    try:
+        engine = _pg_engine(conn_rec)
+        rows = _rows(engine, "SELECT oid::text AS oid, datname FROM pg_database")
+        return {r["oid"]: r["datname"] for r in rows}
+    except Exception:
+        return {}
+
+
+def svc_pg_queries_filtered(conn_id: int, db: Session, hide_actmon: bool = True,
+                            database: str = None, user: str = None,
+                            query_type: str = None, search: str = None):
+    conn_rec = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "postgresql",
+    ).first()
+    if not conn_rec:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    base = svc_queries_detail(conn_id, db)
+    if base.get("status") != "success" or not base.get("pg_ss_available"):
+        return {**base, "available_databases": [], "available_users": [],
+                "applied_filters": {"hide_actmon": hide_actmon, "database": database, "user": user,
+                                     "query_type": query_type, "search": search}}
+
+    oid_to_name = _db_oid_name_map(conn_rec)
+    all_stmts = base.get("all_stmts") or []
+    for s in all_stmts:
+        s["datname"] = oid_to_name.get(s.get("dbid")) or s.get("dbid")
+
+    # The exact credential ActMon itself was configured with for this
+    # connection — every query ActMon's own collector issues against this
+    # database runs as this user (see _pg_engine/db_proxy_service), so this
+    # is a real, per-connection signal, never a hard-coded username or OID.
+    actmon_user = conn_rec.username
+
+    # Available filter values reflect only the hide_actmon setting, not the
+    # OTHER active filters — so picking Database=X doesn't shrink the User
+    # dropdown's other options out from under the next filter change.
+    visible_for_options = [s for s in all_stmts if not hide_actmon or s.get("usename") != actmon_user]
+    available_databases = sorted({s["datname"] for s in visible_for_options if s.get("datname")})
+    available_users = sorted({s["usename"] for s in visible_for_options if s.get("usename")})
+
+    filtered = all_stmts
+    if hide_actmon:
+        filtered = [s for s in filtered if s.get("usename") != actmon_user]
+    if database:
+        filtered = [s for s in filtered if s.get("datname") == database]
+    if user:
+        filtered = [s for s in filtered if s.get("usename") == user]
+    if query_type:
+        filtered = [s for s in filtered if s.get("query_type") == query_type]
+    if search:
+        needle = search.lower()
+        filtered = [s for s in filtered if needle in str(s.get("query") or "").lower()
+                    or needle in str(s.get("usename") or "").lower()]
+
+    top_mean  = sorted(filtered, key=lambda x: x["mean_exec_time"],  reverse=True)[:25]
+    top_total = sorted(filtered, key=lambda x: x["total_exec_time"], reverse=True)[:25]
+    top_calls = sorted(filtered, key=lambda x: x["calls"],           reverse=True)[:25]
+    top_io    = sorted(filtered, key=lambda x: x["shared_blks_read"],reverse=True)[:25]
+    top_rows  = sorted(filtered, key=lambda x: x["rows"],            reverse=True)[:25]
+    top_temp  = sorted(filtered, key=lambda x: x["temp_blks_read"],  reverse=True)[:10]
+
+    by_type = {}
+    for s in filtered:
+        qt = s["query_type"]
+        by_type[qt] = by_type.get(qt, 0) + 1
+
+    total_io = sum(s["shared_blks_hit"] for s in filtered) + sum(s["shared_blks_read"] for s in filtered)
+    cache_hit_pct = round(sum(s["shared_blks_hit"] for s in filtered) / max(total_io, 1) * 100, 2) if filtered else base.get("cache_hit_pct", 0)
+
+    return {
+        **base,
+        "all_stmts":         filtered,
+        "total_statements":  len(filtered),
+        "total_statements_unfiltered": len(all_stmts),
+        "cache_hit_pct":     cache_hit_pct,
+        "by_type":           by_type,
+        "top_by_mean_time":  top_mean,
+        "top_by_total_time": top_total,
+        "top_by_calls":      top_calls,
+        "top_by_io":         top_io,
+        "top_by_rows":       top_rows,
+        "top_by_temp":       top_temp,
+        "available_databases": available_databases,
+        "available_users":      available_users,
+        "actmon_user":          actmon_user,
+        "applied_filters": {"hide_actmon": hide_actmon, "database": database, "user": user,
+                             "query_type": query_type, "search": search},
     }
 
 
@@ -2921,19 +3043,23 @@ def svc_analyze_slow_query_groq(conn_id: int, payload: PgSlowQueryGroqRequest, d
 
 === QUERY CONTEXT ===
 Host: {rec.host}:{rec.port}
-Database: {rec.database_name or 'unknown'}
+Database: {payload.database or rec.database_name or 'unknown'}
 PostgreSQL User: {payload.user_name or 'unknown'}
+Query Type: {payload.query_type or 'unknown'}
 SQL: {payload.sql_text}
 
 === PERFORMANCE METRICS ===
 Execution Count: {payload.calls:,}
 Average Execution Time: {payload.mean_exec_time_ms:.2f} ms
+Minimum Execution Time: {payload.min_exec_time_ms:.2f} ms
 Maximum Execution Time: {payload.max_exec_time_ms:.2f} ms
 Total Cumulative Time: {payload.total_exec_time_ms:.2f} ms
 Rows Returned: {payload.rows:,}
 Shared Blocks Hit (cache): {payload.shared_blks_hit:,}
 Shared Blocks Read (disk): {payload.shared_blks_read:,}
 Cache Hit Rate: {payload.cache_hit_pct:.1f}%
+Temp Blocks Read (disk spill): {payload.temp_blks_read:,}
+Temp Blocks Written (disk spill): {payload.temp_blks_written:,}
 
 === EXPLAIN ANALYZE OUTPUT ===
 {explain_text}
@@ -3002,7 +3128,12 @@ Return this exact JSON structure:
         return {"status": "success", "analysis": analysis}
 
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        # Never leak the AI provider's own error text (auth failures, rate
+        # limits, model errors) to the browser — that's exactly the "internal
+        # AI implementation" detail this feature must keep hidden. Full detail
+        # stays in the backend log only.
+        logging.getLogger("postgres_ai").warning("AI query suggestion failed for conn=%s: %s", conn_id, e)
+        return {"status": "error", "error": "AI suggestions are temporarily unavailable."}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

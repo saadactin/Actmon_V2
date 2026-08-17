@@ -90,10 +90,17 @@ export const SLOW_QUERY_ENGINES = {
       byId: (id, qid) => `/connections/mysql/${id}/slow-queries/${encodeURIComponent(qid)}`,
       analyzeGroq: (id) => `/connections/mysql/${id}/slow-queries/analyze-groq`,
       explainSql: (id) => `/connections/mysql/${id}/slow-queries/explain-analyze`,
+      // Query-scoped analysis workspace (EXPLAIN FORMAT=JSON + real table/
+      // index metadata + coverage validation + diagnosis, then a separate
+      // context-aware Groq call) — MySQL-only for now, see
+      // mysql_slow_query_analysis_service.py.
+      analyzeFull: (id) => `/connections/mysql/${id}/slow-queries/analyze-full`,
+      analyzeContext: (id) => `/connections/mysql/${id}/slow-queries/analyze-context`,
     },
     hasExplain: true,
+    hasFullAnalysis: true,
     setupGuide: null,
-    sourceLabel: () => 'performance_schema / slow query log',
+    sourceLabel: () => 'MySQL/MariaDB Slow Query Log file',
     buildAiPayload: (row, raw) => ({
       sql_text: row.query_text || '',
       db_name: row.database_name || '',
@@ -101,7 +108,14 @@ export const SLOW_QUERY_ENGINES = {
       avg_exec_sec: num(row.average_execution_time) / 1000,
       max_exec_sec: num(row.max_execution_time) / 1000,
       total_exec_sec: num(row.total_execution_time) / 1000,
-      rows_examined: num(raw?.rows_examined ?? raw?.SUM_ROWS_EXAMINED),
+      // `row.rows_affected` is the normalized field name for "rows
+      // examined" and is always present regardless of source — prefer it
+      // over `raw` (which the MySQL Slow Queries list never actually
+      // attaches, since it fetches its own paginated `normalized` rows
+      // directly rather than going through the generic page's `_raw`
+      // attachment step; falling back to `raw?.rows_examined` alone meant
+      // this silently came out as 0 for every MySQL query).
+      rows_examined: num(row.rows_affected ?? raw?.rows_examined ?? raw?.SUM_ROWS_EXAMINED),
       rows_returned: num(row.rows_returned),
       no_index_count: num(raw?.no_index_count ?? raw?.SUM_NO_INDEX_USED),
       last_seen: row.last_seen || null,

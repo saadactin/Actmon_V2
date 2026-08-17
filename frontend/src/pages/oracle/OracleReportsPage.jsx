@@ -11,6 +11,7 @@ import {
   C, HealthChecks, KStat, RSection, RTable, ReportShell, UsageBar, fmtNum, now, statusBadge,
 } from '@/pages/_shared/reportKit';
 import { explainWait } from '@/config/oracleWaits';
+import { computeInstanceHealthScore } from '@/utils/oracleHealth';
 
 /**
  * Oracle monitoring report — twenty sections over twenty-one endpoints.
@@ -132,16 +133,12 @@ export default function OracleReportsPage() {
   const singleMemberGroups = redoGroups.filter((g) => num(g.members) < 2);
   const invalidTotal = num(invalid.data?.total);
 
-  const healthScore = (() => {
-    let s = 100;
-    if (sessionPct > 90) s -= 30; else if (sessionPct > 70) s -= 15;
-    if (bufHitPct > 0 && bufHitPct < 70) s -= 25; else if (bufHitPct > 0 && bufHitPct < 85) s -= 10;
-    if (maxTsPct > 90) s -= 20; else if (maxTsPct > 80) s -= 10;
-    if (rmanFailed > 0) s -= 15;
-    if (maxGap > 10) s -= 20; else if (maxGap > 5) s -= 10;
-    if (invalidTotal > 50) s -= 10;
-    return Math.max(0, s);
-  })();
+  // Shared with OracleDashboard.jsx (frontend/src/utils/oracleHealth.js) so the
+  // same instance can never score differently on the report vs. the dashboard.
+  const healthScore = computeInstanceHealthScore({
+    sessionPct, bufHitPct, maxTsPct, hostCpuPct,
+    rmanFailed, archiveGapCount: maxGap, invalidObjectsTotal: invalidTotal,
+  });
 
   const connName = conn.name || inst.name || `Oracle #${id}`;
   const subtitle = [

@@ -5,6 +5,7 @@ import {
   listActiveAlerts, listRules, toggleRule, updateRule,
 } from '@/api/alerts';
 import { listAgents, listCloudAccounts, listOsServers } from '@/api/dashboard';
+import { QK } from '@/api/queryKeys';
 import { severityOf } from '@/components/charts/status';
 
 const ACTIVE_KEY = ['alerts', 'active'];
@@ -143,8 +144,8 @@ export function useAlertRules() {
 export function useScopeTargets(enabled = false) {
   const [servers, agents, accounts] = useQueries({
     queries: [
-      { queryKey: ['dash', 'servers'], queryFn: listOsServers, enabled, retry: false, staleTime: 60_000 },
-      { queryKey: ['dash', 'agents'], queryFn: listAgents, enabled, retry: false, staleTime: 60_000 },
+      { queryKey: QK.osServers(), queryFn: listOsServers, enabled, retry: false, staleTime: 60_000 },
+      { queryKey: QK.agents, queryFn: listAgents, enabled, retry: false, staleTime: 60_000 },
       { queryKey: ['dash', 'cloud'], queryFn: listCloudAccounts, enabled, retry: false, staleTime: 60_000 },
     ],
   });
@@ -152,7 +153,7 @@ export function useScopeTargets(enabled = false) {
   const uniqueSorted = (list) => [...new Set(list.filter(Boolean).map(String))].sort();
 
   return {
-    server: uniqueSorted((servers.data || []).map((s) => s.server_name)),
+    server: uniqueSorted((Array.isArray(servers.data) ? servers.data : []).map((s) => s.server_name)),
     agent: uniqueSorted((agents.data || []).map((a) => a.name || a.agent_name)),
     account: uniqueSorted((accounts.data || []).map(
       (a) => a.account_name || a.name || a.provider || a.cloud_provider,

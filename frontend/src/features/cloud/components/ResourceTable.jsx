@@ -301,6 +301,10 @@ export const ResourceTable = ({ accountId }) => {
           sort={{ key: sortKey, dir: sortAsc ? 'asc' : 'desc' }}
           onSort={toggle}
           empty={<EmptyState icon="search" title="No resources found" body="Try adjusting your filters." />}
+          rowHeight={52}
+          virtualize
+          virtualizeThreshold={150}
+          maxBodyHeight={640}
         />
 
         {/* Footer */}

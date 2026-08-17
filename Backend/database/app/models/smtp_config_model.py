@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from app.database.base import Base
+from app.models._encrypted_type import EncryptedString
 from datetime import datetime
 
 
@@ -11,7 +12,7 @@ class SmtpConfig(Base):
     smtp_host    = Column(String(300), nullable=False)
     smtp_port    = Column(Integer,     default=587)
     smtp_user    = Column(String(300), nullable=True)
-    smtp_password= Column(String(500), nullable=True)
+    smtp_password= Column(EncryptedString, nullable=True)  # legacy column, kept encrypted-at-rest too
     smtp_tls     = Column(Boolean,     default=True)
     sender_email = Column(String(300), nullable=False)
     sender_name  = Column(String(200), default="Actmon Monitor")

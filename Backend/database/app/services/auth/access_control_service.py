@@ -20,6 +20,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.common.credential_encryption_service import credential_encryption
+
 SECRET_KEY = os.getenv("JWT_SECRET", "actmon-secret-key-change-in-production")
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
@@ -152,6 +154,13 @@ def record_login(db: Session, user: dict, success: bool, ip: str = None, ua: str
 
 
 def create_session(db: Session, user: dict, ip: str = None, ua: str = None) -> tuple[int, str]:
+    """Returns (session_id, raw_token) — the raw token is never persisted.
+    Only its HMAC-SHA256 hash (via the centralized CredentialEncryptionService,
+    same pattern as agent enrollment tokens) is stored in `user_session.
+    session_token`, since this row is a write-only security-tracking/audit
+    artifact (device/IP/login-time listing) that no auth path reads back for
+    equality lookup — a one-way hash is strictly correct here, not reversible
+    encryption, and this is nothing this app can decrypt back to."""
     token = secrets.token_urlsafe(32)
     expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=TOKEN_EXPIRE_HOURS)
     info = parse_user_agent(ua)
@@ -159,7 +168,8 @@ def create_session(db: Session, user: dict, ip: str = None, ua: str = None) -> t
         INSERT INTO user_session (user_id, session_token, login_time, expiry_time, ip_address, device_name, is_active)
         VALUES (:uid, :tok, now(), :exp, :ip, :dev, true)
         RETURNING session_id
-    """), {"uid": user["user_id"], "tok": token, "exp": expiry, "ip": ip, "dev": info["device"]}).scalar()
+    """), {"uid": user["user_id"], "tok": credential_encryption.hash_token(token),
+           "exp": expiry, "ip": ip, "dev": info["device"]}).scalar()
     return sid, token
 
 

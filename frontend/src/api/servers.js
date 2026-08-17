@@ -1,4 +1,4 @@
-import client from './client';
+import client, { ensureArray } from './client';
 
 // ============================================================
 // OS SERVERS
@@ -7,8 +7,15 @@ import client from './client';
 export const getServerSummary = () =>
   client.get('/os-servers/summary').then((r) => r.data);
 
+// GET /os-servers/ replies {status:'success', data:[...]} — unwrapped to a
+// bare array here so every consumer gets the same shape regardless of which
+// module's listOsServers() populated the shared ['os-servers'] query-cache
+// entry (this one, or api/dashboard.js's — they used to disagree, which
+// intermittently left `hosts`/`serversData` as the raw wrapper object
+// instead of an array, throwing "hosts is not iterable" and showing "0
+// servers" on every technology card).
 export const listOsServers = (params = {}) =>
-  client.get('/os-servers/', { params }).then((r) => r.data);
+  client.get('/os-servers/', { params }).then((r) => ensureArray(r.data));
 
 export const getOsServer = (id) =>
   client.get(`/os-servers/${id}`).then((r) => r.data);

@@ -3,16 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Loader2, Pencil, Database, Settings } from 'lucide-react';
 import { listAgents } from '@/api/agents';
+import { QK } from '@/api/queryKeys';
 
 const Row = ({ label, value }) => (
-  <div className="grid grid-cols-[260px_1fr] gap-4 py-2.5">
+  <div className="grid grid-cols-1 sm:grid-cols-[260px_1fr] gap-1 sm:gap-4 py-2.5">
     <span className="text-[15px] text-slate-500">{label}</span>
     <span className="text-[15px] text-slate-800 break-all">{value || <span className="text-slate-400">—</span>}</span>
   </div>
 );
 
 const StatusRow = ({ ok, okText, waitText, links }) => (
-  <div className="grid grid-cols-[260px_1fr] gap-4 py-2.5 items-center">
+  <div className="grid grid-cols-1 sm:grid-cols-[260px_1fr] gap-1 sm:gap-4 py-2.5 sm:items-center">
     <span className="flex items-center gap-2">
       {ok ? <CheckCircle2 size={17} className="text-emerald-600 flex-shrink-0" />
         : <Loader2 size={16} className="text-blue-500 animate-spin flex-shrink-0" />}
@@ -32,7 +33,7 @@ export default function StepSummary({ data, goToStep }) {
   const navigate = useNavigate();
 
   // Live agent lookup by the ingestion token used in this wizard run.
-  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: listAgents, refetchInterval: 5000 });
+  const { data: agents = [] } = useQuery({ queryKey: QK.agents, queryFn: listAgents, refetchInterval: 5000 });
   const agent = agents.find((a) => a.agent_token === data.token)
     || agents.find((a) => data.tokenName && (a.name || '').toLowerCase().startsWith(data.tokenName.toLowerCase()));
   const online = agent?.status === 'online';
@@ -83,7 +84,15 @@ export default function StepSummary({ data, goToStep }) {
       {/* ── ADDITIONAL ACTIONS ── */}
       <h3 className="text-[15px] font-black text-slate-800 uppercase tracking-wide mt-7">Additional Actions</h3>
       <div className="mt-3 space-y-4 max-w-2xl">
-        <button onClick={() => navigate(`/agents/setup?tab=Databases&agent=${encodeURIComponent(agent?.name || data.tokenName || '')}&token=${encodeURIComponent(data.token || '')}`)}
+        <button onClick={() => navigate('/agents/setup?tab=Databases', {
+            // Enrollment token passed via router state, not a query string —
+            // this is a same-app wizard hand-off, not a link meant to be
+            // bookmarked/shared, so it has no reason to sit in the address
+            // bar or browser history. AgentSetupPage falls back to the
+            // (legacy) query-string param if state is absent, e.g. on a
+            // hard refresh of the destination page.
+            state: { agent: agent?.name || data.tokenName || '', token: data.token || '' },
+          })}
           className="w-full text-left rounded-lg border border-slate-200 bg-slate-50/80 hover:border-blue-300 hover:bg-blue-50/30 p-5 flex items-start gap-4 transition-all">
           <div className="w-11 h-11 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center flex-shrink-0"><Database size={24} /></div>
           <div>

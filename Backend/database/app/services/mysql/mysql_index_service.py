@@ -1,4 +1,3 @@
-import re
 from collections import defaultdict
 from urllib.parse import quote_plus
 
@@ -199,48 +198,76 @@ def get_index_analysis(conn_id: int, db: Session, live: bool = False) -> dict:
     except Exception as e:
         result["errors"]["table_sizes"] = str(e)
 
-    # 5. Queries with No Index Used
+    # 5 & 6. Full-Scan Queries + Missing Index Candidates — sourced from the
+    # REAL Slow Query Log (never performance_schema). Each genuine application
+    # query found there (already excludes system/session/ActMon-internal
+    # traffic — see mysql_slow_query_service.is_actmon_internal_query) is run
+    # through the SAME EXPLAIN + table/index-metadata + coverage-validation
+    # pipeline the "Analyze Query" workspace uses for one query at a time, so
+    # "full scan" and "missing index" here mean the execution plan actually
+    # says so — never a digest counter, never a regex guess at table names.
     try:
-        no_idx = _rows(engine, """
-            SELECT
-                IFNULL(SCHEMA_NAME,'(all)') AS db_name,
-                DIGEST_TEXT     AS sql_text,
-                COUNT_STAR      AS count_calls,
-                ROUND(AVG_TIMER_WAIT/1e12,4)  AS avg_sec,
-                ROUND(MAX_TIMER_WAIT/1e12,4)  AS max_sec,
-                SUM_NO_INDEX_USED             AS no_index_used,
-                SUM_NO_GOOD_INDEX_USED        AS no_good_index_used,
-                SUM_ROWS_EXAMINED             AS rows_examined,
-                SUM_ROWS_SENT                 AS rows_sent,
-                DATE_FORMAT(LAST_SEEN,'%Y-%m-%d %H:%i:%s') AS last_seen
-            FROM performance_schema.events_statements_summary_by_digest
-            WHERE (SCHEMA_NAME NOT IN
-                   ('performance_schema','information_schema','mysql','sys')
-                   OR SCHEMA_NAME IS NULL)
-              AND (SUM_NO_INDEX_USED > 0 OR SUM_NO_GOOD_INDEX_USED > 0)
-              AND DIGEST_TEXT IS NOT NULL
-            ORDER BY (SUM_NO_INDEX_USED + SUM_NO_GOOD_INDEX_USED) * AVG_TIMER_WAIT DESC
-            LIMIT 50
-        """)
-        result["no_index_queries"] = no_idx
-        result["errors"]["no_index_queries"] = None
-    except Exception as e:
-        result["errors"]["no_index_queries"] = str(e)
+        from app.services.mysql import mysql_slow_query_service as _sqs
+        from app.services.mysql import mysql_slow_query_analysis_service as _analysis
 
-    # 6. Missing Index Candidates
-    try:
-        table_scan_count = defaultdict(lambda: {"count": 0, "total_rows": 0, "avg_sec": 0.0})
-        for q in result.get("no_index_queries", []):
-            db_name = q.get("db_name", "(all)")
-            sql = (q.get("sql_text") or "").upper()
-            tables = re.findall(r"(?:FROM|JOIN)\s+`?(\w+)`?", sql)
-            for t in tables:
-                key = (db_name, t.lower())
-                table_scan_count[key]["count"]      += int(q.get("no_index_used", 0)) + int(q.get("no_good_index_used", 0))
-                table_scan_count[key]["total_rows"] += int(q.get("rows_examined", 0))
-                table_scan_count[key]["avg_sec"]     = max(
-                    table_scan_count[key]["avg_sec"], float(q.get("avg_sec", 0))
-                )
+        slow_resp = _sqs.get_slow_queries(conn_id, db, live=live)
+        app_queries = slow_resp.get("file_queries") or []
+
+        no_idx_queries = []
+        # Aggregated per (db, table): every occurrence where the query's own
+        # coverage check found no existing index covering its predicates.
+        candidates_by_key = {}
+
+        for q in app_queries[:40]:
+            sql_text = q.get("sql_text")
+            db_name = q.get("db_name")
+            if not sql_text:
+                continue
+            try:
+                explain_result = _analysis.explain_query(conn_id, sql_text, db_name, db, mode="estimate")
+            except Exception:
+                continue
+            if explain_result.get("status") != "success":
+                continue
+
+            flags = explain_result.get("flags", {})
+            table_names = _analysis.resolve_table_names(explain_result.get("tables", []), sql_text)
+            meta = _analysis.collect_table_metadata(conn_id, table_names, db_name, db)
+            tables_meta = meta.get("tables", [])
+            coverage_findings, _predicates = _analysis.validate_index_coverage(sql_text, tables_meta)
+
+            if flags.get("has_full_scan"):
+                no_idx_queries.append({
+                    "db_name": db_name,
+                    "sql_text": sql_text,
+                    "count_calls": q.get("count_calls", 1),
+                    "avg_sec": q.get("avg_exec_sec", 0.0),
+                    "max_sec": q.get("max_exec_sec", 0.0),
+                    "no_index_used": 1 if flags.get("has_full_scan") else 0,
+                    "no_good_index_used": 1 if flags.get("has_ignored_index") else 0,
+                    "rows_examined": q.get("rows_examined", 0),
+                    "rows_sent": q.get("rows_returned", 0),
+                    "last_seen": q.get("last_seen"),
+                })
+
+            for f in coverage_findings:
+                if f.get("verdict") != "not_covered":
+                    continue
+                key = (db_name, f["table_name"])
+                agg = candidates_by_key.setdefault(key, {
+                    "db_name": db_name, "table_name": f["table_name"],
+                    "no_index_count": 0, "rows_examined": 0, "worst_avg_sec": 0.0,
+                    "columns_needed": [],
+                })
+                agg["no_index_count"] += 1
+                agg["rows_examined"] = max(agg["rows_examined"], int(q.get("rows_examined") or 0))
+                agg["worst_avg_sec"] = max(agg["worst_avg_sec"], float(q.get("avg_exec_sec") or 0))
+                for c in f.get("columns_needed", []):
+                    if c not in agg["columns_needed"]:
+                        agg["columns_needed"].append(c)
+
+        result["no_index_queries"] = no_idx_queries
+        result["errors"]["no_index_queries"] = None
 
         size_lookup = {(t["db_name"], t["table_name"]): t for t in result["table_sizes"]}
         existing_col_lookup = defaultdict(list)
@@ -248,25 +275,35 @@ def get_index_analysis(conn_id: int, db: Session, live: bool = False) -> dict:
             existing_col_lookup[(idx["db_name"], idx["table_name"])].append(idx)
 
         candidates = []
-        for (db_name, tbl), stats in sorted(table_scan_count.items(), key=lambda x: -x[1]["count"]):
+        for (db_name, tbl), agg in sorted(candidates_by_key.items(), key=lambda x: -x[1]["no_index_count"]):
             size_info = size_lookup.get((db_name, tbl), {})
-            existing  = existing_col_lookup.get((db_name, tbl), [])
+            existing = existing_col_lookup.get((db_name, tbl), [])
+            cols = agg["columns_needed"]
+            idx_name = f"idx_{tbl}_{'_'.join(cols)}"[:64] if cols else f"idx_{tbl}"
+            suggested_sql = (
+                f"CREATE INDEX `{idx_name}` ON `{db_name}`.`{tbl}` ({', '.join(f'`{c}`' for c in cols)});"
+                if cols else f"-- No specific predicate columns could be extracted for `{tbl}`."
+            )
             candidates.append({
-                "db_name":          db_name,
-                "table_name":       tbl,
-                "no_index_count":   stats["count"],
-                "rows_examined":    stats["total_rows"],
-                "worst_avg_sec":    round(stats["avg_sec"], 4),
-                "table_rows":       size_info.get("row_estimate"),
-                "data_mb":          size_info.get("data_mb"),
+                "db_name": db_name,
+                "table_name": tbl,
+                "no_index_count": agg["no_index_count"],
+                "rows_examined": agg["rows_examined"],
+                "worst_avg_sec": round(agg["worst_avg_sec"], 4),
+                "table_rows": size_info.get("row_estimate"),
+                "data_mb": size_info.get("data_mb"),
                 "existing_indexes": [e["index_name"] for e in existing],
-                "recommendation":   f"Analyze queries on `{tbl}` and add indexes on frequently filtered/joined columns.",
-                "suggested_sql":    f"-- Identify frequent WHERE/JOIN columns on `{db_name}`.`{tbl}` and run:\n-- CREATE INDEX idx_{tbl}_<col> ON `{db_name}`.`{tbl}` (<col>);",
+                "recommendation": (
+                    f"Queries filtering/joining on {', '.join(cols)} have no existing index with that "
+                    f"leading prefix on `{tbl}` — the optimizer has no efficient access path."
+                    if cols else f"Add an index on the frequently filtered/joined columns of `{tbl}`."
+                ),
+                "suggested_sql": suggested_sql,
                 "crud_impact": {
-                    "select":  "Significant improvement expected (full scan → index seek)",
-                    "insert":  "Minor overhead per insert for each new index",
-                    "update":  "Minor overhead for indexed column updates",
-                    "delete":  "Minimal overhead for delete operations",
+                    "select": "Significant improvement expected (full scan → index seek)",
+                    "insert": "Minor overhead per insert for each new index",
+                    "update": "Minor overhead for indexed column updates",
+                    "delete": "Minimal overhead for delete operations",
                     "storage": "Additional disk space per index (typically 10-30% of data size)",
                 },
             })
@@ -274,7 +311,8 @@ def get_index_analysis(conn_id: int, db: Session, live: bool = False) -> dict:
         result["missing_index_candidates"] = candidates[:30]
         result["errors"]["missing_index_candidates"] = None
     except Exception as e:
-        result["errors"]["missing_index_candidates"] = str(e)
+        result["errors"]["no_index_queries"] = result["errors"].get("no_index_queries") or str(e)
+        result["errors"]["missing_index_candidates"] = result["errors"].get("missing_index_candidates") or str(e)
 
     # 7. Summary
     result["summary"] = {

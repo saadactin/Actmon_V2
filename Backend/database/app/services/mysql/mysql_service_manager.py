@@ -1,9 +1,12 @@
+import os
+
 from app.services.os_server.ssh_service import (
     execute_ssh_command
 )
 
-SSH_USERNAME = "actmon"
-SSH_PASSWORD = "Actmon@123"
+# Read from .env, not a source literal — see mysql_config_service.py.
+SSH_USERNAME = os.getenv("ACTMON_MYSQL_SSH_USERNAME", "actmon")
+SSH_PASSWORD = os.getenv("ACTMON_MYSQL_SSH_PASSWORD", "Actmon@123")
 
 
 def restart_mysql_service(host):

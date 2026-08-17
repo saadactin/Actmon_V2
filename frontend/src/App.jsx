@@ -69,6 +69,8 @@ const MySQLErrorLogs = lazy(() => import('@/pages/mysql/ErrorLogs'));
 const MySQLErrorAnalysis = lazy(() => import('@/pages/mysql/ErrorAnalysis'));
 const MySQLSelfHeal = lazy(() => import('@/pages/mysql/MySQLSelfHeal'));
 const MySQLIndexAnalysis = lazy(() => import('@/pages/mysql/IndexAnalysis'));
+const MySQLBinaryLogs = lazy(() => import('@/pages/mysql/BinaryLogs'));
+const MySQLBinaryLogDetail = lazy(() => import('@/pages/mysql/BinaryLogDetail'));
 const MySQLReportsPage = lazy(() => import('@/pages/mysql/MySQLReportsPage'));
 
 // PostgreSQL — ported verbatim. Same shape as MySQL: the dashboard hosts the
@@ -257,6 +259,8 @@ export default function App() {
         <Route path="/mysql-dashboard/:id/error-analysis" element={<MySQLErrorAnalysis />} />
         <Route path="/mysql-dashboard/:id/self-heal" element={<MySQLSelfHeal />} />
         <Route path="/mysql-dashboard/:id/index-analysis" element={<MySQLIndexAnalysis />} />
+        <Route path="/mysql-dashboard/:id/binary-logs/:logName" element={<MySQLBinaryLogDetail />} />
+        <Route path="/mysql-dashboard/:id/binary-logs" element={<MySQLBinaryLogs />} />
         <Route path="/mysql-dashboard/:id/reports" element={<MySQLReportsPage />} />
         <Route path="/mysql-dashboard/:id/:tab" element={<MySQLDashboard />} />
 

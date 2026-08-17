@@ -50,6 +50,13 @@ export default function EngineDashboardHeader({
       <PageHeader
         title={`${engine.name} Dashboard`}
         description={target}
+        /* Back to the Databases hub instead of the breadcrumb trail — a
+           dashboard reached by picking a connection from that list is one
+           step deep, so "back" is unambiguous and more useful here than a
+           trail that only ever reads "Databases > PostgreSQL > #8". */
+        backTo="/databases"
+        backLabel="Back to Databases"
+        hideBreadcrumbs
         /* The engine's own mark, tinted with its validated slot colour — the same
            colour it carries in the agents list, the databases hub and the charts. */
         leading={(

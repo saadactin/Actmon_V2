@@ -34,7 +34,7 @@ export function Panel({ title, icon, subtitle, actions, footer, className, bodyC
               {subtitle && <p className="truncate-safe mt-0.5 text-[11px] text-subtle">{subtitle}</p>}
             </div>
           )}
-          {actions && <div className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</div>}
+          {actions && <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">{actions}</div>}
         </header>
       )}
       <div className={cn('flex-1 px-card py-card', bodyClassName)}>{children}</div>

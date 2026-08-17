@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import MongoDBConnectionCreate
+from app.services.common.credential_encryption_service import credential_encryption
 
 
 def list_connections(db: Session, org_id=None):
@@ -12,7 +13,7 @@ def list_connections(db: Session, org_id=None):
     if org_id is not None:
         query = query.filter(ConnectionMaster.org_id == org_id)
     connections = query.all()
-    return {"status": "success", "data": connections}
+    return {"status": "success", "data": [credential_encryption.mask_connection_fields(c) for c in connections]}
 
 
 def create_connection(request: MongoDBConnectionCreate, db: Session, org_id=1):
@@ -36,7 +37,7 @@ def create_connection(request: MongoDBConnectionCreate, db: Session, org_id=1):
         return {
             "status": "success",
             "message": "MongoDB connection created successfully",
-            "data": new_connection,
+            "data": credential_encryption.mask_connection_fields(new_connection),
         }
     except Exception as e:
         db.rollback()
@@ -50,7 +51,7 @@ def get_connection(connection_id: int, db: Session):
     ).first()
     if not connection:
         raise HTTPException(status_code=404, detail="MongoDB connection not found")
-    return {"status": "success", "data": connection}
+    return {"status": "success", "data": credential_encryption.mask_connection_fields(connection)}
 
 
 def update_connection(connection_id: int, request: MongoDBConnectionCreate, db: Session):
@@ -65,7 +66,8 @@ def update_connection(connection_id: int, request: MongoDBConnectionCreate, db: 
         connection.host = request.host
         connection.port = request.port
         connection.username = request.username
-        connection.password = request.password
+        if not credential_encryption.looks_like_mask(request.password):
+            connection.password = request.password
         connection.database_name = request.database_name
         connection.mongo_protocol = getattr(request, "mongo_protocol", "mongodb://")
         connection.auth_source = getattr(request, "auth_source", "admin")
@@ -75,7 +77,7 @@ def update_connection(connection_id: int, request: MongoDBConnectionCreate, db: 
         return {
             "status": "success",
             "message": "MongoDB connection updated successfully",
-            "data": connection,
+            "data": credential_encryption.mask_connection_fields(connection),
         }
     except Exception as e:
         db.rollback()

@@ -46,6 +46,60 @@ export const NODE_TYPES = [
   { value: 'Cluster Node', label: 'Cluster Node', icon: '⬡', desc: 'Generic cluster member', tone: 'neutral' },
 ];
 
+/**
+ * Per-engine Node Role / Database Topology option lists — the Node Role step
+ * only shows the options relevant to the database service(s) actually
+ * selected/detected in the Services step (never Oracle RAC/Data Guard for a
+ * MySQL host, never Galera for an Oracle host). Values not already in
+ * NODE_TYPES (e.g. 'Patroni Cluster') are still just plain strings stored in
+ * the existing free-text os_servers.node_type column — no schema change.
+ */
+export const MYSQL_NODE_TYPES = [
+  { value: 'Standalone', label: 'Standalone', icon: '○', desc: 'Single server, no HA', tone: 'neutral' },
+  { value: 'Primary', label: 'Primary / Source', icon: '★', desc: 'Replication primary / source', tone: 'success' },
+  { value: 'Secondary', label: 'Secondary / Replica', icon: '◎', desc: 'Replication replica', tone: 'info' },
+  { value: 'Galera Node', label: 'Galera Node', icon: '⬡', desc: 'Galera / PXC multi-primary', tone: 'accent' },
+  { value: 'Cluster Node', label: 'Cluster Node', icon: '⬡', desc: 'Generic cluster member', tone: 'neutral' },
+  { value: 'Arbiter', label: 'Arbiter', icon: '◇', desc: 'Quorum / tiebreaker, no data', tone: 'warning' },
+];
+
+export const POSTGRESQL_NODE_TYPES = [
+  { value: 'Standalone', label: 'Standalone', icon: '○', desc: 'Single server, no HA', tone: 'neutral' },
+  { value: 'Primary', label: 'Primary', icon: '★', desc: 'Streaming replication primary', tone: 'success' },
+  { value: 'Secondary', label: 'Replica / Standby', icon: '◎', desc: 'Streaming replication standby', tone: 'info' },
+  { value: 'Patroni Cluster', label: 'Patroni Cluster', icon: '⬡', desc: 'Patroni-managed HA cluster member', tone: 'accent' },
+  { value: 'Cluster Node', label: 'Cluster Node', icon: '⬡', desc: 'Generic cluster member', tone: 'neutral' },
+];
+
+/**
+ * Oracle's topology is NOT stored in node_type/cluster_name — it lives on the
+ * connection itself (ConnectionMaster.oracle_deployment_type / oracle_role),
+ * reusing the topology service and Auto Detect endpoint already built for the
+ * Oracle dashboard. Each manual option maps to a (deployment_type, role) pair
+ * the existing PUT /connections/oracle/{id}/deployment-type accepts.
+ */
+export const ORACLE_MANUAL_TOPOLOGY = [
+  { id: 'standalone', label: 'Standalone Oracle', deployment_type: 'standalone', role: null, icon: '○', tone: 'neutral' },
+  { id: 'rac', label: 'Oracle RAC', deployment_type: 'rac', role: null, icon: '⬡', tone: 'accent' },
+  { id: 'dg_primary', label: 'Data Guard Primary', deployment_type: 'data_guard', role: 'primary', icon: '★', tone: 'success' },
+  { id: 'dg_standby', label: 'Data Guard Standby', deployment_type: 'data_guard', role: 'standby', icon: '◎', tone: 'info' },
+  { id: 'rac_dg_primary', label: 'RAC + Data Guard Primary', deployment_type: 'rac_dg', role: 'primary', icon: '★', tone: 'success' },
+  { id: 'rac_dg_standby', label: 'RAC + Data Guard Standby', deployment_type: 'rac_dg', role: 'standby', icon: '◎', tone: 'info' },
+];
+
+/**
+ * Which per-engine topology list applies when several services are selected
+ * at once — Oracle's topology is the most consequential to surface correctly,
+ * then PostgreSQL, then MySQL/MariaDB; anything else (or nothing recognized)
+ * falls back to the generic NODE_TYPES list, unchanged from today.
+ */
+export function topologyEngineFor(selectedDbs = []) {
+  if (selectedDbs.includes('Oracle')) return 'oracle';
+  if (selectedDbs.includes('PostgreSQL')) return 'postgresql';
+  if (selectedDbs.includes('MySQL') || selectedDbs.includes('MariaDB')) return 'mysql';
+  return 'generic';
+}
+
 export const ENVIRONMENTS = ['Production', 'UAT', 'Development', 'Testing'];
 
 /** Form defaults — identical to the existing page's useForm defaultValues. */
@@ -57,9 +111,16 @@ export const SERVER_FORM_DEFAULTS = {
   auto_discovery: true,
 };
 
-/** Wizard steps. The agent path stops at Connection and hands off to Add Data. */
+/**
+ * Wizard steps. The agent path stops at Connection and hands off to Add Data.
+ *
+ * Services comes BEFORE Node Role: the Node Role / Database Topology step's
+ * options depend on which database technology was selected/detected in
+ * Services (Oracle RAC/Data Guard vs. MySQL replication roles vs. PostgreSQL
+ * roles), so the engine has to be known first.
+ */
 export const SSH_STEPS = [
-  'Connection', 'Operating System', 'Server Identity', 'SSH Access', 'Node Role', 'Services',
+  'Connection', 'Operating System', 'Server Identity', 'SSH Access', 'Services', 'Node Role',
   'Add Connection', 'Review',
 ];
 export const AGENT_STEPS = ['Connection'];

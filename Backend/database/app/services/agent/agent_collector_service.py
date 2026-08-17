@@ -956,21 +956,66 @@ def _collect_mysql_snapshots(agent_name: str, conn_id: int, db):
         get_mysql_dashboard, get_table_stats, get_innodb_metrics,
         get_user_stats, get_performance_detail, get_backup_info,
     )
-    from app.routes.mysql.mysql_slow_queries_routes import get_slow_queries
-    from app.routes.mysql.mysql_replication_routes import replication_status, replication_variables
+    from app.services.mysql import (
+        mysql_slow_query_service, mysql_log_service, mysql_binlog_service,
+        mysql_replication_service, mysql_history_flush_service as _hist,
+    )
     from app.routes.mysql.mysql_index_analysis_routes import index_analysis
+
+    # Each of these also feeds the historical ClickHouse event/snapshot tables
+    # (Reports architecture, §16) from data ALREADY being fetched for the live
+    # snapshot — no additional MySQL queries. The flush call is best-effort and
+    # swallows its own errors internally, so it can never affect what gets
+    # cached for the live dashboard/pages below.
+
+    def _slow_queries_and_flush():
+        result = mysql_slow_query_service.get_slow_queries(conn_id, db)
+        _hist.flush_slow_queries(agent_name, conn_id, result)
+        return result
+
+    def _error_logs_and_flush():
+        result = mysql_log_service.get_error_logs(conn_id, db)
+        _hist.flush_error_logs(agent_name, conn_id, result)
+        return result
+
+    def _binlog_and_flush():
+        result = mysql_binlog_service.get_binlog_status(conn_id, db)
+        _hist.flush_binlog_snapshot(agent_name, conn_id, result)
+        return result
+
+    def _replication_and_flush():
+        # Calls the SERVICE function directly, not the route wrapper — that
+        # wrapper's signature is (conn_id, live: Query, ..., db: Depends), so
+        # calling it positionally as (conn_id, db) silently lands `db` in the
+        # `live` slot and leaves the real `db` param as an unresolved Depends()
+        # sentinel (same class of bug already found/fixed for mysql_slow_queries
+        # below — Depends/Query defaults only ever resolve via FastAPI's own
+        # request handling, never on a direct Python call). That was throwing on
+        # every cycle, caught by _try_snapshot's blanket except and logged at
+        # debug level — so this snapshot had never once been cached for any
+        # agent-routed MySQL connection.
+        result = mysql_replication_service.get_replication_status(conn_id, db)
+        _hist.flush_replication_snapshot(agent_name, conn_id, result)
+        return result
 
     _run_snaps(agent_name, conn_id, db, [
         ("mysql_dashboard",             lambda: get_mysql_dashboard(conn_id, db)),
-        ("mysql_slow_queries",          lambda: get_slow_queries(conn_id, db)),
+        # Calls the SERVICE function directly, not the route wrapper — see
+        # _replication_and_flush's note above for why (identical bug class).
+        # That was throwing on every cycle, caught by _try_snapshot's blanket
+        # except and logged at debug level — so this snapshot type had never
+        # once been cached for any agent-routed MySQL connection.
+        ("mysql_slow_queries",          _slow_queries_and_flush),
         ("mysql_table_stats",           lambda: get_table_stats(conn_id, db)),
         ("mysql_innodb",                lambda: get_innodb_metrics(conn_id, db)),
         ("mysql_user_stats",            lambda: get_user_stats(conn_id, db)),
         ("mysql_performance_detail",    lambda: get_performance_detail(conn_id, db)),
         ("mysql_backup_info",           lambda: get_backup_info(conn_id, db)),
-        ("mysql_replication_status",    lambda: replication_status(conn_id, db)),
-        ("mysql_replication_variables", lambda: replication_variables(conn_id, db)),
+        ("mysql_replication_status",    _replication_and_flush),
+        ("mysql_replication_variables", lambda: mysql_replication_service.get_replication_variables(conn_id, db)),
         ("mysql_index_analysis",        lambda: index_analysis(conn_id, db)),
+        ("mysql_error_logs",            _error_logs_and_flush),
+        ("mysql_binlog_status",         _binlog_and_flush),
     ])
 
 
@@ -980,6 +1025,17 @@ def _collect_postgres_snapshots(agent_name: str, conn_id: int, db):
         svc_replication_detail, svc_queries_detail, svc_tables_detail,
         svc_config_detail, svc_users_detail, svc_storage_detail,
     )
+    from app.services.postgres.patroni_cluster_service import svc_patroni_status
+    from app.services.postgres import postgres_patroni_history_flush_service as _patroni_hist
+
+    # Patroni status folds in a Patroni REST probe (short timeout, degrades
+    # cleanly to patroni_detected=False for plain non-Patroni connections) on
+    # top of the SAME svc_replication_detail() call already made two lines
+    # below for the pg_replication_detail snapshot — no extra Postgres load.
+    def _patroni_status_and_flush():
+        result = svc_patroni_status(conn_id, db)
+        _patroni_hist.flush_patroni_status(agent_name, conn_id, result, db)
+        return result
 
     _run_snaps(agent_name, conn_id, db, [
         ("pg_monitoring_dashboard", lambda: svc_monitoring_dashboard(conn_id, db)),
@@ -991,6 +1047,7 @@ def _collect_postgres_snapshots(agent_name: str, conn_id: int, db):
         ("pg_config_detail",        lambda: svc_config_detail(conn_id, db)),
         ("pg_users_detail",         lambda: svc_users_detail(conn_id, db)),
         ("pg_storage_detail",       lambda: svc_storage_detail(conn_id, db)),
+        ("pg_patroni_status",       _patroni_status_and_flush),
     ])
 
 
@@ -999,7 +1056,36 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
         oracle_dashboard, oracle_sga_detail, oracle_pga_detail,
         oracle_sessions, oracle_top_sql, oracle_wait_events,
         oracle_schema_tables, oracle_data_guard,
+        oracle_rac_nodes, oracle_services, oracle_asm, oracle_cdb_pdb,
+        oracle_topology_detect,
     )
+    from app.services.oracle import oracle_history_flush_service as _hist
+
+    # Each of these also feeds the historical ClickHouse tables (RAC nodes,
+    # Services, Data Guard, ASM) from data ALREADY being fetched for the live
+    # snapshot — no additional Oracle queries. The flush call is best-effort
+    # and swallows its own errors internally, so it can never affect what
+    # gets cached for the live dashboard/RAC/Data-Guard tabs below.
+
+    def _data_guard_and_flush():
+        result = oracle_data_guard(conn_id, db)
+        _hist.flush_dataguard(agent_name, conn_id, result, db)
+        return result
+
+    def _rac_nodes_and_flush():
+        result = oracle_rac_nodes(conn_id, db)
+        _hist.flush_rac_nodes(agent_name, conn_id, result, db)
+        return result
+
+    def _services_and_flush():
+        result = oracle_services(conn_id, db)
+        _hist.flush_services(agent_name, conn_id, result, db)
+        return result
+
+    def _asm_and_flush():
+        result = oracle_asm(conn_id, db)
+        _hist.flush_asm(agent_name, conn_id, result, db)
+        return result
 
     _run_snaps(agent_name, conn_id, db, [
         ("oracle_dashboard",     lambda: oracle_dashboard(conn_id, db)),
@@ -1009,7 +1095,12 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
         ("oracle_top_sql",       lambda: oracle_top_sql(conn_id, db)),
         ("oracle_wait_events",   lambda: oracle_wait_events(conn_id, db)),
         ("oracle_schema_tables", lambda: oracle_schema_tables(conn_id, db)),
-        ("oracle_data_guard",    lambda: oracle_data_guard(conn_id, db)),
+        ("oracle_data_guard",    _data_guard_and_flush),
+        ("oracle_rac_nodes",     _rac_nodes_and_flush),
+        ("oracle_services",      _services_and_flush),
+        ("oracle_asm",           _asm_and_flush),
+        ("oracle_cdb_pdb",       lambda: oracle_cdb_pdb(conn_id, db)),
+        ("oracle_topology",      lambda: oracle_topology_detect(conn_id, db)),
     ])
 
 

@@ -52,7 +52,10 @@ def get_client():
                                    socket_timeout=1.5, decode_responses=True)
         cli.ping()
         _client = cli
-        logger.info("[redis_store] hot tier connected (%s)", REDIS_URL)
+        # REDIS_URL can legitimately be redis://:password@host:port/db — never
+        # log it verbatim.
+        from app.services.common.credential_encryption_service import credential_encryption
+        logger.info("[redis_store] hot tier connected (%s)", credential_encryption.redact(REDIS_URL))
         return _client
     except Exception as e:  # noqa: BLE001 — Redis absent → hot tier off, retry later
         _next_retry = time.monotonic() + _COOLDOWN

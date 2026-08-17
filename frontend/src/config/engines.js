@@ -63,7 +63,14 @@ const DEFAULT_QUICK_LINKS = [
 ];
 
 const QUICK_LINKS = {
-  mysql: DEFAULT_QUICK_LINKS,
+  /* Slow Queries / Error Logs / Indexes moved into the main tab strip
+     (see `config/mysqlDashboardNav.js`) — AI Analysis and Self-Heal are no
+     longer top-level entry points at all (AI now lives inside Query
+     Analysis; Self-Heal's route still exists but isn't advertised here).
+     Only Reports remains a genuine "sub-page that isn't a tab." */
+  mysql: [
+    { path: 'reports', label: 'Reports', icon: 'report' },
+  ],
   postgresql: [
     { path: 'slow-queries', label: 'Slow Queries', icon: 'trend' },
     { path: 'error-logs', label: 'Error Logs', icon: 'logs' },

@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import client from '@/api/client';
 import PageHeader from '@/components/layout/PageHeader';
+import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import Tabs from '@/components/ui/Tabs';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
@@ -16,13 +17,60 @@ import Notice from '@/components/ui/Notice';
 import Select from '@/components/ui/Select';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
 import { PageLoading, InlineLoading } from '@/components/ui/Loading';
-import { Paged } from '@/components/ui/Pagination';
+import Pagination, { Paged, pageCountOf } from '@/components/ui/Pagination';
 import CopyButton from '@/components/ui/CopyButton';
 import { MetricTile, Panel, SqlCell, SqlBlock, TablePanel } from '@/pages/_shared/enginePanels';
 import { fmtNumber, fmtDateTime } from '@/config/dbCatalog';
+import { MYSQL_DASHBOARD_TABS, mysqlTabRoute } from '@/config/mysqlDashboardNav';
 import {
   engineFor, DEFAULT_CAPABILITIES, SEVERITY_TONES, SEVERITY_LABELS, fmtMs,
 } from '@/config/slowQueryCatalog';
+
+const SEVERITY_FILTER_OPTIONS = [
+  { id: 'all', label: 'All severities' },
+  { id: 'critical', label: 'Critical' },
+  { id: 'high', label: 'High' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'low', label: 'Low' },
+];
+
+/** The query cell for the MySQL Slow Queries list — deliberately NOT the
+ * shared `SqlCell` (which stays a compact single-line truncation used by
+ * every other engine's Explorer tab): this one shows a genuinely readable,
+ * wrapped chunk of SQL.
+ *
+ * The whole cell is part of the row's click target — clicking the query
+ * text OR "Show full query" opens Query Analysis for that exact query
+ * (`row.onClick` on the enclosing `<tr>`, see `MysqlSlowQueryExplorer`
+ * below), it does NOT locally expand/collapse text on this page. Only the
+ * Copy button stops propagation, since copying the SQL shouldn't also
+ * navigate away. (This previously wrapped the ENTIRE cell in its own
+ * `stopPropagation`, which silently ate every click here — including on the
+ * query text itself — before it could ever reach the row's navigate
+ * handler. That's the actual reason the detail page never opened.) */
+function SlowQuerySqlCell({ sql }) {
+  const text = String(sql || '').replace(/\s+/g, ' ').trim();
+  if (!text) return <span className="text-subtle">—</span>;
+  const isLong = text.length > 220;
+
+  return (
+    <div className="max-w-2xl cursor-pointer">
+      <pre className="line-clamp-3 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-fg">
+        {text}
+      </pre>
+      <div className="mt-1 flex items-center gap-2">
+        {isLong && (
+          <span className="text-[11px] font-semibold text-accent-text hover:underline">
+            Show full query
+          </span>
+        )}
+        <span onClick={(e) => e.stopPropagation()}>
+          <CopyButton text={text} />
+        </span>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Slow Query Analysis — the ONE list page every engine renders through.
@@ -381,6 +429,17 @@ function HotspotCard({ title, icon, items, metric }) {
 function ExplorerTab({ rows, cap, engine, id, isFetching, onRefetch, data }) {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+  // A busy engine can return hundreds-to-thousands of query fingerprints
+  // (pg_stat_statements/performance_schema digests) — re-filtering, re-sorting,
+  // and rebuilding every row's JSX (SqlCell + badges) on EVERY keystroke was
+  // visibly laggy at that size. The input itself stays wired to `search` so
+  // typing feels instant; only the actual filtering work waits for a short
+  // pause in typing.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 220);
+    return () => clearTimeout(t);
+  }, [search]);
   const [userFilter, setUserFilter] = useState('');
   const [minDuration, setMinDuration] = useState('0');
   const [sort, setSort] = useState({ key: 'avg', dir: 'desc' });
@@ -391,14 +450,14 @@ function ExplorerTab({ rows, cap, engine, id, isFetching, onRefetch, data }) {
   ]), [rows]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     const floor = Number(minDuration) || 0;
     return rows.filter((r) => (
       (!q || String(r.query_text || '').toLowerCase().includes(q))
       && (!userFilter || r.user_name === userFilter)
       && num(r.average_execution_time) >= floor
     ));
-  }, [rows, search, userFilter, minDuration]);
+  }, [rows, debouncedSearch, userFilter, minDuration]);
 
   const isInstance = cap.aggregation === 'instance';
 
@@ -504,6 +563,232 @@ function ExplorerTab({ rows, cap, engine, id, isFetching, onRefetch, data }) {
         )}
       </Paged>
     </TablePanel>
+  );
+}
+
+/* ── MySQL — focused Slow Query Explorer ─────────────────────────────────────
+ * MySQL gets its own dedicated page (see `MysqlSlowQueriesPage` below), not
+ * the generic Overview/Explorer/AI Analysis/Reports tab set every other
+ * engine uses — it opens directly on the full list. The collector can
+ * genuinely return hundreds of entries on a busy server, so this sends the
+ * database/schema filter, min execution time, search text, sort, and page
+ * straight to `GET .../slow-queries` (see
+ * `mysql_slow_query_service.list_slow_queries_filtered`), so the frontend
+ * only ever holds the one page it's showing. Other engines' list endpoints
+ * don't support these params yet, so this stays MySQL-only for now — every
+ * other engine keeps using the generic ExplorerTab above, unchanged. */
+
+const SORT_KEY_TO_PARAM = {
+  avg: 'avg', max: 'max', execs: 'count', rows_sent: 'rows_returned', rows_examined: 'rows_examined', last: 'last_seen',
+};
+
+function MysqlSlowQueryExplorer({ engine, id }) {
+  const navigate = useNavigate();
+  const [schema, setSchema] = useState('');
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 220);
+    return () => clearTimeout(t);
+  }, [search]);
+  const [minDuration, setMinDuration] = useState('0');
+  const [severity, setSeverity] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sort, setSort] = useState({ key: 'avg', dir: 'desc' });
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
+
+  const params = useMemo(() => ({
+    db_name: schema || undefined,
+    min_avg_ms: Number(minDuration) || undefined,
+    search: debouncedSearch.trim() || undefined,
+    severity: severity !== 'all' ? severity : undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    sort_by: SORT_KEY_TO_PARAM[sort.key],
+    sort_dir: sort.dir,
+    page,
+    page_size: pageSize,
+  }), [schema, minDuration, debouncedSearch, severity, dateFrom, dateTo, sort, page]);
+
+  // Filters/sort/schema changing should always land back on page 1 — never
+  // silently show an empty "page 4 of 1" after narrowing the result set.
+  useEffect(() => { setPage(1); }, [schema, minDuration, debouncedSearch, severity, dateFrom, dateTo, sort.key, sort.dir]);
+
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ['slowQueriesFiltered', 'mysql', id, params],
+    queryFn: () => client.get(engine.api.list(id), { params }).then((r) => r.data),
+    // v5's replacement for the v4 boolean `keepPreviousData: true` (silently
+    // ignored in v5) — without this, the table briefly emptied on every
+    // database/severity/search/date/sort/page change instead of keeping the
+    // previous rows visible while the new filter's data loads.
+    placeholderData: keepPreviousData,
+    refetchInterval: 30000,
+  });
+
+  // The backend clamps an out-of-range page to the real last page (e.g. the
+  // log rotated and the filtered result set shrank while sitting on a later
+  // page) and reports which page it actually served. Sync local state to
+  // that so the displayed "page" label and the Pagination control's
+  // Prev/Next state never disagree with what's actually on screen.
+  useEffect(() => {
+    if (data && typeof data.page === 'number' && data.page !== page) {
+      setPage(data.page);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const pageRows = data?.normalized || [];
+  const total = data?.normalized_total ?? pageRows.length;
+  const availableSchemas = data?.available_databases || [];
+  const pageCount = pageCountOf(total, pageSize);
+  const logConfig = data?.slow_log_config;
+
+  const schemaOptions = [{ id: '', label: 'All databases' }, ...availableSchemas.map((s) => ({ id: s, label: s }))];
+
+  const columns = [
+    { key: 'sev', label: 'Severity' },
+    { key: 'db', label: 'Database' },
+    { key: 'query', label: 'Query' },
+    { key: 'avg', label: 'Avg time', align: 'right', sortable: true },
+    { key: 'max', label: 'Max time', align: 'right', sortable: true },
+    { key: 'execs', label: 'Executions', align: 'right', sortable: true },
+    { key: 'rows_sent', label: 'Rows sent', align: 'right', sortable: true },
+    { key: 'rows_examined', label: 'Rows examined', align: 'right', sortable: true },
+    { key: 'last', label: 'Last seen', sortable: true },
+    { key: 'who', label: 'User / Host' },
+  ];
+
+  const tableRows = pageRows.map((r, i) => ({
+    key: r.query_id || `q-${i}`,
+    onClick: () => navigate(`${engine.dashboardPath(id)}/slow-queries/detail`, { state: { row: r, raw: r._raw } }),
+    cells: {
+      sev: <SeverityBadge severity={r.severity} />,
+      db: r.database_name
+        ? <Badge tone="accent" size="xs">{r.database_name}</Badge>
+        : <Badge tone="neutral" size="xs">No Database</Badge>,
+      query: <SlowQuerySqlCell sql={r.query_text} />,
+      avg: (
+        <span className={
+          r.severity === 'critical' ? 'font-mono font-bold text-danger-fg'
+            : r.severity === 'high' ? 'font-mono font-bold text-warning-fg' : 'font-mono font-semibold'
+        }>
+          {fmtMs(r.average_execution_time)}
+        </span>
+      ),
+      max: r.max_execution_time != null ? <span className="font-mono text-muted">{fmtMs(r.max_execution_time)}</span> : null,
+      execs: <span className="font-mono">{fmtNumber(r.execution_count)}</span>,
+      rows_sent: <span className="font-mono text-muted">{fmtNumber(r.rows_returned)}</span>,
+      rows_examined: <span className="font-mono text-muted">{fmtNumber(r.rows_affected)}</span>,
+      last: r.last_seen ? (
+        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
+      ) : null,
+      who: (r.user_name || r.host) ? (
+        <span className="whitespace-nowrap font-mono text-[11px]">
+          {r.user_name || '—'}
+          {r.host && <span className="text-subtle"> @ {r.host}</span>}
+        </span>
+      ) : <span className="text-subtle">—</span>,
+    },
+  }));
+
+  return (
+    <div className="space-y-gutter">
+      {logConfig && logConfig.enabled === false && (
+        <Notice tone="warning" title="The Slow Query Log is not enabled on this server.">
+          Set <code>slow_query_log = ON</code> (and a <code>long_query_time</code> threshold) to start recording
+          entries — nothing can be shown here until it is.
+        </Notice>
+      )}
+      {data?.file_error && (
+        <Notice tone="warning" title="The Slow Query Log file could not be read.">{data.file_error}</Notice>
+      )}
+
+      <TablePanel
+        title="Slow queries"
+        icon="zap"
+        subtitle="Every genuine entry from the MySQL/MariaDB Slow Query Log — filtered and paginated on the server"
+        actions={(
+          <>
+            <Select value={minDuration} onChange={setMinDuration} options={DURATION_FILTERS} size="sm" width="auto" />
+            {/* Always shown — even with a single real database, this is how
+                the user confirms what's actually in the log and switches
+                between it and "All Databases". Previously hidden whenever
+                `availableSchemas.length <= 1`, which is exactly why it
+                looked "missing" on a server with only one active database. */}
+            <Select value={schema} onChange={setSchema} options={schemaOptions} size="sm" width="auto" />
+            <Select value={severity} onChange={setSeverity} options={SEVERITY_FILTER_OPTIONS} size="sm" width="auto" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onClear={() => setSearch('')}
+              placeholder="Search query text…"
+              icon="search"
+              size="sm"
+              wrapperClassName="w-44"
+            />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
+            />
+            <span className="text-[11px] text-subtle">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
+            />
+            <Button variant="ghost" size="sm" icon="refresh" loading={isFetching} onClick={() => refetch()} aria-label="Refresh" />
+            <Badge tone="accent" size="xs">{fmtNumber(total)}</Badge>
+          </>
+        )}
+      >
+        <Table
+          columns={columns}
+          rows={tableRows}
+          sort={sort}
+          onSort={(key) => setSort((cur) => nextSort(cur, key))}
+          loading={isFetching}
+          empty={
+            <EmptyState icon="zap" title="No slow queries match these filters"
+              body="Try widening the duration floor, clearing the search, or picking a different database."
+              action={<Button variant="primary" icon="refresh" onClick={() => refetch()}>Refresh now</Button>} />
+          }
+        />
+        {total > 0 && (
+          <Pagination page={page} pageCount={pageCount} total={total} pageSize={pageSize} onPage={setPage} unit="queries" />
+        )}
+      </TablePanel>
+    </div>
+  );
+}
+
+/** MySQL's whole Slow Queries page — a focused explorer, nothing else. Opens
+ * directly on the full list (no Overview, no AI Analysis tab here — that
+ * only ever runs per-query, inside "Analyze Query"). Shares the SAME nav
+ * strip as the rest of the MySQL dashboard (Overview…Storage…Slow Queries),
+ * so it feels like one continuous tab set even though this page lives at
+ * its own route, not inside `MySQLDashboard.jsx`'s own `activeTab` switch. */
+function MysqlSlowQueriesPage({ engine, id }) {
+  const navigate = useNavigate();
+  return (
+    <div className="flex min-h-full flex-col">
+      <EngineDashboardHeader
+        tech="mysql"
+        connectionId={id}
+        tabs={MYSQL_DASHBOARD_TABS}
+        activeTab="slow-queries"
+        onTabChange={(t) => navigate(mysqlTabRoute(id, t))}
+      />
+      <div className="space-y-1">
+        <h1 className="text-lg font-black text-fg">Slow Queries</h1>
+        <p className="text-xs text-subtle">MySQL/MariaDB Slow Query Log</p>
+      </div>
+      <MysqlSlowQueryExplorer engine={engine} id={id} />
+    </div>
   );
 }
 
@@ -644,12 +929,16 @@ export default function SlowQueriesPage({ tech }) {
   const { id } = useParams();
   const [tab, setTab] = useState('overview');
 
+  // MySQL gets its own focused page below (MysqlSlowQueriesPage) — this
+  // generic multi-tab fetch would be pure waste for it (a second, unpaginated
+  // fetch of the same data its own explorer already queries with real
+  // server-side filters), so it's disabled rather than run and ignored.
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['slowQueries', tech, id],
     queryFn: () => client.get(engine.api.list(id)).then((r) => r.data),
     retry: false,
     refetchInterval: 30000,
-    enabled: !!engine,
+    enabled: !!engine && engine.key !== 'mysql',
   });
 
   const cap = data?.capabilities || DEFAULT_CAPABILITIES;
@@ -702,6 +991,12 @@ export default function SlowQueriesPage({ tech }) {
     );
   }
 
+  // A focused Slow Query Explorer, not the generic Overview/Explorer/AI
+  // Analysis/Reports tab set — opens directly on the full list.
+  if (engine.key === 'mysql') {
+    return <MysqlSlowQueriesPage engine={engine} id={id} />;
+  }
+
   if (isLoading) return <>{header}<PageLoading title="Loading slow queries…" /></>;
 
   if (error) {
@@ -723,7 +1018,9 @@ export default function SlowQueriesPage({ tech }) {
       )}
 
       {tab === 'overview' && <OverviewTab rows={rows} cap={cap} engine={engine} id={id} data={data} onRefetch={refetch} />}
-      {tab === 'explorer' && <ExplorerTab rows={rows} cap={cap} engine={engine} id={id} isFetching={isFetching} onRefetch={refetch} data={data} />}
+      {tab === 'explorer' && (
+        <ExplorerTab rows={rows} cap={cap} engine={engine} id={id} isFetching={isFetching} onRefetch={refetch} data={data} />
+      )}
       {tab === 'ai' && <AiAnalysisTab rows={rows} engine={engine} id={id} />}
       {tab === 'reports' && <ReportsTab rows={rows} engine={engine} id={id} />}
 

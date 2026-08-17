@@ -1,9 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { listAgents, registerAgent, syncConnections } from '@/api/agents';
+import { QK } from '@/api/queryKeys';
 import { TIMING, statusLevel } from '@/config/agents';
 
-const KEY = ['agents', 'list'];
+// Shared with the agent-setup wizard's own polling query (StepSummary.jsx) and
+// useDashboardData.js — one cache entry per endpoint (see api/queryKeys.js).
+const KEY = QK.agents;
 
 /**
  * The agents list, its derived counts and filter options, plus the register and

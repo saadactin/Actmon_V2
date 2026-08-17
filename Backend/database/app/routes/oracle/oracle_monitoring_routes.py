@@ -41,6 +41,12 @@ from app.services.oracle.oracle_monitoring_service import (
     oracle_ebs_concurrent,
     oracle_ebs_workflow,
     oracle_db_status,
+    oracle_topology_detect,
+    oracle_rac_nodes,
+    oracle_services,
+    oracle_asm,
+    oracle_cdb_pdb,
+    oracle_listener_status,
 )
 
 router = APIRouter(prefix="/api/v1/connections/oracle", tags=["Oracle Monitoring"])
@@ -263,3 +269,40 @@ def route_oracle_ebs_workflow(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-db-status")
 def route_oracle_db_status(conn_id: int, db: Session = Depends(get_db)):
     return oracle_db_status(conn_id, db)
+
+
+# 32 — topology detection (RAC / Data Guard), re-derived live from Oracle
+# metadata, never blindly trusting the registration-time selection.
+@router.get("/{conn_id}/oracle-topology")
+def route_oracle_topology_detect(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_topology_detect(conn_id, db)
+
+
+# 33 — RAC per-instance nodes + cluster health rollup
+@router.get("/{conn_id}/oracle-rac-nodes")
+def route_oracle_rac_nodes(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_rac_nodes(conn_id, db)
+
+
+# 34 — Oracle Services per-instance availability
+@router.get("/{conn_id}/oracle-services")
+def route_oracle_services(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_services(conn_id, db)
+
+
+# 35 — ASM disk group usage/state
+@router.get("/{conn_id}/oracle-asm")
+def route_oracle_asm(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_asm(conn_id, db)
+
+
+# 36 — CDB/PDB (multitenant) status
+@router.get("/{conn_id}/oracle-cdb-pdb")
+def route_oracle_cdb_pdb(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_cdb_pdb(conn_id, db)
+
+
+# 37 — listener status, differentiated failure modes
+@router.get("/{conn_id}/oracle-listener-status")
+def route_oracle_listener_status(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_listener_status(conn_id, db)

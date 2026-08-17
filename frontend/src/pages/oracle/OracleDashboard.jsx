@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import {
-  Activity, BarChart2, Boxes, Clock, Cpu, HardDrive, Key, Lock, RotateCcw, Settings,
-  ShieldCheck, Table, TrendingUp, Users, Zap,
-} from 'lucide-react';
+import { Key, Lock, Table } from 'lucide-react';
 import client from '@/api/client';
 
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
@@ -12,6 +9,7 @@ import HostResources from '@/pages/postgresql/PgHostResources';
 import TrendChart from '@/components/gauges/TrendChart';
 import ChartCard from '@/components/charts/ChartCard';
 import { STATUS, bandFor } from '@/components/charts/status';
+import { computeInstanceHealthScore } from '@/utils/oracleHealth';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
@@ -34,6 +32,8 @@ import {
   fmtBytes, fmtNumber, oracleTableRow, orderColumns, withHints,
 } from '@/config/dbCatalog';
 import { WAIT_CLASS_TONES, explainWait, isIdleWait } from '@/config/oracleWaits';
+import { tabsForTopology } from '@/config/oracleDashboardNav';
+import { healthBand } from '@/utils/oracleHealth';
 import OracleLiveQueries from './LiveQueries';
 
 /**
@@ -53,25 +53,6 @@ const REFRESH_INTERVAL = 15; // seconds
 
 const get = (id, path, params) =>
   client.get(`/connections/oracle/${id}/${path}`, params ? { params } : undefined).then((r) => r.data);
-
-const TABS = [
-  { id: 'overview', label: 'Overview', icon: Activity },
-  { id: 'performance', label: 'Performance', icon: TrendingUp },
-  { id: 'sessions', label: 'Sessions', icon: Users },
-  { id: 'sql', label: 'Top SQL', icon: Zap },
-  { id: 'tablespaces', label: 'Tablespaces', icon: HardDrive },
-  { id: 'objects', label: 'Objects', icon: Boxes },
-  { id: 'tables', label: 'Tables', icon: Table },
-  { id: 'dataguard', label: 'Data Guard', icon: ShieldCheck },
-  { id: 'redologs', label: 'Redo Logs', icon: RotateCcw },
-  { id: 'processes', label: 'Processes', icon: Cpu },
-  { id: 'users', label: 'Users', icon: Key },
-  { id: 'systemstats', label: 'Sys Stats', icon: BarChart2 },
-  { id: 'slowqueries', label: 'Slow SQL', icon: Clock },
-  { id: 'live', label: 'Live Queries', icon: Activity },
-  { id: 'locks', label: 'Locks', icon: Lock },
-  { id: 'parameters', label: 'Parameters', icon: Settings },
-];
 
 const num = (v) => Number(v) || 0;
 const mb = (v) => num(v) * 1048576;
@@ -110,21 +91,6 @@ const ACCOUNT_TONES = {
 };
 const REDO_TONES = { CURRENT: 'success', ACTIVE: 'warning', INACTIVE: 'neutral', UNUSED: 'neutral' };
 
-/** 0–100. Same weighting as the existing dashboard. */
-function computeHealthScore({ sessionPct, bufHitPct, maxTsPct, waitCount, hostCpuPct }) {
-  let score = 100;
-  if (sessionPct > 90) score -= 25;
-  else if (sessionPct > 75) score -= 12;
-  if (bufHitPct > 0 && bufHitPct < 80) score -= 25;
-  else if (bufHitPct > 0 && bufHitPct < 90) score -= 12;
-  if (maxTsPct > 95) score -= 25;
-  else if (maxTsPct > 85) score -= 12;
-  if (hostCpuPct > 90) score -= 15;
-  else if (hostCpuPct > 75) score -= 8;
-  if (waitCount > 20) score -= 8;
-  return Math.max(0, score);
-}
-
 function HealthBadge({ score }) {
   const band = score >= 80 ? STATUS.good : score >= 60 ? STATUS.warning : STATUS.critical;
   return (
@@ -136,6 +102,222 @@ function HealthBadge({ score }) {
       <Icon name="activity" size={13} />
       Health {score}
     </span>
+  );
+}
+
+const DEPLOYMENT_OPTIONS = [
+  { id: 'standalone', label: 'Standalone' },
+  { id: 'rac', label: 'RAC' },
+  { id: 'data_guard', label: 'Data Guard' },
+  { id: 'rac_dg', label: 'RAC + Data Guard' },
+];
+
+function detectedTopologyLabel(topology) {
+  if (!topology || (!topology.is_rac && !topology.is_dataguard)) return 'Standalone';
+  if (topology.is_rac && topology.is_dataguard) return 'RAC + Data Guard';
+  if (topology.is_rac) return 'RAC';
+  return 'Data Guard';
+}
+
+function detectedDeploymentType(topology) {
+  if (topology?.is_rac && topology?.is_dataguard) return 'rac_dg';
+  if (topology?.is_rac) return 'rac';
+  if (topology?.is_dataguard) return 'data_guard';
+  return 'standalone';
+}
+
+/**
+ * §1 — the user's selection is a hint, never a source of truth. This banner
+ * lets them record it (client.put persists ConnectionMaster.oracle_deployment_type)
+ * while always showing what was actually auto-detected from GV$INSTANCE/
+ * V$DATABASE, and flags a mismatch rather than silently trusting the dropdown.
+ */
+function OracleDeploymentBanner({ id, connection, topology, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const selected = connection?.oracle_deployment_type || 'standalone';
+  const detected = detectedDeploymentType(topology);
+  const mismatch = selected !== detected;
+
+  const save = async (value) => {
+    setSaving(true);
+    try {
+      await client.put(`/connections/oracle/${id}/deployment-type`, { deployment_type: value });
+      onSaved?.();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-control border border-border bg-sunken px-3 py-2">
+      <span className="text-[12px] font-semibold text-muted">Oracle Deployment:</span>
+      <Select value={selected} onChange={save} options={DEPLOYMENT_OPTIONS} size="sm" width="auto" disabled={saving} />
+      <Badge tone={mismatch ? 'warning' : 'neutral'} size="xs">
+        Detected: {detectedTopologyLabel(topology)}
+      </Badge>
+      {mismatch && (
+        <span className="text-[11px] text-warning-fg">
+          Selection does not match the detected topology — ActMon always monitors the detected state.
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Data Guard standbys are separate connections/databases (§9, §13) — this
+ * lists the ones already linked via oracle_topology_links and lets the user
+ * link another already-registered Oracle connection as a standby/far-sync/
+ * cascaded-standby peer. No new inline connection sub-wizard: link an Oracle
+ * connection registered the normal way (Add OS Server / Add Data), same as
+ * every other engine.
+ */
+function OracleTopologyPeers({ id }) {
+  const [peerId, setPeerId] = useState('');
+  const [linkType, setLinkType] = useState('standby');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const peersQ = useQuery({
+    queryKey: ['oracleTopologyPeers', id],
+    queryFn: () => client.get(`/connections/oracle/${id}/topology/peers`).then((r) => r.data),
+    retry: false,
+  });
+  const allConnsQ = useQuery({
+    queryKey: ['oracleAllConnections'],
+    queryFn: () => client.get('/connections/oracle/').then((r) => r.data),
+    retry: false,
+  });
+
+  const downstream = peersQ.data?.downstream || [];
+  const upstream = peersQ.data?.upstream || [];
+  const candidates = (allConnsQ.data?.data || []).filter((c) => String(c.id) !== String(id));
+
+  const addPeer = async () => {
+    if (!peerId) return;
+    setSaving(true); setError(null);
+    try {
+      await client.post(`/connections/oracle/${id}/topology/peers`, { peer_connection_id: Number(peerId), link_type: linkType });
+      setPeerId('');
+      peersQ.refetch();
+    } catch (e) {
+      setError(e?.response?.data?.detail || 'Could not link that connection.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removePeer = async (linkId) => {
+    await client.delete(`/connections/oracle/topology/peers/${linkId}`);
+    peersQ.refetch();
+  };
+
+  return (
+    <Panel title="Data Guard Peers" icon="branch" subtitle="Standby / far-sync / cascaded-standby connections linked to this primary">
+      {upstream.length > 0 && (
+        <p className="mb-2 text-[12px] text-muted">
+          This connection is a <strong>{upstream[0].link_type}</strong> of{' '}
+          <strong>{upstream[0].peer?.name || `connection #${upstream[0].connection_id}`}</strong>.
+        </p>
+      )}
+      {downstream.length === 0 ? (
+        <EmptyState icon="branch" title="No standby peers linked yet" body="Link an already-registered Oracle connection as this primary's standby." />
+      ) : (
+        <ul className="mb-gutter-sm space-y-1.5">
+          {downstream.map((l) => (
+            <li key={l.id} className="flex items-center justify-between rounded-control border border-border px-3 py-1.5 text-[12px]">
+              <span>
+                <Badge tone="accent" size="xs">{l.link_type}</Badge>{' '}
+                <span className="font-semibold">{l.peer?.name || `Connection #${l.peer_connection_id}`}</span>
+                {l.peer?.host && <span className="ml-1 text-muted">({l.peer.host}:{l.peer.port})</span>}
+              </span>
+              <Button size="xs" variant="ghost" onClick={() => removePeer(l.id)}>Unlink</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-end gap-2">
+        <Select value={peerId} onChange={setPeerId} width="auto" size="sm"
+          placeholder="Choose a connection…"
+          options={candidates.map((c) => ({ id: String(c.id), label: `${c.connection_name} (${c.host}:${c.port})` }))} />
+        <Select value={linkType} onChange={setLinkType} width="auto" size="sm"
+          options={[
+            { id: 'standby', label: 'Standby' },
+            { id: 'far_sync', label: 'Far Sync' },
+            { id: 'cascaded_standby', label: 'Cascaded Standby' },
+          ]} />
+        <Button size="sm" onClick={addPeer} disabled={!peerId || saving}>Add Standby</Button>
+      </div>
+      {error && <p className="mt-1.5 text-[11px] text-danger-fg">{error}</p>}
+    </Panel>
+  );
+}
+
+function TopologyNodeBox({ label, sub, ok }) {
+  return (
+    <div className="flex min-w-[140px] flex-col rounded-control border border-border bg-panel px-3 py-2">
+      <span className="flex items-center gap-1.5 text-[12px] font-semibold text-fg">
+        <span className={cnDot(ok)} />
+        {label}
+      </span>
+      {sub && <span className="mt-0.5 text-[11px] text-subtle">{sub}</span>}
+    </div>
+  );
+}
+function cnDot(ok) {
+  return `inline-block h-2 w-2 rounded-full ${ok ? 'bg-success' : 'bg-danger'}`;
+}
+
+/**
+ * §25 — a clear visual: who's Primary, who's Standby, which nodes/instances
+ * are running, is transport/apply healthy, what's the lag. Auto-discovered
+ * from oracle_rac_nodes/oracle_data_guard, not hand-curated like the existing
+ * host-level ReplicationTopology/GaleraTopology on DatabaseServersPage.
+ */
+function OracleTopologyDiagram({ topology, racNodes, dataGuard }) {
+  const nodes = racNodes?.nodes || [];
+  const isRac = topology?.is_rac;
+  const isDg = topology?.is_dataguard;
+
+  if (!isRac && !isDg) {
+    return <TopologyNodeBox label="Standalone Instance" sub="No RAC, no Data Guard" ok />;
+  }
+
+  return (
+    <div className="flex flex-col gap-gutter">
+      <div>
+        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">
+          {isRac ? 'RAC Cluster (Primary)' : 'Primary'}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {isRac ? nodes.map((n) => (
+            <TopologyNodeBox key={n.instance_number}
+              label={`Node ${n.instance_number} / ${n.instance_name}`}
+              sub={`${n.host_name} — ${n.instance_status}`}
+              ok={String(n.instance_status).toUpperCase() === 'OPEN'} />
+          )) : (
+            <TopologyNodeBox label={dataGuard?.role || 'Primary'} sub={dataGuard?.open_mode} ok />
+          )}
+        </div>
+      </div>
+
+      {isDg && (
+        <>
+          <div className="flex items-center gap-2 pl-2 text-[11px] text-muted">
+            <span>↓ Redo Transport</span>
+            <Badge tone={dataGuard?.transport_status === 'failed' ? 'danger' : 'neutral'} size="xs">
+              {dataGuard?.transport_status || 'unknown'}
+            </Badge>
+            <span>Lag: {dataGuard?.transport_lag_sec != null ? `${dataGuard.transport_lag_sec}s` : 'N/A'}</span>
+          </div>
+          <div>
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">Standby</p>
+            <TopologyNodeBox label="Standby database" sub={`Apply: ${dataGuard?.apply_status || 'unknown'} · Lag: ${dataGuard?.apply_lag_sec != null ? `${dataGuard.apply_lag_sec}s` : 'N/A'}`}
+              ok={dataGuard?.apply_status !== 'stopped'} />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -210,6 +392,22 @@ export default function OracleDashboard() {
   const locks = q('oracleLocks', 'oracle-locks', { refetchInterval: 10000, enabled: on('locks') });
   const params = q('oracleParams', 'oracle-parameters', { staleTime: 120000, enabled: on('parameters') });
 
+  // Topology detection (§1) — always enabled (not tab-gated): the tab list
+  // itself depends on this, and it's a single cheap query (GV$INSTANCE count +
+  // a couple of V$ lookups), not a heavy collection.
+  const topologyQ = useQuery({
+    queryKey: ['oracleTopology', id],
+    queryFn: () => get(id, 'oracle-topology'),
+    retry: false,
+    staleTime: 60000,
+  });
+  const topology = topologyQ.data || {};
+
+  const racNodes = q('oracleRacNodes', 'oracle-rac-nodes', { refetchInterval: 15000, enabled: on('rac') });
+  const services = q('oracleServices', 'oracle-services', { refetchInterval: 30000, enabled: on('services') });
+  const asm = q('oracleAsm', 'oracle-asm', { refetchInterval: 60000, enabled: on('asm') });
+  const cdbPdb = q('oracleCdbPdb', 'oracle-cdb-pdb', { refetchInterval: 60000, enabled: on('multitenant') });
+
   const schema = useQuery({
     queryKey: ['oracleSchemaTables', id, schemaOwner],
     queryFn: () => get(id, 'oracle-schema-tables', schemaOwner ? { owner: schemaOwner } : undefined),
@@ -280,7 +478,7 @@ export default function OracleDashboard() {
       maxTsPct,
       fullestTs: tsList.find((t) => num(t.used_pct) === maxTsPct) || null,
       criticalTs: tsList.filter((t) => num(t.used_pct) > 85),
-      healthScore: computeHealthScore({
+      healthScore: computeInstanceHealthScore({
         sessionPct, bufHitPct, maxTsPct, waitCount: waitList.length, hostCpuPct,
       }),
     };
@@ -324,7 +522,7 @@ export default function OracleDashboard() {
           tech="oracle"
           connectionId={id}
           connection={connection}
-          tabs={TABS}
+          tabs={tabsForTopology(topology)}
           activeTab={activeTab}
           onTabChange={setActiveTab}
           alerts={alerts}
@@ -343,6 +541,11 @@ export default function OracleDashboard() {
         {/* ══ OVERVIEW ══════════════════════════════════════════════════════ */}
         {on('overview') && (
           <div className="space-y-gutter">
+            {/* Deployment-type control belongs on Overview only — it used to
+                render above every tab, so switching to Sessions/Locks/etc.
+                repeated the same "Detected: Standalone" banner for no reason. */}
+            <OracleDeploymentBanner id={id} connection={connection} topology={topology} onSaved={() => { refetch(); topologyQ.refetch(); }} />
+
             <div className="grid grid-cols-2 gap-gutter-sm sm:grid-cols-4 xl:grid-cols-8">
               <MetricTile label="Instance" icon="server" value={hs.instance_name || '—'}
                 sub={hs.host_name || undefined} />
@@ -916,6 +1119,38 @@ export default function OracleDashboard() {
                   )}
                 </Panel>
 
+                {dataGuard.data?.role && (
+                  <Panel title="Role / Protection / Lag" icon="activity"
+                    subtitle="Real role, protection mode and transport/apply lag — not just a configured flag"
+                    actions={(
+                      <Badge tone={healthBand(dataGuard.data.health?.status).tone} size="xs">
+                        {healthBand(dataGuard.data.health?.status).label}
+                      </Badge>
+                    )}
+                  >
+                    <div className="grid gap-gutter-sm sm:grid-cols-2 xl:grid-cols-4">
+                      <StatCell label="Role" value={dataGuard.data.role || 'N/A'} />
+                      <StatCell label="Protection Mode" value={dataGuard.data.protection_mode || 'N/A'} />
+                      <StatCell label="Transport" value={dataGuard.data.transport_status || 'Unknown'} />
+                      <StatCell label="Apply" value={dataGuard.data.apply_status || 'Unknown'} />
+                      <StatCell label="Transport Lag"
+                        value={dataGuard.data.transport_lag_sec != null ? `${dataGuard.data.transport_lag_sec}s` : 'N/A'}
+                        tone={dataGuard.data.transport_lag_sec > 60 ? 'bad' : 'good'} />
+                      <StatCell label="Apply Lag"
+                        value={dataGuard.data.apply_lag_sec != null ? `${dataGuard.data.apply_lag_sec}s` : 'N/A'}
+                        tone={dataGuard.data.apply_lag_sec > 60 ? 'bad' : 'good'} />
+                      <StatCell label="Archive Gap" value={dataGuard.data.archive_gap ?? 'N/A'}
+                        tone={(dataGuard.data.archive_gap || 0) > 0 ? 'bad' : 'good'} />
+                      <StatCell label="Switchover Status" value={dataGuard.data.switchover_status || 'N/A'} />
+                    </div>
+                    {dataGuard.data.health?.reason && (
+                      <p className="mt-gutter-sm text-[12px] text-danger-fg">Reason: {dataGuard.data.health.reason}</p>
+                    )}
+                  </Panel>
+                )}
+
+                <OracleTopologyPeers id={id} />
+
                 {(dataGuard.data?.archive_dests || []).length > 0 && (
                   <TablePanel title="Archive destinations" icon="branch"
                     subtitle="v$archive_dest_status — where redo is shipped">
@@ -990,6 +1225,168 @@ export default function OracleDashboard() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* ══ RAC ═══════════════════════════════════════════════════════════ */}
+        {on('rac') && (
+          <div className="space-y-gutter">
+            {racNodes.isLoading ? <InlineLoading label="Reading RAC instance status…" /> : (
+              <>
+                <Panel title="RAC Cluster" icon="server"
+                  subtitle={`${racNodes.data?.nodes_total ?? (racNodes.data?.nodes || []).length} instance(s) via GV$INSTANCE`}
+                  actions={(
+                    <Badge tone={healthBand(racNodes.data?.cluster_health).tone} size="xs">
+                      {healthBand(racNodes.data?.cluster_health).label}
+                    </Badge>
+                  )}
+                >
+                  <div className="grid gap-gutter-sm sm:grid-cols-2 xl:grid-cols-4">
+                    <StatCell label="Instances Open" value={`${racNodes.data?.nodes_open ?? 0} / ${racNodes.data?.nodes_total ?? 0}`} />
+                    <StatCell label="Cluster Health" value={healthBand(racNodes.data?.cluster_health).label} />
+                  </div>
+                </Panel>
+                <TablePanel title="Nodes / Instances" icon="server" subtitle="GV$INSTANCE — one row per RAC instance">
+                  <Table2
+                    columns={[
+                      { key: 'inst', label: 'Instance #', align: 'right' },
+                      { key: 'name', label: 'Instance Name' },
+                      { key: 'host', label: 'Host' },
+                      { key: 'status', label: 'Status' },
+                      { key: 'dbstatus', label: 'DB Status' },
+                      { key: 'sessions', label: 'Active Sessions', align: 'right' },
+                      { key: 'blocking', label: 'Blocking Sessions', align: 'right' },
+                    ]}
+                    rows={(racNodes.data?.nodes || []).map((n) => ({
+                      key: n.instance_number,
+                      cells: {
+                        inst: <span className="font-mono">{n.instance_number}</span>,
+                        name: <span className="font-semibold">{n.instance_name}</span>,
+                        host: n.host_name,
+                        status: <StateChip value={n.instance_status} tones={{ OPEN: 'success', MOUNTED: 'warning' }} />,
+                        dbstatus: <StateChip value={n.database_status} tones={{ ACTIVE: 'success' }} />,
+                        sessions: n.active_sessions ?? 'N/A',
+                        blocking: <span className={n.blocking_sessions > 0 ? 'text-danger-fg font-semibold' : ''}>{n.blocking_sessions ?? 'N/A'}</span>,
+                      },
+                    }))}
+                    empty={<EmptyState icon="server" title="No RAC nodes found" />}
+                  />
+                </TablePanel>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ══ SERVICES ══════════════════════════════════════════════════════ */}
+        {on('services') && (
+          <div className="space-y-gutter">
+            {services.isLoading ? <InlineLoading label="Reading Oracle Services…" /> : (
+              <TablePanel title="Oracle Services" icon="branch" subtitle="DBA_SERVICES / GV$ACTIVE_SERVICES — per-instance availability, independent of overall database health">
+                <Table2
+                  columns={[
+                    { key: 'name', label: 'Service' },
+                    { key: 'status', label: 'Overall Status' },
+                    { key: 'instances', label: 'Per-Instance' },
+                  ]}
+                  rows={(services.data?.services || []).map((s) => ({
+                    key: s.service_name,
+                    cells: {
+                      name: <span className="font-semibold">{s.service_name}</span>,
+                      status: <StateChip value={s.status} tones={{ online: 'success', partial: 'warning', offline: 'danger' }} />,
+                      instances: (
+                        <span className="flex flex-wrap gap-1">
+                          {(s.instances || []).map((i, idx) => (
+                            <Badge key={idx} tone={i.status === 'online' ? 'success' : 'danger'} size="xs">
+                              #{i.instance_number ?? '—'} {i.status}
+                            </Badge>
+                          ))}
+                        </span>
+                      ),
+                    },
+                  }))}
+                  empty={<EmptyState icon="branch" title="No services found" />}
+                />
+              </TablePanel>
+            )}
+          </div>
+        )}
+
+        {/* ══ ASM ═══════════════════════════════════════════════════════════ */}
+        {on('asm') && (
+          <div className="space-y-gutter">
+            {asm.isLoading ? <InlineLoading label="Reading ASM disk groups…" /> : (
+              asm.data?.status !== 'success' ? (
+                <EmptyState icon="disk" title="ASM Not Configured" body="This instance does not use Automatic Storage Management." />
+              ) : (
+                <TablePanel title="ASM Disk Groups" icon="disk" subtitle="V$ASM_DISKGROUP">
+                  <Table2
+                    columns={[
+                      { key: 'name', label: 'Disk Group' },
+                      { key: 'state', label: 'State' },
+                      { key: 'total', label: 'Total (MB)', align: 'right' },
+                      { key: 'used', label: 'Used %', align: 'right' },
+                      { key: 'free', label: 'Free (MB)', align: 'right' },
+                      { key: 'offline', label: 'Offline Disks', align: 'right' },
+                      { key: 'sev', label: 'Severity' },
+                    ]}
+                    rows={(asm.data?.diskgroups || []).map((dg) => ({
+                      key: dg.name,
+                      cells: {
+                        name: <span className="font-semibold">{dg.name}</span>,
+                        state: <StateChip value={dg.state} tones={{ MOUNTED: 'success', CONNECTED: 'success' }} />,
+                        total: fmtNumber(dg.total_mb),
+                        used: dg.used_pct != null ? `${dg.used_pct}%` : 'N/A',
+                        free: fmtNumber(dg.free_mb),
+                        offline: <span className={dg.offline_disks > 0 ? 'text-danger-fg font-semibold' : ''}>{dg.offline_disks}</span>,
+                        sev: <Badge tone={healthBand(dg.severity === 'healthy' ? 'healthy' : dg.severity).tone} size="xs">{dg.severity}</Badge>,
+                      },
+                    }))}
+                    empty={<EmptyState icon="disk" title="No disk groups found" />}
+                  />
+                </TablePanel>
+              )
+            )}
+          </div>
+        )}
+
+        {/* ══ MULTITENANT (CDB/PDB) ═════════════════════════════════════════ */}
+        {on('multitenant') && (
+          <div className="space-y-gutter">
+            {cdbPdb.isLoading ? <InlineLoading label="Reading CDB/PDB status…" /> : (
+              cdbPdb.data?.status !== 'success' ? (
+                <EmptyState icon="boxes" title="Not a Multitenant (CDB) Database" body="This instance is not a Container Database." />
+              ) : (
+                <TablePanel title="Pluggable Databases" icon="boxes" subtitle={`V$PDBS — ${cdbPdb.data?.pdb_count ?? 0} PDB(s)`}>
+                  <Table2
+                    columns={[
+                      { key: 'conid', label: 'CON_ID', align: 'right' },
+                      { key: 'name', label: 'Name' },
+                      { key: 'mode', label: 'Open Mode' },
+                      { key: 'restricted', label: 'Restricted' },
+                    ]}
+                    rows={(cdbPdb.data?.pdbs || []).map((p) => ({
+                      key: p.con_id,
+                      cells: {
+                        conid: <span className="font-mono">{p.con_id}</span>,
+                        name: <span className="font-semibold">{p.name}</span>,
+                        mode: <StateChip value={p.open_mode} tones={{ 'READ WRITE': 'success', 'READ ONLY': 'warning', MOUNTED: 'neutral' }} />,
+                        restricted: <StateChip value={p.restricted} tones={{ NO: 'success', YES: 'warning' }} />,
+                      },
+                    }))}
+                    empty={<EmptyState icon="boxes" title="No PDBs found" />}
+                  />
+                </TablePanel>
+              )
+            )}
+          </div>
+        )}
+
+        {/* ══ TOPOLOGY ══════════════════════════════════════════════════════ */}
+        {on('topology') && (
+          <div className="space-y-gutter">
+            <Panel title="Topology" icon="branch" subtitle="Auto-discovered from Oracle metadata — not the registration-time selection">
+              <OracleTopologyDiagram topology={topology} racNodes={racNodes.data} dataGuard={dataGuard.data} />
+            </Panel>
           </div>
         )}
 

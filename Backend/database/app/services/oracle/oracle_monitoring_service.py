@@ -405,6 +405,7 @@ def oracle_dashboard(conn_id: int, db: Session):
             "port":         conn.port,
             "database":     conn.database_name,
             "service_name": getattr(conn, "service_name", ""),
+            "oracle_deployment_type": getattr(conn, "oracle_deployment_type", None),
         },
         "health_summary":        health_summary,
         "overview":              health_summary,
@@ -1513,8 +1514,125 @@ def oracle_data_guard(conn_id: int, db: Session):
 
     configured = len(dg_status) > 0 or len(archive_dests) > 1 or len(standby_logs) > 0
 
+    # ── Real role / protection / transport+apply lag / health verdict ──
+    # Replaces the old bare `configured: bool` with the actual root-cause-aware
+    # picture required by §7/§10: role, protection mode, transport status,
+    # apply status, transport/apply lag, archive gap, and a verdict that names
+    # WHAT failed rather than a blanket "DOWN". All fields degrade to None/
+    # "N/A" on permission or version errors — never a fabricated value (§29).
+    role = protection_mode = protection_level = open_mode = switchover_status = None
+    try:
+        row = _rows(engine, "SELECT database_role, protection_mode, protection_level, "
+                            "open_mode, switchover_status FROM v$database")
+        if row:
+            role               = _safe_str(row[0].get("DATABASE_ROLE")) or None
+            protection_mode    = _safe_str(row[0].get("PROTECTION_MODE")) or None
+            protection_level   = _safe_str(row[0].get("PROTECTION_LEVEL")) or None
+            open_mode          = _safe_str(row[0].get("OPEN_MODE")) or None
+            switchover_status  = _safe_str(row[0].get("SWITCHOVER_STATUS")) or None
+    except Exception:
+        pass
+
+    transport_lag_sec = apply_lag_sec = None
+    try:
+        raw = _rows(engine, "SELECT name, value FROM v$dataguard_stats WHERE name IN ('transport lag','apply lag')")
+        for r in raw:
+            secs = _parse_dg_interval_seconds(r.get("VALUE"))
+            if _safe_str(r.get("NAME")) == "transport lag":
+                transport_lag_sec = secs
+            elif _safe_str(r.get("NAME")) == "apply lag":
+                apply_lag_sec = secs
+    except Exception:
+        pass
+
+    apply_status = None
+    try:
+        raw = _rows(engine, "SELECT process, status FROM v$managed_standby WHERE process LIKE 'MRP%'")
+        if raw:
+            apply_status = "applying" if any(_safe_str(r.get("STATUS")).upper() == "APPLYING_LOG" for r in raw) else "idle"
+        elif role and "STANDBY" in role.upper():
+            apply_status = "stopped"
+    except Exception:
+        pass
+
+    transport_status = None
+    try:
+        if archive_dests:
+            statuses = {d["status"].upper() for d in archive_dests if d.get("status")}
+            transport_status = "failed" if any(s in ("ERROR", "FAILED") for s in statuses) \
+                else ("valid" if "VALID" in statuses else None)
+    except Exception:
+        pass
+
+    archive_gap_count = None
+    last_received_seq = last_applied_seq = None
+    try:
+        gap_rows = _rows(engine, "SELECT thread#, low_sequence#, high_sequence# FROM v$archive_gap")
+        archive_gap_count = len(gap_rows)
+    except Exception:
+        pass
+    try:
+        seq_rows = _rows(engine, "SELECT thread#, MAX(sequence#) AS max_seq, "
+                                 "MAX(CASE WHEN applied != 'NO' THEN sequence# END) AS max_applied "
+                                 "FROM v$archived_log GROUP BY thread#")
+        if seq_rows:
+            last_received_seq = max((_safe_int(r.get("MAX_SEQ")) for r in seq_rows), default=None)
+            applied_vals = [_safe_int(r.get("MAX_APPLIED")) for r in seq_rows if r.get("MAX_APPLIED") is not None]
+            last_applied_seq = max(applied_vals) if applied_vals else None
+    except Exception:
+        pass
+
+    if not configured and not role:
+        dg_health = {"status": "not_configured"}
+    else:
+        reasons = []
+        health_status = "healthy"
+        if transport_status == "failed":
+            reasons.append("archive destination error"); health_status = "critical"
+        if apply_status == "stopped":
+            reasons.append("redo apply stopped"); health_status = "critical"
+        if archive_gap_count:
+            reasons.append(f"archive gap ({archive_gap_count} missing sequence range(s))")
+            health_status = "critical" if health_status != "critical" else health_status
+        if transport_lag_sec is not None and transport_lag_sec > 60:
+            reasons.append(f"high transport lag ({transport_lag_sec}s)")
+            health_status = "warning" if health_status == "healthy" else health_status
+        if apply_lag_sec is not None and apply_lag_sec > 60:
+            reasons.append(f"high apply lag ({apply_lag_sec}s)")
+            health_status = "warning" if health_status == "healthy" else health_status
+        dg_health = {
+            "status": health_status,
+            "transport": transport_status or "unknown",
+            "apply": apply_status or "unknown",
+            "reason": "; ".join(reasons) if reasons else None,
+        }
+
     return {"status": "success", "configured": configured,
-            "dg_status": dg_status, "archive_dests": archive_dests, "standby_logs": standby_logs}
+            "dg_status": dg_status, "archive_dests": archive_dests, "standby_logs": standby_logs,
+            "role": role, "protection_mode": protection_mode, "protection_level": protection_level,
+            "open_mode": open_mode, "switchover_status": switchover_status,
+            "transport_status": transport_status, "apply_status": apply_status,
+            "transport_lag_sec": transport_lag_sec, "apply_lag_sec": apply_lag_sec,
+            "last_received_seq": last_received_seq, "last_applied_seq": last_applied_seq,
+            "archive_gap": archive_gap_count, "health": dg_health}
+
+
+def _parse_dg_interval_seconds(value):
+    """Parses V$DATAGUARD_STATS's interval-day-to-second text value
+    ('+00 00:00:03') into whole seconds. Returns None (never 0) on anything
+    unparseable — the caller renders that as N/A, not a fabricated zero."""
+    if not value:
+        return None
+    try:
+        s = str(value).strip()
+        sign = -1 if s.startswith("-") else 1
+        s = s.lstrip("+-")
+        day_part, _, time_part = s.partition(" ")
+        days = int(day_part)
+        h, m, sec = (int(x) for x in time_part.split(":"))
+        return sign * (days * 86400 + h * 3600 + m * 60 + sec)
+    except Exception:
+        return None
 
 
 # ──────────────────────────────────────────────────────────────
@@ -3052,3 +3170,328 @@ def oracle_db_status(conn_id: int, db: Session):
         pass
 
     return result
+
+
+# ──────────────────────────────────────────────────────────────
+#  32. TOPOLOGY DETECTION (RAC / Data Guard) — never trusts the user's
+#      registration-time selection; always re-derives the actual topology
+#      from Oracle metadata itself (§1).
+# ──────────────────────────────────────────────────────────────
+
+def oracle_topology_detect(conn_id: int, db: Session):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_topology", db)
+    if _cached is not None:
+        return _cached
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+
+    is_rac, instance_count = False, 0
+    try:
+        rows = _rows(engine, "SELECT COUNT(*) AS cnt FROM gv$instance")
+        instance_count = _safe_int(rows[0].get("CNT")) if rows else 0
+        is_rac = instance_count > 1
+    except Exception:
+        pass
+    if not is_rac:
+        try:
+            rows = _rows(engine, "SELECT value FROM v$parameter WHERE name = 'cluster_database'")
+            if rows and _safe_str(rows[0].get("VALUE")).upper() == "TRUE":
+                is_rac = True
+        except Exception:
+            pass
+
+    role = None
+    try:
+        rows = _rows(engine, "SELECT database_role FROM v$database")
+        if rows:
+            role = _safe_str(rows[0].get("DATABASE_ROLE")) or None
+    except Exception:
+        pass
+
+    is_dataguard = bool(role) and role.upper() != "PRIMARY"
+    if not is_dataguard:
+        try:
+            rows = _rows(engine, "SELECT COUNT(*) AS cnt FROM v$archive_dest_status "
+                                 "WHERE target = 'STANDBY' AND status = 'VALID'")
+            is_dataguard = bool(rows and _safe_int(rows[0].get("CNT")) > 0)
+        except Exception:
+            pass
+
+    asm_configured = False
+    try:
+        rows = _rows(engine, "SELECT COUNT(*) AS cnt FROM v$asm_diskgroup")
+        asm_configured = bool(rows and _safe_int(rows[0].get("CNT")) > 0)
+    except Exception:
+        pass
+
+    is_cdb = False
+    try:
+        rows = _rows(engine, "SELECT cdb FROM v$database")
+        is_cdb = bool(rows and _safe_str(rows[0].get("CDB")).upper() == "YES")
+    except Exception:
+        pass
+
+    return {"status": "success", "is_rac": is_rac, "instance_count": instance_count or 1,
+            "is_dataguard": is_dataguard, "role": role,
+            "asm_configured": asm_configured, "is_cdb": is_cdb}
+
+
+# ──────────────────────────────────────────────────────────────
+#  33. RAC NODES — per-instance status/sessions/blocking + topology-aware
+#      cluster health rollup (§3, §4, §23). Uses GV$ views — the ONLY
+#      collector in this file that does (every other one is single-instance
+#      V$). Gracefully returns is_rac=False on a standalone instance rather
+#      than an error, since GV$ views work fine (just return 1 row) even
+#      without RAC.
+# ──────────────────────────────────────────────────────────────
+
+def oracle_rac_nodes(conn_id: int, db: Session):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_rac_nodes", db)
+    if _cached is not None:
+        return _cached
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+
+    try:
+        rows = _rows(engine, """
+            SELECT inst_id, instance_number, instance_name, host_name, status,
+                   database_status, active_state, thread#
+            FROM gv$instance ORDER BY instance_number
+        """)
+    except Exception as e:
+        return {"status": "error", "error": str(e), "is_rac": False, "nodes": []}
+
+    nodes = [{
+        "instance_number": _safe_int(r.get("INSTANCE_NUMBER")),
+        "instance_name":   _safe_str(r.get("INSTANCE_NAME")),
+        "host_name":       _safe_str(r.get("HOST_NAME")),
+        "instance_status": _safe_str(r.get("STATUS")),
+        "database_status": _safe_str(r.get("DATABASE_STATUS")),
+        "active_state":    _safe_str(r.get("ACTIVE_STATE")),
+        "thread":          _safe_int(r.get("THREAD#")),
+    } for r in rows]
+
+    if len(nodes) <= 1:
+        return {"status": "success", "is_rac": False, "nodes": nodes}
+
+    try:
+        sess_rows = _rows(engine, "SELECT inst_id, COUNT(*) AS cnt FROM gv$session WHERE type='USER' GROUP BY inst_id")
+        sess_by_inst = {_safe_int(r.get("INST_ID")): _safe_int(r.get("CNT")) for r in sess_rows}
+    except Exception:
+        sess_by_inst = {}
+    try:
+        block_rows = _rows(engine, "SELECT inst_id, COUNT(*) AS cnt FROM gv$session "
+                                   "WHERE blocking_session IS NOT NULL GROUP BY inst_id")
+        block_by_inst = {_safe_int(r.get("INST_ID")): _safe_int(r.get("CNT")) for r in block_rows}
+    except Exception:
+        block_by_inst = {}
+
+    for n in nodes:
+        n["active_sessions"]   = sess_by_inst.get(n["instance_number"])
+        n["blocking_sessions"] = block_by_inst.get(n["instance_number"])
+
+    # Topology-aware rollup (§23) — NOT a flat average: all OPEN → healthy,
+    # some unreachable/not-OPEN → warning, none reachable → critical. Shared
+    # with the frontend's clusterHealthFromNodes() so the two never diverge.
+    from app.utils.oracle_health import cluster_health_from_nodes
+    open_count = sum(1 for n in nodes if (n["instance_status"] or "").upper() == "OPEN")
+    cluster_health = cluster_health_from_nodes(nodes)
+
+    return {
+        "status": "success", "is_rac": True, "instance_count": len(nodes),
+        "nodes": nodes, "nodes_open": open_count, "nodes_total": len(nodes),
+        "cluster_health": cluster_health,
+    }
+
+
+# ──────────────────────────────────────────────────────────────
+#  34. ORACLE SERVICES — per-instance availability (§5). Independent of
+#      overall database health: a service can be down on one RAC node while
+#      the database itself is fully healthy.
+# ──────────────────────────────────────────────────────────────
+
+def oracle_services(conn_id: int, db: Session):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_services", db)
+    if _cached is not None:
+        return _cached
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+
+    try:
+        svc_rows = _rows(engine, "SELECT name FROM dba_services "
+                                 "WHERE name NOT LIKE 'SYS%' AND UPPER(name) NOT LIKE '%XDB%'")
+    except Exception as e:
+        return {"status": "error", "error": str(e), "services": []}
+
+    try:
+        active_rows = _rows(engine, "SELECT inst_id, service_name FROM gv$active_services")
+    except Exception:
+        active_rows = []
+    # Service names can differ in case between DBA_SERVICES and
+    # GV$ACTIVE_SERVICES depending on how the service was created (quoted
+    # identifiers, PDB default services, etc.) — match case-insensitively so a
+    # genuinely-running service never misreports as offline over a casing
+    # difference alone.
+    active_by_service = {}
+    for r in active_rows:
+        active_by_service.setdefault(_safe_str(r.get("SERVICE_NAME")).upper(), set()).add(_safe_int(r.get("INST_ID")))
+
+    try:
+        inst_rows = _rows(engine, "SELECT instance_number FROM gv$instance")
+        all_instances = sorted({_safe_int(r.get("INSTANCE_NUMBER")) for r in inst_rows})
+    except Exception:
+        all_instances = []
+
+    services = []
+    for r in svc_rows:
+        name = _safe_str(r.get("NAME"))
+        active_on = active_by_service.get(name.upper(), set())
+        if all_instances:
+            per_instance = [{"instance_number": i, "status": "online" if i in active_on else "offline"}
+                             for i in all_instances]
+            if len(active_on) == len(all_instances):
+                overall = "online"
+            elif active_on:
+                overall = "partial"
+            else:
+                overall = "offline"
+        else:
+            per_instance = [{"instance_number": None, "status": "online" if active_on else "offline"}]
+            overall = "online" if active_on else "offline"
+        services.append({"service_name": name, "status": overall, "instances": per_instance})
+
+    return {"status": "success", "services": services}
+
+
+# ──────────────────────────────────────────────────────────────
+#  35. ASM — disk group usage/state (§6). Not every Oracle instance uses ASM;
+#      a clean "Not Configured" is the correct answer on file-system storage.
+# ──────────────────────────────────────────────────────────────
+
+def oracle_asm(conn_id: int, db: Session):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_asm", db)
+    if _cached is not None:
+        return _cached
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+
+    try:
+        dg_rows = _rows(engine, "SELECT group_number, name, state, type, total_mb, free_mb, "
+                                "usable_file_mb, offline_disks FROM v$asm_diskgroup")
+    except Exception:
+        return {"status": "not_configured"}
+    if not dg_rows:
+        return {"status": "not_configured"}
+
+    try:
+        op_rows = _rows(engine, "SELECT group_number FROM v$asm_operation")
+        rebalancing_groups = {_safe_int(r.get("GROUP_NUMBER")) for r in op_rows}
+    except Exception:
+        rebalancing_groups = set()
+
+    diskgroups = []
+    for r in dg_rows:
+        total_mb = _safe_float(r.get("TOTAL_MB"))
+        free_mb  = _safe_float(r.get("FREE_MB"))
+        used_mb  = max(0.0, total_mb - free_mb)
+        used_pct = round((used_mb / total_mb) * 100, 1) if total_mb > 0 else None
+        state    = _safe_str(r.get("STATE"))
+        offline_disks = _safe_int(r.get("OFFLINE_DISKS"))
+        if state.upper() not in ("MOUNTED", "CONNECTED") or offline_disks > 0:
+            severity = "critical"
+        elif used_pct is not None and used_pct >= 95:
+            severity = "critical"
+        elif used_pct is not None and used_pct >= 85:
+            severity = "warning"
+        else:
+            severity = "healthy"
+        diskgroups.append({
+            "name": _safe_str(r.get("NAME")), "state": state, "type": _safe_str(r.get("TYPE")),
+            "total_mb": total_mb, "used_mb": used_mb, "free_mb": free_mb,
+            "usable_file_mb": _safe_float(r.get("USABLE_FILE_MB")), "used_pct": used_pct,
+            "offline_disks": offline_disks,
+            "rebalance_active": _safe_int(r.get("GROUP_NUMBER")) in rebalancing_groups,
+            "severity": severity,
+        })
+
+    return {"status": "success", "diskgroups": diskgroups}
+
+
+# ──────────────────────────────────────────────────────────────
+#  36. MULTITENANT (CDB/PDB) — §16. A non-CDB instance correctly reports
+#      Not Configured rather than an empty-but-present PDB list.
+# ──────────────────────────────────────────────────────────────
+
+def oracle_cdb_pdb(conn_id: int, db: Session):
+    from app.utils.agent_cache import get_snapshot as _get_snap
+    _cached = _get_snap(conn_id, "oracle_cdb_pdb", db)
+    if _cached is not None:
+        return _cached
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+
+    try:
+        rows = _rows(engine, "SELECT cdb FROM v$database")
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+    is_cdb = bool(rows and _safe_str(rows[0].get("CDB")).upper() == "YES")
+    if not is_cdb:
+        return {"status": "not_configured"}
+
+    try:
+        pdb_rows = _rows(engine, "SELECT con_id, name, open_mode, restricted FROM v$pdbs ORDER BY con_id")
+    except Exception as e:
+        return {"status": "error", "error": str(e), "is_cdb": True, "pdbs": []}
+
+    pdbs = [{
+        "con_id": _safe_int(r.get("CON_ID")), "name": _safe_str(r.get("NAME")),
+        "open_mode": _safe_str(r.get("OPEN_MODE")), "restricted": _safe_str(r.get("RESTRICTED")),
+    } for r in pdb_rows]
+
+    return {"status": "success", "is_cdb": True, "pdb_count": len(pdbs), "pdbs": pdbs}
+
+
+# ──────────────────────────────────────────────────────────────
+#  37. LISTENER — a real TCP probe that differentiates failure modes (§15)
+#      instead of a blanket "Oracle Offline". Never touches the stored
+#      password in any log/return value.
+# ──────────────────────────────────────────────────────────────
+
+def oracle_listener_status(conn_id: int, db: Session):
+    import socket
+    conn = _get_conn_or_404(conn_id, db)
+    host, port = conn.host, conn.port or 1521
+    result = {"host": host, "port": port}
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5)
+    try:
+        rc = sock.connect_ex((host, port))
+    except socket.gaierror:
+        return {**result, "status": "host_unreachable", "reason": "DNS resolution failed for host"}
+    except Exception as e:
+        return {**result, "status": "host_unreachable", "reason": str(e)}
+    finally:
+        sock.close()
+
+    if rc != 0:
+        return {**result, "status": "port_unreachable",
+                "reason": f"Connection refused/timed out on port {port}"}
+
+    try:
+        engine = _oracle_engine(conn)
+        with engine.connect():
+            pass
+        return {**result, "status": "listener_ok", "reason": None}
+    except Exception as e:
+        msg = str(e)
+        if "ORA-01017" in msg or "invalid username" in msg.lower():
+            return {**result, "status": "auth_failure", "reason": "Invalid username/password"}
+        if "ORA-12514" in msg or "ORA-12541" in msg or "TNS" in msg.upper():
+            return {**result, "status": "listener_unreachable", "reason": msg[:300]}
+        return {**result, "status": "database_unreachable", "reason": msg[:300]}

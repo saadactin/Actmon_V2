@@ -1,49 +1,24 @@
 """
-Symmetric encryption for cloud database secrets (Azure Cosmos DB primary/secondary
-keys and future cloud provider credentials) — these are master account keys, far
-more sensitive than a scoped DB user/password, so unlike the rest of this app's
-plaintext connection passwords, they're encrypted at rest.
+DEPRECATED — kept only so `cosmosdb_service.py`, `smtp_config_routes.py`, and
+`channel_config_service.py` keep working unchanged. New code must use
+`app.services.common.credential_encryption_service.credential_encryption`
+directly; this module is a thin delegator to that ONE centralized service,
+not a second encryption implementation.
 
-Configure via ACTMON_ENCRYPTION_KEY in .env (generate with:
-`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
-If absent, an ephemeral key is generated and a warning logged — fine for local dev,
-but anything encrypted with it becomes unreadable after a restart, so production
-deployments must set a persistent key.
+`encrypt_secret`/`decrypt_secret` used to be Fernet-backed with a
+silently-generated ephemeral key when `ACTMON_ENCRYPTION_KEY` was unset — that
+fallback is gone. A missing/malformed key now fails fast (see
+`credential_encryption_service.CredentialEncryptionKeyError`) instead of
+encrypting with a throwaway key that makes data unrecoverable after a
+restart. Values already encrypted with the old Fernet path keep decrypting
+transparently (`credential_encryption.decrypt()` recognizes both formats).
 """
-import os
-from cryptography.fernet import Fernet
-
-_fernet = None
+from app.services.common.credential_encryption_service import credential_encryption
 
 
-def _get_or_create_key() -> bytes:
-    key = os.environ.get("ACTMON_ENCRYPTION_KEY")
-    if key:
-        return key.encode()
-    generated = Fernet.generate_key()
-    print(
-        "[actmon] WARNING: ACTMON_ENCRYPTION_KEY not set — generated an ephemeral key. "
-        "Cloud database secrets encrypted with it will be unreadable after this process restarts. "
-        f"Add to .env: ACTMON_ENCRYPTION_KEY={generated.decode()}"
-    )
-    os.environ["ACTMON_ENCRYPTION_KEY"] = generated.decode()
-    return generated
+def encrypt_secret(plaintext: str | None) -> str | None:
+    return credential_encryption.encrypt(plaintext)
 
 
-def _cipher() -> Fernet:
-    global _fernet
-    if _fernet is None:
-        _fernet = Fernet(_get_or_create_key())
-    return _fernet
-
-
-def encrypt_secret(plaintext: str) -> str | None:
-    if not plaintext:
-        return None
-    return _cipher().encrypt(plaintext.encode()).decode()
-
-
-def decrypt_secret(ciphertext: str) -> str | None:
-    if not ciphertext:
-        return None
-    return _cipher().decrypt(ciphertext.encode()).decode()
+def decrypt_secret(ciphertext: str | None) -> str | None:
+    return credential_encryption.decrypt(ciphertext)

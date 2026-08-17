@@ -3,6 +3,11 @@ venv/
 .venv/
 env/
 ENV/
+# Disk-space workaround: pytest installed here via `pip install --target`
+# when the venv's own drive had no free space. Run
+# `pip install -r requirements.txt` into the real venv instead once space is
+# available, then this directory is unnecessary.
+.test_deps/
 
 # Python Cache
 __pycache__/

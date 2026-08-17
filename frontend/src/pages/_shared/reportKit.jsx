@@ -33,6 +33,7 @@ export const PERIODS = [
   { id: 'daily', label: 'Daily', color: C.indigo },
   { id: 'weekly', label: 'Weekly', color: C.orange },
   { id: 'monthly', label: 'Monthly', color: C.purple },
+  { id: 'custom', label: 'Custom', color: C.slate },
 ];
 
 /* ─── formatters ─── */

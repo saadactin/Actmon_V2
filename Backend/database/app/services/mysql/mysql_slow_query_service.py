@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import json
 import os
@@ -14,7 +15,6 @@ from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
-from app.services.common.actmon_internal_tables import mysql_exclude_internal_tables_sql
 from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
@@ -67,7 +67,26 @@ _SYSTEM_SCHEMA_REF_RE = re.compile(
 )
 
 _ADMIN_VERB_RE = re.compile(
-    r"^\s*(SHOW|EXPLAIN|DESC|DESCRIBE|ANALYZE\s+TABLE|OPTIMIZE\s+TABLE|CHECK\s+TABLE|FLUSH|KILL)\b",
+    r"^\s*(SHOW|EXPLAIN|DESC|DESCRIBE|ANALYZE\s+TABLE|OPTIMIZE\s+TABLE|CHECK\s+TABLE|FLUSH|KILL"
+    r"|COMMIT|ROLLBACK|USE)\b",
+    re.IGNORECASE,
+)
+
+# `SELECT @@var` (session/global system-variable reads — @@version,
+# @@sql_mode, @@transaction_isolation, @@datadir, …) and `SELECT SLEEP(...)`
+# are connection bootstrap/health-check noise, never business queries — a
+# real application's own SELECT never starts with either shape.
+_SELECT_SYSVAR_RE = re.compile(r"^\s*SELECT\s+@@", re.IGNORECASE)
+_SELECT_SLEEP_RE = re.compile(r"^\s*SELECT\s+SLEEP\s*\(", re.IGNORECASE)
+
+# A bare `SET <system_var> = ...` (session/global config — autocommit,
+# sql_mode, long_query_time, character set, time zone, …) is connection
+# setup, never application workload. This deliberately does NOT match
+# `SET @user_var := ...` (no `@` in the identifier class below) — a real
+# application's own procedural use of a user variable stays visible.
+_SESSION_SET_RE = re.compile(
+    r"^\s*SET\s+(?:SESSION\s+|GLOBAL\s+|@@session\.|@@global\.)?"
+    r"(?:NAMES\b|CHARACTER\s+SET\b|[A-Za-z_][A-Za-z0-9_]*\s*:?=)",
     re.IGNORECASE,
 )
 
@@ -80,11 +99,33 @@ _ACTMON_SIGNATURE_RES = [
     re.compile(rf"^\s*SELECT\s+COUNT\s*\(\s*\*\s*\)\s+FROM\s+{_QUALIFIED_TABLE}\s*$", re.IGNORECASE),
 ]
 
+_USER_HOST_RE = re.compile(
+    r"User@Host:\s*([^\[\s]+)\[[^\]]*\]\s*@\s*([^\[]*)\[([^\]]*)\]", re.IGNORECASE
+)
+
+# Every mysqld startup writes this 3-line banner straight into the slow log
+# file (not just at the very top — on every restart, wherever it happens to
+# fall in the file). It has no leading "#", so a query logged right before a
+# restart has this banner text run straight into its own captured SQL unless
+# explicitly cut off here.
+_MYSQLD_BANNER_RE = re.compile(r"[A-Za-z]:\\[^\n]*mysqld(?:\.exe)?,\s*Version:", re.IGNORECASE)
+
+# mysqld logs a client disconnect (Quit/Sleep/Ping) as its own slow-log entry
+# when the connection's teardown crosses long_query_time — this is a
+# connection-lifecycle event, not a query. Its own "#"-prefixed marker line
+# isn't preceded by "\n" from the capture regex's anchor point (it directly
+# follows "SET timestamp=...;\n" with nothing in between), so it gets pulled
+# into sql_text the same way the mysqld banner does; cut at its first
+# occurrence too so an entry that's ONLY this marker reduces to an empty
+# sql_text and is dropped by the `if not sql_text` check below.
+_ADMIN_COMMAND_RE = re.compile(r"#\s*administrator command:", re.IGNORECASE)
+
 
 def is_actmon_internal_query(db_name: str, sql_text: str) -> bool:
-    """True if this statement is ActMon's own monitoring/introspection traffic
-    rather than the monitored database's application workload — see the
-    module docstring above for the classification rules."""
+    """True if this statement is MySQL/MariaDB system-schema traffic, a
+    session/connection-setup command, or ActMon's own monitoring/introspection
+    traffic — never the monitored database's real application workload. See
+    the module docstring above for the classification rules."""
     if (db_name or "").strip().lower() in ACTMON_SYSTEM_SCHEMAS:
         return True
     text_ = (sql_text or "").strip()
@@ -93,6 +134,10 @@ def is_actmon_internal_query(db_name: str, sql_text: str) -> bool:
     if _SYSTEM_SCHEMA_REF_RE.search(text_):
         return True
     if _ADMIN_VERB_RE.match(text_):
+        return True
+    if _SESSION_SET_RE.match(text_):
+        return True
+    if _SELECT_SYSVAR_RE.match(text_) or _SELECT_SLEEP_RE.match(text_):
         return True
     return any(p.match(text_) for p in _ACTMON_SIGNATURE_RES)
 
@@ -142,8 +187,29 @@ def _read_file_via_ssh(host: str, port: int, username: str, password: str, filep
 
 
 def _parse_slow_log_content(content: str, default_db: str) -> list:
-    """Parse MySQL/MariaDB slow query log text into a list of query dicts."""
+    """Parse MySQL/MariaDB slow query log text into a list of query dicts.
+
+    No filtering by SQL verb/pattern happens here — every recorded entry with
+    a `Query_time:` header is a genuine logged statement (SELECT, INSERT,
+    UPDATE, DELETE, REPLACE, DDL, anything) and is kept. The only exclusion
+    applied anywhere in this module is ActMon-internal/system traffic, done
+    later by `is_actmon_internal_query`/`_split_internal` — never a verb
+    whitelist.
+
+    `db_name` carries forward across entries like a real session: vanilla
+    MySQL only emits `use <db>;` (or MariaDB's `# Schema:`) when the database
+    actually changes, not on every logged statement, so a query without its
+    own schema marker is running against whatever database the last marker
+    set. `default_db` (the connection's OWN configured database) is
+    deliberately NOT used to seed this — that's a guess about what a given
+    log entry was running against, not something the log itself says, and
+    would silently mislabel any entry logged before this parse ever saw a
+    real `Schema:`/`use` marker. Entries with no marker seen yet stay
+    `db_name: None`, which the frontend renders honestly as "No Database"
+    rather than a fabricated one.
+    """
     queries = []
+    current_db = None
     for block in content.split("# Time:"):
         try:
             if "Query_time:" not in block:
@@ -156,14 +222,24 @@ def _parse_slow_log_content(content: str, default_db: str) -> list:
             re_ = re.search(r"Rows_examined:\s*(\d+)", block)
             rs  = re.search(r"Rows_sent:\s*(\d+)", block)
 
-            db_name  = default_db
+            # "# User@Host: appuser[appuser] @ localhost [127.0.0.1]  Id: 42"
+            # — hostname and IP are each optional (one or the other is often
+            # blank depending on how the client connected), so prefer whichever
+            # one is actually populated.
+            user_m = _USER_HOST_RE.search(block)
+            user_name, host = None, None
+            if user_m:
+                user_name = user_m.group(1) or None
+                host = (user_m.group(2) or "").strip() or (user_m.group(3) or "").strip() or None
+
             schema_m = re.search(r"Schema:\s*(\S+)", block)
             if schema_m and schema_m.group(1) not in ("", "QC_hit:"):
-                db_name = schema_m.group(1)
+                current_db = schema_m.group(1)
             else:
                 use_m = re.search(r"^use\s+(\S+?);", block, re.MULTILINE | re.IGNORECASE)
                 if use_m:
-                    db_name = use_m.group(1).strip("`'\"")
+                    current_db = use_m.group(1).strip("`'\"")
+            db_name = current_db
 
             sql_text = ""
             ts_m = re.search(r"SET timestamp=\d+;\n([\s\S]+?)(?:\n#|\Z)", block)
@@ -183,10 +259,28 @@ def _parse_slow_log_content(content: str, default_db: str) -> list:
                     sql_lines.append(stripped)
                 sql_text = " ".join(sql_lines).rstrip(";").strip()
 
+            banner_m = _MYSQLD_BANNER_RE.search(sql_text)
+            if banner_m:
+                sql_text = sql_text[:banner_m.start()].strip().rstrip(";").strip()
+
+            admin_m = _ADMIN_COMMAND_RE.search(sql_text)
+            if admin_m:
+                sql_text = sql_text[:admin_m.start()].strip().rstrip(";").strip()
+
             if not sql_text:
                 continue
 
+            # The raw log records every individual execution, not a merged
+            # per-shape digest — so this id identifies one logged EVENT
+            # (db + query text + its own timestamp/duration), not a query
+            # shape. It's deterministic for the same log content, which is
+            # what the detail page's refresh/direct-link lookup needs.
+            normalized_sql = re.sub(r"\s+", " ", sql_text).strip().lower()
+            digest_key = f"{db_name}|{normalized_sql}|{last_seen}|{qt.group(1) if qt else ''}"
+            digest_id = hashlib.md5(digest_key.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
             queries.append({
+                "digest_id":      digest_id,
                 "db_name":        db_name,
                 "sql_text":       sql_text,
                 "avg_exec_sec":   float(qt.group(1)) if qt else 0.0,
@@ -197,6 +291,8 @@ def _parse_slow_log_content(content: str, default_db: str) -> list:
                 "rows_returned":  int(rs.group(1)) if rs else 0,
                 "no_index_count": 0,
                 "last_seen":      last_seen,
+                "user_name":      user_name,
+                "host":           host,
             })
         except Exception:
             pass
@@ -206,14 +302,20 @@ def _parse_slow_log_content(content: str, default_db: str) -> list:
 # ── Service functions ─────────────────────────────────────────────────────────
 
 def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
+    """The MySQL/MariaDB Slow Query Log FILE is the one and only source here —
+    never `performance_schema`/`sys`. Those catalogs summarize by DIGEST
+    (normalized query shape) and can silently omit or merge entries depending
+    on consumer/instrument state; the raw log file is the actual, complete
+    record of every statement the server logged as slow, verbatim. Every
+    parsed entry is kept regardless of its SQL verb/pattern (SELECT, INSERT,
+    UPDATE, DELETE, REPLACE, DDL, subqueries, CTEs, anything) — the only
+    exclusion is ActMon-internal/system traffic via `_split_internal` below."""
     from app.utils.agent_cache import get_snapshot as _get_snap
     if not live:
         cached = _get_snap(conn_id, "mysql_slow_queries", db)
         if cached is not None:
             if "normalized" not in cached:
-                _normalize_mysql_rows(
-                    cached.get("perf_schema_queries") or cached.get("file_queries") or [], cached
-                )
+                _normalize_mysql_rows(cached.get("file_queries") or [], cached)
             return cached
 
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
@@ -233,106 +335,6 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             slow_log  = vd.get("slow_query_log", "OFF")
             slow_file = vd.get("slow_query_log_file", "")
             long_time = float(vd.get("long_query_time", 10.0))
-
-            # performance_schema consumer status
-            perf_consumers, perf_schema_enabled = {}, False
-            try:
-                ps_row = conn.execute(text("SHOW VARIABLES LIKE 'performance_schema'")).fetchone()
-                perf_schema_enabled = (ps_row[1] if ps_row else "OFF") == "ON"
-            except Exception:
-                pass
-
-            try:
-                c_rows = conn.execute(text(
-                    "SELECT NAME, ENABLED FROM performance_schema.setup_consumers"
-                )).fetchall()
-                perf_consumers = {r[0]: r[1] for r in c_rows}
-            except Exception:
-                pass
-
-            # auto-enable disabled consumers
-            consumers_enabled = False
-            statement_consumers = {
-                k: v for k, v in perf_consumers.items()
-                if "statement" in k.lower() or "digest" in k.lower()
-            }
-            if statement_consumers and any(v == "NO" for v in statement_consumers.values()):
-                try:
-                    conn.execute(text("""
-                        UPDATE performance_schema.setup_consumers
-                        SET ENABLED = 'YES'
-                        WHERE ENABLED = 'NO'
-                          AND (NAME LIKE '%statement%'
-                            OR NAME LIKE '%digest%'
-                            OR NAME IN ('global_instrumentation','thread_instrumentation'))
-                    """))
-                    try:
-                        conn.execute(text("""
-                            UPDATE performance_schema.setup_instruments
-                            SET ENABLED = 'YES', TIMED = 'YES'
-                            WHERE NAME LIKE 'statement/%'
-                        """))
-                    except Exception:
-                        pass
-                    conn.commit()
-                    consumers_enabled = True
-                except Exception:
-                    pass
-
-            # performance schema queries
-            perf_queries, perf_error = [], None
-            try:
-                rows = conn.execute(text(f"""
-                    SELECT
-                        DIGEST                                     AS digest_id,
-                        IFNULL(SCHEMA_NAME,'(all)')               AS db_name,
-                        DIGEST_TEXT                               AS sql_text,
-                        COUNT_STAR                                AS count_calls,
-                        ROUND(AVG_TIMER_WAIT / 1e12, 4)          AS avg_exec_sec,
-                        ROUND(MIN_TIMER_WAIT / 1e12, 4)          AS min_exec_sec,
-                        ROUND(MAX_TIMER_WAIT / 1e12, 4)          AS max_exec_sec,
-                        ROUND(SUM_TIMER_WAIT / 1e12, 4)          AS total_exec_sec,
-                        SUM_ROWS_EXAMINED                        AS rows_examined,
-                        SUM_ROWS_SENT                            AS rows_returned,
-                        COALESCE(SUM_NO_GOOD_INDEX_USED, 0)
-                          + COALESCE(SUM_NO_INDEX_USED, 0)       AS no_index_count,
-                        DATE_FORMAT(FIRST_SEEN,'%Y-%m-%d %H:%i:%s') AS first_seen,
-                        DATE_FORMAT(LAST_SEEN,'%Y-%m-%d %H:%i:%s') AS last_seen
-                    FROM performance_schema.events_statements_summary_by_digest
-                    WHERE DIGEST_TEXT IS NOT NULL
-                      AND COUNT_STAR > 0
-                      AND {mysql_exclude_internal_tables_sql("DIGEST_TEXT")}
-                    ORDER BY AVG_TIMER_WAIT DESC
-                    LIMIT 200
-                """)).fetchall()
-                perf_queries = [dict(r._mapping) for r in rows]
-            except Exception as e:
-                perf_error = str(e)
-
-            if not perf_queries and not perf_error:
-                try:
-                    rows = conn.execute(text(f"""
-                        SELECT
-                            IFNULL(db,'(all)')                   AS db_name,
-                            query                                AS sql_text,
-                            exec_count                           AS count_calls,
-                            ROUND(avg_latency / 1e12, 4)        AS avg_exec_sec,
-                            ROUND(max_latency / 1e12, 4)        AS max_exec_sec,
-                            ROUND(total_latency / 1e12, 4)      AS total_exec_sec,
-                            rows_examined                        AS rows_examined,
-                            rows_sent                            AS rows_returned,
-                            no_index_used_count                  AS no_index_count,
-                            last_seen                            AS last_seen
-                        FROM sys.x$statement_analysis
-                        WHERE {mysql_exclude_internal_tables_sql("query")}
-                        ORDER BY avg_latency DESC
-                        LIMIT 200
-                    """)).fetchall()
-                    if rows:
-                        perf_queries = [dict(r._mapping) for r in rows]
-                        perf_error   = None
-                except Exception:
-                    pass
 
             # slow log file parsing
             file_queries, file_error = [], None
@@ -406,16 +408,15 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
 
         # Split out ActMon's own monitoring/introspection traffic — the Slow
         # Queries page's job is to surface the MONITORED database's workload,
-        # not the noise generated by monitoring it. The excluded side isn't
+        # not the noise generated by monitoring it. This is the ONLY exclusion
+        # applied — no filtering by SQL verb/pattern. The excluded side isn't
         # thrown away: it's returned separately (capped) so the UI can still
         # show "N ActMon queries hidden" rather than filtering silently.
-        perf_queries, perf_internal   = _split_internal(perf_queries)
-        file_queries, file_internal   = _split_internal(file_queries)
-        internal_queries = perf_internal + file_internal
+        file_queries, internal_queries = _split_internal(file_queries)
 
-        all_queries = perf_queries if perf_queries else file_queries
-        # Agent-connected DBs don't need SSH: the agent already delivers query
-        # internals via performance_schema. The UI uses this to hide the SSH nag.
+        all_queries = file_queries
+        # Agent-connected DBs don't need SSH: the agent already delivers the
+        # log file over its own channel. The UI uses this to hide the SSH nag.
         agent_connected = (rec.registration_mode or "").lower() == "agent"
         if not agent_connected:
             from app.models.os_server_model import OsServer, DatabaseInstance
@@ -431,12 +432,7 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
                 "slow_query_log_file": full_slow_file,
                 "long_query_time":     long_time,
             },
-            "source":                  "slow_query_log_file" if file_queries else ("performance_schema" if perf_queries else "none"),
-            "perf_schema_queries":     perf_queries,
-            "perf_schema_error":       perf_error,
-            "perf_schema_enabled":     perf_schema_enabled,
-            "perf_consumers":          perf_consumers,
-            "consumers_auto_enabled":  consumers_enabled,
+            "source":                  "slow_query_log_file",
             "file_queries":            file_queries,
             "file_error":              file_error,
             "total":                   len(all_queries),
@@ -458,11 +454,9 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
 
 def _normalize_mysql_rows(all_queries: list, response: dict) -> None:
     """Builds the shared cross-engine `normalized`/`capabilities` shape from
-    whichever row set (performance_schema digests or parsed slow-log-file
-    entries) this call ended up using. Both share the same field names
-    (db_name, sql_text, avg_exec_sec, ...), so one mapping covers either
-    source. Mutates `response` in place; see slow_query_normalize.py."""
-    source = response.get("source") or "performance_schema"
+    the parsed slow-log-file entries. Mutates `response` in place; see
+    slow_query_normalize.py."""
+    source = response.get("source") or "slow_query_log_file"
     normalized = []
     for q in all_queries:
         avg_ms = (q.get("avg_exec_sec") or 0) * 1000
@@ -477,6 +471,8 @@ def _normalize_mysql_rows(all_queries: list, response: dict) -> None:
             max_execution_time=(q.get("max_exec_sec") or 0) * 1000,
             rows_affected=q.get("rows_examined"),
             rows_returned=q.get("rows_returned"),
+            user_name=q.get("user_name"),
+            host=q.get("host"),
             first_seen=q.get("first_seen"),
             last_seen=q.get("last_seen"),
             source=source,
@@ -484,7 +480,106 @@ def _normalize_mysql_rows(all_queries: list, response: dict) -> None:
     attach_normalized(response, "mysql", normalized)
 
 
+def _parse_iso_ts(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def list_slow_queries_filtered(
+    conn_id: int, db: Session, live: bool = False,
+    database_name: str = None, min_avg_ms: float = None, search: str = None,
+    severity: str = None, date_from: str = None, date_to: str = None,
+    sort_by: str = None, sort_dir: str = "desc", page: int = 1, page_size: int = 50,
+) -> dict:
+    """Wraps `get_slow_queries` with real server-side filter/sort/pagination
+    over the normalized row list, so the frontend receives only the slice it
+    actually needs (database/schema filter, min execution time, text search,
+    severity, date range, sort, page) instead of always rendering the full
+    collector fetch (already capped at 200 rows) and filtering client-side.
+    Doesn't change `get_slow_queries` or its caching at all — this only
+    reshapes what's returned from the SAME underlying data, so calling it
+    with no filters and a page_size >= 200 is identical to calling
+    `get_slow_queries` directly."""
+    response = get_slow_queries(conn_id, db, live=live)
+    all_normalized = response.get("normalized") or []
+    normalized = list(all_normalized)
+
+    if database_name:
+        normalized = [r for r in normalized if (r.get("database_name") or "").lower() == database_name.lower()]
+    if min_avg_ms:
+        normalized = [r for r in normalized if (r.get("average_execution_time") or 0) >= min_avg_ms]
+    if search:
+        q = search.lower()
+        normalized = [r for r in normalized if q in (r.get("query_text") or "").lower()]
+    if severity and severity.lower() != "all":
+        normalized = [r for r in normalized if (r.get("severity") or "").lower() == severity.lower()]
+    if date_from or date_to:
+        df = _parse_iso_ts(date_from)
+        # A plain "YYYY-MM-DD" date_to means "through the end of that day" —
+        # otherwise midnight itself would exclude every entry logged later
+        # that same day.
+        dt = _parse_iso_ts(f"{date_to}T23:59:59" if date_to and len(date_to) == 10 else date_to)
+        def _in_range(r):
+            ts = _parse_iso_ts(r.get("last_seen"))
+            if ts is None:
+                return False
+            if df and ts.replace(tzinfo=None) < df.replace(tzinfo=None):
+                return False
+            if dt and ts.replace(tzinfo=None) > dt.replace(tzinfo=None):
+                return False
+            return True
+        normalized = [r for r in normalized if _in_range(r)]
+
+    sort_key_map = {
+        "avg": "average_execution_time", "total": "total_execution_time",
+        "count": "execution_count", "rows_examined": "rows_affected",
+        "rows_returned": "rows_returned", "max": "max_execution_time",
+        "last_seen": "last_seen",
+    }
+    key = sort_key_map.get(sort_by, "average_execution_time")
+    reverse = (sort_dir != "asc")
+    if key == "last_seen":
+        normalized.sort(key=lambda r: r.get(key) or "", reverse=reverse)
+    else:
+        normalized.sort(key=lambda r: r.get(key) if r.get(key) is not None else -1, reverse=reverse)
+
+    total_filtered = len(normalized)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 500))
+    # If the requested page is beyond the last page these filters actually
+    # produce (e.g. a stale page number from before a filter narrowed the
+    # result set), clamp to the real last page rather than returning an
+    # empty slice for a page that doesn't exist — the response's own `page`
+    # always reflects what was ACTUALLY served.
+    last_page = max(1, -(-total_filtered // page_size)) if total_filtered else 1
+    if page > last_page:
+        page = last_page
+    start = (page - 1) * page_size
+    page_rows = normalized[start:start + page_size]
+
+    # Available database/schema names for the filter dropdown — computed from
+    # the FULL fetched set, not the already-filtered slice, so picking one
+    # schema doesn't make the others disappear from the dropdown options.
+    available_databases = sorted({r.get("database_name") for r in all_normalized if r.get("database_name")})
+
+    out = dict(response)
+    out["normalized"] = page_rows
+    out["normalized_total"] = total_filtered
+    out["available_databases"] = available_databases
+    out["page"] = page
+    out["page_size"] = page_size
+    out["has_next"] = (page * page_size) < total_filtered
+    out["has_previous"] = page > 1
+    return out
+
+
 def get_ssh_config_data(conn_id: int, db: Session) -> dict:
+    from app.services.common.credential_encryption_service import credential_encryption
+
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:
         raise HTTPException(404, "Connection not found")
@@ -492,7 +587,7 @@ def get_ssh_config_data(conn_id: int, db: Session) -> dict:
         "ssh_host":   rec.ssh_host or rec.host,
         "ssh_port":   rec.ssh_port or 22,
         "ssh_user":   rec.ssh_user or "",
-        "ssh_password": "***" if rec.ssh_password else "",
+        "ssh_password": credential_encryption.mask(rec.ssh_password) or "",
         "configured": bool(rec.ssh_user and rec.ssh_password),
     }
 
@@ -505,19 +600,28 @@ def save_ssh_config_data(
     ssh_password: str,
     db: Session,
 ) -> dict:
+    from app.services.common.credential_encryption_service import credential_encryption
+
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:
         raise HTTPException(404, "Connection not found")
 
+    # get_ssh_config_data (below) returns "***" for an already-configured
+    # password — if the caller round-trips that placeholder unchanged (e.g.
+    # opened the modal and saved without touching the password field), keep
+    # the real stored credential instead of overwriting it with the literal
+    # mask string.
+    effective_password = rec.ssh_password if credential_encryption.looks_like_mask(ssh_password) else ssh_password
+
     resolved_host = ssh_host or rec.host
-    content, err = _read_file_via_ssh(resolved_host, ssh_port or 22, ssh_user, ssh_password, "/etc/hostname")
+    content, err = _read_file_via_ssh(resolved_host, ssh_port or 22, ssh_user, effective_password, "/etc/hostname")
     if err and not content:
         return {"status": "error", "message": f"SSH test failed: {err}"}
 
     rec.ssh_host     = ssh_host or None
     rec.ssh_port     = ssh_port or 22
     rec.ssh_user     = ssh_user
-    rec.ssh_password = ssh_password
+    rec.ssh_password = effective_password
     db.commit()
     return {"status": "success", "message": "SSH credentials saved and verified"}
 
@@ -633,6 +737,117 @@ Return this exact JSON structure:
         return {"status": "error", "error": str(e)}
 
 
+def analyze_slow_query_with_context(conn_id: int, payload: dict, analysis: dict, db: Session) -> dict:
+    """Same Groq call convention as `analyze_slow_query_with_groq` above
+    (same model/temperature, prompt + `json.loads()` + error fallback) — this
+    is an ADDITIONAL function, not a replacement. `analyze_slow_query_with_groq`
+    is unchanged and still backs the Overview/Explorer tabs' quick "AI
+    Analysis" flow, which never gathers this context.
+
+    This one is sent the FULL deterministic evidence bundle from
+    `mysql_slow_query_analysis_service.analyze_query_full` (EXPLAIN, real
+    table/index metadata, query-vs-index coverage, duplicate indexes, and the
+    rule-based diagnosis) — Groq is told explicitly to reason only from that
+    evidence, never to invent a table/column/index/metric, and never to
+    recommend an index the coverage check already shows exists."""
+    rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
+    if not rec:
+        return {"status": "error", "error": "Connection not found"}
+
+    try:
+        from groq import Groq
+        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        rows_examined = payload.get("rows_examined", 0) or 0
+        rows_returned = payload.get("rows_returned", 0) or 0
+        efficiency = round(rows_returned / max(rows_examined, 1) * 100, 1) if rows_examined else 100
+
+        explain = analysis.get("explain") or {}
+        plan_mode = explain.get("mode", "estimate")
+        explain_text = json.dumps(explain.get("tables", []), indent=2, default=str)[:3000]
+        tables_text = json.dumps(analysis.get("tables", []), indent=2, default=str)[:4000]
+        coverage_text = json.dumps(analysis.get("index_coverage", []), indent=2, default=str)[:2000]
+        duplicate_text = json.dumps(analysis.get("duplicate_indexes", []), indent=2, default=str)[:1500]
+        diagnosis_text = json.dumps((analysis.get("diagnosis") or {}).get("issues", []), indent=2, default=str)[:3000]
+
+        prompt = f"""You are a world-class MySQL/MariaDB DBA. You are given REAL, ALREADY-COLLECTED database
+evidence for one slow query — the execution plan, the actual tables/columns/indexes that exist, a
+deterministic coverage check of the query's predicates against those real indexes, already-detected
+duplicate indexes, and a rule-based diagnosis. Reason ONLY from this evidence — do not invent a
+table, column, index, or metric that is not listed below, and do not recommend an index the coverage
+check already shows exists. Return ONLY valid JSON, no markdown, no code fences.
+
+=== QUERY ===
+Database: {payload.get('db_name') or 'unknown'}
+SQL: {payload.get('sql_text', '')}
+
+=== PERFORMANCE METRICS ===
+Execution Count: {payload.get('count_calls', 0):,}
+Average Execution Time: {payload.get('avg_exec_sec', 0.0):.4f}s
+Total Cumulative Time: {payload.get('total_exec_sec', 0.0):.4f}s
+Rows Examined: {rows_examined:,}
+Rows Returned: {rows_returned:,}
+Efficiency Ratio: {efficiency}%
+
+=== EXECUTION PLAN ({plan_mode.upper()} — {"actually executed" if plan_mode == "analyze" else "estimated, statement NOT executed"}) ===
+{explain_text}
+
+=== TABLE METADATA (real, from information_schema) ===
+{tables_text}
+
+=== QUERY-VS-INDEX COVERAGE (already computed from real index metadata — trust this, do not recompute) ===
+{coverage_text}
+
+=== DUPLICATE/REDUNDANT INDEXES ALREADY DETECTED ON THESE TABLES ===
+{duplicate_text}
+
+=== RULE-BASED DIAGNOSIS (already-detected issues, each evidence-backed) ===
+{diagnosis_text}
+
+Return this exact JSON structure:
+{{
+  "summary": "one-sentence description of what the query does and the main reason it is slow",
+  "root_cause": "detailed root cause referencing the ACTUAL evidence above, not generic advice",
+  "recommendations": [
+    {{
+      "priority": "critical|high|medium|low",
+      "problem": "the specific problem",
+      "evidence": "the exact evidence from above that supports this",
+      "recommendation": "what to do",
+      "expected_benefit": "what improves and roughly how much",
+      "risk": "any downside or trade-off",
+      "existing_index_considered": "which existing index (if any) was checked before this recommendation, or 'none applicable'",
+      "example": "an example SQL statement, or empty string if not applicable"
+    }}
+  ],
+  "query_rewrite": {{
+    "applicable": true,
+    "optimized_sql": "rewritten query, or empty string if no rewrite is warranted",
+    "changes_made": ["list of specific changes"],
+    "explanation": "what changed and why it should be faster — grounded in the evidence, not a generic claim"
+  }},
+  "risks_and_testing": ["what to test/verify before applying any recommendation in production"],
+  "estimated_overall_improvement": "a grounded estimate, or 'uncertain without testing' if the evidence doesn't support a number"
+}}"""
+
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=3000,
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        result = json.loads(raw.strip())
+        return {"status": "success", "analysis": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Session) -> dict:
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:
@@ -736,7 +951,11 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
 
 
 def build_export_csv(conn_id: int, period: str, db: Session) -> dict:
-    """Returns {"csv_bytes": bytes, "filename": str} or raises HTTPException."""
+    """Returns {"csv_bytes": bytes, "filename": str} or raises HTTPException.
+
+    Sources exclusively from the Slow Query Log file, same as `get_slow_queries`
+    — never performance_schema/sys — so the export always mirrors exactly what
+    the Slow Queries page itself is showing."""
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:
         raise HTTPException(404, "Connection not found")
@@ -747,86 +966,54 @@ def build_export_csv(conn_id: int, period: str, db: Session) -> dict:
 
     period_map = {"hourly": 1, "daily": 24, "weekly": 168, "all": None}
     hours  = period_map[period]
-    queries, source = [], "unknown"
+    queries, source = [], "slow_query_log_file"
 
     try:
         with engine.connect() as conn:
-            where_clause = f"AND LAST_SEEN >= NOW() - INTERVAL {hours} HOUR" if hours else ""
-            try:
-                rows = conn.execute(text(f"""
-                    SELECT
-                        IFNULL(SCHEMA_NAME,'(all)')                     AS db_name,
-                        DIGEST_TEXT                                     AS sql_text,
-                        COUNT_STAR                                      AS count_calls,
-                        ROUND(AVG_TIMER_WAIT / 1e12, 4)                AS avg_exec_sec,
-                        ROUND(MAX_TIMER_WAIT / 1e12, 4)                AS max_exec_sec,
-                        ROUND(SUM_TIMER_WAIT / 1e12, 4)                AS total_exec_sec,
-                        SUM_ROWS_EXAMINED                              AS rows_examined,
-                        SUM_ROWS_SENT                                  AS rows_returned,
-                        COALESCE(SUM_NO_INDEX_USED,0)+COALESCE(SUM_NO_GOOD_INDEX_USED,0) AS no_index_count,
-                        DATE_FORMAT(LAST_SEEN,'%Y-%m-%d %H:%i:%s')    AS last_seen
-                    FROM performance_schema.events_statements_summary_by_digest
-                    WHERE DIGEST_TEXT IS NOT NULL
-                      AND COUNT_STAR > 0
-                      AND {mysql_exclude_internal_tables_sql("DIGEST_TEXT")}
-                      {where_clause}
-                    ORDER BY AVG_TIMER_WAIT DESC
-                    LIMIT 1000
-                """)).fetchall()
-                queries = [dict(r._mapping) for r in rows]
-                source  = "performance_schema"
-            except Exception:
-                pass
+            var_rows = conn.execute(text(
+                "SHOW VARIABLES WHERE Variable_name IN ('slow_query_log','slow_query_log_file')"
+            )).fetchall()
+            vd       = {r[0]: r[1] for r in var_rows}
+            log_file = vd.get("slow_query_log_file", "")
 
-            if not queries:
+            if log_file and not (log_file.startswith("/") or (len(log_file) > 1 and log_file[1] == ":")):
                 try:
-                    var_rows = conn.execute(text(
-                        "SHOW VARIABLES WHERE Variable_name IN ('slow_query_log','slow_query_log_file')"
-                    )).fetchall()
-                    vd       = {r[0]: r[1] for r in var_rows}
-                    log_file = vd.get("slow_query_log_file", "")
-
-                    if log_file and not (log_file.startswith("/") or (len(log_file) > 1 and log_file[1] == ":")):
-                        try:
-                            datadir  = conn.execute(text("SELECT @@datadir")).scalar() or ""
-                            log_file = datadir.rstrip("/").rstrip("\\") + "/" + log_file.lstrip("/")
-                        except Exception:
-                            pass
-
-                    if log_file:
-                        content_str = None
-                        if os.path.exists(log_file):
-                            content_str = open(log_file, encoding="utf-8", errors="ignore").read()
-                        else:
-                            raw = conn.execute(text("SELECT LOAD_FILE(:p)"), {"p": log_file}).scalar()
-                            if raw is not None:
-                                content_str = raw if isinstance(raw, str) else raw.decode("utf-8", errors="ignore")
-                            if not content_str and rec.ssh_user and rec.ssh_password:
-                                ssh_host = rec.ssh_host or rec.host
-                                c, _     = _read_file_via_ssh(ssh_host, rec.ssh_port or 22, rec.ssh_user, rec.ssh_password, log_file)
-                                content_str = c
-
-                        if content_str:
-                            queries = _parse_slow_log_content(content_str, rec.database_name or "")
-                            source  = "slow_query_log_file"
-                            if hours:
-                                cutoff     = datetime.now() - timedelta(hours=hours)
-                                filtered_q = []
-                                for q in queries:
-                                    try:
-                                        for fmt in ("%y%m%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%y%m%d %H:%M:%S"):
-                                            try:
-                                                ts = datetime.strptime(q["last_seen"].strip(), fmt)
-                                                if ts >= cutoff:
-                                                    filtered_q.append(q)
-                                                break
-                                            except ValueError:
-                                                continue
-                                    except Exception:
-                                        filtered_q.append(q)
-                                queries = filtered_q
+                    datadir  = conn.execute(text("SELECT @@datadir")).scalar() or ""
+                    log_file = datadir.rstrip("/").rstrip("\\") + "/" + log_file.lstrip("/")
                 except Exception:
                     pass
+
+            if log_file:
+                content_str = None
+                if os.path.exists(log_file):
+                    content_str = open(log_file, encoding="utf-8", errors="ignore").read()
+                else:
+                    raw = conn.execute(text("SELECT LOAD_FILE(:p)"), {"p": log_file}).scalar()
+                    if raw is not None:
+                        content_str = raw if isinstance(raw, str) else raw.decode("utf-8", errors="ignore")
+                    if not content_str and rec.ssh_user and rec.ssh_password:
+                        ssh_host = rec.ssh_host or rec.host
+                        c, _     = _read_file_via_ssh(ssh_host, rec.ssh_port or 22, rec.ssh_user, rec.ssh_password, log_file)
+                        content_str = c
+
+                if content_str:
+                    queries = _parse_slow_log_content(content_str, rec.database_name or "")
+                    if hours:
+                        cutoff     = datetime.now() - timedelta(hours=hours)
+                        filtered_q = []
+                        for q in queries:
+                            try:
+                                for fmt in ("%y%m%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                                    try:
+                                        ts = datetime.strptime(q["last_seen"].strip(), fmt)
+                                        if ts >= cutoff:
+                                            filtered_q.append(q)
+                                        break
+                                    except ValueError:
+                                        continue
+                            except Exception:
+                                filtered_q.append(q)
+                        queries = filtered_q
     except Exception as e:
         raise HTTPException(500, str(e))
 

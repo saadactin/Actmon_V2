@@ -146,9 +146,15 @@ export function toConnectionPayload(engineKey, values, fallbackConnectionName) {
     host: values.host || '',
     port: values.port ? Number(values.port) : undefined,
     username: values.username || '',
-    password: values.password || '',
     database_name: values.database_name || '',
   };
+  // Omitted (not sent as '') when blank — a future edit form pre-filling
+  // this from a masked API response must never be able to wipe the stored
+  // password just by leaving the field untouched. Create flows still work:
+  // the backend requires a password on create, so a blank submission there
+  // fails validation exactly as before, just with a clearer "missing field"
+  // error instead of silently persisting an empty string.
+  if (values.password) payload.password = values.password;
   (CONNECTION_EXTRA_FIELDS[engineKey] || []).forEach((f) => {
     const raw = values[f.name];
     if (f.name === 'windows_authentication') { payload.windows_authentication = raw === 'true'; return; }

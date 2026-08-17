@@ -309,8 +309,11 @@ export default function AgentSetupPage() {
   const setupBase = inDb ? '/databases/setup' : '/agents/setup';
   // Deep link from the deploy-wizard Summary ("Monitor database performance"):
   // carry the just-deployed agent into the tech wizard so it's pre-selected.
-  const agentParam = params.get('agent');
-  const tokenParam = params.get('token');
+  // Prefers router state (never touches the URL/history) over the legacy
+  // query-string param, which is kept only as a fallback for a hard refresh
+  // of this page (state doesn't survive that, the query string does).
+  const agentParam = location.state?.agent ?? params.get('agent');
+  const tokenParam = location.state?.token ?? params.get('token');
   const agentQS = agentParam ? `?agent=${encodeURIComponent(agentParam)}${tokenParam ? `&token=${encodeURIComponent(tokenParam)}` : ''}` : '';
 
   const isIntro = tab === 'Intro';

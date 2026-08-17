@@ -32,27 +32,29 @@ export default function Stepper({ steps, current, orientation = 'horizontal' }) 
   }
 
   return (
-    <div className="flex items-start">
-      {steps.map((label, i) => {
-        const done = i < current;
-        const active = i === current;
-        return (
-          <React.Fragment key={label}>
-            <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 90 }}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[14px] font-black transition-colors ${
-                done ? 'bg-emerald-500 text-white'
-                  : active ? 'bg-blue-600 text-white'
-                    : 'bg-white border-2 border-slate-300 text-slate-400'}`}>
-                {done ? <Check size={16} /> : i + 1}
+    <div className="overflow-x-auto no-scrollbar">
+      <div className="flex items-start min-w-max">
+        {steps.map((label, i) => {
+          const done = i < current;
+          const active = i === current;
+          return (
+            <React.Fragment key={label}>
+              <div className="flex flex-col items-center flex-shrink-0" style={{ minWidth: 72 }}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[14px] font-black transition-colors ${
+                  done ? 'bg-emerald-500 text-white'
+                    : active ? 'bg-blue-600 text-white'
+                      : 'bg-white border-2 border-slate-300 text-slate-400'}`}>
+                  {done ? <Check size={16} /> : i + 1}
+                </div>
+                <span className={`text-[14px] font-bold mt-1.5 text-center whitespace-nowrap ${i <= current ? 'text-slate-800' : 'text-slate-400'}`}>{label}</span>
               </div>
-              <span className={`text-[14px] font-bold mt-1.5 text-center ${i <= current ? 'text-slate-800' : 'text-slate-400'}`}>{label}</span>
-            </div>
-            {i < steps.length - 1 && (
-              <div className={`flex-1 h-0.5 mt-3.5 mx-1 rounded-full ${i < current ? 'bg-emerald-500' : 'bg-slate-200'}`} />
-            )}
-          </React.Fragment>
-        );
-      })}
+              {i < steps.length - 1 && (
+                <div className={`w-10 sm:w-16 h-0.5 mt-3.5 mx-1 rounded-full ${i < current ? 'bg-emerald-500' : 'bg-slate-200'}`} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
     </div>
   );
 }

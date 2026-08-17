@@ -142,6 +142,29 @@ export const SECTIONS = [
           { id: 'cluster_node_down', label: 'Cluster node down', kind: 'event', desc: 'a cluster node goes down', evaluation: 'reserved' },
         ],
       },
+      {
+        group: 'Oracle RAC',
+        metrics: [
+          { id: 'rac_node_down', label: 'RAC node/instance down', kind: 'event', desc: 'a RAC instance is no longer OPEN', evaluation: 'collector' },
+          { id: 'service_down', label: 'Oracle Service unavailable', kind: 'event', desc: 'an Oracle service goes offline on one or more instances', evaluation: 'collector' },
+        ],
+      },
+      {
+        group: 'Oracle Data Guard',
+        metrics: [
+          { id: 'dg_transport_failure', label: 'Data Guard transport failure', kind: 'event', desc: 'redo transport to a standby fails', evaluation: 'collector' },
+          { id: 'dg_apply_failure', label: 'Data Guard apply stopped', kind: 'event', desc: 'redo apply (MRP) stops on a standby', evaluation: 'collector' },
+          { id: 'dg_transport_lag', label: 'Data Guard transport lag', unit: 's', kind: 'numeric', def: 60, evaluation: 'collector' },
+          { id: 'dg_apply_lag', label: 'Data Guard apply lag', unit: 's', kind: 'numeric', def: 60, evaluation: 'collector' },
+          { id: 'dg_archive_gap', label: 'Data Guard archive gap', kind: 'event', desc: 'a standby is missing archived log sequences', evaluation: 'collector' },
+        ],
+      },
+      {
+        group: 'Oracle ASM',
+        metrics: [
+          { id: 'asm_diskgroup_critical', label: 'ASM disk group critical', kind: 'event', desc: 'an ASM disk group is unmounted, has offline disks, or is nearly full', evaluation: 'collector' },
+        ],
+      },
     ],
   },
   {
@@ -228,6 +251,14 @@ const SHORT_LABELS = {
   replication_broken: 'Replication',
   replica_down: 'Replica',
   cluster_node_down: 'Cluster',
+  rac_node_down: 'RAC Node',
+  service_down: 'Service',
+  dg_transport_failure: 'DG Transport',
+  dg_apply_failure: 'DG Apply',
+  dg_transport_lag: 'DG Lag',
+  dg_apply_lag: 'DG Apply Lag',
+  dg_archive_gap: 'DG Gap',
+  asm_diskgroup_critical: 'ASM',
 };
 
 /** One- or two-word name for a metric, for dense lists. */

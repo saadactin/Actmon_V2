@@ -3,6 +3,7 @@ import { useQueries, useQueryClient } from '@tanstack/react-query';
 import {
   getServerSummary, listActiveAlerts, listAgents, listCloudAccounts, listOsServers,
 } from '@/api/dashboard';
+import { QK } from '@/api/queryKeys';
 import { severityOf, STATUS, statusOf } from '@/components/charts/status';
 
 /** Database engines we roll hosts up by, in a fixed display order. */
@@ -68,9 +69,12 @@ export default function useDashboardData() {
 
   const results = useQueries({
     queries: [
-      { queryKey: ['dash', 'servers'], queryFn: listOsServers, refetchInterval: REFRESH.servers, retry: false },
-      { queryKey: ['dash', 'summary'], queryFn: getServerSummary, refetchInterval: REFRESH.summary, retry: false },
-      { queryKey: ['dash', 'agents'], queryFn: listAgents, refetchInterval: REFRESH.agents, retry: false },
+      // Shared keys with InfraPage/DatabaseServersPage/AddOsServerPage/useAgents
+      // (see api/queryKeys.js) — one cache entry per endpoint instead of each
+      // page refetching the same list on every navigation.
+      { queryKey: QK.osServers(), queryFn: listOsServers, refetchInterval: REFRESH.servers, retry: false },
+      { queryKey: QK.osServersSummary, queryFn: getServerSummary, refetchInterval: REFRESH.summary, retry: false },
+      { queryKey: QK.agents, queryFn: listAgents, refetchInterval: REFRESH.agents, retry: false },
       { queryKey: ['dash', 'alerts'], queryFn: listActiveAlerts, refetchInterval: REFRESH.alerts, retry: false },
       { queryKey: ['dash', 'cloud'], queryFn: listCloudAccounts, refetchInterval: REFRESH.cloud, retry: false },
     ],
@@ -78,13 +82,27 @@ export default function useDashboardData() {
 
   const [serversQ, summaryQ, agentsQ, alertsQ, cloudQ] = results;
 
-  const hosts = serversQ.data || [];
-  const agents = agentsQ.data || [];
+  // Array.isArray, not just `|| []`: the ['os-servers'] query-cache entry is
+  // shared with pages that (previously) wrote the raw {status,data:[...]}
+  // wrapper instead of an unwrapped array — a truthy object slipped past a
+  // plain `|| []` guard and threw "hosts is not iterable" one line later in
+  // tallyBy(). The root cause (two listOsServers() with different unwrap
+  // conventions racing for the same cache key) is fixed at the source in
+  // api/servers.js now, but this stays as a cheap defensive guard.
+  const hosts = Array.isArray(serversQ.data) ? serversQ.data : [];
   const alerts = alertsQ.data || [];
   const cloud = cloudQ.data || [];
   const summary = summaryQ.data || {};
 
-  const derived = useMemo(() => {
+  // Split by domain, each with its OWN dependency array, rather than one big
+  // memo keyed on all 5 query results together. Alerts refetch every 15s —
+  // 2-4x more often than servers/summary/agents/cloud (30-60s) — and every
+  // React Query refetch returns a new array reference even when the data is
+  // byte-for-byte identical. With one shared memo, an alerts-only refetch used
+  // to recompute (and, since ChartCard/StatTile read these values straight
+  // through, re-render) infra/resources/topCpu/perTech too, even though none
+  // of them actually changed. Now an alerts refetch only touches `alertData`.
+  const hostDerived = useMemo(() => {
     /* ── infrastructure ── */
     const local = tally(hosts);
     // The summary endpoint is authoritative when present; the host list is the
@@ -115,9 +133,6 @@ export default function useDashboardData() {
     // "is the database service actually up" signal, just rolled up per host
     // instead of per engine.
     const databases = tallyBy(dbHosts, (h) => h.db_status);
-
-    /* ── agents ── */
-    const agentTally = tally(agents);
 
     /* ── resource averages (hosts that actually reported) ── */
     const resources = {
@@ -152,23 +167,7 @@ export default function useDashboardData() {
       .sort((a, b) => b.value - a.value)
       .slice(0, TOP_CPU_HOSTS);
 
-    /* ── alerts by severity ── */
-    const bySeverity = { critical: 0, warning: 0, info: 0 };
-    for (const a of alerts) bySeverity[severityOf(a.severity).id] += 1;
-
-    // Newest first, kept whole: the overview's alert feed scrolls and filters by
-    // severity, so it needs every firing alert rather than a top slice. `recent`
-    // stays for callers that only want the first few.
-    const sortedAlerts = [...alerts]
-      .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0));
-    const recentAlerts = sortedAlerts.slice(0, 8);
-
-    /* ── distribution: cloud providers, else host environments ── */
-    const providers = {};
-    for (const acct of cloud) {
-      const key = String(acct.provider || acct.cloud_provider || 'Other').toUpperCase();
-      providers[key] = (providers[key] || 0) + 1;
-    }
+    /* ── distribution: host environments/OS ── */
     const environments = {};
     for (const h of hosts) {
       const key = h.environment || 'Unspecified';
@@ -184,18 +183,53 @@ export default function useDashboardData() {
       .sort((a, b) => b.value - a.value);
 
     return {
-      infra,
-      databases,
-      perTech,
-      agents: agentTally,
-      resources,
-      topCpu,
-      alerts: { total: alerts.length, ...bySeverity, recent: recentAlerts, list: sortedAlerts },
-      cloud: { total: cloud.length, byProvider: toList(providers) },
+      infra, databases, perTech, resources, topCpu,
       byEnvironment: toList(environments),
       byOsType: toList(osTypes),
     };
-  }, [hosts, agents, alerts, cloud, summary]);
+  }, [hosts, summary]);
+
+  // "Agents" means an actual installed host-agent process, not every saved DB
+  // connection — the /agents/ endpoint has one row per connection regardless of
+  // how it's collected, so an org monitoring 6 hosts over SSH plus 1 real agent
+  // install showed "13 agents" instead of the 1 that's real. The real signal is
+  // os_servers.collector, already fetched as part of `hosts`.
+  const agentDerived = useMemo(() => tally(hosts.filter((h) => h.collector === 'agent')), [hosts]);
+  const sshDerived = useMemo(() => tally(hosts.filter((h) => h.collector === 'ssh')), [hosts]);
+
+  const alertDerived = useMemo(() => {
+    const bySeverity = { critical: 0, warning: 0, info: 0 };
+    for (const a of alerts) bySeverity[severityOf(a.severity).id] += 1;
+
+    // Newest first, kept whole: the overview's alert feed scrolls and filters by
+    // severity, so it needs every firing alert rather than a top slice. `recent`
+    // stays for callers that only want the first few.
+    const sortedAlerts = [...alerts]
+      .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0));
+    const recentAlerts = sortedAlerts.slice(0, 8);
+
+    return { total: alerts.length, ...bySeverity, recent: recentAlerts, list: sortedAlerts };
+  }, [alerts]);
+
+  const cloudDerived = useMemo(() => {
+    const providers = {};
+    for (const acct of cloud) {
+      const key = String(acct.provider || acct.cloud_provider || 'Other').toUpperCase();
+      providers[key] = (providers[key] || 0) + 1;
+    }
+    const toList = (map) => Object.entries(map)
+      .map(([label, value]) => ({ key: label, label, value }))
+      .sort((a, b) => b.value - a.value);
+    return { total: cloud.length, byProvider: toList(providers) };
+  }, [cloud]);
+
+  const derived = {
+    ...hostDerived,
+    agents: agentDerived,
+    ssh: sshDerived,
+    alerts: alertDerived,
+    cloud: cloudDerived,
+  };
 
   /* ── one error surface: only report failures that leave the page empty ── */
   const errors = results.filter((r) => r.isError).map((r) => r.error);
@@ -209,10 +243,24 @@ export default function useDashboardData() {
     isFetching: results.some((r) => r.isFetching),
     /** Cloud runs as its own service, so its absence isn't a dashboard failure. */
     hasCoreData: !serversQ.isError || !agentsQ.isError,
+    /** The cloud microservice failing (proxied 500, connection refused, etc.)
+     * must never render identically to "genuinely zero cloud accounts" — the
+     * Cloud Accounts tile checks this to show "Cloud service unavailable"
+     * instead of a misleading "None connected". */
+    cloudError: cloudQ.isError,
     offline,
     unauthorised,
     errorCount: errors.length,
-    refresh: () => qc.invalidateQueries({ queryKey: ['dash'] }),
+    // No longer one shared ['dash'] prefix — servers/summary/agents now use
+    // the cross-page canonical keys (see api/queryKeys.js), so each tier is
+    // invalidated explicitly instead of relying on a prefix match.
+    refresh: () => {
+      qc.invalidateQueries({ queryKey: QK.osServers() });
+      qc.invalidateQueries({ queryKey: QK.osServersSummary });
+      qc.invalidateQueries({ queryKey: QK.agents });
+      qc.invalidateQueries({ queryKey: ['dash', 'alerts'] });
+      qc.invalidateQueries({ queryKey: ['dash', 'cloud'] });
+    },
   };
 }
 

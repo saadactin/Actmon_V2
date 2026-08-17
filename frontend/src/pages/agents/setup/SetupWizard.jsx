@@ -11,6 +11,7 @@ import StepSummary from './steps/StepSummary';
 import { techById } from './techConfig';
 import { TechLogo } from './logos';
 import { createInstallToken, saveAgentDbConfig } from '@/api/agents';
+import { QK } from '@/api/queryKeys';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useConfirmExit, useWizardDraft, useWizardStep } from '@/hooks/useWizard';
 
@@ -109,8 +110,8 @@ export default function SetupWizard() {
         username: c.username, password: c.password,
         database_name: c.database_name, environment: c.environment,
       });
-      qc.invalidateQueries({ queryKey: ['agents'] });
-      qc.invalidateQueries({ queryKey: ['osServers'] });
+      qc.invalidateQueries({ queryKey: QK.agents });
+      qc.invalidateQueries({ queryKey: QK.osServers() });
       // Only new agents need an install command; an existing agent is already
       // running, so its dashboard is real the moment this connection exists —
       // no "wait for it to appear" detour through Agents/Databases needed.

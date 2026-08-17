@@ -23,6 +23,7 @@ import Gauge from '@/components/gauges/Gauge';
 import TrendChart from '@/components/gauges/TrendChart';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
+import { MYSQL_DASHBOARD_TABS, mysqlTabRoute } from '@/config/mysqlDashboardNav';
 import Button from '@/components/ui/Button';
 import IconButton from '@/components/ui/IconButton';
 import { Paged } from '@/components/ui/Pagination';
@@ -31,6 +32,7 @@ import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptMysqlTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 import { DATABASE_COLUMNS, TABLE_COLUMNS, TABLE_SORT_PRESETS } from '@/config/dbCatalog';
 import { PageLoading } from '@/components/ui/Loading';
+import { computeHealthScore } from '@/utils/mysqlHealth';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
 /* ─── palette ─── */
@@ -59,24 +61,6 @@ const fetchTableData      = (id, db, tbl) => client.get(`/connections/mysql/${id
 const fetchReplication    = (id) => client.get(`/connections/mysql/${id}/replication/status`).then(r => r.data);
 const fetchReplVars       = (id) => client.get(`/connections/mysql/${id}/replication/variables`).then(r => r.data);
 const fetchPerfDetail     = (id) => client.get(`/connections/mysql/${id}/performance-detail`).then(r => r.data);
-const fetchBinlogStatus   = (id) => client.get(`/connections/mysql/${id}/binlog/status`).then(r => r.data);
-const fetchBinlogs        = (id) => client.get(`/connections/mysql/${id}/binlogs`).then(r => r.data);
-const fetchBinlogLive     = (id) => client.get(`/connections/mysql/${id}/binlog/live`).then(r => r.data);
-const fetchBinlogEvents   = (id, logName, offset, limit) =>
-  client.get(`/connections/mysql/${id}/binlogs/${encodeURIComponent(logName)}/events`, { params: { offset, limit } }).then(r => r.data);
-
-const TABS = [
-  { id: 'overview',    label: 'Overview',      icon: Activity },
-  { id: 'performance', label: 'Performance',    icon: TrendingUp },
-  { id: 'queries',     label: 'Queries',        icon: Zap },
-  { id: 'databases',   label: 'Databases',      icon: Database },
-  { id: 'tables',      label: 'Tables',         icon: Table },
-  { id: 'locks',       label: 'Locks',          icon: Lock },
-  { id: 'replication', label: 'Replication',    icon: GitBranch },
-  { id: 'users',       label: 'Users',          icon: Users },
-  { id: 'storage',     label: 'Storage',        icon: HardDrive },
-  { id: 'logs',        label: 'Logs',           icon: FileText },
-];
 
 const REFRESH_INTERVAL = 15; // seconds
 
@@ -357,9 +341,10 @@ export default function MySQLDashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   // ── Tab is URL-driven: /mysql-dashboard/:id/:tab → every tab has its own route.
   // setActiveTab keeps its old signature but now navigates instead of setState.
+  // Indexes/Binary Logs/Error Logs/Slow Queries route to their OWN separate
+  // pages (mysqlTabRoute handles that) — everything else stays inline here.
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
-    navigate(`/mysql-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  const setActiveTab = (t) => navigate(mysqlTabRoute(id, t));
   const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines]   = useState({ conn: [], cache: [], qps: [] });
   const [tableSearch, setTableSearch] = useState('');
@@ -375,12 +360,6 @@ export default function MySQLDashboard() {
 
   // Replication state
   const [replVarsOpen, setReplVarsOpen] = useState(false);
-
-  // Binary log state
-  const [selBinlog, setSelBinlog]       = useState(null);
-  const [binlogOffset, setBinlogOffset] = useState(0);
-  const [liveFilter, setLiveFilter]     = useState('all');
-  const BINLOG_PAGE = 100;
 
   // Performance tab state
   const [perfStmtSort, setPerfStmtSort] = useState({ key: 'sum_ms', asc: false });
@@ -488,35 +467,6 @@ export default function MySQLDashboard() {
     enabled: activeTab === 'replication' && replVarsOpen,
   });
 
-  /* ── Binlog queries (Logs tab) ── */
-  const { data: binlogStatusData } = useQuery({
-    queryKey: ['mysqlBinlogStatus', id],
-    queryFn:  () => fetchBinlogStatus(id),
-    retry: false,
-    refetchInterval: 15000,
-    enabled: activeTab === 'logs',
-  });
-  const { data: binlogsData, isLoading: binlogsLoading } = useQuery({
-    queryKey: ['mysqlBinlogs', id],
-    queryFn:  () => fetchBinlogs(id),
-    retry: false,
-    refetchInterval: 30000,
-    enabled: activeTab === 'logs',
-  });
-  const { data: binlogLiveData, isLoading: liveLoading } = useQuery({
-    queryKey: ['mysqlBinlogLive', id],
-    queryFn:  () => fetchBinlogLive(id),
-    retry: false,
-    refetchInterval: 5000,
-    enabled: activeTab === 'logs',
-  });
-  const { data: binlogEventsData, isLoading: eventsLoading } = useQuery({
-    queryKey: ['mysqlBinlogEvents', id, selBinlog, binlogOffset],
-    queryFn:  () => fetchBinlogEvents(id, selBinlog, binlogOffset, BINLOG_PAGE),
-    retry: false,
-    enabled: activeTab === 'logs' && !!selBinlog,
-  });
-
   /* ── Performance Detail query ── */
   const { data: perfData, isLoading: perfLoading, refetch: refetchPerf, dataUpdatedAt: perfUpdatedAt } = useQuery({
     queryKey: ['mysqlPerfDetail', id],
@@ -585,14 +535,14 @@ export default function MySQLDashboard() {
   const isReplica  = health_summary.replication_state === 'REPLICA';
   const connPct    = Number(health_summary.connection_usage_pct) || 0;
   const cachePct   = Number(health_summary.cache_usage_pct)      || 0;
-  const healthScore = computeHealthScore(health_summary, long_running_queries, connPct, cachePct);
+  const healthScore = computeHealthScore(long_running_queries.length, connPct, cachePct);
 
   /* ── alert counts per tab ── */
   const alerts = {
     queries:     long_running_queries.length,
     locks:       (innodbData?.metrics?.deadlocks || 0),
     replication: isReplica && replication.Last_Error ? 1 : 0,
-    logs:        error_log_count > 0 ? 1 : 0,
+    'error-logs': error_log_count > 0 ? 1 : 0,
   };
 
   return (
@@ -613,7 +563,7 @@ export default function MySQLDashboard() {
         tech="mysql"
         connectionId={id}
         connection={connection}
-        tabs={TABS}
+        tabs={MYSQL_DASHBOARD_TABS}
         activeTab={activeTab}
         onTabChange={setActiveTab}
         alerts={alerts}
@@ -860,11 +810,10 @@ export default function MySQLDashboard() {
             )}
 
             {/* ── Row 8: Quick actions ── */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <ActionCard icon={<Zap className="text-yellow-500" size={24} />}    title="Slow Queries"   desc="Identify expensive SQL"   onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)} />
               <ActionCard icon={<FileText className="text-red-500" size={24} />}  title="Error Logs"     desc="View & classify errors"    onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)} />
               <ActionCard icon={<Layers className="text-violet-500" size={24} />} title="Index Analysis" desc="Unused, dupe & missing"    onClick={() => navigate(`/mysql-dashboard/${id}/index-analysis`)} />
-              <ActionCard icon={<Heart className="text-pink-500" size={24} />}    title="Self-Heal"      desc="AI-powered remediation"    onClick={() => navigate(`/mysql-dashboard/${id}/self-heal`)} />
               <ActionCard icon={<FileText className="text-green-500" size={24} />} title="Reports"       desc="Open full DB report"       onClick={() => navigate(`/mysql-dashboard/${id}/reports`)} />
             </div>
 
@@ -2388,312 +2337,6 @@ export default function MySQLDashboard() {
             );
           })()
         )}
-
-        {/* ══ LOGS ══════════════════════════════════════════════════ */}
-        {activeTab === 'logs' && (
-          <div className="space-y-5">
-
-            {/* ── KPIs ── */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <ClickableKpi title="Error Log Entries"  value={error_log_count}
-                accent={error_log_count > 0 ? 'red' : 'green'}
-                hint="Click to view error logs"
-                onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)} />
-              <ClickableKpi title="Slow Queries Total" value={fmtNum(query_stats.Slow_queries)}
-                accent={Number(query_stats.Slow_queries) > 0 ? 'orange' : 'green'}
-                hint="Click to view slow queries"
-                onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)} />
-              <MetricKpi title="Binlog"             value={binlogStatusData?.binlog_enabled ? 'ON' : (binlogStatusData ? 'OFF' : '…')} accent={binlogStatusData?.binlog_enabled ? 'green' : 'red'} />
-              <MetricKpi title="Binlog Format"      value={binlogStatusData?.variables?.binlog_format || '—'} accent="blue" />
-            </div>
-
-            {/* ── Log File Paths ── */}
-            <Panel title="Log File Paths">
-              <div className="space-y-2 text-sm">
-                <Row label="Error Log"        value={error_log_path || '—'} mono />
-                <Row label="Slow Query Log"   value={slow_query_config.slow_query_log_file || '—'} mono />
-                <Row label="Slow Log Enabled" value={slow_query_config.slow_query_log || '—'} />
-                <Row label="Long Query Time"  value={`${slow_query_config.long_query_time || '—'} seconds`} />
-              </div>
-              <div className="flex gap-3 mt-5 flex-wrap">
-                <button onClick={() => navigate(`/mysql-dashboard/${id}/error-logs`)}
-                  className="px-4 h-9 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700 flex items-center gap-2">
-                  <FileText size={13} /> Error Logs
-                </button>
-                <button onClick={() => navigate(`/mysql-dashboard/${id}/error-analysis`)}
-                  className="px-4 h-9 rounded-xl bg-cyan-700 text-white text-xs font-bold hover:bg-cyan-800 flex items-center gap-2">
-                  <Zap size={13} /> AI Analysis
-                </button>
-                <button onClick={() => navigate(`/mysql-dashboard/${id}/slow-queries`)}
-                  className="px-4 h-9 rounded-xl border border-slate-200 bg-white text-xs font-bold hover:bg-slate-50 flex items-center gap-2">
-                  <Clock size={13} /> Slow Queries
-                </button>
-              </div>
-            </Panel>
-
-            {/* ── Binary Log Status ── */}
-            {binlogStatusData && (
-              <Panel title="Binary Log Status">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="space-y-2 text-sm">
-                    <Row label="Binary Logging"  value={binlogStatusData.binlog_enabled ? 'ON' : 'OFF'} />
-                    <Row label="Format"          value={binlogStatusData.variables?.binlog_format || '—'} mono />
-                    <Row label="Row Image"       value={binlogStatusData.variables?.binlog_row_image || '—'} />
-                    <Row label="sync_binlog"     value={binlogStatusData.variables?.sync_binlog || '—'} mono />
-                    <Row label="Expire (days)"   value={binlogStatusData.variables?.expire_logs_days || '—'} />
-                    <Row label="Max Size"        value={binlogStatusData.variables?.max_binlog_size ? fmtBytes(Number(binlogStatusData.variables.max_binlog_size)) : '—'} />
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <Row label="Current File"    value={binlogStatusData.master_status?.File || '—'} mono />
-                    <Row label="Position"        value={binlogStatusData.master_status?.Position || '—'} mono />
-                    <Row label="Basename"        value={binlogStatusData.binlog_basename || '—'} mono />
-                    <Row label="Is Replica"      value={binlogStatusData.is_replica ? 'YES' : 'NO'} />
-                    {binlogStatusData.master_error && (
-                      <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 font-mono break-all">
-                        ⚠ {binlogStatusData.master_error}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </Panel>
-            )}
-
-            {/* ── Binary Log Files ── */}
-            <Panel title={`Binary Log Files${binlogsData?.data?.length ? ` (${binlogsData.data.length})` : ''}`}>
-              {binlogsLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-4">
-                  <Loader2 size={14} className="animate-spin" /> Loading binary logs…
-                </div>
-              ) : binlogsData?.status === 'disabled' || binlogsData?.status === 'error' ? (
-                <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-                  <p className="font-bold mb-1">Binary logging is not available</p>
-                  <pre className="text-xs font-mono whitespace-pre-wrap text-amber-700">{binlogsData.error}</pre>
-                </div>
-              ) : (binlogsData?.data?.length > 0) ? (
-                <>
-                  <div className="overflow-x-auto rounded-xl border border-slate-200">
-                    <table className="w-full text-xs">
-                      <thead className="bg-slate-50 border-b border-slate-200">
-                        <tr>
-                          <th className="px-4 py-2.5 text-left font-bold text-slate-500">Log File</th>
-                          <th className="px-4 py-2.5 text-right font-bold text-slate-500">Size</th>
-                          <th className="px-4 py-2.5 text-center font-bold text-slate-500">Encrypted</th>
-                          <th className="px-4 py-2.5 text-center font-bold text-slate-500">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {/* Newest first — MySQL returns SHOW BINARY LOGS oldest-first,
-                            but the current / most recent file is what you want on top.
-                            Sorted on the numeric suffix (…bin.000294) so 294 > 99. */}
-                        {[...binlogsData.data].sort((a, b) => {
-                          const seq = (n) => Number(String(n?.log_name || '').match(/(\d+)$/)?.[1] ?? 0);
-                          return seq(b) - seq(a);
-                        }).map((f, i) => {
-                          const isCurrent = f.log_name === binlogStatusData?.master_status?.File;
-                          const isSelected = f.log_name === selBinlog;
-                          return (
-                            <tr key={i}
-                              className={`border-t border-slate-100 cursor-pointer transition-colors ${isSelected ? 'bg-cyan-50 border-l-4 border-l-cyan-500' : isCurrent ? 'bg-green-50' : 'hover:bg-slate-50'}`}
-                              onClick={() => { setSelBinlog(f.log_name); setBinlogOffset(0); }}
-                            >
-                              <td className="px-4 py-2.5 font-mono">
-                                {f.log_name}
-                                {isCurrent && <span className="ml-2 px-1.5 py-0.5 bg-green-100 text-green-700 text-[9px] font-bold rounded-full">CURRENT</span>}
-                              </td>
-                              <td className="px-4 py-2.5 text-right font-mono text-slate-600">{f.size_human}</td>
-                              <td className="px-4 py-2.5 text-center text-slate-500">{f.encrypted}</td>
-                              <td className="px-4 py-2.5 text-center">
-                                <button
-                                  className="px-2.5 py-1 rounded-lg bg-slate-800 text-white text-[10px] font-bold hover:bg-slate-700 transition-colors"
-                                  onClick={(e) => { e.stopPropagation(); setSelBinlog(f.log_name); setBinlogOffset(0); }}
-                                >
-                                  View Events
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Events for selected file */}
-                  {selBinlog && (
-                    <div className="mt-4 space-y-3">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <h4 className="text-sm font-bold text-slate-700 font-mono">{selBinlog} — Events</h4>
-                        <div className="flex items-center gap-2">
-                          <button
-                            disabled={binlogOffset === 0}
-                            onClick={() => setBinlogOffset(o => Math.max(0, o - BINLOG_PAGE))}
-                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition-colors"
-                          >← Prev</button>
-                          <span className="text-xs text-slate-400 font-mono">offset {binlogOffset}</span>
-                          <button
-                            disabled={!binlogEventsData?.data?.length || binlogEventsData.data.length < BINLOG_PAGE}
-                            onClick={() => setBinlogOffset(o => o + BINLOG_PAGE)}
-                            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50 transition-colors"
-                          >Next →</button>
-                          <button
-                            onClick={() => setSelBinlog(null)}
-                            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 transition-colors text-slate-600"
-                          >✕ Close</button>
-                        </div>
-                      </div>
-                      {eventsLoading ? (
-                        <div className="flex items-center gap-2 text-xs text-slate-400 py-3">
-                          <Loader2 size={12} className="animate-spin" /> Loading events…
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 max-h-72 overflow-y-auto">
-                          <table className="w-full text-[11px]">
-                            <thead className="bg-slate-800 text-white sticky top-0">
-                              <tr>
-                                <th className="px-3 py-2 text-left font-bold">Pos</th>
-                                <th className="px-3 py-2 text-left font-bold">Event Type</th>
-                                <th className="px-3 py-2 text-left font-bold">End Pos</th>
-                                <th className="px-3 py-2 text-left font-bold">Server ID</th>
-                                <th className="px-3 py-2 text-left font-bold">Info</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(binlogEventsData?.data || []).map((ev, i) => {
-                                const evType = ev.event_type || '';
-                                const rowBg =
-                                  evType.includes('Write')  ? 'bg-green-50' :
-                                  evType.includes('Update') ? 'bg-amber-50' :
-                                  evType.includes('Delete') ? 'bg-red-50'   :
-                                  evType === 'Query'        ? 'bg-blue-50'  :
-                                  evType.includes('Gtid')   ? 'bg-purple-50': '';
-                                return (
-                                  <tr key={i} className={`border-t border-slate-100 ${rowBg}`}>
-                                    <td className="px-3 py-1.5 font-mono text-slate-600">{ev.pos}</td>
-                                    <td className="px-3 py-1.5">
-                                      <BinlogEventBadge type={evType} />
-                                    </td>
-                                    <td className="px-3 py-1.5 font-mono text-slate-500">{ev.end_log_pos}</td>
-                                    <td className="px-3 py-1.5 font-mono text-slate-500">{ev.server_id}</td>
-                                    <td className="px-3 py-1.5 font-mono text-slate-600 max-w-xs truncate" title={ev.info}>{ev.info}</td>
-                                  </tr>
-                                );
-                              })}
-                              {!(binlogEventsData?.data?.length) && (
-                                <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400">No events found</td></tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-sm text-slate-400 py-4">No binary log files found.</p>
-              )}
-            </Panel>
-
-            {/* ── Live Binlog Events ── */}
-            <Panel title={
-              <div className="flex items-center gap-3">
-                <span>Live Binlog Events</span>
-                {liveLoading
-                  ? <Loader2 size={12} className="animate-spin text-slate-400" />
-                  : <span className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block animate-pulse" />
-                      LIVE · 5s
-                    </span>
-                }
-                {binlogLiveData?.current_log && (
-                  <span className="text-[10px] font-mono text-slate-400">{binlogLiveData.current_log} @ {binlogLiveData.current_pos}</span>
-                )}
-              </div>
-            }>
-              {binlogLiveData?.status === 'error' ? (
-                <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-amber-800">
-                  <p className="font-bold mb-1">Binary logging not enabled or insufficient privileges</p>
-                  <p className="text-xs font-mono">{binlogLiveData.error}</p>
-                </div>
-              ) : (
-                <>
-                  {/* Filter pills */}
-                  <div className="flex gap-2 mb-3 flex-wrap">
-                    {[
-                      { key: 'all',    label: 'All Events' },
-                      { key: 'write',  label: 'Writes (INS/UPD/DEL)' },
-                      { key: 'gtid',   label: 'GTID' },
-                      { key: 'query',  label: 'DDL / Query' },
-                      { key: 'other',  label: 'Other' },
-                    ].map(({ key, label }) => (
-                      <button
-                        key={key}
-                        onClick={() => setLiveFilter(key)}
-                        className="px-3 py-1 rounded-full text-[10px] font-bold transition-all"
-                        style={liveFilter === key
-                          ? { background: '#0f172a', color: '#fff' }
-                          : { background: '#f1f5f9', color: '#475569' }}
-                      >{label}</button>
-                    ))}
-                    <span className="ml-auto text-[10px] text-slate-400 self-center">
-                      {binlogLiveData?.showing || 0} events shown
-                    </span>
-                  </div>
-
-                  {/* Events table */}
-                  <div className="overflow-x-auto rounded-xl border border-slate-200 max-h-80 overflow-y-auto">
-                    <table className="w-full text-[11px]">
-                      <thead className="bg-slate-800 text-white sticky top-0">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-bold">Pos</th>
-                          <th className="px-3 py-2 text-left font-bold">Event Type</th>
-                          <th className="px-3 py-2 text-left font-bold">End Pos</th>
-                          <th className="px-3 py-2 text-left font-bold">Server</th>
-                          <th className="px-3 py-2 text-left font-bold">Info</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(() => {
-                          const evts = (binlogLiveData?.data || []).filter(ev => {
-                            if (liveFilter === 'all')   return true;
-                            if (liveFilter === 'write') return ev.is_write;
-                            if (liveFilter === 'gtid')  return ev.is_gtid;
-                            if (liveFilter === 'query') return ev.event_type === 'Query';
-                            return !ev.is_write && !ev.is_gtid && ev.event_type !== 'Query';
-                          });
-                          if (!evts.length) return (
-                            <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">
-                              {binlogLiveData ? 'No events match the filter.' : 'Loading live events…'}
-                            </td></tr>
-                          );
-                          return evts.map((ev, i) => {
-                            const evType = ev.event_type || '';
-                            const rowBg =
-                              evType.includes('Write')    ? 'bg-green-50'  :
-                              evType.includes('Update')   ? 'bg-amber-50'  :
-                              evType.includes('Delete')   ? 'bg-red-50'    :
-                              evType === 'Query'          ? 'bg-blue-50'   :
-                              ev.is_gtid                  ? 'bg-purple-50' :
-                              ev.is_rotate                ? 'bg-slate-100' : '';
-                            return (
-                              <tr key={i} className={`border-t border-slate-100 ${rowBg}`}>
-                                <td className="px-3 py-1.5 font-mono text-slate-600">{ev.pos}</td>
-                                <td className="px-3 py-1.5"><BinlogEventBadge type={evType} /></td>
-                                <td className="px-3 py-1.5 font-mono text-slate-500">{ev.end_log_pos}</td>
-                                <td className="px-3 py-1.5 font-mono text-slate-500">{ev.server_id}</td>
-                                <td className="px-3 py-1.5 font-mono text-slate-600 max-w-xs truncate" title={ev.info}>{ev.info || '—'}</td>
-                              </tr>
-                            );
-                          });
-                        })()}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </Panel>
-
-          </div>
-        )}
-
       </ErrorBoundary>
       </div>
     </div>
@@ -2702,16 +2345,6 @@ export default function MySQLDashboard() {
 }
 
 /* ─── helpers ─── */
-function computeHealthScore(hs, longRunning, connPct, cachePct) {
-  let score = 100;
-  if (connPct > 90)  score -= 30;
-  else if (connPct > 70) score -= 15;
-  if (cachePct < 80) score -= 20;
-  else if (cachePct < 90) score -= 10;
-  if (longRunning.length > 5) score -= 15;
-  else if (longRunning.length > 0) score -= 5;
-  return Math.max(0, score);
-}
 function fmtBytes(bytes) {
   if (!bytes) return '0 B';
   const b = Number(bytes);

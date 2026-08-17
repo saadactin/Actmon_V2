@@ -15,7 +15,14 @@ import {
  * its payload carries the RBAC menu the caller uses to decide where to land.
  */
 export const useAuth = () => {
-  const { token, user, setAuth, clearToken } = useAuthStore();
+  // Selectors, not a bare `useAuthStore()` destructure — this hook is used
+  // widely (login flow, header, guards), and a whole-store subscription
+  // re-renders every caller whenever ANY auth field changes, not just the
+  // ones actually read here.
+  const token = useAuthStore((s) => s.token);
+  const user = useAuthStore((s) => s.user);
+  const setAuth = useAuthStore((s) => s.setAuth);
+  const clearToken = useAuthStore((s) => s.clearToken);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 

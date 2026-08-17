@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, Foreign
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database.base import Base
+from app.models._encrypted_type import EncryptedString
 
 
 class OsServer(Base):
@@ -16,9 +17,15 @@ class OsServer(Base):
     environment = Column(String(100), default="Production")
     node_type = Column(String(100), default="Standalone")
     cluster_name = Column(String(255))
+    # Patroni's own REST API port, when this node runs a Patroni-managed
+    # PostgreSQL. Null means "use the 8008 default" — Patroni presence itself
+    # is never stored, only ever auto-detected live via a short-timeout probe
+    # (see patroni_service.probe()), so a plain non-Patroni Postgres host is
+    # completely unaffected.
+    patroni_api_port = Column(Integer, nullable=True)
     ssh_port = Column(Integer, default=22)
     ssh_username = Column(String(255))
-    ssh_password = Column(String(500))
+    ssh_password = Column(EncryptedString)  # encrypted at rest, see CredentialEncryptionService
     database_services = Column(JSON, default=list)
     status = Column(String(50), default="Unknown")
     monitoring_enabled = Column(Boolean, default=True)
@@ -26,7 +33,15 @@ class OsServer(Base):
 
     # Connection transport: 'ssh' (poll over SSH) or 'agent' (host agent pushes data)
     collector = Column(String(20), default="ssh")
+    # `agent_token` is a bearer credential used for equality lookup — hashed
+    # (HMAC-SHA256), not encrypted: reversible encryption is non-deterministic
+    # (random nonce per value) and can never satisfy a WHERE-clause match.
+    # `agent_token_hash` is what every lookup now filters on; `agent_token`
+    # itself is kept present-but-unread (never returned by any API, never
+    # used for lookup) purely as the rollback path during the cutover — see
+    # migrate_credentials_to_encrypted.py.
     agent_token = Column(String(128), index=True, nullable=True)
+    agent_token_hash = Column(String(64), index=True, nullable=True)
     last_infra_json = Column(Text, nullable=True)     # latest agent-pushed snapshot
     last_infra_at = Column(DateTime, nullable=True)
 

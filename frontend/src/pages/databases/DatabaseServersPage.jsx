@@ -11,6 +11,8 @@ import {
   listOsServers, getServerSummary, refreshServerStatus, deleteOsServer, getLiveStatus,
 } from '@/api/servers';
 import { listConnections } from '@/api/connections';
+import client from '@/api/client';
+import { QK } from '@/api/queryKeys';
 import { usePermissions } from '@/hooks/usePermissions';
 import PageHeader from '@/components/layout/PageHeader';
 import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
@@ -238,6 +240,72 @@ const DB_COLORS = {
 function dbColor(s) { return DB_COLORS[(s||'').toLowerCase()] || 'bg-slate-100 text-slate-600 border-slate-200'; }
 
 /* ══════════════════════════════════════════════════════
+   POSTGRESQL REPLICATION HEALTH
+   Reuses the exact byte-lag buckets PostgreSQLDashboard.jsx's lagColor()
+   already applies to the same `/replication-detail` payload (1 MiB / 10 MiB)
+   — no second threshold set, no new replication evaluator.
+══════════════════════════════════════════════════════ */
+const REPL_LAG_WARN_BYTES = 1_048_576;
+const REPL_LAG_CRIT_BYTES = 10_485_760;
+
+/** pg_stat_replication reports client_addr as a CIDR ("192.168.56.112/32") — strip
+ * the mask before comparing against the node's plain IP. */
+const bareIp = (addr) => String(addr || '').split('/')[0];
+
+/**
+ * Classify one PostgreSQL node's replication state from the cluster's already-
+ * cached `/replication-detail` response. Replicas are matched to a node purely by
+ * `client_addr` vs. `node.ip_address` (pg_stat_replication carries no other host
+ * identity) — this is the same field PostgreSQLDashboard.jsx already displays.
+ */
+function classifyReplication({ node, isPrimary, replDetail }) {
+  if (!replDetail) return null;
+  // Two distinct failure shapes, confirmed live: (a) the engine itself never
+  // connects → {status:'error'}; (b) the engine connects but the Postgres
+  // instance rejects every actual query (e.g. "database system is not yet
+  // accepting connections" during recovery) → svc_replication_detail still
+  // wraps this as {status:'success'}, just with every field empty/default
+  // and the real failures listed in `errors[]` (pg_version stays 0). Either
+  // way, an empty replicas[] here means "couldn't check", not "no replicas
+  // configured" — conflating the two previously made an actually-broken
+  // primary read HEALTHY while its genuinely-fine replicas read WARNING.
+  const unreachable = replDetail.status === 'error'
+    || (replDetail.pg_version === 0 && (replDetail.errors || []).length > 0);
+  if (unreachable) {
+    return { status: 'unknown', label: isPrimary ? 'Unknown (primary unreachable)' : 'Unknown' };
+  }
+  if (isPrimary) {
+    const count = (replDetail.replicas || []).length;
+    return count > 0
+      ? { status: 'primary', label: `Streaming to ${count} replica${count !== 1 ? 's' : ''}` }
+      : { status: 'primary_idle', label: 'No Active Replicas' };
+  }
+  const match = (replDetail.replicas || []).find((r) => r.client_addr && bareIp(r.client_addr) === node.ip_address);
+  if (!match) return { status: 'inactive', label: 'Inactive' };
+  if (match.state && match.state !== 'streaming' && match.state !== 'catchup') {
+    return { status: 'inactive', label: match.state };
+  }
+  const byteLag = match.byte_lag || 0;
+  if (byteLag >= REPL_LAG_CRIT_BYTES) return { status: 'lag_critical', label: 'Lagging', byteLag };
+  if (byteLag >= REPL_LAG_WARN_BYTES) return { status: 'lag_warning', label: 'Lagging', byteLag };
+  return { status: 'streaming', label: 'Streaming', byteLag };
+}
+
+/**
+ * Overall node health = worst of OS, DB and (for a PostgreSQL replica) replication.
+ * OS Online and DB Running keep their existing meaning untouched — this only ADDS
+ * a third, independent signal on top, per the explicit rule that inactive
+ * replication with OS/DB otherwise fine must read as WARNING, not something worse.
+ */
+function computeNodeHealth({ osDown, osWarn, dbDown, dbDegraded, repl }) {
+  if (osDown || dbDown) return 'DEGRADED';
+  if (osWarn || dbDegraded) return 'WARNING';
+  if (repl?.status === 'lag_critical') return 'DEGRADED';
+  if (repl?.status === 'inactive' || repl?.status === 'lag_warning' || repl?.status === 'unknown') return 'WARNING';
+  return 'HEALTHY';
+}
+
+/* ══════════════════════════════════════════════════════
    HEADER STATS  (was drawn inline in each gradient hero)
 ══════════════════════════════════════════════════════ */
 function OnlineBadge({ connected = 0, total = 0, pct }) {
@@ -462,13 +530,13 @@ export default function DatabaseServersPage({ tech = null }) {
   const [statusFilter, setStatusFilter]     = useState(null); // null | online | warning | offline | clusters (KPI card click)
 
   const { data: summaryData } = useQuery({
-    queryKey: ['serverSummary'],
+    queryKey: QK.osServersSummary,
     queryFn: getServerSummary,
     refetchInterval: 30000,
   });
 
   const { data: serversData, isLoading } = useQuery({
-    queryKey: ['osServers', envFilter],
+    queryKey: QK.osServers(envFilter),
     queryFn: () => listOsServers(envFilter !== 'All' ? { environment: envFilter } : {}),
     refetchInterval: 60000,
   });
@@ -510,13 +578,13 @@ export default function DatabaseServersPage({ tech = null }) {
   // Three separate calls, not chained with `||` — that would short-circuit
   // and skip later hooks once an earlier one returns truthy, which is a
   // conditional hook call (exactly the crash this once caused).
-  const fetchingSummary = useIsFetching({ queryKey: ['serverSummary'] });
-  const fetchingServers = useIsFetching({ queryKey: ['osServers'] });
+  const fetchingSummary = useIsFetching({ queryKey: QK.osServersSummary });
+  const fetchingServers = useIsFetching({ queryKey: QK.osServers() });
   const fetchingLive = useIsFetching({ queryKey: ['liveStatus'] });
   const isFetchingAny = fetchingSummary || fetchingServers || fetchingLive;
   const refreshNow = () => {
-    qc.invalidateQueries({ queryKey: ['serverSummary'] });
-    qc.invalidateQueries({ queryKey: ['osServers'] });
+    qc.invalidateQueries({ queryKey: QK.osServersSummary });
+    qc.invalidateQueries({ queryKey: QK.osServers() });
     qc.invalidateQueries({ queryKey: ['liveStatus'] });
     qc.invalidateQueries({ queryKey: ['allConnections'] });
     qc.invalidateQueries({ queryKey: ['cosmosdbConnections'] });
@@ -525,11 +593,11 @@ export default function DatabaseServersPage({ tech = null }) {
 
   const refreshMutation = useMutation({
     mutationFn: refreshServerStatus,
-    onSuccess: () => qc.invalidateQueries(['osServers']),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QK.osServers() }),
   });
   const deleteMutation = useMutation({
     mutationFn: deleteOsServer,
-    onSuccess: () => { qc.invalidateQueries(['osServers']); qc.invalidateQueries(['serverSummary']); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: QK.osServers() }); qc.invalidateQueries({ queryKey: QK.osServersSummary }); },
   });
 
   const liveMap = {};
@@ -550,7 +618,7 @@ export default function DatabaseServersPage({ tech = null }) {
     return { ...s, status: live.os_status, db_status: live.db_status, db_instances: mergedInstances };
   };
 
-  const allServers = (serversData?.data || []).map(mergeNode);
+  const allServers = (serversData || []).map(mergeNode);
 
   const techCounts = TECH_CONFIG.reduce((acc, t) => {
     acc[t.id] = {
@@ -804,77 +872,18 @@ export default function DatabaseServersPage({ tech = null }) {
             </div>
 
             <div className="space-y-5">
-              {Object.entries(clusterMap).map(([clusterName, rawNodes]) => {
-                const nodes   = sortNodes(rawNodes);
-                const galera  = isGalera(nodes);
-                const allOk   = nodes.every((n) => n.status === 'Connected');
-                const anyWarn = nodes.some((n) => n.status === 'Warning');
-                const status  = allOk ? 'HEALTHY' : anyWarn ? 'WARNING' : 'DEGRADED';
-                const dbTypes = [...new Set(nodes.flatMap((n) => n.database_services || []))];
-                const avgs    = clusterAverages(nodes);
-
-                return (
-                  <div key={clusterName} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                    <div className={`px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3 ${
-                      status==='HEALTHY'?'border-b-slate-100 bg-gradient-to-r from-emerald-50/40 to-white':
-                      status==='WARNING'?'border-b-amber-100 bg-gradient-to-r from-amber-50/40 to-white':
-                      'border-b-red-100 bg-gradient-to-r from-red-50/30 to-white'}`}>
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${galera?'bg-purple-100':'bg-indigo-100'}`}>
-                            <GitBranch size={17} className={galera?'text-purple-600':'text-indigo-600'}/>
-                          </div>
-                          <div>
-                            <h3 className="text-base font-black text-slate-900 leading-none">{clusterName}</h3>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${galera?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}`}>
-                                {galera ? 'Galera Multi-Primary' : 'Streaming Replication'}
-                              </span>
-                              <span className="text-slate-400 text-[10px]">{nodes[0]?.environment}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-slate-400 text-[11px] flex items-center gap-1">
-                            <Layers size={10}/> {nodes.length} nodes
-                          </span>
-                          {dbTypes.map((d) => (
-                            <span key={d} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${dbColor(d)}`}>{d}</span>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="hidden lg:flex items-center gap-4 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2">
-                          {[
-                            { label:'CPU', val:avgs.cpu,  color:'text-orange-600' },
-                            { label:'RAM', val:avgs.ram,  color:'text-purple-600' },
-                            { label:'Disk',val:avgs.disk, color:'text-blue-600'   },
-                          ].map(({ label, val, color }) => (
-                            <div key={label} className="text-center">
-                              <p className="text-[9px] text-slate-400 font-bold uppercase">{label}</p>
-                              <p className={`text-[13px] font-black ${color}`}>{val!==null ? `${val}%` : '—'}</p>
-                            </div>
-                          ))}
-                        </div>
-                        <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black ${
-                          status==='HEALTHY' ?'bg-emerald-100 text-emerald-700':
-                          status==='WARNING' ?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${status==='HEALTHY'?'bg-emerald-500 animate-pulse':status==='WARNING'?'bg-amber-500':'bg-red-500'}`}/>
-                          {status}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="px-6 py-6 overflow-x-auto">
-                      {galera
-                        ? <GaleraTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections} tech={selectedTech}/>
-                        : <ReplicationTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections} tech={selectedTech}/>
-                      }
-                    </div>
-                  </div>
-                );
-              })}
+              {Object.entries(clusterMap).map(([clusterName, rawNodes]) => (
+                <ClusterTopologyCard
+                  key={clusterName}
+                  clusterName={clusterName}
+                  rawNodes={rawNodes}
+                  navigate={navigate}
+                  setTerminalServer={setTerminalServer}
+                  refreshMutation={refreshMutation}
+                  allConnections={allConnections}
+                  tech={selectedTech}
+                />
+              ))}
             </div>
           </section>
         )}
@@ -947,11 +956,212 @@ export default function DatabaseServersPage({ tech = null }) {
 }
 
 /* ══════════════════════════════════════════════════════
+   CLUSTER TOPOLOGY CARD
+   One cluster's whole card: header (status + reason) + the node topology below
+   it. Pulled out of the parent's .map() so it can hold its own PostgreSQL
+   replication-detail query — every cluster needs its own independent fetch,
+   which a bare .map() callback can't do (not a component, can't call hooks).
+══════════════════════════════════════════════════════ */
+function ClusterTopologyCard({ clusterName, rawNodes, navigate, setTerminalServer, refreshMutation, allConnections, tech }) {
+  const nodes   = sortNodes(rawNodes);
+  const galera  = isGalera(nodes);
+  const dbTypes = [...new Set(nodes.flatMap((n) => n.database_services || []))];
+  const avgs    = clusterAverages(nodes);
+
+  // Replication health is only meaningful for genuine PostgreSQL streaming-
+  // replication clusters — Galera has no primary/replica concept (test case 7:
+  // a non-replication cluster must never be penalized for having no replication
+  // data), and this pass is scoped to PostgreSQL only.
+  const primaryNode = nodes.find((n) => n.node_type === 'Primary' || n.node_type === 'Master');
+  const wantsRepl   = tech === 'postgresql' && !galera && !!primaryNode;
+  // Same connection-id-first, IP-fallback resolution TopologyNodeCard itself uses,
+  // so the replication query targets the exact connection the card would open.
+  const primaryLinkedInst = wantsRepl
+    ? (primaryNode.db_instances || []).find((i) => i.connection_id && normDb(i.db_type) === 'postgresql')
+    : null;
+  const primaryConn = wantsRepl
+    ? (primaryLinkedInst && allConnections.find((c) => c.id === primaryLinkedInst.connection_id))
+      || findConn(allConnections, primaryNode, 'postgresql')
+    : null;
+
+  // Patroni is the authoritative source when detected (§1/§24: one health
+  // model, no duplicate calculation) — its own /patroni/status already
+  // combines Patroni state + real upstream WAL-receiver streaming + lag into
+  // one per-member verdict. Any registered connection in this cluster works
+  // as the entry point; the backend resolves the whole group by cluster_name.
+  const { data: patroniStatus } = useQuery({
+    queryKey: ['patroniStatusForTopology', primaryConn?.id],
+    queryFn: () => client.get(`/connections/postgresql/${primaryConn.id}/patroni/status`).then((r) => r.data),
+    enabled: wantsRepl && !!primaryConn?.id,
+    staleTime: 15_000,
+    refetchInterval: 20_000,
+    retry: false,
+  });
+  const patroniDetected = wantsRepl && !!patroniStatus?.patroni_detected;
+
+  // Fallback only for genuinely non-Patroni PostgreSQL clusters: the older,
+  // raw pg_stat_replication-based classification (still fixed for the
+  // disguised-failure case — see classifyReplication).
+  const { data: replDetail } = useQuery({
+    queryKey: ['pgReplDetailForTopology', primaryConn?.id],
+    queryFn: () => client.get(`/connections/postgresql/${primaryConn.id}/replication-detail`).then((r) => r.data),
+    enabled: wantsRepl && !patroniDetected && !!primaryConn?.id,
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
+  // Per-node replication classification + authoritative health, keyed by node
+  // id so ReplicationTopology/TopologyNodeCard can look theirs up directly.
+  const replByNodeId = {};
+  const healthByNodeId = {};
+  const roleByNodeId = {};
+  if (patroniDetected) {
+    const streamingReplicaCount = patroniStatus.members.filter((m) => !['leader', 'standby_leader', 'sync_standby_leader'].includes(m.role) && m.wal_receiver_streaming).length;
+    for (const n of nodes) {
+      const m = patroniStatus.members.find((mm) => mm.ip_address === n.ip_address);
+      if (!m) continue;
+      const isLeader = ['leader', 'standby_leader', 'sync_standby_leader'].includes(m.role);
+      if (m.patroni_state === 'missing') {
+        replByNodeId[n.id] = { status: 'unknown', label: 'Missing from cluster' };
+      } else if (isLeader) {
+        replByNodeId[n.id] = { status: 'primary', label: `Streaming to ${streamingReplicaCount} replica${streamingReplicaCount !== 1 ? 's' : ''}` };
+      } else if (m.wal_receiver_streaming === false) {
+        replByNodeId[n.id] = { status: 'inactive', label: 'Inactive' };
+      } else if (m.wal_receiver_streaming === true) {
+        replByNodeId[n.id] = { status: 'streaming', label: 'Streaming', byteLag: m.lag_bytes };
+      } else {
+        replByNodeId[n.id] = { status: 'unknown', label: 'Unknown' };
+      }
+      healthByNodeId[n.id] = m.node_health;
+      // Patroni's real, current role wins over the manually-set node_type —
+      // confirmed live: node_type stays "Primary" forever (it's set once at
+      // registration), while the actual Leader can move via switchover/failover.
+      roleByNodeId[n.id] = isLeader ? 'Leader' : 'Replica';
+    }
+  } else if (wantsRepl && replDetail) {
+    for (const n of nodes) {
+      replByNodeId[n.id] = classifyReplication({ node: n, isPrimary: n === primaryNode, replDetail });
+    }
+  }
+
+  const osAllOk   = nodes.every((n) => n.status === 'Connected');
+  const osAnyWarn = nodes.some((n) => n.status === 'Warning');
+
+  let status = 'HEALTHY';
+  let reason = null;
+  if (patroniDetected) {
+    // Patroni's own per-member verdict IS the health model here — fold it
+    // straight into the cluster-level badge instead of re-deriving a second
+    // opinion from OS/DB signals ActMon's own polling already disagrees with
+    // (confirmed live: a node can show OS Online/DB Running while Patroni
+    // correctly reports it CRITICAL/missing from the DCS entirely).
+    const healths = Object.values(healthByNodeId);
+    const critN = healths.filter((h) => h === 'CRITICAL').length;
+    const degN  = healths.filter((h) => h === 'DEGRADED').length;
+    const warnN = healths.filter((h) => h === 'WARNING').length;
+    if (critN > 0) status = 'DEGRADED';
+    else if (degN > 0) status = 'DEGRADED';
+    else if (warnN > 0) status = 'WARNING';
+    if (status !== 'HEALTHY') reason = patroniStatus.reason || null;
+  } else if (!osAllOk) {
+    status = osAnyWarn ? 'WARNING' : 'DEGRADED';
+  } else {
+    const replList  = Object.values(replByNodeId);
+    const replWarnCount = replList.filter((r) => r.status === 'inactive' || r.status === 'lag_warning').length;
+    const replCritCount = replList.filter((r) => r.status === 'lag_critical').length;
+    const replUnknownCount = replList.filter((r) => r.status === 'unknown').length;
+    if (replCritCount > 0) {
+      status = 'DEGRADED';
+      reason = `${replCritCount} node${replCritCount !== 1 ? 's have' : ' has'} critical replication lag.`;
+    } else if (replWarnCount > 0 || replUnknownCount > 0) {
+      status = 'WARNING';
+      const parts = [];
+      if (replWarnCount > 0) parts.push(replWarnCount === 1 ? '1 node has inactive replication' : `${replWarnCount} nodes have replication issues`);
+      if (replUnknownCount > 0) parts.push(replUnknownCount === 1 ? "1 node's replication status could not be verified" : `${replUnknownCount} nodes' replication status could not be verified`);
+      reason = parts.join('; ') + '.';
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className={`px-6 py-4 border-b flex flex-wrap items-center justify-between gap-3 ${
+        status==='HEALTHY'?'border-b-slate-100 bg-gradient-to-r from-emerald-50/40 to-white':
+        status==='WARNING'?'border-b-amber-100 bg-gradient-to-r from-amber-50/40 to-white':
+        'border-b-red-100 bg-gradient-to-r from-red-50/30 to-white'}`}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${galera?'bg-purple-100':'bg-indigo-100'}`}>
+              <GitBranch size={17} className={galera?'text-purple-600':'text-indigo-600'}/>
+            </div>
+            <div>
+              <h3 className="text-base font-black text-slate-900 leading-none">{clusterName}</h3>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${galera?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}`}>
+                  {galera ? 'Galera Multi-Primary' : 'Streaming Replication'}
+                </span>
+                <span className="text-slate-400 text-[10px]">{nodes[0]?.environment}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-slate-400 text-[11px] flex items-center gap-1">
+              <Layers size={10}/> {nodes.length} nodes
+            </span>
+            {dbTypes.map((d) => (
+              <span key={d} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${dbColor(d)}`}>{d}</span>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-4 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2">
+            {[
+              { label:'CPU', val:avgs.cpu,  color:'text-orange-600' },
+              { label:'RAM', val:avgs.ram,  color:'text-purple-600' },
+              { label:'Disk',val:avgs.disk, color:'text-blue-600'   },
+            ].map(({ label, val, color }) => (
+              <div key={label} className="text-center">
+                <p className="text-[9px] text-slate-400 font-bold uppercase">{label}</p>
+                <p className={`text-[13px] font-black ${color}`}>{val!==null ? `${val}%` : '—'}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black ${
+              status==='HEALTHY' ?'bg-emerald-100 text-emerald-700':
+              status==='WARNING' ?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${status==='HEALTHY'?'bg-emerald-500 animate-pulse':status==='WARNING'?'bg-amber-500':'bg-red-500'}`}/>
+              {status}
+            </span>
+            {reason && (
+              <span className={`text-[10px] font-bold max-w-[220px] text-right ${status==='WARNING'?'text-amber-600':'text-red-600'}`}>
+                {reason}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="px-6 py-6 overflow-x-auto">
+        {galera
+          ? <GaleraTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech}/>
+          : <ReplicationTopology nodes={nodes} navigate={navigate} openTerminal={setTerminalServer} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} replByNodeId={replByNodeId} healthByNodeId={healthByNodeId} roleByNodeId={roleByNodeId}/>
+        }
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════
    REPLICATION TOPOLOGY
 ══════════════════════════════════════════════════════ */
-function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[], tech=null }) {
-  const primary     = nodes.filter((n)=>n.node_type==='Primary'||n.node_type==='Master');
-  const secondaries = nodes.filter((n)=>!['Primary','Master'].includes(n.node_type));
+function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, allConnections=[], tech=null, replByNodeId={}, healthByNodeId={}, roleByNodeId={} }) {
+  // When Patroni's real role map is available, order by IT (leader first) —
+  // not the static node_type — so the card order survives a switchover too.
+  const hasRoleMap = Object.keys(roleByNodeId).length > 0;
+  const primary     = hasRoleMap ? nodes.filter((n)=>roleByNodeId[n.id]==='Leader') : nodes.filter((n)=>n.node_type==='Primary'||n.node_type==='Master');
+  const secondaries = hasRoleMap ? nodes.filter((n)=>roleByNodeId[n.id]!=='Leader') : nodes.filter((n)=>!['Primary','Master'].includes(n.node_type));
   const ordered     = [...primary, ...secondaries];
 
   return (
@@ -959,7 +1169,7 @@ function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, a
       {ordered.map((node, idx) => (
         <React.Fragment key={node.id}>
           <div className="flex-shrink-0 w-[296px]">
-            <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} fullWidth/>
+            <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} repl={replByNodeId[node.id]} authoritativeHealth={healthByNodeId[node.id]} authoritativeRole={roleByNodeId[node.id]} fullWidth/>
           </div>
           {idx < ordered.length-1 && (
             <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
@@ -1178,9 +1388,15 @@ function ServerTableRow({ node, idx, navigate, openTerminal, refreshMutation, al
 /* ══════════════════════════════════════════════════════
    NODE CARD — uniform height via h-full + flex-col
 ══════════════════════════════════════════════════════ */
-function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false, fullWidth=false, tech=null, connectionOnly=false }) {
+function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allConnections=[], onDelete, showMetricsInline=false, fullWidth=false, tech=null, connectionOnly=false, repl=null, authoritativeHealth=null, authoritativeRole=null }) {
   const [hovered, setHovered] = useState(false);
-  const m = nodeMeta(node.node_type);
+  // Patroni's real current role overrides the static node_type label — a
+  // switchover/failover moves who's "Leader" without ActMon's registration-
+  // time field ever being told (confirmed live: node_type stays "Primary"
+  // on the original node forever).
+  const m = authoritativeRole
+    ? { ...nodeMeta(authoritativeRole === 'Leader' ? 'Primary' : 'Replica'), label: authoritativeRole.toUpperCase() }
+    : nodeMeta(node.node_type);
   const hasMetrics = node.cpu_usage || node.ram_usage || node.disk_usage;
   const isRefreshing = refreshMutation.isPending && refreshMutation.variables === node.id;
   // A DB instance may carry a linked connection_id (agent-registered DBs) — that IS the
@@ -1217,6 +1433,15 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
     : 'bg-gradient-to-r from-slate-300 to-slate-400';
 
   const dbInstances = node.db_instances || [];
+
+  // OS Online and DB Running keep their own meaning — this node's overall health
+  // additionally folds in replication (when the caller supplied one, i.e. this is
+  // a PostgreSQL replication-cluster node), so "inactive replication with OS/DB
+  // otherwise fine" reads as WARNING without touching the OS/DB fields themselves.
+  // `authoritativeHealth` (Patroni's own per-member verdict) wins outright when
+  // present — one health model, not two disagreeing calculations (confirmed
+  // live: ActMon's own OS/DB polling can lag behind Patroni's real-time view).
+  const nodeHealth = authoritativeHealth || (repl ? computeNodeHealth({ osDown, osWarn, dbDown, dbDegraded, repl }) : null);
 
   // Clicking the card is the same action as its primary button — resolved once,
   // in serverTarget(), so the card, the row and the button always agree.
@@ -1311,7 +1536,9 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
           );
         })()}
 
-        {/* OS + DB status badges */}
+        {/* OS + DB (+ Replication + Health, on a PostgreSQL replication node) status badges —
+            kept independently visible so nobody has to open the Replication tab to learn a
+            replica has gone quiet: OS Online / DB Running never imply Replication is healthy. */}
         <div className={`grid gap-2 mb-4 ${connectionOnly ? 'grid-cols-1' : 'grid-cols-2'}`}>
           {!connectionOnly && (
           <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
@@ -1331,6 +1558,32 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
             <Database size={11}/>
             <span>{dbUp?'DB Running':dbDown?'DB Stopped':dbDegraded?'Degraded':'DB Unknown'}</span>
           </div>
+          {repl && !connectionOnly && (
+            <>
+              <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+                repl.status==='streaming' || repl.status==='primary' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                repl.status==='lag_critical' ? 'bg-red-50 border-red-200 text-red-600' :
+                repl.status==='unknown' ? 'bg-slate-100 border-slate-200 text-slate-500' :
+                'bg-amber-50 border-amber-200 text-amber-700'}`}
+                title={repl.status==='unknown'
+                  ? (repl.label === 'Missing from cluster'
+                      ? "This node no longer appears in Patroni's cluster member list at all."
+                      : "Couldn't be checked — the cluster's primary is unreachable right now, so its replication data can't be read.")
+                  : "Replication state — from Patroni's own WAL-receiver/streaming view"}>
+                <GitBranch size={11}/>
+                <span>{repl.status==='inactive' ? '⚠ Replication Inactive' : `Replication ${repl.label}`}</span>
+              </div>
+              <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+                nodeHealth==='HEALTHY' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                nodeHealth==='WARNING' ? 'bg-amber-50 border-amber-200 text-amber-700' :
+                nodeHealth==='CRITICAL' ? 'bg-red-100 border-red-300 text-red-700' :
+                'bg-red-50 border-red-200 text-red-600'}`}
+                title="Overall node health: worst of OS, database and replication">
+                <Stethoscope size={11}/>
+                <span>Health {nodeHealth}</span>
+              </div>
+            </>
+          )}
         </div>
 
         {/* uptime */}

@@ -397,7 +397,9 @@ def svc_get_os_server(server_id: int, db: Session, org_id: Optional[int] = None)
             "monitoring_enabled": server.monitoring_enabled,
             "auto_discovery": server.auto_discovery,
             "collector": server.collector or "ssh",
-            "agent_token": server.agent_token,
+            # Shown once, at creation (svc_create_os_server below) — never
+            # re-exposed on a subsequent GET, same discipline as a password.
+            "agent_token_configured": bool(server.agent_token),
             "last_infra_at": server.last_infra_at.isoformat() if server.last_infra_at else None,
             "created_at": server.created_at.isoformat() if server.created_at else None,
             "db_instances": instances,
@@ -408,6 +410,28 @@ def svc_get_os_server(server_id: int, db: Session, org_id: Optional[int] = None)
 
 def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
     import uuid
+
+    # A physical host has one IP address — registering it a second time under a
+    # different server_name silently created a duplicate node in every cluster-
+    # topology view keyed by cluster_name (two cards for what's really one
+    # machine, e.g. "PG-Server-1" and a later "PostgreSQL" both at the same IP
+    # in the same Patroni Cluster group). No prior check existed for this.
+    existing = db.query(OsServer).filter(
+        OsServer.org_id == org_id,
+        func.lower(OsServer.ip_address) == (request.ip_address or "").strip().lower(),
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A server at {request.ip_address} is already registered as "
+                f"'{existing.server_name}' (id {existing.id}). Edit that server "
+                f"instead of registering the same host again."
+            ),
+        )
+
+    from app.services.common.credential_encryption_service import credential_encryption
+
     collector = (request.collector or "ssh").lower()
     agent_token = f"actmon-{uuid.uuid4().hex}" if collector == "agent" else None
 
@@ -429,6 +453,7 @@ def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
         status="Unknown",
         collector=collector,
         agent_token=agent_token,
+        agent_token_hash=credential_encryption.hash_token(agent_token),
     )
 
     db.add(server)
@@ -474,12 +499,17 @@ def svc_create_os_server(request: OsServerCreate, db: Session, org_id: int = 1):
 
 
 def svc_update_os_server(server_id: int, request: OsServerUpdate, db: Session):
+    from app.services.common.credential_encryption_service import credential_encryption
+
     server = db.query(OsServer).filter(OsServer.id == server_id).first()
 
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    for field, value in request.dict(exclude_unset=True).items():
+    data = request.dict(exclude_unset=True)
+    if credential_encryption.looks_like_mask(data.get("ssh_password")):
+        data.pop("ssh_password", None)  # blank or a mask placeholder — keep the stored credential
+    for field, value in data.items():
         setattr(server, field, value)
 
     db.commit()

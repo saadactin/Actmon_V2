@@ -10,6 +10,7 @@ from sqlalchemy.pool import NullPool
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import MySQLConnectionCreate
 from app.services.common.actmon_internal_tables import mysql_exclude_internal_tables_sql
+from app.services.common.credential_encryption_service import credential_encryption
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -54,7 +55,7 @@ def list_connections(db: Session, org_id=None) -> dict:
     if org_id is not None:
         query = query.filter(ConnectionMaster.org_id == org_id)
     connections = query.all()
-    return {"status": "success", "data": connections}
+    return {"status": "success", "data": [credential_encryption.mask_connection_fields(c) for c in connections]}
 
 
 def create_connection(request: MySQLConnectionCreate, db: Session, org_id=1) -> dict:

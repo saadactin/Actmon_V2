@@ -92,9 +92,12 @@ class StartupPing(BaseModel):
 def route_startup_ping(req: StartupPing, db: Session = Depends(get_db)):
     from app.services.agent import agent_update_ledger_service as ledger
     from app.models.agent_model import AgentToken
+    from app.services.common.credential_encryption_service import credential_encryption
     # Resolve identity from the enrollment token, never from the self-reported
     # hostname — the token is what actually authorises this host.
-    tok = db.query(AgentToken).filter(AgentToken.token == req.token).first()
+    tok = db.query(AgentToken).filter(
+        credential_encryption.token_match_filter(AgentToken.token_hash, AgentToken.token, req.token)
+    ).first()
     if not tok:
         raise HTTPException(status_code=401, detail="Unknown agent token.")
     name = tok.agent_name or req.hostname
@@ -210,8 +213,10 @@ def route_universal_msi(url: str = Query(...), db: Session = Depends(get_db)):
     double-click — the host self-registers by its own name. No wizard, no token to manage."""
     import uuid
     from app.models.agent_model import AgentToken
+    from app.services.common.credential_encryption_service import credential_encryption
     token = "actmon-" + uuid.uuid4().hex
-    db.add(AgentToken(token=token, token_name="ActMon Agent", agent_name="ActMon Agent", os_type="windows"))
+    db.add(AgentToken(token=token, token_hash=credential_encryption.hash_token(token),
+                       token_name="ActMon Agent", agent_name="ActMon Agent", os_type="windows"))
     db.commit()
     try:
         path = build_token_msi(token, url)

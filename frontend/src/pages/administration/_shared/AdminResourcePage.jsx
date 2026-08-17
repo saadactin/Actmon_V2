@@ -75,6 +75,16 @@ function FieldControl({ field, value, onChange, options }) {
       );
     case 'number':
       return <Input type="number" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={field.readOnly} />;
+    case 'password':
+      // Value is always blank on open (see openEdit/openCreate) — never
+      // pre-filled from a fetched row, and never displayed in view mode
+      // (handled separately, above this switch). Blank on submit means
+      // "leave unchanged"; the backend is responsible for not overwriting
+      // the stored value with an empty string.
+      return (
+        <Input type="password" value={value ?? ''} onChange={(e) => onChange(e.target.value)}
+          disabled={field.readOnly} autoComplete="new-password" placeholder={field.editPlaceholder} />
+      );
     case 'date':
       return <Input type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={field.readOnly} />;
     case 'json':
@@ -196,9 +206,19 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     return v;
   }
 
+  // Password-type fields are never pre-filled from a fetched row — whatever
+  // the API returned for one (a hash, a masked placeholder) is blanked out
+  // here so it's never displayed, never re-submitted unchanged, and never
+  // sitting in form state at all longer than necessary.
+  function withPasswordsBlanked(row) {
+    const v = { ...row };
+    config.fields.forEach((f) => { if (f.type === 'password') v[f.key] = ''; });
+    return v;
+  }
+
   function openCreate() { setForm({ mode: 'add', values: emptyValues(), errors: {} }); }
-  function openEdit(row) { setForm({ mode: 'edit', values: { ...row }, errors: {} }); }
-  function openView(row) { setForm({ mode: 'view', values: { ...row }, errors: {} }); }
+  function openEdit(row) { setForm({ mode: 'edit', values: withPasswordsBlanked(row), errors: {} }); }
+  function openView(row) { setForm({ mode: 'view', values: withPasswordsBlanked(row), errors: {} }); }
   function closeForm() { setForm(null); setDynOptions({}); }
 
   function setField(key, value) {
@@ -217,7 +237,12 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
         await create(form.values);
         flash(`${singular} created.`);
       } else {
-        await update({ id: form.values[config.idKey], row: form.values });
+        // A blank password field means "leave it unchanged" — never send an
+        // empty string on update, which some backends would otherwise treat
+        // as a real (empty) value and overwrite the stored credential/hash.
+        const row = { ...form.values };
+        config.fields.forEach((f) => { if (f.type === 'password' && !row[f.key]) delete row[f.key]; });
+        await update({ id: form.values[config.idKey], row });
         flash(`${singular} updated.`);
       }
       closeForm();
@@ -255,13 +280,15 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
           <div className="px-card py-card">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {config.fields.map((f) => (
-                <div key={f.key} className={f.type === 'textarea' || f.type === 'json' ? 'sm:col-span-2' : undefined}>
+                <div key={f.key} className={f.type === 'textarea' || f.type === 'json' || f.fullWidth ? 'sm:col-span-2' : undefined}>
                   <label className="mb-1 block text-[12px] font-semibold text-muted">
                     {f.label}{f.required && <span className="text-danger"> *</span>}
                   </label>
                   {form.mode === 'view' ? (
                     <p className="text-[13px] text-fg">
-                      {f.type === 'checkbox' ? (form.values[f.key] ? 'Active' : 'Inactive') : String(form.values[f.key] ?? '—')}
+                      {f.type === 'checkbox' ? (form.values[f.key] ? 'Active' : 'Inactive')
+                        : f.type === 'password' ? 'Configured'
+                        : String(form.values[f.key] ?? '—')}
                     </p>
                   ) : (
                     <FieldControl

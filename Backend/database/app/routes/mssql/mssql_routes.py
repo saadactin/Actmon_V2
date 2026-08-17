@@ -8,6 +8,7 @@ from app.database.connection import SessionLocal
 from app.models.connection_model import ConnectionMaster
 from app.models.connection_schema import MSSQLConnectionCreate
 from app.services.auth.tenant_context import tenant_ctx, scope_org_id, create_org_id
+from app.services.common.credential_encryption_service import credential_encryption
 
 router = APIRouter(
     prefix="/api/v1/connections/mssql",
@@ -34,7 +35,7 @@ def list_mssql_connections(db: Session = Depends(get_db), ctx: dict = Depends(te
 
     return {
         "status": "success",
-        "data": connections
+        "data": [credential_encryption.mask_connection_fields(c) for c in connections]
     }
 
 # CREATE MSSQL CONNECTION
@@ -76,7 +77,7 @@ def create_mssql_connection(
         return {
             "status": "success",
             "message": "MSSQL connection created successfully",
-            "data": new_connection
+            "data": credential_encryption.mask_connection_fields(new_connection)
         }
     except Exception as e:
         db.rollback()
@@ -92,10 +93,10 @@ def get_mssql_connection(connection_id: int, db: Session = Depends(get_db)):
     
     if not connection:
         raise HTTPException(status_code=404, detail="MSSQL connection not found")
-    
+
     return {
         "status": "success",
-        "data": connection
+        "data": credential_encryption.mask_connection_fields(connection)
     }
 
 # UPDATE MSSQL CONNECTION
@@ -118,18 +119,19 @@ def update_mssql_connection(
         connection.host = request.host
         connection.port = request.port
         connection.username = request.username
-        connection.password = request.password
+        if not credential_encryption.looks_like_mask(request.password):
+            connection.password = request.password
         connection.database_name = request.database_name
         connection.windows_authentication = request.windows_authentication
         connection.instance_name = request.instance_name
-        
+
         db.commit()
         db.refresh(connection)
-        
+
         return {
             "status": "success",
             "message": "MSSQL connection updated successfully",
-            "data": connection
+            "data": credential_encryption.mask_connection_fields(connection)
         }
     except Exception as e:
         db.rollback()

@@ -5,6 +5,7 @@ import ActmonAiMark from '@/components/brand/ActmonAiMark';
 import ChatSidebar from '@/components/chat/ChatSidebar';
 import { Bubble, Welcome } from '@/components/chat/ChatWidget';
 import { useChatStore } from '@/store/chatStore';
+import cn from '@/lib/cn';
 
 /**
  * Full-page ActMon AI — a ChatGPT/Cursor-style layout: a left rail of the
@@ -23,6 +24,11 @@ export default function AiAssistantPage() {
   const resumeLastSession = useChatStore((s) => s.resumeLastSession);
 
   const [draft, setDraft] = useState('');
+  // The sidebar sits inline (always visible) at md+ (≥768px) — below that, a
+  // fixed 256px column would crush the conversation into a sliver, so it
+  // becomes a toggled overlay drawer instead. Same component, same route,
+  // just how it's revealed at a narrow width.
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const listRef = useRef(null);
   const taRef = useRef(null);
   const pinnedToBottom = useRef(true);
@@ -64,10 +70,29 @@ export default function AiAssistantPage() {
         title="ActMon AI"
         description={streaming ? 'Thinking…' : 'Ask about a host, a database, an alert, or what needs attention right now.'}
         leading={<ActmonAiMark size={32} glow={false} />}
+        actions={(
+          <IconButton
+            icon="menu" label="Conversations" size="sm" className="md:hidden"
+            onClick={() => setMobileSidebarOpen((v) => !v)}
+          />
+        )}
       />
 
-      <div className="card flex h-[calc(100vh-var(--content-pad-x)*2-11rem)] min-h-[480px] overflow-hidden p-0">
-        <ChatSidebar className="w-64 shrink-0" />
+      <div className="card relative flex h-[calc(100vh-var(--content-pad-x)*2-11rem)] min-h-[480px] overflow-hidden p-0">
+        <ChatSidebar
+          className={cn(
+            'w-64 shrink-0',
+            mobileSidebarOpen
+              ? 'absolute inset-y-0 left-0 z-20 flex shadow-xl'
+              : 'hidden md:flex',
+          )}
+        />
+        {mobileSidebarOpen && (
+          <div
+            className="absolute inset-0 z-10 bg-black/30 md:hidden"
+            onClick={() => setMobileSidebarOpen(false)}
+          />
+        )}
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div
