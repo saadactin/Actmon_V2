@@ -1089,10 +1089,12 @@ Return this exact JSON structure:
 }}"""
 
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=800,
+            max_tokens=1500,  # bumped from 800 — this model's hidden reasoning trace
+                              # counts against max_tokens before any visible content
+            reasoning_effort="low",
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

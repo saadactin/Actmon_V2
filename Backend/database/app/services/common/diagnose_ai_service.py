@@ -18,7 +18,7 @@ import os
 
 from groq import Groq
 
-_MODEL = "llama-3.3-70b-versatile"
+_MODEL = "openai/gpt-oss-120b"
 
 
 def _client():
@@ -97,6 +97,7 @@ Return ONLY valid JSON, no markdown, no commentary, in exactly this shape:
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=1200,
+            reasoning_effort="low",
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

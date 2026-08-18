@@ -3,6 +3,8 @@ Oracle Monitoring routes — thin handlers only.
 All business logic lives in app/services/oracle/oracle_monitoring_service.py
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,7 @@ from app.services.oracle.oracle_monitoring_service import (
     oracle_awr_sql,
     oracle_monitoring_dashboard,
     oracle_slow_queries,
+    oracle_slow_queries_filtered,
     oracle_error_logs,
     oracle_index_analysis,
     oracle_live_queries,
@@ -164,8 +167,28 @@ def route_oracle_monitoring_dashboard(conn_id: int, db: Session = Depends(get_db
 
 # 17
 @router.get("/{conn_id}/oracle-slow-queries")
-def route_oracle_slow_queries(conn_id: int, db: Session = Depends(get_db)):
-    return oracle_slow_queries(conn_id, db)
+def route_oracle_slow_queries(
+    conn_id: int,
+    db_name: Optional[str] = None,
+    query_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    user_name: Optional[str] = None,
+    search: Optional[str] = None,
+    min_avg_ms: Optional[float] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "desc",
+    page: int = 1,
+    page_size: int = 25,
+    db: Session = Depends(get_db),
+):
+    return oracle_slow_queries_filtered(
+        conn_id, db, db_name=db_name, query_type=query_type, severity=severity,
+        user_name=user_name, search=search, min_avg_ms=min_avg_ms,
+        date_from=date_from, date_to=date_to, sort_by=sort_by, sort_dir=sort_dir,
+        page=page, page_size=page_size,
+    )
 
 
 @router.post("/{conn_id}/oracle-slow-queries/analyze-groq")

@@ -34,6 +34,7 @@ import { fmtBytes, fmtNumber } from '@/config/dbCatalog';
 import {
   CH_DATABASE_COLUMNS, CH_TABLE_COLUMNS, MAX_PARTS_WARN, chDatabaseRow, chTableRow,
 } from '@/config/clickhouseCatalog';
+import { CLICKHOUSE_DASHBOARD_TABS } from '@/config/clickhouseDashboardNav';
 
 /**
  * ClickHouse dashboard — twelve tabs, each backed by its own `system.*` query.
@@ -54,20 +55,7 @@ const REFRESH_INTERVAL = 15; // seconds
 const get = (id, path) =>
   client.get(`/connections/clickhouse/${id}/${path}`).then((r) => r.data);
 
-const TABS = [
-  { id: 'overview', label: 'Overview', icon: Activity },
-  { id: 'queries', label: 'Running', icon: Zap },
-  { id: 'querylog', label: 'Query Log', icon: FileText },
-  { id: 'slowqueries', label: 'Slow Queries', icon: TrendingUp },
-  { id: 'databases', label: 'Databases', icon: Server },
-  { id: 'tables', label: 'Tables', icon: Database },
-  { id: 'partitions', label: 'Partitions', icon: Layers },
-  { id: 'merges', label: 'Merges', icon: GitMerge },
-  { id: 'replicas', label: 'Replicas', icon: Copy },
-  { id: 'clusters', label: 'Clusters', icon: Network },
-  { id: 'sysmetrics', label: 'System Metrics', icon: ClipboardCheck },
-  { id: 'settings', label: 'Settings', icon: Clipboard },
-];
+const TABS = CLICKHOUSE_DASHBOARD_TABS;
 
 const num = (v) => Number(v) || 0;
 

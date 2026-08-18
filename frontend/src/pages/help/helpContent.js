@@ -447,11 +447,10 @@ DOCS['db-overview'] = {
   crumbs:['ActMon Documentation','Dashboard','Dashboard Overview'], module:'Dashboard', status:'Complete',
   body:`
     <h2>What the Dashboard is</h2>
-    <p>The Dashboard is ActMon's monitoring landing page, rendered at the route <code>/dashboard</code> by the
-    component <code>src/pages/Dashboard.jsx</code>. It is a single-view page — it has no tabs and no
-    sub-routes. Its purpose is to answer, at a glance, five questions: how many database servers, infrastructure
-    hosts, cloud accounts, and agents ActMon currently knows about, how healthy each group is, and what alerts
-    are currently firing.</p>
+    <p>The Dashboard is ActMon's monitoring landing page — the first thing you see after signing in. It is a
+    single-view page with no tabs and no sub-pages to navigate. Its purpose is to answer, at a glance, five
+    questions: how many database servers, infrastructure hosts, cloud accounts, and agents ActMon currently
+    knows about, how healthy each group is, and what alerts are currently firing.</p>
     <h2>Purpose</h2>
     <p>Every number and chart on the Dashboard is derived — in the browser, not by a dedicated backend
     endpoint — from the same four or five data feeds that also back the Agents, Database (Infrastructure),

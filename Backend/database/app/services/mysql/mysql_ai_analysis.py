@@ -74,7 +74,7 @@ MySQL Error:
 
     response = client.chat.completions.create(
 
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
 
         messages=[
             {
@@ -85,7 +85,9 @@ MySQL Error:
 
         temperature=0.1,
 
-        max_tokens=1500
+        max_tokens=1500,
+
+        reasoning_effort="low"
 
     )
 

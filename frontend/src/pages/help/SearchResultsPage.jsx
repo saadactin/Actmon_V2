@@ -23,9 +23,9 @@ export default function SearchResultsPage({ query, go }) {
       </p>
 
       {results.length === 0 ? (
-        <div className="card flex flex-col items-center gap-3 px-6 py-14 text-center">
+        <div className="hc-card flex flex-col items-center gap-3 py-14 text-center">
           <Icon name="search" size={28} className="text-subtle" />
-          <p className="max-w-[42ch] text-[13.5px] text-muted">
+          <p className="max-w-[42ch] hc-card-description">
             Try a different word, or browse the module list from the Help Center home page.
           </p>
           <button
@@ -43,15 +43,16 @@ export default function SearchResultsPage({ query, go }) {
               key={r.id}
               type="button"
               onClick={() => go(r.id)}
-              className="card flex flex-col gap-1 px-4 py-3 text-left transition-colors hover:border-accent hover:bg-accent-soft"
+              className="hc-card flex flex-col gap-1 text-left"
+              style={{ padding: 'calc(var(--hc-card-padding) * 0.6) var(--hc-card-padding)' }}
             >
               <div className="flex items-center gap-2">
                 <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[9.5px] tracking-wide text-subtle uppercase">
                   {r.module}
                 </span>
-                <span className="truncate-safe text-[14.5px] font-semibold text-fg">{r.title}</span>
+                <span className="hc-card-title truncate-safe font-semibold">{r.title}</span>
               </div>
-              {r.dek && <p className="truncate-safe max-w-[70ch] text-[12.5px] text-muted">{r.dek}</p>}
+              {r.dek && <p className="truncate-safe max-w-[70ch] hc-card-description">{r.dek}</p>}
             </button>
           ))}
         </div>

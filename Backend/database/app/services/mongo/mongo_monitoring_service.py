@@ -627,17 +627,18 @@ def get_slow_operations(conn_id: int, db: Session):
         except Exception:
             pass
 
-        # Split out ActMon's own monitoring traffic (this connection may point
-        # at the same Mongo instance ActMon itself uses) — same idea as every
-        # other engine's exclusion filter, applied here on the Python side
+        # Tag ActMon's own monitoring traffic (this connection may point at
+        # the same Mongo instance ActMon itself uses) — same idea as every
+        # other engine's classification, applied here on the Python side
         # since profiler/currentOp results aren't produced by a query ActMon
-        # can add a WHERE clause to.
+        # can add a WHERE clause to. Kept in the list (tagged), not dropped —
+        # the Slow Queries page's "ActMon Queries" filter needs real rows.
         def _is_actmon(op):
             return contains_internal_table(op.get("ns", "")) or contains_internal_table(op.get("query", ""))
 
-        actmon_internal = [op for op in (current_ops + profile_ops) if _is_actmon(op)]
-        current_ops = [op for op in current_ops if not _is_actmon(op)]
-        profile_ops = [op for op in profile_ops if not _is_actmon(op)]
+        for op in current_ops + profile_ops:
+            op["query_type"] = "actmon" if _is_actmon(op) else "system"
+        actmon_internal_count = sum(1 for op in (current_ops + profile_ops) if op["query_type"] == "actmon")
 
         all_ops = current_ops + profile_ops
         all_ops.sort(key=lambda x: x.get("millis", x.get("secs_running", 0) * 1000), reverse=True)
@@ -648,7 +649,7 @@ def get_slow_operations(conn_id: int, db: Session):
             "profile_ops":  profile_ops,
             "all_ops":      all_ops,
             "total":        len(all_ops),
-            "actmon_internal_count": len(actmon_internal),
+            "actmon_internal_count": actmon_internal_count,
             "profiling_status": {
                 "enabled":    profiling_enabled,
                 "was_active": len(current_ops) > 0,
@@ -691,8 +692,31 @@ def _normalize_mongo_rows(all_ops: list, response: dict) -> None:
             rows_returned=op.get("nreturned"),
             last_seen=op.get("ts") or None,
             source=op.get("source"),
+            query_type=op.get("query_type"),
         ))
     attach_normalized(response, "mongodb", common_rows)
+
+
+def get_slow_operations_filtered(
+    conn_id: int, db: Session, *,
+    db_name: str = None, query_type: str = None, severity: str = None,
+    user_name: str = None, search: str = None, min_avg_ms: float = None,
+    date_from: str = None, date_to: str = None,
+    sort_by: str = None, sort_dir: str = "desc", page: int = 1, page_size: int = 25,
+) -> dict:
+    """Wraps `get_slow_operations` with the shared filter/sort/paginate
+    contract every engine's Slow Queries list now uses."""
+    from app.services.common.slow_query_normalize import filter_paginate_rows
+    response = get_slow_operations(conn_id, db)
+    result = filter_paginate_rows(
+        response.get("normalized") or [],
+        database_name=db_name, query_type=query_type, severity=severity,
+        user_name=user_name, search=search, min_avg_ms=min_avg_ms,
+        date_from=date_from, date_to=date_to,
+        sort_by=sort_by, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+    response.update(result)
+    return response
 
 
 def explain_operation(conn_id: int, database: str, collection: str, query_filter, db: Session) -> dict:
@@ -1814,10 +1838,11 @@ Return this exact JSON structure:
 }}"""
 
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=3000,
+            reasoning_effort="low",
         )
 
         import json as _json

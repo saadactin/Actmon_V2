@@ -31,6 +31,7 @@ const MODULES = [
   { title: 'User Sessions', to: '/user-sessions', icon: 'activity', scope: 'global', desc: 'Active and expired sessions issued to users.' },
   { title: 'Password History', to: '/password-history', icon: 'lock', scope: 'global', desc: 'When each user’s password was last changed.' },
   { title: 'AI Chat Sessions', to: '/ai-chat-sessions', icon: 'chat', scope: 'global', desc: 'Every ActMon AI conversation across your users, for audit and support.' },
+  { title: 'Help Center Appearance', to: '/help-center-appearance', icon: 'palette', scope: 'global', desc: 'Card themes, colors, sizing, and layout for the documentation library.' },
 ];
 
 function moduleHref(m, orgId, orgName) {

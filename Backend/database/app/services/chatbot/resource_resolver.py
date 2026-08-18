@@ -18,6 +18,7 @@ caller can ask rather than pick:
 """
 import re
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
@@ -74,7 +75,29 @@ def resolve(db: Session, org_id, resource_hint, module: str, engine=None, page_c
         if module == "infra" and page_context.get("server_id"):
             row = db.query(OsServer).filter(OsServer.id == page_context["server_id"]).first()
             return _result("resolved", _serialize(row, "infra")) if row else _result("not_found")
-        return _result("not_found")
+
+    # No specific name was given at all — e.g. "mysql", "tell me mysql health",
+    # "how is postgres doing" — but the classifier still extracted an ENGINE.
+    # This is the common single-word/short follow-up shape and must not fall
+    # through to "ask which connection", or a bare engine name loops forever:
+    # resolve directly against every connection of that engine — one match
+    # resolves, several are ambiguous (ask which), zero is a clear not_found
+    # ("no MySQL connection configured"), same three-way contract as a named hint.
+    if not hint and engine and module == "database":
+        # "mysql" must also match a row stored as "mariadb" — the classifier's
+        # engine enum has no separate mariadb value, but the connections table
+        # does (same equivalence health_tool.get_live_health already applies).
+        engine_l = engine.lower()
+        match_types = ("mysql", "mariadb") if engine_l in ("mysql", "mariadb") else (engine_l,)
+        q = db.query(ConnectionMaster).filter(func.lower(ConnectionMaster.db_type).in_(match_types))
+        if org_id is not None:
+            q = q.filter(ConnectionMaster.org_id == org_id)
+        rows = q.all()
+        if not rows:
+            return _result("not_found")
+        if len(rows) == 1:
+            return _result("resolved", _serialize(rows[0], module))
+        return _result("ambiguous", candidates=[_serialize(r, module) for r in rows[:8]])
 
     if not hint:
         return _result("not_found")

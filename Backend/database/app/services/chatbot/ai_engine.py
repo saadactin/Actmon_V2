@@ -91,6 +91,9 @@ Make suggestions relevant to what was just discussed and immediately useful.
 # Streaming Chat
 # ──────────────────────────────────────────────────────────────────────────────
 
+_MODEL = "openai/gpt-oss-120b"
+
+
 def stream_chat(messages: list) -> Generator[str, None, None]:
     """Yield SSE-formatted lines from Groq streaming API."""
     from groq import Groq
@@ -99,11 +102,17 @@ def stream_chat(messages: list) -> Generator[str, None, None]:
     full_text = ""
     try:
         stream = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=_MODEL,
             messages=messages,
             stream=True,
             max_tokens=2048,
             temperature=0.72,
+            # This model emits a separate hidden "reasoning" delta alongside the
+            # visible "content" delta on every chunk — "low" keeps that internal
+            # trace short so a turn stays fast and max_tokens isn't eaten by
+            # reasoning before the visible answer is even written. Only
+            # `delta.content` below is ever yielded to the user.
+            reasoning_effort="low",
         )
         for chunk in stream:
             delta = chunk.choices[0].delta.content or ""
@@ -134,10 +143,11 @@ def chat_once(messages: list) -> str:
     from groq import Groq
     client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model=_MODEL,
         messages=messages,
         max_tokens=1024,
         temperature=0.5,
+        reasoning_effort="low",
     )
     return resp.choices[0].message.content or ""
 

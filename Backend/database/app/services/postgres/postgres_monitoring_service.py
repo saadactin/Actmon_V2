@@ -1051,6 +1051,11 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
     # silently mislabeled as "extension unavailable".
     try:
         try:
+            # ActMon's own queries are NOT excluded here (unlike other
+            # pg_stat_statements reads in this file) — the Slow Queries page
+            # tags them via `classify_query_type()` in `_normalize_pg_rows`
+            # instead, so the "ActMon Queries" filter has real rows to show
+            # rather than a query that never returns any.
             rows = _rows(
                 read_eng,
                 "SELECT s.queryid, userid::regrole AS user_name, s.dbid, d.datname, s.query, s.calls, "
@@ -1060,9 +1065,8 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
                 "JOIN pg_database d ON d.oid = s.dbid "
                 "WHERE s.query NOT LIKE '%pg_stat_statements%' "
                 "AND s.query NOT LIKE '%pg_catalog%' "
-                f"AND {pg_exclude_internal_tables_sql('s.query')} "
                 "ORDER BY s.mean_exec_time DESC "
-                "LIMIT 50"
+                "LIMIT 200"
             )
         except Exception:
             rows = _rows(
@@ -1074,9 +1078,8 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
                 "JOIN pg_database d ON d.oid = s.dbid "
                 "WHERE s.query NOT LIKE '%pg_stat_statements%' "
                 "AND s.query NOT LIKE '%pg_catalog%' "
-                f"AND {pg_exclude_internal_tables_sql('s.query')} "
                 "ORDER BY s.mean_exec_time DESC "
-                "LIMIT 50"
+                "LIMIT 200"
             )
         queries = [dict(r) for r in rows]
         for q in queries:
@@ -1145,6 +1148,29 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
         "error":   error,
     }
     _normalize_pg_rows(queries, response)
+    return response
+
+
+def svc_pg_slow_queries_filtered(
+    conn_id: int, db: Session, *,
+    db_name: str = None, query_type: str = None, severity: str = None,
+    user_name: str = None, search: str = None, min_avg_ms: float = None,
+    date_from: str = None, date_to: str = None,
+    sort_by: str = None, sort_dir: str = "desc", page: int = 1, page_size: int = 25,
+) -> dict:
+    """Wraps `svc_pg_slow_queries` with the shared filter/sort/paginate
+    contract (`filter_paginate_rows`) every engine's Slow Queries list now
+    uses — see slow_query_normalize.py."""
+    from app.services.common.slow_query_normalize import filter_paginate_rows
+    response = svc_pg_slow_queries(conn_id, db)
+    result = filter_paginate_rows(
+        response.get("normalized") or [],
+        database_name=db_name, query_type=query_type, severity=severity,
+        user_name=user_name, search=search, min_avg_ms=min_avg_ms,
+        date_from=date_from, date_to=date_to,
+        sort_by=sort_by, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+    response.update(result)
     return response
 
 
@@ -3112,10 +3138,11 @@ Return this exact JSON structure:
 }}"""
 
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
             max_tokens=3000,
+            reasoning_effort="low",
         )
 
         raw = response.choices[0].message.content.strip()
@@ -3622,7 +3649,7 @@ Rules:
     try:
         client = Groq(api_key=api_key)
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": error_context},
@@ -3630,6 +3657,7 @@ Rules:
             max_tokens=1800,
             temperature=0.25,
             response_format={"type": "json_object"},
+            reasoning_effort="low",
         )
         raw      = resp.choices[0].message.content or "{}"
         analysis = json.loads(raw)

@@ -27,6 +27,7 @@ import Pagination, { Paged } from '@/components/ui/Pagination';
 import Gauge from '@/components/gauges/Gauge';
 import TrendChart from '@/components/gauges/TrendChart';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
+import { MONGODB_DASHBOARD_TABS } from '@/config/mongodbDashboardNav';
 
 /* ─── MongoDB palette ─── */
 const C = {
@@ -60,21 +61,7 @@ const fetchUsers        = (id) => client.get(`/connections/mongodb/${id}/mongo-u
 const fetchErrorLogs    = (id) => client.get(`/connections/mongodb/${id}/mongo-error-logs`).then(r => r.data);
 const fetchCollAnalysis = (id) => client.get(`/connections/mongodb/${id}/mongo-collection-analysis`).then(r => r.data);
 
-const TABS = [
-  { id: 'overview',     label: 'Overview',       icon: Activity },
-  { id: 'operations',   label: 'Operations',      icon: Zap },
-  { id: 'profiler',     label: 'Profiler',        icon: Terminal },
-  { id: 'collections',  label: 'Collections',     icon: Layers },
-  { id: 'indexes',      label: 'Indexes',         icon: Key },
-  { id: 'replication',  label: 'Replication',     icon: GitBranch },
-  { id: 'oplog',        label: 'Oplog',           icon: Archive },
-  { id: 'sharding',     label: 'Sharding',        icon: Network },
-  { id: 'transactions', label: 'Transactions',    icon: RotateCcw },
-  { id: 'wiredtiger',   label: 'WiredTiger',      icon: Cpu },
-  { id: 'users',        label: 'Users',           icon: Users },
-  { id: 'slowqueries',  label: 'Slow Queries',    icon: Clock },
-  { id: 'errorlogs',    label: 'Error Logs',      icon: FileText },
-];
+const TABS = MONGODB_DASHBOARD_TABS;
 
 const REFRESH_INTERVAL = 15;
 
@@ -415,8 +402,6 @@ export default function MongoDBDashboard() {
   const [sparklines, setSparklines] = useState({ conn: [], cache: [], ops: [] });
   const [collSearch, setCollSearch] = useState('');
   const [selDb, setSelDb]           = useState('');
-  const [nsFilter, setNsFilter]     = useState('');
-  const [msThreshold, setMsThreshold] = useState(100);
   const [elSev, setElSev]           = useState('ALL');
   const [elSearch, setElSearch]     = useState('');
   const countRef = useRef(null);
@@ -610,8 +595,8 @@ export default function MongoDBDashboard() {
   );
 
   const alerts = {
-    operations:   (opsData?.slow_count || 0),
-    slowqueries:  (slowData?.total || 0),
+    operations:      (opsData?.slow_count || 0),
+    'slow-queries':  (slowData?.total || 0),
   };
 
   /* ─────────────────────────────────────────────────────────────── */
@@ -2036,93 +2021,10 @@ export default function MongoDBDashboard() {
         })()}
 
         {/* ══ SLOW QUERIES ══════════════════════════════════════════════ */}
-        {activeTab === 'slowqueries' && (() => {
-          if (slowLoading) return <TabLoader />;
-          const allOps = slowData?.all_ops || [];
-          const filtered = allOps.filter(op => {
-            const ms      = op.millis || (op.secs_running || 0) * 1000;
-            const matchMs = ms >= msThreshold;
-            const matchNs = !nsFilter || (op.ns || '').toLowerCase().includes(nsFilter.toLowerCase());
-            return matchMs && matchNs;
-          });
-          return (
-            <div className="space-y-5">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <MetricKpi title="Slow Ops Total"    value={allOps.length}            accent={allOps.length > 0 ? 'red' : 'green'} />
-                <MetricKpi title="From CurrentOp"   value={(slowData?.current_ops || []).length} accent="orange" />
-                <MetricKpi title="From Profiler"     value={(slowData?.profile_ops  || []).length} accent="blue" />
-                <MetricKpi title="After Filter"      value={filtered.length}          accent="slate" />
-              </div>
-
-              {/* Filter controls */}
-              <div className="flex items-center gap-3 flex-wrap bg-white rounded-2xl border border-slate-200 p-4">
-                <div className="relative">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input value={nsFilter} onChange={e => setNsFilter(e.target.value)}
-                    placeholder="Filter by namespace..."
-                    className="h-9 pl-8 pr-4 w-48 rounded-xl border border-slate-200 text-sm outline-none focus:border-green-400" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Clock size={13} className="text-slate-400" />
-                  <span className="text-xs text-slate-500 font-semibold">Min ms:</span>
-                  <input type="number" value={msThreshold} onChange={e => setMsThreshold(Number(e.target.value) || 0)}
-                    className="h-9 w-20 px-3 rounded-xl border border-slate-200 text-sm outline-none focus:border-green-400" />
-                </div>
-                <span className="text-xs text-slate-400">{filtered.length} results</span>
-              </div>
-
-              <Panel title={`Slow Operations (>${msThreshold}ms)`}>
-                <div className="overflow-x-auto">
-                  <Paged rows={filtered} unit="operations">{(pageRows, pager) => (<>
-                  <table className="w-full text-xs">
-                    <thead className="bg-slate-50">
-                      <tr>{['Source', 'Op', 'Namespace', 'Duration', 'Docs Exam.', 'Keys Exam.', 'Plan', 'Client', 'Timestamp'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
-                      ))}</tr>
-                    </thead>
-                    <tbody>
-                      {pageRows.map((op, i) => {
-                        const ms = op.millis || (op.secs_running || 0) * 1000;
-                        return (
-                          <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${ms > 5000 ? 'bg-red-50/40' : ms > 1000 ? 'bg-yellow-50/40' : ''}`}>
-                            <td className="px-3 py-2.5">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${op.source === 'currentOp' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
-                                {op.source || '—'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5">
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold"
-                                style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
-                                {op.op || op.type || '—'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-slate-500 max-w-[180px] truncate">{op.ns || '—'}</td>
-                            <td className={`px-3 py-2.5 font-bold ${ms > 5000 ? 'text-red-600' : ms > 1000 ? 'text-orange-600' : 'text-slate-700'}`}>
-                              {ms > 0 ? `${ms}ms` : `${op.secs_running || 0}s`}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono">{fmtNum(op.docsExamined || 0)}</td>
-                            <td className="px-3 py-2.5 font-mono">{fmtNum(op.keysExamined || 0)}</td>
-                            <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
-                            <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{op.client || '—'}</td>
-                            <td className="px-3 py-2.5 font-mono text-[9px] text-slate-400 whitespace-nowrap">{op.ts || '—'}</td>
-                          </tr>
-                        );
-                      })}
-                      {filtered.length === 0 && (
-                        <tr><td colSpan={9}>
-                          <EmptyState icon={Clock} message={`No slow operations above ${msThreshold}ms`}
-                            sub="Reduce threshold or enable profiling to capture more data" />
-                        </td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                  {pager}
-                  </>)}</Paged>
-                </div>
-              </Panel>
-            </div>
-          );
-        })()}
+        {/* Slow Queries now lives on its own shared route (see slowQueryCatalog.js /
+            SlowQueriesPage.jsx) — the 'slow-queries' tab id is one of
+            MYSQL_EXTERNAL_TAB_ROUTES-style external routes, never reached as an
+            in-page tab here, so there is no `activeTab === 'slow-queries'` case. */}
 
         {/* ══ ERROR LOGS ════════════════════════════════════════════════ */}
         {activeTab === 'errorlogs' && (() => {

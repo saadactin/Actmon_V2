@@ -40,6 +40,7 @@ from app.models.smtp_config_model import SmtpConfig                       # noqa
 from app.models.alert_rule_model import AlertRule                         # noqa: F401
 from app.models.monitoring_settings_model import MonitoringSettings       # noqa: F401
 from app.models.dashboard_appearance_model import DashboardAppearanceSettings  # noqa: F401
+from app.models.help_center_appearance_model import HelpCenterAppearance   # noqa: F401
 from app.models.diagnosis_run_model import DiagnosisRun                   # noqa: F401
 from app.models.db_check_run_model import DbCheckRun                       # noqa: F401
 from app.models.patroni_config_history_model import PatroniConfigHistory   # noqa: F401
@@ -94,6 +95,7 @@ from app.routes.settings.monitoring_settings_routes import router as monitoring_
 from app.routes.settings.mysql_ch_retention_routes import router as mysql_ch_retention_router
 from app.routes.settings.oracle_ch_retention_routes import router as oracle_ch_retention_router
 from app.routes.settings.dashboard_appearance_routes import router as dashboard_appearance_router
+from app.routes.settings.help_center_appearance_routes import router as help_center_appearance_router
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
 from app.routes.common.db_diagnose_routes import router as db_diagnose_router
@@ -254,6 +256,7 @@ app.include_router(monitoring_settings_router)
 app.include_router(mysql_ch_retention_router)
 app.include_router(oracle_ch_retention_router)
 app.include_router(dashboard_appearance_router)
+app.include_router(help_center_appearance_router)
 app.include_router(mongo_monitoring_router)
 
 # New OS server + terminal routes

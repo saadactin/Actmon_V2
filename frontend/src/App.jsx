@@ -123,6 +123,7 @@ const AdminResourcePage = lazy(() => import('@/pages/administration/_shared/Admi
 const AdministrationPage = lazy(() => import('@/pages/administration/AdministrationPage'));
 const GroupRolePagePermission = lazy(() => import('@/pages/administration/GroupRolePagePermission'));
 const AiChatSessionsPage = lazy(() => import('@/pages/administration/AiChatSessionsPage'));
+const HelpCenterAppearancePage = lazy(() => import('@/pages/administration/HelpCenterAppearancePage'));
 
 /** MongoDB's Slow Query page moved from /slow-operations to /slow-queries for
  * consistency with every other engine — this keeps an old bookmark working. */
@@ -358,6 +359,7 @@ export default function App() {
         <Route path="/user-sessions" element={<AdminResourcePage config={ADMIN_RESOURCES['user-sessions']} />} />
         <Route path="/password-history" element={<AdminResourcePage config={ADMIN_RESOURCES['password-history']} />} />
         <Route path="/ai-chat-sessions" element={<AiChatSessionsPage />} />
+        <Route path="/help-center-appearance" element={<HelpCenterAppearancePage />} />
 
         {generated.map((n) => (
           <Route

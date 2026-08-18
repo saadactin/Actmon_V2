@@ -11,9 +11,12 @@ import { useChatStore, LAUNCHER_SIZE } from '@/store/chatStore';
 import { APP } from '@/config/app.config';
 
 export const SUGGESTIONS = [
-  'Is anything unhealthy right now?',
-  'Summarise today’s alerts',
-  'Which host has the highest CPU?',
+  'Check system health',
+  'Show unhealthy databases',
+  'Show active alerts',
+  'Check replication',
+  'Find slow queries',
+  'Check agent health',
 ];
 
 /** Pointer movement past this, in either axis combined, counts as a drag rather
@@ -136,6 +139,7 @@ export default function ChatWidget() {
   const clear = useChatStore((s) => s.clear);
   const stop = useChatStore((s) => s.stop);
   const send = useChatStore((s) => s.send);
+  const retry = useChatStore((s) => s.retry);
   const resumeLastSession = useChatStore((s) => s.resumeLastSession);
 
   /** The floating panel is a small, always-on-top affordance — for a longer
@@ -266,7 +270,9 @@ export default function ChatWidget() {
             {messages.length === 0 ? (
               <Welcome onPick={submit} />
             ) : (
-              messages.map((m) => <Bubble key={m.id} message={m} onPick={submit} />)
+              messages.map((m) => (
+                <Bubble key={m.id} message={m} onPick={submit} onRetry={(id) => retry(id, pathname)} />
+              ))
             )}
           </div>
 
@@ -310,8 +316,8 @@ export function Welcome({ onPick }) {
     <div className="flex h-full flex-col items-center justify-center gap-4 px-2 text-center">
       <ActmonAiMark size={56} />
       <div>
-        <p className="text-[13px] font-bold text-fg">Hi, I&rsquo;m ActMon AI</p>
-        <p className="mt-1 text-[12px] text-muted">
+        <p className="text-[16px] font-bold text-fg">Hi, I&rsquo;m ActMon AI</p>
+        <p className="mt-1 text-[14px] text-muted">
           Ask about a host, an alert, or what needs attention right now.
         </p>
       </div>
@@ -321,7 +327,7 @@ export function Welcome({ onPick }) {
             key={s}
             type="button"
             onClick={() => onPick(s)}
-            className="rounded-control border border-border px-3 py-2 text-left text-[12px] text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
+            className="rounded-control border border-border px-3 py-2 text-left text-[14px] text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
           >
             {s}
           </button>
@@ -331,7 +337,7 @@ export function Welcome({ onPick }) {
   );
 }
 
-export function Bubble({ message, onPick }) {
+export function Bubble({ message, onPick, onRetry }) {
   const mine = message.role === 'user';
   return (
     <div className={cn('flex items-end gap-2', mine && 'flex-row-reverse')}>
@@ -346,11 +352,20 @@ export function Bubble({ message, onPick }) {
           )}
         >
           {mine
-            ? <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
+            ? <p className="text-[16px] leading-relaxed whitespace-pre-wrap">{message.content}</p>
             : message.content
               ? <FormatMessage text={message.content} />
               : <TypingDots />}
         </div>
+        {!mine && message.error && onRetry && (
+          <button
+            type="button"
+            onClick={() => onRetry(message.id)}
+            className="mt-1.5 flex items-center gap-1 rounded-control border border-border px-2.5 py-1 text-[13px] font-medium text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
+          >
+            <Icon name="refresh" size={12} /> Retry
+          </button>
+        )}
         {!mine && message.actionProposal && (
           <ActionProposalCard messageId={message.id} proposal={message.actionProposal} />
         )}
@@ -361,7 +376,7 @@ export function Bubble({ message, onPick }) {
                 key={s}
                 type="button"
                 onClick={() => onPick?.(s)}
-                className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
+                className="rounded-full border border-border px-2.5 py-1 text-[13px] text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
               >
                 {s}
               </button>

@@ -1991,9 +1991,12 @@ def oracle_slow_queries(conn_id: int, db: Session):
     engine = _get_engine(conn)
 
     try:
+        # ActMon's own queries are NOT excluded here — the Slow Queries page
+        # tags them via `classify_query_type()` in `_normalize_oracle_rows`
+        # instead, so the "ActMon Queries" filter has real rows to show.
         raw = _rows(
             engine,
-            f"""SELECT sql_id, executions,
+            """SELECT sql_id, executions,
                       ROUND(elapsed_time/NULLIF(executions,0)/1000000,4) AS avg_elapsed_sec,
                       ROUND(cpu_time/NULLIF(executions,0)/1000000,4)     AS avg_cpu_sec,
                       ROUND(disk_reads/NULLIF(executions,0),0)           AS avg_disk_reads,
@@ -2003,9 +2006,8 @@ def oracle_slow_queries(conn_id: int, db: Session):
                       parsing_schema_name
                FROM v$sqlarea
                WHERE executions > 0
-                 AND {oracle_exclude_internal_tables_sql('sql_text')}
                ORDER BY elapsed_time/NULLIF(executions,0) DESC
-               FETCH FIRST 50 ROWS ONLY"""
+               FETCH FIRST 200 ROWS ONLY"""
         )
         queries = [
             {
@@ -2049,6 +2051,35 @@ def _normalize_oracle_rows(queries: list, response: dict) -> None:
             source="v$sqlarea",
         ))
     attach_normalized(response, "oracle", common_rows)
+
+
+def oracle_slow_queries_filtered(
+    conn_id: int, db: Session, *,
+    db_name: str = None, query_type: str = None, severity: str = None,
+    user_name: str = None, search: str = None, min_avg_ms: float = None,
+    date_from: str = None, date_to: str = None,
+    sort_by: str = None, sort_dir: str = "desc", page: int = 1, page_size: int = 25,
+) -> dict:
+    """Wraps `oracle_slow_queries` with the shared filter/sort/paginate
+    contract every engine's Slow Queries list now uses. `db_name` filters on
+    `schema_name` (Oracle has no separate database concept) since that's the
+    only "which schema" dimension `v$sqlarea` exposes."""
+    from app.services.common.slow_query_normalize import filter_paginate_rows
+    response = oracle_slow_queries(conn_id, db)
+    rows = response.get("normalized") or []
+    if db_name:
+        rows = [r for r in rows if r.get("schema_name") == db_name]
+    result = filter_paginate_rows(
+        rows,
+        query_type=query_type, severity=severity, user_name=user_name,
+        search=search, min_avg_ms=min_avg_ms, date_from=date_from, date_to=date_to,
+        sort_by=sort_by, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+    # filter_paginate_rows computes available_databases from `database_name`
+    # (None for Oracle) — override with the real schema-name list instead.
+    result["available_databases"] = sorted({r["schema_name"] for r in (response.get("normalized") or []) if r.get("schema_name")})
+    response.update(result)
+    return response
 
 
 # ──────────────────────────────────────────────────────────────

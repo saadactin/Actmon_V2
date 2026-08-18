@@ -159,6 +159,21 @@ export const useChatStore = create((set, get) => ({
   /** Stop the current response mid-stream, keeping whatever text already arrived. */
   stop: () => controller?.abort(),
 
+  /** Re-sends the user message that preceded a failed assistant reply — drops
+   * that failed pair and runs the exact same `send()` path fresh, rather than
+   * patching the old bubble in place, so retry behaves identically to a new
+   * message (session persistence, abort handling, etc. all just work). */
+  retry: (messageId, pathname) => {
+    const msgs = get().messages;
+    const idx = msgs.findIndex((m) => m.id === messageId);
+    if (idx < 1) return;
+    const failed = msgs[idx];
+    const userMsg = msgs[idx - 1];
+    if (!failed?.error || userMsg?.role !== 'user') return;
+    set({ messages: msgs.slice(0, idx - 1) });
+    get().send(userMsg.content, pathname);
+  },
+
   /** Runs a proposed action (restart/kill/reboot/…) the assistant is not allowed to
    * execute on its own — the backend re-verifies RBAC and this password server-side
    * before calling the exact same service function the Infra page's own buttons use. */

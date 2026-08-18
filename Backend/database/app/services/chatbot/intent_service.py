@@ -9,7 +9,7 @@ analysis defined, and extracts a module + resource hint so downstream code
 knows whether to answer from knowledge, fetch live/historical data, or propose
 an action.
 
-Uses `llama-3.1-8b-instant` rather than the 70B model the actual chat answer
+Uses `openai/gpt-oss-20b` rather than the larger model the actual chat answer
 uses — classification is a small structured task, and running it on the big
 model would double per-turn latency/cost for no accuracy benefit here. Follows
 the same prompt-engineered-JSON + json.loads() + graceful-fallback convention
@@ -20,6 +20,7 @@ since nothing else in this app relies on that.
 import json
 import logging
 import os
+from typing import Optional
 
 log = logging.getLogger("actmon_ai.intent")
 
@@ -145,13 +146,18 @@ def classify(message: str, history: list = None, context: dict = None) -> dict:
 
     try:
         resp = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             messages=[
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": user_block},
             ],
-            max_tokens=300,
+            max_tokens=400,
             temperature=0,
+            reasoning_effort="low",  # this model emits a hidden reasoning trace that
+                                     # counts against max_tokens before any visible
+                                     # content — "low" keeps that trace short enough
+                                     # that classification stays fast and never gets
+                                     # truncated to an empty response.
         )
         raw = resp.choices[0].message.content or ""
         start, end = raw.find("{"), raw.rfind("}")
@@ -173,6 +179,73 @@ def classify(message: str, history: list = None, context: dict = None) -> dict:
         "engine": _clean(parsed.get("engine")),
         "resource_hint": _clean(parsed.get("resource_hint")),
         "action_hint": _clean(parsed.get("action_hint")),
+    }
+
+
+_ENGINE_ALIASES = {
+    "mysql": "mysql", "maria": "mysql", "mariadb": "mysql",
+    "postgres": "postgresql", "postgresql": "postgresql", "pg": "postgresql",
+    "oracle": "oracle",
+    "mssql": "mssql", "sqlserver": "mssql", "sql server": "mssql",
+    "mongo": "mongodb", "mongodb": "mongodb",
+    "clickhouse": "clickhouse",
+    "cosmos": "cosmosdb", "cosmosdb": "cosmosdb", "cosmos db": "cosmosdb",
+}
+
+_MONITORING_MODULE_WORDS = (
+    ("replication", "cluster_ha"), ("replica", "cluster_ha"), ("patroni", "cluster_ha"),
+    ("failover", "cluster_ha"), (" ha ", "cluster_ha"), ("cluster", "cluster_ha"),
+    ("slow quer", "slow_query"), ("slow-quer", "slow_query"),
+    ("alert", "alerts"),
+    ("cpu", "metrics"), ("memory", "metrics"), ("ram", "metrics"), ("disk", "metrics"),
+    ("utiliz", "metrics"), ("performance", "metrics"),
+    ("log", "logs"), ("error", "logs"),
+    ("connection", "database"), ("uptime", "health"), ("status", "health"), ("health", "health"),
+)
+
+
+def keyword_fallback(message: str, engine_only: bool = False) -> Optional[dict]:
+    """A deterministic backstop for when `classify()` returns "ambiguous".
+
+    The 8B/20B classifier is a hosted, likely-MoE model — confirmed by direct,
+    repeated testing to occasionally return "ambiguous" for the EXACT same
+    input (same history, temperature=0) that it correctly classifies as
+    current_state on every other call. That non-determinism is real and not
+    something a prompt tweak alone can fully close, so the one case the
+    product spec treats as non-negotiable — a bare engine name or an
+    engine+monitoring-word message never loops on repeated clarification —
+    gets a plain keyword check here instead of trusting a single LLM call.
+    This never overrides a CONFIDENT non-ambiguous classification, only steps
+    in when the model itself already gave up.
+
+    Returns a dict shaped like classify()'s output, or None if no engine/
+    monitoring keyword is present (a genuinely unresolvable message stays
+    ambiguous, unchanged).
+    """
+    text = f" {(message or '').lower()} "
+    engine = None
+    for alias, canon in _ENGINE_ALIASES.items():
+        if alias in text:
+            engine = canon
+            break
+
+    module = None
+    for word, mod in _MONITORING_MODULE_WORDS:
+        if word in text:
+            module = mod
+            break
+
+    if not engine and not module:
+        return None
+    if engine_only and not engine:
+        return None
+
+    return {
+        "category": "current_state",
+        "module": module or "health",
+        "engine": engine,
+        "resource_hint": None,
+        "action_hint": None,
     }
 
 

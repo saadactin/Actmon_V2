@@ -69,7 +69,7 @@ export default function ChatSidebar({ className }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search chats"
-            className="h-9 w-full rounded-control border border-border bg-surface pl-8 pr-2.5 text-[12.5px] text-fg placeholder:text-subtle outline-none focus:border-accent"
+            className="h-9 w-full rounded-control border border-border bg-surface pl-8 pr-2.5 text-[14px] text-fg placeholder:text-subtle outline-none focus:border-accent"
           />
         </div>
       </div>
@@ -105,13 +105,13 @@ export default function ChatSidebar({ className }) {
                         if (e.key === 'Escape') setEditingId(null);
                       }}
                       onBlur={commitRename}
-                      className="h-6 flex-1 rounded border border-accent bg-surface px-1.5 text-[12.5px] text-fg outline-none"
+                      className="h-6 flex-1 rounded border border-accent bg-surface px-1.5 text-[14px] text-fg outline-none"
                     />
                   ) : (
                     <div className="min-w-0 flex-1">
-                      <p className="truncate-safe text-[12.5px] font-semibold">{s.title || 'New chat'}</p>
+                      <p className="truncate-safe text-[15px] font-semibold">{s.title || 'New chat'}</p>
                       {s.last_message && (
-                        <p className="truncate-safe text-[11px] text-subtle">{s.last_message}</p>
+                        <p className="truncate-safe text-[13px] text-subtle">{s.last_message}</p>
                       )}
                     </div>
                   )}

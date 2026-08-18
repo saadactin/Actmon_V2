@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Database, GitBranch, HardDrive, Lock, Table, TrendingUp, Users, Zap,
+  Activity, Database, GitBranch, HardDrive, Lock, Search, Table, TrendingUp, Users, Zap,
 } from 'lucide-react';
 import client from '@/api/client';
 import { mssqlTableDetail } from '@/api/drilldown';
@@ -34,6 +34,7 @@ import {
   TABLE_COLUMNS, fmtBytes, fmtNumber, mssqlDatabaseRow, mssqlTableRow, orderColumns,
   withExtras, withHints, withoutColumns,
 } from '@/config/dbCatalog';
+import { MSSQL_DASHBOARD_TABS } from '@/config/mssqlDashboardNav';
 
 /**
  * SQL Server dashboard.
@@ -53,17 +54,7 @@ const SYSTEM_DATABASES = ['master', 'model', 'msdb', 'tempdb'];
 const fetchDashboard = (id) =>
   client.get(`/connections/mssql/${id}/monitoring-dashboard`).then((r) => r.data);
 
-const TABS = [
-  { id: 'overview', label: 'Overview', icon: Activity },
-  { id: 'performance', label: 'Performance', icon: TrendingUp },
-  { id: 'queries', label: 'Queries', icon: Zap },
-  { id: 'databases', label: 'Databases', icon: Database },
-  { id: 'tables', label: 'Tables', icon: Table },
-  { id: 'locks', label: 'Locks', icon: Lock },
-  { id: 'replication', label: 'Replication', icon: GitBranch },
-  { id: 'users', label: 'Logins', icon: Users },
-  { id: 'storage', label: 'Storage', icon: HardDrive },
-];
+const TABS = MSSQL_DASHBOARD_TABS;
 
 /* SQL Server state vocabulary → the shared tones. Only values that carry meaning
    are mapped; anything else stays neutral rather than being colour-guessed. */

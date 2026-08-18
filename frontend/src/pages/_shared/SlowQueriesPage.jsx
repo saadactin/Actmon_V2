@@ -1,14 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, Legend,
-} from 'recharts';
 import client from '@/api/client';
-import PageHeader from '@/components/layout/PageHeader';
+import IconButton from '@/components/ui/IconButton';
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
-import Tabs from '@/components/ui/Tabs';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
@@ -16,15 +11,45 @@ import Input from '@/components/ui/Input';
 import Notice from '@/components/ui/Notice';
 import Select from '@/components/ui/Select';
 import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
-import { PageLoading, InlineLoading } from '@/components/ui/Loading';
+import { InlineLoading } from '@/components/ui/Loading';
 import Pagination, { Paged, pageCountOf } from '@/components/ui/Pagination';
 import CopyButton from '@/components/ui/CopyButton';
-import { MetricTile, Panel, SqlCell, SqlBlock, TablePanel } from '@/pages/_shared/enginePanels';
+import { Panel, SqlBlock, TablePanel } from '@/pages/_shared/enginePanels';
 import { fmtNumber, fmtDateTime } from '@/config/dbCatalog';
 import { MYSQL_DASHBOARD_TABS, mysqlTabRoute } from '@/config/mysqlDashboardNav';
+import { POSTGRES_DASHBOARD_TABS, postgresTabRoute } from '@/config/postgresDashboardNav';
+import { MSSQL_DASHBOARD_TABS, mssqlTabRoute } from '@/config/mssqlDashboardNav';
+import { MONGODB_DASHBOARD_TABS, mongodbTabRoute } from '@/config/mongodbDashboardNav';
+import { CLICKHOUSE_DASHBOARD_TABS, clickhouseTabRoute } from '@/config/clickhouseDashboardNav';
+import { BASE_TABS as ORACLE_DASHBOARD_TABS } from '@/config/oracleDashboardNav';
+import PageHeader from '@/components/layout/PageHeader';
 import {
   engineFor, DEFAULT_CAPABILITIES, SEVERITY_TONES, SEVERITY_LABELS, fmtMs,
 } from '@/config/slowQueryCatalog';
+
+/** Every engine's own dashboard tab strip + the route a tab click lands on —
+ * so the Slow Queries page shows AS one tab within that engine's real
+ * navigation (matching MySQL's own page) instead of a disconnected mini
+ * page. Oracle's/ClickHouse's own "Slow Queries"/"Slow SQL" tab ids
+ * (`slowqueries`, no hyphen) are still in-page preview panels inside their
+ * Dashboard components — kept as the `activeTab` id here too, so the strip
+ * highlights correctly; every other tab click still navigates back into the
+ * real dashboard exactly like clicking it there would. */
+const ENGINE_NAV = {
+  postgresql: { tabs: POSTGRES_DASHBOARD_TABS, activeTab: 'slow-queries', tabRoute: postgresTabRoute },
+  mssql: { tabs: MSSQL_DASHBOARD_TABS, activeTab: 'slow-queries', tabRoute: mssqlTabRoute },
+  mongodb: { tabs: MONGODB_DASHBOARD_TABS, activeTab: 'slow-queries', tabRoute: mongodbTabRoute },
+  clickhouse: { tabs: CLICKHOUSE_DASHBOARD_TABS, activeTab: 'slowqueries', tabRoute: clickhouseTabRoute },
+  oracle: { tabs: ORACLE_DASHBOARD_TABS, activeTab: 'slowqueries', tabRoute: (id, t) => `/oracle-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}` },
+};
+
+const QUERY_TYPE_FILTER_OPTIONS = [
+  { id: 'all', label: 'All queries' },
+  { id: 'system', label: 'System queries' },
+  { id: 'actmon', label: 'ActMon queries' },
+];
+
+const NOT_CONFIGURED_MESSAGE = 'Slow query data is unavailable or not configured.';
 
 const SEVERITY_FILTER_OPTIONS = [
   { id: 'all', label: 'All severities' },
@@ -75,17 +100,15 @@ function SlowQuerySqlCell({ sql }) {
 /**
  * Slow Query Analysis — the ONE list page every engine renders through.
  *
- * PostgreSQL's page was this task's reference implementation: 4 tabs (Overview,
- * Query Explorer, AI Analysis, Reports), a KPI strip, a slowest-queries chart, a
- * by-user breakdown, hotspot cards, and a CSV export. Every engine gets exactly
- * this shape now — what changes per engine is which columns/panels apply
- * (`capabilities`, from the normalized API response), never the layout.
- *
- * The table and every stat here reads `data.normalized` — the common row shape
- * every engine's backend now produces — so no branch here ever checks `tech`.
+ * MySQL is the reference design (`MysqlSlowQueryExplorer`/`MysqlSlowQueriesPage`
+ * below, unchanged): a single filterable/sortable/paginated list, no charts.
+ * Every other engine renders through the generalized `SlowQueryExplorer` +
+ * `SlowQueriesPage` further down — same table, same filters, same pagination,
+ * same detail drill-down, no per-engine chart dashboard. What differs per
+ * engine is only which columns/filters apply (`capabilities`, from the
+ * normalized API response) and where the underlying data comes from — never
+ * the layout or interaction.
  */
-
-const PIE_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#84cc16'];
 
 const num = (v) => Number(v) || 0;
 
@@ -285,284 +308,6 @@ function SetupGuidePanel({ id, engine, onEnabled }) {
         </Notice>
       </div>
     </Panel>
-  );
-}
-
-/* ── Overview tab ────────────────────────────────────────────────────────── */
-
-function OverviewTab({ rows, cap, engine, id, data, onRefetch }) {
-  const isInstance = cap.aggregation === 'instance';
-
-  const totalExecs = rows.reduce((s, r) => s + num(r.execution_count), 0);
-  const avgTime = rows.length ? rows.reduce((s, r) => s + num(r.average_execution_time), 0) / rows.length : 0;
-  const criticalCount = rows.filter((r) => r.severity === 'critical').length;
-
-  const barData = [...rows]
-    .sort((a, b) => num(b.average_execution_time) - num(a.average_execution_time))
-    .slice(0, 12)
-    .map((r, i) => ({
-      name: `Q${i + 1}`,
-      avg: num(r.average_execution_time),
-      max: num(r.max_execution_time ?? r.average_execution_time),
-      label: (r.query_text || '').replace(/\s+/g, ' ').slice(0, 40),
-    }));
-
-  const userMap = {};
-  if (cap.user_name) {
-    rows.forEach((r) => {
-      const u = r.user_name || 'unknown';
-      userMap[u] = (userMap[u] || 0) + 1;
-    });
-  }
-  const pieData = Object.entries(userMap).map(([name, value]) => ({ name, value }));
-
-  const top5Slow = [...rows].sort((a, b) => num(b.average_execution_time) - num(a.average_execution_time)).slice(0, 5);
-  const top5Calls = cap.execution_count
-    ? [...rows].sort((a, b) => num(b.execution_count) - num(a.execution_count)).slice(0, 5) : [];
-  const top5Rows = cap.rows_returned
-    ? [...rows].sort((a, b) => num(b.rows_returned) - num(a.rows_returned)).slice(0, 5) : [];
-
-  return (
-    <div className="space-y-gutter">
-      {engine.setupGuide === 'pg_stat_statements' && data?.pg_stat_statements_available === false && (
-        <SetupGuidePanel id={id} engine={engine} onEnabled={onRefetch} />
-      )}
-
-      <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
-        <MetricTile label={isInstance ? 'Operations captured' : 'Unique queries'} value={rows.length} icon="list" />
-        {cap.execution_count ? (
-          <MetricTile label="Total executions" value={fmtNumber(totalExecs)} icon="activity" tone="accent" />
-        ) : (
-          <MetricTile label="Source" value={engine.sourceLabel(data)} icon="database" />
-        )}
-        <MetricTile label={isInstance ? 'Avg duration' : 'Avg query time'} value={fmtMs(avgTime)} icon="clock"
-          tone={avgTime > SEVERITY_THRESHOLDS_MS_HIGH ? 'bad' : 'neutral'} />
-        <MetricTile label="Critical now" value={criticalCount} icon="alert"
-          tone={criticalCount ? 'bad' : 'good'} hint="Averaging more than 10s" />
-      </div>
-
-      {rows.length > 0 && (
-        <div className="grid grid-cols-1 gap-gutter lg:grid-cols-3">
-          <TablePanel title="Slowest queries" icon="trend"
-            subtitle="Top 12 by average duration — avg vs max"
-            className="lg:col-span-2" bodyClassName="px-card py-card">
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={barData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} unit=" ms" width={55} />
-                <RTooltip
-                  formatter={(v, n) => [fmtMs(v), n === 'avg' ? 'Avg time' : 'Max time']}
-                  labelFormatter={(_, p) => p?.[0]?.payload?.label || ''}
-                  contentStyle={{ fontSize: 11 }}
-                />
-                <Bar dataKey="avg" name="avg" fill="var(--color-accent, #6366f1)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="max" name="max" fill="#f59e0b" radius={[4, 4, 0, 0]} opacity={0.55} />
-              </BarChart>
-            </ResponsiveContainer>
-          </TablePanel>
-
-          {cap.user_name && pieData.length > 0 ? (
-            <TablePanel title="By user" icon="user" bodyClassName="px-card py-card">
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80}
-                    dataKey="value" nameKey="name" label={({ percent }) => (percent > 0.08 ? '' : '')}>
-                    {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
-                  </Pie>
-                  <RTooltip contentStyle={{ fontSize: 11 }} />
-                  <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </TablePanel>
-          ) : (
-            <Panel title="Source" icon="info">
-              <p className="text-[12px] text-muted">{engine.sourceLabel(data)}</p>
-            </Panel>
-          )}
-        </div>
-      )}
-
-      {rows.length > 0 && (
-        <div className="grid grid-cols-1 gap-gutter md:grid-cols-3">
-          <HotspotCard title="Slowest queries" icon="clock" items={top5Slow}
-            metric={(r) => fmtMs(r.average_execution_time)} />
-          {cap.execution_count && (
-            <HotspotCard title="Most executed" icon="activity" items={top5Calls}
-              metric={(r) => `${fmtNumber(r.execution_count)} execs`} />
-          )}
-          {cap.rows_returned && (
-            <HotspotCard title="Most rows returned" icon="rows" items={top5Rows}
-              metric={(r) => `${fmtNumber(r.rows_returned)} rows`} />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const SEVERITY_THRESHOLDS_MS_HIGH = 2000;
-
-function HotspotCard({ title, icon, items, metric }) {
-  return (
-    <Panel title={title} icon={icon}>
-      {items.length === 0 ? (
-        <p className="text-[12px] text-subtle">No data</p>
-      ) : (
-        <div className="space-y-2">
-          {items.map((r, i) => (
-            <div key={i} className="flex items-start justify-between gap-2">
-              <span className="truncate-safe flex-1 font-mono text-[11px] text-muted">
-                {(r.query_text || '').replace(/\s+/g, ' ').slice(0, 55)}
-              </span>
-              <span className="shrink-0 font-mono text-[11px] font-bold text-accent-text">{metric(r)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-/* ── Query Explorer tab ──────────────────────────────────────────────────── */
-
-function ExplorerTab({ rows, cap, engine, id, isFetching, onRefetch, data }) {
-  const navigate = useNavigate();
-  const [search, setSearch] = useState('');
-  // A busy engine can return hundreds-to-thousands of query fingerprints
-  // (pg_stat_statements/performance_schema digests) — re-filtering, re-sorting,
-  // and rebuilding every row's JSX (SqlCell + badges) on EVERY keystroke was
-  // visibly laggy at that size. The input itself stays wired to `search` so
-  // typing feels instant; only the actual filtering work waits for a short
-  // pause in typing.
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 220);
-    return () => clearTimeout(t);
-  }, [search]);
-  const [userFilter, setUserFilter] = useState('');
-  const [minDuration, setMinDuration] = useState('0');
-  const [sort, setSort] = useState({ key: 'avg', dir: 'desc' });
-
-  const userOptions = useMemo(() => ([
-    { id: '', label: 'All users' },
-    ...[...new Set(rows.map((r) => r.user_name).filter(Boolean))].sort().map((u) => ({ id: u, label: u })),
-  ]), [rows]);
-
-  const filtered = useMemo(() => {
-    const q = debouncedSearch.trim().toLowerCase();
-    const floor = Number(minDuration) || 0;
-    return rows.filter((r) => (
-      (!q || String(r.query_text || '').toLowerCase().includes(q))
-      && (!userFilter || r.user_name === userFilter)
-      && num(r.average_execution_time) >= floor
-    ));
-  }, [rows, debouncedSearch, userFilter, minDuration]);
-
-  const isInstance = cap.aggregation === 'instance';
-
-  const columns = useMemo(() => {
-    const cols = [
-      { key: 'sev', label: 'Severity' },
-      { key: 'query', label: 'Query' },
-      { key: 'avg', label: isInstance ? 'Duration' : 'Avg time', align: 'right', sortable: true },
-    ];
-    if (!isInstance) cols.push({ key: 'max', label: 'Max time', align: 'right', sortable: true });
-    if (cap.execution_count) cols.push({ key: 'execs', label: 'Executions', align: 'right', sortable: true });
-    if (cap.rows_returned) cols.push({ key: 'rows', label: 'Rows', align: 'right', sortable: true });
-    if (cap.user_name) cols.push({ key: 'user', label: 'User' });
-    if (cap.host) cols.push({ key: 'host', label: 'Host' });
-    cols.push({ key: 'last', label: 'Last seen', sortable: true });
-    return cols;
-  }, [cap, isInstance]);
-
-  const tableRows = useMemo(() => sortRows(filtered.map((r, i) => ({
-    key: r.query_id || `q-${i}`,
-    onClick: () => navigate(`${engine.dashboardPath(id)}/slow-queries/detail`, { state: { row: r, raw: r._raw } }),
-    sort: {
-      avg: num(r.average_execution_time),
-      max: num(r.max_execution_time),
-      execs: num(r.execution_count),
-      rows: num(r.rows_returned),
-      last: r.last_seen ? new Date(r.last_seen).getTime() || 0 : 0,
-    },
-    cells: {
-      sev: <SeverityBadge severity={r.severity} />,
-      query: (
-        <div>
-          <SqlCell sql={r.query_text} max={100} />
-          {r.database_name && <Badge tone="accent" size="xs" className="mt-1">{r.database_name}</Badge>}
-        </div>
-      ),
-      avg: (
-        <span className={
-          r.severity === 'critical' ? 'font-mono font-bold text-danger-fg'
-            : r.severity === 'high' ? 'font-mono font-bold text-warning-fg'
-              : 'font-mono font-semibold'
-        }>
-          {fmtMs(r.average_execution_time)}
-        </span>
-      ),
-      max: r.max_execution_time != null ? <span className="font-mono text-muted">{fmtMs(r.max_execution_time)}</span> : null,
-      execs: <span className="font-mono">{fmtNumber(r.execution_count)}</span>,
-      rows: <span className="font-mono text-muted">{fmtNumber(r.rows_returned)}</span>,
-      user: r.user_name ? <span className="font-mono text-[12px]">{r.user_name}</span> : null,
-      host: r.host ? <span className="font-mono text-[11px] text-muted">{r.host}</span> : null,
-      last: r.last_seen ? (
-        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
-      ) : null,
-    },
-  })), sort), [filtered, sort, navigate, engine, id]);
-
-  return (
-    <TablePanel
-      title="Slow queries"
-      icon="zap"
-      subtitle="Select a row for the full analysis"
-      actions={(
-        <>
-          {userOptions.length > 2 && (
-            <Select value={userFilter} onChange={setUserFilter} options={userOptions} size="sm" width="auto" />
-          )}
-          <Select value={minDuration} onChange={setMinDuration} options={DURATION_FILTERS} size="sm" width="auto" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onClear={() => setSearch('')}
-            placeholder="Search query text…"
-            icon="search"
-            size="sm"
-            wrapperClassName="w-44"
-          />
-          <Badge tone="accent" size="xs">
-            {filtered.length === rows.length ? rows.length : `${filtered.length} / ${rows.length}`}
-          </Badge>
-        </>
-      )}
-    >
-      <Paged rows={tableRows} unit="queries">
-        {(page, pager) => (
-          <>
-            <Table
-              columns={columns}
-              rows={page}
-              sort={sort}
-              onSort={(key) => setSort((cur) => nextSort(cur, key))}
-              loading={isFetching}
-              empty={rows.length ? (
-                <EmptyState icon="filter" title="No matches"
-                  body="Nothing matches the current filters — try a wider duration or clear the search." />
-              ) : (
-                <EmptyState icon="zap" title="No slow queries captured"
-                  body={data?.error ? `${engine.label} reported: ${data.error}` : 'Nothing has crossed the slow-query threshold yet.'}
-                  action={<Button variant="primary" icon="refresh" onClick={onRefetch}>Refresh now</Button>} />
-              )}
-            />
-            {pager}
-          </>
-        )}
-      </Paged>
-    </TablePanel>
   );
 }
 
@@ -792,132 +537,254 @@ function MysqlSlowQueriesPage({ engine, id }) {
   );
 }
 
-/* ── AI Analysis tab ─────────────────────────────────────────────────────── */
+/* ── Generic Slow Query Explorer — every engine except MySQL ──────────────
+ * The SAME table/filters/pagination/search/sorting/empty/loading/error
+ * design MySQL's own explorer uses above, generalized: reads whichever
+ * columns/params an engine's `capabilities` genuinely populate rather than
+ * hardcoding MySQL-specific fields. One component, reused for PostgreSQL,
+ * Oracle, SQL Server, MongoDB, and ClickHouse (and Cosmos DB once wired) —
+ * not a per-engine reimplementation. */
 
-function AiAnalysisTab({ rows, engine, id }) {
-  const [selected, setSelected] = useState(null);
-  const [ai, setAi] = useState(null);
+function NotConfiguredNotice({ engine, data }) {
+  return (
+    <Notice tone="warning" title={NOT_CONFIGURED_MESSAGE}>
+      {data?.error
+        ? `${engine.label} reported: ${data.error}`
+        : `No slow-query collection mechanism is currently reachable for this ${engine.label} connection.`}
+    </Notice>
+  );
+}
 
-  const worst5 = [...rows].sort((a, b) => num(b.average_execution_time) - num(a.average_execution_time)).slice(0, 5);
+function SlowQueryExplorer({ engine, id }) {
+  const navigate = useNavigate();
+  const [schema, setSchema] = useState('');
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 220);
+    return () => clearTimeout(t);
+  }, [search]);
+  const [minDuration, setMinDuration] = useState('0');
+  const [severity, setSeverity] = useState('all');
+  const [queryType, setQueryType] = useState('all');
+  const [userFilter, setUserFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sort, setSort] = useState({ key: 'avg', dir: 'desc' });
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
 
-  const runAi = async (row) => {
-    setSelected(row);
-    setAi({ loading: true });
-    try {
-      const payload = engine.buildAiPayload(row, row._raw);
-      const res = await client.post(engine.api.analyzeGroq(id), payload).then((r) => r.data);
-      setAi(res.status === 'success' ? { result: res.analysis } : { err: res.error || 'The analyser returned no result.' });
-    } catch (e) {
-      setAi({ err: e?.message || String(e) });
+  const params = useMemo(() => ({
+    db_name: schema || undefined,
+    query_type: queryType !== 'all' ? queryType : undefined,
+    min_avg_ms: Number(minDuration) || undefined,
+    search: debouncedSearch.trim() || undefined,
+    severity: severity !== 'all' ? severity : undefined,
+    user_name: userFilter || undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+    sort_by: sort.key,
+    sort_dir: sort.dir,
+    page,
+    page_size: pageSize,
+  }), [schema, queryType, minDuration, debouncedSearch, severity, userFilter, dateFrom, dateTo, sort, page]);
+
+  useEffect(() => { setPage(1); }, [schema, queryType, minDuration, debouncedSearch, severity, userFilter, dateFrom, dateTo, sort.key, sort.dir]);
+
+  const { data, isFetching, error, refetch } = useQuery({
+    queryKey: ['slowQueriesFiltered', engine.key, id, params],
+    queryFn: () => client.get(engine.api.list(id), { params }).then((r) => r.data),
+    placeholderData: keepPreviousData,
+    refetchInterval: 30000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (data && typeof data.page === 'number' && data.page !== page) {
+      setPage(data.page);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  const pageRows = data?.normalized || [];
+  const total = data?.normalized_total ?? pageRows.length;
+  const availableSchemas = data?.available_databases || [];
+  const availableUsers = data?.available_users || [];
+  const pageCount = pageCountOf(total, pageSize);
+
+  const schemaOptions = [{ id: '', label: 'All databases' }, ...availableSchemas.map((s) => ({ id: s, label: s }))];
+  const userOptions = [{ id: '', label: 'All users' }, ...availableUsers.map((u) => ({ id: u, label: u }))];
+
+  const columns = [
+    { key: 'sev', label: 'Status' },
+    { key: 'db', label: 'Database' },
+    { key: 'query', label: 'Query' },
+    { key: 'avg', label: 'Avg time', align: 'right', sortable: true },
+    { key: 'max', label: 'Max time', align: 'right', sortable: true },
+    { key: 'execs', label: 'Executions', align: 'right', sortable: true },
+    { key: 'rows', label: 'Rows', align: 'right', sortable: true },
+    { key: 'first_seen', label: 'First seen', sortable: true },
+    { key: 'last', label: 'Last seen', sortable: true },
+    { key: 'user', label: 'User' },
+    { key: 'actions', label: '' },
+  ];
+
+  const tableRows = pageRows.map((r, i) => ({
+    // `query_id` alone isn't guaranteed unique here — the same digest id
+    // (e.g. pg_stat_statements' queryid, Oracle's sql_id) can legitimately
+    // repeat across different databases/schemas on one instance, which
+    // produced React's "two children with the same key" warning when two
+    // such rows landed on the same page. The row's position is always
+    // unique, so it's folded into the key too.
+    key: `${r.query_id || 'q'}-${i}`,
+    onClick: () => navigate(`${engine.dashboardPath(id)}/slow-queries/detail`, { state: { row: r, raw: r._raw } }),
+    cells: {
+      sev: <SeverityBadge severity={r.severity} />,
+      // Oracle has no separate database concept -- schema_name is the
+      // real "which database" answer there, so it is the fallback rather
+      // than an honest-but-unhelpful "No Database" on every single row.
+      db: (r.database_name || r.schema_name)
+        ? <Badge tone="accent" size="xs">{r.database_name || r.schema_name}</Badge>
+        : <Badge tone="neutral" size="xs">No Database</Badge>,
+      query: <SlowQuerySqlCell sql={r.query_text} />,
+      avg: (
+        <span className={
+          r.severity === 'critical' ? 'font-mono font-bold text-danger-fg'
+            : r.severity === 'high' ? 'font-mono font-bold text-warning-fg' : 'font-mono font-semibold'
+        }>
+          {fmtMs(r.average_execution_time)}
+        </span>
+      ),
+      max: r.max_execution_time != null ? <span className="font-mono text-muted">{fmtMs(r.max_execution_time)}</span> : <span className="text-subtle">—</span>,
+      execs: r.execution_count != null ? <span className="font-mono">{fmtNumber(r.execution_count)}</span> : <span className="text-subtle">—</span>,
+      rows: (r.rows_returned ?? r.rows_affected) != null
+        ? <span className="font-mono text-muted">{fmtNumber(r.rows_returned ?? r.rows_affected)}</span>
+        : <span className="text-subtle">—</span>,
+      first_seen: r.first_seen ? (
+        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.first_seen) || r.first_seen}</span>
+      ) : <span className="text-subtle">—</span>,
+      last: r.last_seen ? (
+        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
+      ) : <span className="text-subtle">—</span>,
+      user: r.user_name ? <span className="font-mono text-[12px]">{r.user_name}</span> : <span className="text-subtle">—</span>,
+      actions: (
+        <span onClick={(e) => e.stopPropagation()}>
+          <IconButton
+            icon="chevron-right"
+            label="View details"
+            size="sm"
+            onClick={() => navigate(`${engine.dashboardPath(id)}/slow-queries/detail`, { state: { row: r, raw: r._raw } })}
+          />
+        </span>
+      ),
+    },
+  }));
+
+  // A genuine configuration gap (collector unreachable/disabled, zero rows to
+  // show either way) gets the exact required message, with whatever specific
+  // fix ActMon already knows for this engine (Postgres's SetupGuidePanel)
+  // underneath it — never fake data in its place.
+  const notConfigured = data?.status === 'error' && total === 0
+    && !(engine.setupGuide === 'pg_stat_statements' && data.pg_stat_statements_available === false);
 
   return (
     <div className="space-y-gutter">
-      <Panel title="ActMon AI Deep Analysis" icon="brain"
-        subtitle="Powered by the ActMon AI engine — instant DBA-level insights">
-        {worst5.length === 0 ? (
-          <p className="text-[12px] text-subtle">No query data available yet.</p>
-        ) : (
+      {engine.setupGuide === 'pg_stat_statements' && data?.pg_stat_statements_available === false && (
+        <SetupGuidePanel id={id} engine={engine} onEnabled={refetch} />
+      )}
+      {notConfigured && <NotConfiguredNotice engine={engine} data={data} />}
+      {error && (
+        <Notice tone="danger" title="Could not load slow queries.">{error.message}</Notice>
+      )}
+
+      <TablePanel
+        title="Slow queries"
+        icon="zap"
+        subtitle={engine.sourceLabel(data)}
+        actions={(
           <>
-            <p className="mb-2 text-[11px] font-bold tracking-wide text-subtle uppercase">Top 5 worst — quick pick</p>
-            <div className="space-y-1.5">
-              {worst5.map((r, i) => (
-                <button
-                  key={r.query_id || i}
-                  type="button"
-                  onClick={() => runAi(r)}
-                  className={`w-full rounded-card border px-3 py-2 text-left text-[12px] transition-colors ${
-                    selected === r ? 'border-accent bg-accent-soft' : 'border-border hover:bg-sunken'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate-safe flex-1 font-mono">
-                      {(r.query_text || '').replace(/\s+/g, ' ').slice(0, 70)}
-                    </span>
-                    <span className="shrink-0 font-mono font-bold">{fmtMs(r.average_execution_time)}</span>
-                  </div>
-                  {r.user_name && <span className="text-[10px] text-subtle">user: {r.user_name}</span>}
-                </button>
-              ))}
-            </div>
+            <Select value={queryType} onChange={setQueryType} options={QUERY_TYPE_FILTER_OPTIONS} size="sm" width="auto" />
+            <Select value={minDuration} onChange={setMinDuration} options={DURATION_FILTERS} size="sm" width="auto" />
+            <Select value={schema} onChange={setSchema} options={schemaOptions} size="sm" width="auto" />
+            {availableUsers.length > 0 && (
+              <Select value={userFilter} onChange={setUserFilter} options={userOptions} size="sm" width="auto" />
+            )}
+            <Select value={severity} onChange={setSeverity} options={SEVERITY_FILTER_OPTIONS} size="sm" width="auto" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onClear={() => setSearch('')}
+              placeholder="Search query text…"
+              icon="search"
+              size="sm"
+              wrapperClassName="w-44"
+            />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
+            />
+            <span className="text-[11px] text-subtle">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
+            />
+            <Button variant="ghost" size="sm" icon="refresh" loading={isFetching} onClick={() => refetch()} aria-label="Refresh" />
+            <Badge tone="accent" size="xs">{fmtNumber(total)}</Badge>
           </>
         )}
-      </Panel>
-
-      {ai?.loading && (
-        <Panel><InlineLoading label="Running ActMon AI analysis — usually 5–10 seconds…" /></Panel>
-      )}
-      {ai?.err && (
-        <>
-          <Notice tone="danger" title="Analysis failed.">{ai.err}</Notice>
-          <Button variant="secondary" icon="refresh" onClick={() => runAi(selected)}>Retry</Button>
-        </>
-      )}
-      {ai?.result && (
-        <Panel title={`Analysis — ${(selected.query_text || '').slice(0, 40)}…`} icon="brain">
-          <AiAnalysisResult a={ai.result} />
-        </Panel>
-      )}
-      {!ai && worst5.length > 0 && (
-        <div className="py-12 text-center text-subtle">
-          <Icon name="brain" size={32} className="mx-auto mb-3 opacity-30" />
-          <p className="text-[13px]">Select a query above to get AI analysis</p>
-        </div>
-      )}
+      >
+        <Table
+          columns={columns}
+          rows={tableRows}
+          sort={sort}
+          onSort={(key) => setSort((cur) => nextSort(cur, key))}
+          loading={isFetching}
+          empty={
+            notConfigured ? (
+              <EmptyState icon="zap" title={NOT_CONFIGURED_MESSAGE} body="No collector is reachable for this connection." />
+            ) : (
+              <EmptyState icon="zap" title="No slow queries match these filters"
+                body="Try widening the duration floor, clearing the search, or picking a different database."
+                action={<Button variant="primary" icon="refresh" onClick={() => refetch()}>Refresh now</Button>} />
+            )
+          }
+        />
+        {total > 0 && (
+          <Pagination page={page} pageCount={pageCount} total={total} pageSize={pageSize} onPage={setPage} unit="queries" />
+        )}
+      </TablePanel>
     </div>
   );
 }
 
-/* ── Reports tab ─────────────────────────────────────────────────────────── */
-
-function ReportsTab({ rows, engine, id }) {
-  const exportCsv = () => {
-    const headers = ['Query', 'Database', 'User', 'Executions', 'Avg time (ms)', 'Max time (ms)', 'Total time (ms)', 'Rows returned', 'Severity', 'Last seen'];
-    const csvRows = rows.map((r) => [
-      `"${(r.query_text || '').replace(/"/g, '""').slice(0, 300)}"`,
-      r.database_name || '',
-      r.user_name || '',
-      num(r.execution_count),
-      num(r.average_execution_time),
-      num(r.max_execution_time),
-      num(r.total_execution_time),
-      num(r.rows_returned),
-      r.severity || '',
-      r.last_seen || '',
-    ].join(','));
-    const csv = [headers.join(','), ...csvRows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${engine.key}_slow_queries_${id}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const totalExecs = rows.reduce((s, r) => s + num(r.execution_count), 0);
-  const totalTime = rows.reduce((s, r) => s + num(r.total_execution_time), 0);
-  const criticalQ = rows.filter((r) => r.severity === 'critical').length;
-
+function GenericSlowQueriesPage({ engine, id }) {
+  const navigate = useNavigate();
+  const nav = ENGINE_NAV[engine.key];
   return (
-    <div className="space-y-gutter">
-      <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
-        <MetricTile label="Total queries" value={rows.length} icon="list" />
-        <MetricTile label="Total executions" value={fmtNumber(totalExecs)} icon="activity" tone="accent" />
-        <MetricTile label="Total DB time" value={fmtMs(totalTime)} icon="clock" />
-        <MetricTile label="Critical (>10s)" value={criticalQ} icon="alert" tone={criticalQ ? 'bad' : 'good'} />
+    <div className="flex min-h-full flex-col">
+      {nav ? (
+        <EngineDashboardHeader
+          tech={engine.key}
+          connectionId={id}
+          tabs={nav.tabs}
+          activeTab={nav.activeTab}
+          onTabChange={(t) => {
+            if (t === nav.activeTab) return;
+            navigate(nav.tabRoute(id, t));
+          }}
+        />
+      ) : (
+        <PageHeader title={`${engine.label} Slow Queries`} icon="zap" backTo={engine.dashboardPath(id)} />
+      )}
+      <div className="space-y-1">
+        <h1 className="text-lg font-black text-fg">Slow Queries</h1>
+        <p className="text-xs text-subtle">{engine.label}</p>
       </div>
-
-      <Panel title="Export slow query report" icon="download"
-        subtitle={`${rows.length} queries · ${criticalQ} critical (>10s avg)`}
-        actions={<Button variant="primary" icon="download" onClick={exportCsv}>Export CSV</Button>}
-      >
-        <p className="text-[12px] text-muted">
-          Includes query text, user, execution counts, timing stats and severity. Suitable for
-          performance audits and sharing with your team.
-        </p>
-      </Panel>
+      <SlowQueryExplorer engine={engine} id={id} />
     </div>
   );
 }
@@ -927,60 +794,6 @@ function ReportsTab({ rows, engine, id }) {
 export default function SlowQueriesPage({ tech }) {
   const engine = engineFor(tech);
   const { id } = useParams();
-  const [tab, setTab] = useState('overview');
-
-  // MySQL gets its own focused page below (MysqlSlowQueriesPage) — this
-  // generic multi-tab fetch would be pure waste for it (a second, unpaginated
-  // fetch of the same data its own explorer already queries with real
-  // server-side filters), so it's disabled rather than run and ignored.
-  const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['slowQueries', tech, id],
-    queryFn: () => client.get(engine.api.list(id)).then((r) => r.data),
-    retry: false,
-    refetchInterval: 30000,
-    enabled: !!engine && engine.key !== 'mysql',
-  });
-
-  const cap = data?.capabilities || DEFAULT_CAPABILITIES;
-
-  /* The raw per-engine row (`_raw`) rides along for whatever the normalized
-     schema deliberately drops (blks_hit/read, no_index_count, docsExamined…) —
-     the AI-payload builders and detail page read it as a bonus, never a
-     requirement, since a field it lacks just falls back to the normalized one. */
-  const rows = useMemo(() => {
-    const normalized = data?.normalized || [];
-    // MongoDB has no `queries` key — its normalization runs over `all_ops`
-    // (current_ops + profile_ops merged and sorted), not the raw `current_ops`
-    // array alone, so that must be checked first.
-    const rawList = data?.queries || data?.all_ops || data?.current_ops || [];
-    return normalized.map((r, i) => ({ ...r, _raw: rawList[i] }));
-  }, [data]);
-
-  const header = (
-    <PageHeader
-      title={`${engine?.label || tech} Slow Queries`}
-      description={engine ? engine.sourceLabel(data) : undefined}
-      icon="zap"
-      backTo={engine ? engine.dashboardPath(id) : undefined}
-      actions={(
-        <Button variant="secondary" icon="refresh" loading={isFetching} onClick={() => refetch()}>
-          Refresh
-        </Button>
-      )}
-      tabs={(
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { id: 'overview', label: 'Overview', icon: 'layers' },
-            { id: 'explorer', label: 'Query Explorer', icon: 'search' },
-            { id: 'ai', label: 'AI Analysis', icon: 'brain' },
-            { id: 'reports', label: 'Reports', icon: 'download' },
-          ]}
-        />
-      )}
-    />
-  );
 
   if (!engine) {
     return (
@@ -991,45 +804,11 @@ export default function SlowQueriesPage({ tech }) {
     );
   }
 
-  // A focused Slow Query Explorer, not the generic Overview/Explorer/AI
-  // Analysis/Reports tab set — opens directly on the full list.
+  // MySQL keeps its own focused page — the reference design every other
+  // engine now matches via GenericSlowQueriesPage/SlowQueryExplorer above.
   if (engine.key === 'mysql') {
     return <MysqlSlowQueriesPage engine={engine} id={id} />;
   }
 
-  if (isLoading) return <>{header}<PageLoading title="Loading slow queries…" /></>;
-
-  if (error) {
-    return (
-      <>
-        {header}
-        <Notice tone="danger" title="Could not load slow queries.">{error.message}</Notice>
-        <Button variant="primary" icon="refresh" onClick={() => refetch()}>Retry</Button>
-      </>
-    );
-  }
-
-  return (
-    <>
-      {header}
-
-      {data?.status === 'error' && data?.error && !(engine.setupGuide === 'pg_stat_statements' && data.pg_stat_statements_available === false) && (
-        <Notice tone="warning" title="The collector could not be read.">{data.error}</Notice>
-      )}
-
-      {tab === 'overview' && <OverviewTab rows={rows} cap={cap} engine={engine} id={id} data={data} onRefetch={refetch} />}
-      {tab === 'explorer' && (
-        <ExplorerTab rows={rows} cap={cap} engine={engine} id={id} isFetching={isFetching} onRefetch={refetch} data={data} />
-      )}
-      {tab === 'ai' && <AiAnalysisTab rows={rows} engine={engine} id={id} />}
-      {tab === 'reports' && <ReportsTab rows={rows} engine={engine} id={id} />}
-
-      <p className="mt-gutter flex items-start gap-1.5 text-[11px] text-subtle">
-        <Icon name="info" size={12} className="mt-0.5 shrink-0" />
-        {cap.aggregation === 'instance'
-          ? 'These are individual observed operations, not aggregated statistics — this engine has no query-digest concept, so each row is a single point in time rather than a running average.'
-          : 'Averages are cumulative since the last reset or server restart — a low execution count may understate a query\'s real cost.'}
-      </p>
-    </>
-  );
+  return <GenericSlowQueriesPage engine={engine} id={id} />;
 }

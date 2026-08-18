@@ -687,7 +687,18 @@ export default function SlowQueryDetailPage({ tech }) {
         description="Cost, then the execution plan, then how to make it faster"
         icon="zap"
         backTo={backTo}
-        actions={row.database_name ? <Badge tone="accent">{row.database_name}</Badge> : undefined}
+        actions={(
+          <div className="flex items-center gap-2">
+            {row.query_type && (
+              <Badge tone={row.query_type === 'actmon' ? 'warning' : 'neutral'}>
+                {row.query_type === 'actmon' ? 'ActMon Query' : 'System Query'}
+              </Badge>
+            )}
+            {(row.database_name || row.schema_name) && (
+              <Badge tone="accent">{row.database_name || row.schema_name}</Badge>
+            )}
+          </div>
+        )}
       />
 
       <div className="space-y-gutter">
@@ -706,6 +717,7 @@ export default function SlowQueryDetailPage({ tech }) {
             {row.rows_affected != null && <StatCell label="Rows examined" value={fmtNumber(row.rows_affected)} />}
             {row.user_name && <StatCell label="User" value={row.user_name} />}
             {row.host && <StatCell label="Host" value={row.host} />}
+            {row.first_seen && <StatCell label="First seen" value={fmtDateTime(row.first_seen) || row.first_seen} />}
             {row.last_seen && <StatCell label="Last seen" value={fmtDateTime(row.last_seen) || row.last_seen} />}
           </div>
         </Step>

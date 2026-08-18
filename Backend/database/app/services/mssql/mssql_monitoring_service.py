@@ -656,8 +656,11 @@ def get_slow_queries(conn_id: int, db: Session):
     conn_rec = _get_conn_or_404(conn_id, db)
     try:
         engine = _mssql_engine(conn_rec)
-        queries = _rows(engine, f"""
-            SELECT TOP 50
+        # ActMon's own queries are NOT excluded here — the Slow Queries page
+        # tags them via `classify_query_type()` in `_normalize_mssql_rows`
+        # instead, so the "ActMon Queries" filter has real rows to show.
+        queries = _rows(engine, """
+            SELECT TOP 200
                 CONVERT(VARCHAR(32), qs.query_hash, 2) AS query_hash,
                 CAST(total_elapsed_time / 1000.0 / NULLIF(execution_count, 0) AS DECIMAL(10,2)) AS avg_elapsed_ms,
                 CAST(min_elapsed_time / 1000.0 AS DECIMAL(10,2)) AS min_elapsed_ms,
@@ -673,7 +676,6 @@ def get_slow_queries(conn_id: int, db: Session):
             FROM sys.dm_exec_query_stats qs
             CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t
             WHERE t.text NOT LIKE '%sys.dm_exec%'
-                AND {mssql_exclude_internal_tables_sql('t.text')}
             ORDER BY avg_elapsed_ms DESC
         """)
 
@@ -729,6 +731,30 @@ def _normalize_mssql_rows(queries: list, response: dict) -> None:
             source="dm_exec_query_stats",
         ))
     attach_normalized(response, "mssql", common_rows)
+
+
+def get_slow_queries_filtered(
+    conn_id: int, db: Session, *,
+    db_name: str = None, query_type: str = None, severity: str = None,
+    user_name: str = None, search: str = None, min_avg_ms: float = None,
+    date_from: str = None, date_to: str = None,
+    sort_by: str = None, sort_dir: str = "desc", page: int = 1, page_size: int = 25,
+) -> dict:
+    """Wraps `get_slow_queries` with the shared filter/sort/paginate contract
+    every engine's Slow Queries list now uses. `user_name` has no effect for
+    MSSQL — `sys.dm_exec_query_stats` carries no per-plan user identity —
+    passed through only for a consistent function signature."""
+    from app.services.common.slow_query_normalize import filter_paginate_rows
+    response = get_slow_queries(conn_id, db)
+    result = filter_paginate_rows(
+        response.get("normalized") or [],
+        database_name=db_name, query_type=query_type, severity=severity,
+        user_name=user_name, search=search, min_avg_ms=min_avg_ms,
+        date_from=date_from, date_to=date_to,
+        sort_by=sort_by, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+    response.update(result)
+    return response
 
 
 def get_error_logs(conn_id: int, db: Session):

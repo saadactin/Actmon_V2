@@ -15,12 +15,23 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.services.common.actmon_internal_tables import contains_internal_table
+
 NORMALIZED_FIELDS = (
     "query_id", "query_text", "database_name", "schema_name", "user_name", "host",
     "execution_count", "total_execution_time", "average_execution_time",
     "min_execution_time", "max_execution_time", "rows_affected", "rows_returned",
-    "first_seen", "last_seen", "status", "severity", "source",
+    "first_seen", "last_seen", "status", "severity", "source", "query_type",
 )
+
+
+def classify_query_type(query_text: Optional[str]) -> str:
+    """'actmon' if this query references one of ActMon's own bookkeeping
+    tables, else 'system' — the generic classifier used by every engine
+    except MySQL, which has its own richer `is_actmon_internal_query()`
+    (schema + admin-verb + signature-query signals) and calls that directly
+    instead of this one."""
+    return "actmon" if contains_internal_table(query_text or "") else "system"
 
 
 def classify_severity(avg_ms: Optional[float], max_ms: Optional[float] = None) -> str:
@@ -57,10 +68,14 @@ def build_normalized_row(
     last_seen: Optional[str] = None,
     status: str = "active",
     source: Optional[str] = None,
+    query_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble one row in the common Slow Query shape. A field the caller
     doesn't supply stays None — the frontend renders that as "N/A" rather
-    than the collector inventing a value the source system doesn't have."""
+    than the collector inventing a value the source system doesn't have.
+    `query_type` defaults to classifying `query_text` via
+    `classify_query_type()` if the caller doesn't already know it (MySQL and
+    MongoDB pass their own richer classification in explicitly)."""
     return {
         "query_id": query_id,
         "query_text": query_text,
@@ -80,6 +95,7 @@ def build_normalized_row(
         "status": status,
         "severity": classify_severity(average_execution_time, max_execution_time),
         "source": source,
+        "query_type": query_type or classify_query_type(query_text),
     }
 
 
@@ -127,6 +143,16 @@ CAPABILITIES: Dict[str, Dict[str, Any]] = {
         "min_execution_time": True, "rows_returned": True, "rows_affected": False,
         "first_seen": False, "cache_hit": False,
     },
+    "cosmosdb": {
+        # Every row is one observed ActMon call, not a query-shape digest —
+        # Cosmos has no native slow-query catalog to summarize by (see
+        # cosmosdb_service.py's own docstring on why this is ActMon's own
+        # call log, not an Azure diagnostic feed).
+        "aggregation": "instance", "query_id": True, "schema_name": False,
+        "user_name": False, "host": False, "execution_count": False,
+        "min_execution_time": False, "rows_returned": False, "rows_affected": False,
+        "first_seen": True, "cache_hit": False,
+    },
 }
 
 
@@ -139,6 +165,96 @@ def attach_normalized(response: Dict[str, Any], tech: str, rows: List[Dict[str, 
     response["normalized"] = rows
     response["capabilities"] = CAPABILITIES.get(tech, {})
     return response
+
+
+_SORT_FIELD = {
+    "avg": "average_execution_time",
+    "max": "max_execution_time",
+    "execs": "execution_count",
+    "count": "execution_count",
+    "rows": "rows_returned",
+    "rows_returned": "rows_returned",
+    "rows_examined": "rows_affected",
+    "first_seen": "first_seen",
+    "last_seen": "last_seen",
+}
+
+
+def filter_paginate_rows(
+    rows: List[Dict[str, Any]],
+    *,
+    database_name: Optional[str] = None,
+    query_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    user_name: Optional[str] = None,
+    search: Optional[str] = None,
+    min_avg_ms: Optional[float] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "desc",
+    page: int = 1,
+    page_size: int = 25,
+) -> Dict[str, Any]:
+    """The ONE filter/sort/paginate contract every engine's Slow Queries list
+    uses — takes the already-normalized, already-`query_type`-tagged row list
+    for ONE engine and returns the exact response shape the shared frontend
+    `SlowQueryExplorer` reads, so no engine reimplements this. Filtering runs
+    in Python over whatever the engine's own collector already returned
+    (never re-queries the database) — safe here because every source this
+    backs (pg_stat_statements, MSSQL/Oracle/ClickHouse's cached digests,
+    Mongo's profiler/currentOp snapshot, ActMon's own Cosmos call log) is a
+    bounded, already-in-memory snapshot, not an unbounded log file (MySQL's
+    slow-query-log-file source is the one exception — it keeps its own real
+    SQL/file-level filtering in `mysql_slow_query_service.py` instead of
+    this helper, since a log file can be far larger than a digest table)."""
+    available_databases = sorted({r["database_name"] for r in rows if r.get("database_name")})
+    available_users = sorted({r["user_name"] for r in rows if r.get("user_name")})
+
+    out = rows
+    if database_name:
+        out = [r for r in out if r.get("database_name") == database_name]
+    if query_type and query_type != "all":
+        out = [r for r in out if r.get("query_type") == query_type]
+    if severity and severity != "all":
+        out = [r for r in out if r.get("severity") == severity]
+    if user_name:
+        out = [r for r in out if r.get("user_name") == user_name]
+    if search:
+        needle = search.strip().lower()
+        if needle:
+            out = [r for r in out if needle in (r.get("query_text") or "").lower()]
+    if min_avg_ms:
+        floor = float(min_avg_ms)
+        out = [r for r in out if (r.get("average_execution_time") or 0) >= floor]
+    if date_from:
+        out = [r for r in out if (r.get("last_seen") or "") >= date_from]
+    if date_to:
+        # last_seen is an ISO timestamp; date_to is a bare date — append the
+        # end-of-day boundary so "to 2026-08-18" includes that whole day.
+        out = [r for r in out if (r.get("last_seen") or "") <= f"{date_to}T23:59:59"]
+
+    field = _SORT_FIELD.get(sort_by, "average_execution_time")
+    reverse = sort_dir != "asc"
+    out = sorted(out, key=lambda r: (r.get(field) is None, r.get(field) or 0), reverse=reverse)
+
+    total = len(out)
+    page = max(1, page)
+    page_size = max(1, min(page_size, 500))
+    page_count = max(1, (total + page_size - 1) // page_size)
+    if page > page_count:
+        page = page_count
+    start = (page - 1) * page_size
+    page_rows = out[start:start + page_size]
+
+    return {
+        "normalized": page_rows,
+        "normalized_total": total,
+        "available_databases": available_databases,
+        "available_users": available_users,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 def find_normalized_by_id(response: Dict[str, Any], query_id: str) -> Optional[Dict[str, Any]]:

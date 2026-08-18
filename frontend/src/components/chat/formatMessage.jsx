@@ -18,7 +18,7 @@ const escapeHtml = (s) =>
 
 function inline(line) {
   return escapeHtml(line)
-    .replace(/`([^`]+)`/g, '<code class="rounded-xs bg-sunken px-1 py-0.5 font-mono text-[11px]">$1</code>')
+    .replace(/`([^`]+)`/g, '<code class="rounded-xs bg-sunken px-1 py-0.5 font-mono text-[14px]">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>');
 }
@@ -39,7 +39,7 @@ export default function FormatMessage({ text }) {
   }
 
   return (
-    <div className="space-y-2 text-[13px] leading-relaxed text-fg">
+    <div className="space-y-2 text-[16px] leading-relaxed text-fg">
       {blocks.map((b, i) => (b.type === 'code'
         ? <CodeBlock key={i} lang={b.lang} code={b.text} />
         : <Prose key={i} text={b.text} />))}
@@ -131,7 +131,7 @@ function Prose({ text }) {
 function MarkdownTable({ header, rows }) {
   return (
     <div className="overflow-x-auto rounded-control border border-border">
-      <table className="w-full border-collapse text-[12px]">
+      <table className="w-full border-collapse text-[14px]">
         <thead>
           <tr className="bg-sunken">
             {header.map((h, i) => (
@@ -182,7 +182,7 @@ function CodeBlock({ lang, code }) {
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="overflow-x-auto bg-inverse px-3 py-2 text-[12px] leading-relaxed text-on-inverse">
+      <pre className="overflow-x-auto bg-inverse px-3 py-2 text-[14px] leading-relaxed text-on-inverse">
         <code>{body}</code>
       </pre>
     </div>

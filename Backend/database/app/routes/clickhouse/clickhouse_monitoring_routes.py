@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -40,8 +42,28 @@ def get_ch_query_log(conn_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{conn_id}/ch-slow-queries")
-def get_ch_slow_queries(conn_id: int, db: Session = Depends(get_db)):
-    return clickhouse_monitoring_service.get_slow_queries(conn_id, db)
+def get_ch_slow_queries(
+    conn_id: int,
+    db_name: Optional[str] = None,
+    query_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    user_name: Optional[str] = None,
+    search: Optional[str] = None,
+    min_avg_ms: Optional[float] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_dir: str = "desc",
+    page: int = 1,
+    page_size: int = 25,
+    db: Session = Depends(get_db),
+):
+    return clickhouse_monitoring_service.get_slow_queries_filtered(
+        conn_id, db, db_name=db_name, query_type=query_type, severity=severity,
+        user_name=user_name, search=search, min_avg_ms=min_avg_ms,
+        date_from=date_from, date_to=date_to, sort_by=sort_by, sort_dir=sort_dir,
+        page=page, page_size=page_size,
+    )
 
 
 @router.post("/{conn_id}/ch-slow-queries/analyze-groq")

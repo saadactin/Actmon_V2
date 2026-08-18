@@ -477,10 +477,12 @@ def get_slow_queries(conn_id: int, db: Session) -> dict:
         "WHERE type IN ('QueryFinish','ExceptionWhileProcessing') "
         "  AND event_time >= now() - INTERVAL 24 HOUR "
         "  AND query NOT LIKE '%system.query_log%' "
-        f"  AND {clickhouse_exclude_internal_tables_sql('query')} "
+        # ActMon's own queries are NOT excluded here — the Slow Queries page
+        # tags them via `classify_query_type()` in `_normalize_clickhouse_rows`
+        # instead, so the "ActMon Queries" filter has real rows to show.
         "GROUP BY normalized_query_hash "
         "HAVING avg(query_duration_ms) > 500 "
-        "ORDER BY query_duration_ms DESC LIMIT 100",
+        "ORDER BY query_duration_ms DESC LIMIT 200",
     )
     used_aggregation = True
     if error:
@@ -497,8 +499,7 @@ def get_slow_queries(conn_id: int, db: Session) -> dict:
             "  AND query_duration_ms > 500 "
             "  AND event_time >= now() - INTERVAL 24 HOUR "
             "  AND query NOT LIKE '%system.query_log%' "
-            f"  AND {clickhouse_exclude_internal_tables_sql('query')} "
-            "ORDER BY query_duration_ms DESC LIMIT 100",
+            "ORDER BY query_duration_ms DESC LIMIT 200",
         )
 
     response = {
@@ -548,6 +549,28 @@ def _normalize_clickhouse_rows(queries: list, response: dict, used_aggregation: 
                 source="system.query_log",
             ))
     attach_normalized(response, "clickhouse", common_rows)
+
+
+def get_slow_queries_filtered(
+    conn_id: int, db: Session, *,
+    db_name: str = None, query_type: str = None, severity: str = None,
+    user_name: str = None, search: str = None, min_avg_ms: float = None,
+    date_from: str = None, date_to: str = None,
+    sort_by: str = None, sort_dir: str = "desc", page: int = 1, page_size: int = 25,
+) -> dict:
+    """Wraps `get_slow_queries` with the shared filter/sort/paginate contract
+    every engine's Slow Queries list now uses."""
+    from app.services.common.slow_query_normalize import filter_paginate_rows
+    response = get_slow_queries(conn_id, db)
+    result = filter_paginate_rows(
+        response.get("normalized") or [],
+        database_name=db_name, query_type=query_type, severity=severity,
+        user_name=user_name, search=search, min_avg_ms=min_avg_ms,
+        date_from=date_from, date_to=date_to,
+        sort_by=sort_by, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+    response.update(result)
+    return response
 
 
 def explain_query(conn_id: int, query_text: str, db: Session) -> dict:

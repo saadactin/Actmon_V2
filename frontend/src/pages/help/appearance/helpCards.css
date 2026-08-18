@@ -1,0 +1,76 @@
+/**
+ * Help Center card/grid/typography primitives — every visual property here
+ * reads a `--hc-*` custom property set by applyHelpAppearance.js (on the
+ * real Help Center root for the live app, or on an isolated preview
+ * container for the appearance editor). No component hardcodes padding,
+ * radius, shadow, grid columns, or image sizing — change the config,
+ * every consumer updates together.
+ */
+
+.hc-card {
+  background: var(--hc-card-bg);
+  border-style: var(--hc-card-border-style);
+  border-width: var(--hc-card-border-width);
+  border-color: color-mix(in srgb, var(--hc-card-border) calc(var(--hc-card-border-opacity) * 100%), transparent);
+  border-radius: var(--hc-card-radius);
+  box-shadow: var(--hc-card-shadow);
+  padding: var(--hc-card-padding);
+  min-height: var(--hc-card-min-height);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.hc-card:hover {
+  background: var(--hc-hover-bg);
+  border-color: var(--hc-hover-border);
+}
+
+.hc-icon {
+  width: var(--hc-icon-size);
+  height: var(--hc-icon-size);
+  border-radius: var(--hc-icon-radius);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+/* Full card width, edge-to-edge — the image IS part of the card, not a
+ * logo floating in a padded, differently-tinted box. */
+.hc-image-header {
+  height: var(--hc-image-header-height);
+  width: 100%;
+  background: var(--hc-image-container-bg);
+  overflow: hidden;
+  flex: none;
+}
+.hc-image-header img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: var(--hc-image-object-fit, cover);
+  border-radius: var(--hc-image-radius);
+}
+
+.hc-card-title { font-size: var(--hc-type-card-title); color: var(--hc-card-title-color); line-height: var(--hc-line-height); }
+.hc-card-description { font-size: var(--hc-type-description); color: var(--hc-card-description-color); line-height: var(--hc-line-height); }
+.hc-card-footer { font-size: var(--hc-type-footer); color: var(--hc-card-footer-color); }
+.hc-section-heading { font-size: var(--hc-type-section-heading); }
+.hc-page-heading { font-size: var(--hc-type-page-heading); }
+.hc-body { font-size: var(--hc-type-body); line-height: var(--hc-line-height); }
+
+/* Grid columns come from real CSS custom properties (repeat() accepts a
+ * var() count directly), not templated Tailwind class names — sidesteps
+ * Tailwind's literal-class-scanning constraint entirely for this piece. */
+.hc-grid {
+  display: grid;
+  gap: var(--hc-card-gap);
+  grid-template-columns: repeat(var(--hc-grid-mobile-cols), 1fr);
+}
+@media (min-width: 640px) {
+  .hc-grid { grid-template-columns: repeat(var(--hc-grid-tablet-cols), 1fr); }
+}
+@media (min-width: 1024px) {
+  .hc-grid { grid-template-columns: repeat(var(--hc-grid-desktop-cols), 1fr); }
+}
+/* Phase 2: auto-fit toggle wiring in the admin UI; the CSS hook is ready. */
+.hc-grid[data-autofit='true'] {
+  grid-template-columns: repeat(auto-fit, minmax(max(var(--hc-card-width, 240px), 220px), 1fr));
+}

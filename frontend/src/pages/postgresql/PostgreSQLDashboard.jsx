@@ -34,6 +34,7 @@ import TrendChart from '@/components/gauges/TrendChart';
 import { PageLoading } from '@/components/ui/Loading';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptPostgresTableDetails } from '@/pages/_shared/tableDetailsAdapters';
+import { POSTGRES_DASHBOARD_TABS } from '@/config/postgresDashboardNav';
 
 /* ─── palette ─── */
 const C = {
@@ -53,18 +54,7 @@ const C = {
 const fetchDashboard = (id) =>
   client.get(`/connections/postgresql/${id}/monitoring-dashboard`).then(r => r.data);
 
-const TABS = [
-  { id: 'overview',    label: 'Overview',    icon: Activity },
-  { id: 'performance', label: 'Performance', icon: TrendingUp },
-  { id: 'queries',     label: 'Queries',     icon: Zap },
-  { id: 'databases',   label: 'Databases',   icon: Database },
-  { id: 'tables',      label: 'Tables',      icon: Table },
-  { id: 'locks',       label: 'Locks',       icon: Lock },
-  { id: 'replication', label: 'Replication', icon: GitBranch },
-  { id: 'users',       label: 'Users',       icon: Users },
-  { id: 'storage',     label: 'Storage',     icon: HardDrive },
-  { id: 'config',      label: 'Config',      icon: Settings },
-];
+const TABS = POSTGRES_DASHBOARD_TABS;
 
 const REFRESH_INTERVAL = 15;
 

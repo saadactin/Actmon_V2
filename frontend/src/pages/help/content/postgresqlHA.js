@@ -7,7 +7,7 @@
  * button, badge, and confirmation string quoted here was read from that code,
  * not invented. Verified against the live app during this documentation pass.
  */
-import { DOCS, icon } from '../helpContent';
+import { DOCS, icon, figure } from '../helpContent';
 
 export const PG_HA_TOPICS = [
   ['pg-patroni-overview', 'Replication & HA Overview'],
@@ -271,9 +271,10 @@ DOCS['pg-patroni-topology'] = {
   module: 'Database', status: 'Complete',
   body: `
     <p>The Topology tab renders a tree built from <em>each replica's own actually-resolved upstream</em> — read
-    from that specific replica's <code>pg_stat_wal_receiver</code> — never a fixed, assumed star shape where
-    every replica reports directly to the leader. This is why the diagram correctly shows cascading
-    configurations rather than flattening them.</p>
+    from that specific replica's own reported connection state — never a fixed, assumed star shape where every
+    replica reports directly to the leader. This is why the diagram correctly shows cascading configurations
+    rather than flattening them.</p>
+    ${figure('PostgreSQL Replication topology', 'Use the topology view to identify the current leader, every replica, its streaming state, and — for a cascading replica — which node it actually streams from.')}
     <h2>What each node box shows</h2>
     <ul>
       <li>Role label — <b>Leader</b>, <b>Replica</b>, or <b>Cascading Replica</b> (never "Missing" unless a
