@@ -7,6 +7,7 @@ import { useCloudStore } from '../state/cloudStore';
 import { PROVIDER_META } from '../components/CloudProviderSelector';
 import { CloudAccountList } from '../components/CloudAccountList';
 import CloudPageHeader from '../components/CloudPageHeader';
+import ProviderLogo from '../components/ProviderLogo';
 import CloudFilterBar from '../components/CloudFilterBar';
 import CloudSection from '../components/CloudSection';
 import { KEY_TO_SLUG, keyFromSlug, providerKeyOf } from '../utils/providerScope';
@@ -56,8 +57,10 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
     {
       key: null,
       icon: null,
-      logo: meta.logo,
-      iconBg: meta.bg,
+      // The brand mark instead of the old emoji; iconBg stays neutral so the
+      // logo's own colours read correctly.
+      logo: <ProviderLogo provider={providerKey} size={20} />,
+      iconBg: 'transparent',
       iconColor: meta.color,
       label: 'Total',
       value: providerAccounts.length,
@@ -69,9 +72,12 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
       icon: 'check',
       iconBg: 'var(--success-soft)',
       iconColor: 'var(--success-fg)',
-      label: 'Online',
+      // These describe OUR last discovery scan, not whether the cloud provider is
+      // up — an "Offline" Azure subscription is usually running perfectly well and
+      // simply denying us read access. The subtitles say so explicitly.
+      label: 'Reachable',
       value: onlineCount,
-      sub: 'last scan ok',
+      sub: 'last scan succeeded',
       ring: 'ring-success-soft',
     },
     {
@@ -79,9 +85,9 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
       icon: 'alert',
       iconBg: 'var(--warning-soft)',
       iconColor: 'var(--warning-fg)',
-      label: 'Warning',
+      label: 'Unverified',
       value: warningCount,
-      sub: 'needs attention',
+      sub: 'never scanned or in progress',
       ring: 'ring-warning-soft',
     },
     {
@@ -89,9 +95,9 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
       icon: 'ban',
       iconBg: 'var(--danger-soft)',
       iconColor: 'var(--danger-fg)',
-      label: 'Offline',
+      label: 'Unreachable',
       value: offlineCount,
-      sub: 'scan failed',
+      sub: 'scan failed (often lost access)',
       ring: 'ring-danger-soft',
     },
     {
@@ -114,11 +120,8 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
         description={`${providerAccounts.length} account${providerAccounts.length !== 1 ? 's' : ''} · pick one to view its dashboard`}
         backTo="/cloud"
         leading={(
-          <div
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-xl"
-            style={{ background: meta.bg, color: meta.color }}
-          >
-            {meta.logo}
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
+            <ProviderLogo provider={providerKey} size={28} />
           </div>
         )}
         actions={(
@@ -206,7 +209,10 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
                 }`}
                 style={isActive ? { background: pMeta.color } : undefined}
               >
-                <span>{pMeta.logo}</span>
+                {/* On the active pill the background is the brand colour, so a
+                    brand-coloured logo would disappear into it — show the mark
+                    only on the inactive pills. */}
+                {!isActive && <ProviderLogo provider={key} size={14} />}
                 <span className="hidden sm:inline">{key}</span>
               </button>
             );

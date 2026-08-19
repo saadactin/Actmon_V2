@@ -7,6 +7,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.services.alerting_service import AlertingService
 from app.services.cloud_account_service import CloudAccountService
 from app.services.discovery_service import DiscoveryService
 from app.services.resource_service import ResourceService
@@ -27,3 +28,7 @@ async def get_resource_service(db: AsyncSession = Depends(get_db)) -> ResourceSe
 
 async def get_cost_service(db: AsyncSession = Depends(get_db)) -> CostService:
     return CostService(db)
+
+
+async def get_alerting_service(db: AsyncSession = Depends(get_db)) -> AlertingService:
+    return AlertingService(db)

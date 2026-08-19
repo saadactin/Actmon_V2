@@ -6,7 +6,11 @@
  * channel_config_service.SECRET_FIELDS / CHANNEL_TYPES exactly.
  */
 export const CHANNEL_ORDER = [
-  'email', 'teams', 'slack', 'telegram', 'whatsapp',
+  // 'email' commented out — email notifications are disabled while no SMTP
+  // server is configured. This list also drives the Severity Routing picker,
+  // so leaving it in would offer Email as a routing target that cannot deliver.
+  // 'email',
+  'teams', 'slack', 'telegram', 'whatsapp',
   'webhook', 'pagerduty', 'jira', 'servicenow',
 ];
 

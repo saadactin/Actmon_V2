@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.providers.aws.aws_auth import AWSAuth
+from app.providers.aws.iam_policy import summarize_policy_documents
 from app.providers.scan_pool import scan_pool, is_denial, is_transient
 
 logger = logging.getLogger("cloud_svc.aws.scanner")
@@ -49,18 +50,28 @@ class AWSScanner:
                                 "provider_resource_id": inst["InstanceId"],
                                 "resource_type": "EC2Instance",
                                 "resource_name": name,
-                                "region_or_zone": inst.get(
-                                    "Placement", {}
-                                ).get("AvailabilityZone", region),
+                                # Region, not the availability zone. Storing the AZ
+                                # here made the region breakdown list ap-south-1a,
+                                # ap-south-1b and ap-south-1 as three separate
+                                # "regions"; the AZ is kept in config below.
+                                "region_or_zone": region,
                                 "status": inst.get("State", {}).get("Name"),
                                 "ip_address": inst.get("PublicIpAddress")
                                 or inst.get("PrivateIpAddress"),
                                 "config": {
+                                    "availability_zone": inst.get(
+                                        "Placement", {}).get("AvailabilityZone"),
                                     "instance_type": inst.get("InstanceType"),
                                     "image_id": inst.get("ImageId"),
                                     "key_name": inst.get("KeyName"),
                                     "vpc_id": inst.get("VpcId"),
                                     "subnet_id": inst.get("SubnetId"),
+                                    # Split out because `ip_address` alone can't
+                                    # tell a public address from a private one —
+                                    # internet-exposure analysis needs that
+                                    # distinction, not just "an IP exists".
+                                    "public_ip": inst.get("PublicIpAddress"),
+                                    "private_ip": inst.get("PrivateIpAddress"),
                                     "platform": inst.get("Platform", "linux"),
                                     "architecture": inst.get("Architecture"),
                                     "security_group_ids": [sg["GroupId"] for sg in inst.get("SecurityGroups", [])],
@@ -145,10 +156,12 @@ class AWSScanner:
                         "provider_resource_id": vol["VolumeId"],
                         "resource_type": "EBSVolume",
                         "resource_name": name,
-                        "region_or_zone": vol.get("AvailabilityZone", region),
+                        # Region, not the AZ (kept in config).
+                        "region_or_zone": region,
                         "status": vol.get("State"),
                         "ip_address": None,
                         "config": {
+                            "availability_zone": vol.get("AvailabilityZone"),
                             "size_gb": vol.get("Size"),
                             "volume_type": vol.get("VolumeType"),
                             "iops": vol.get("Iops"),
@@ -284,6 +297,23 @@ class AWSScanner:
 
         def _fetch():
             lmb = self.auth.get_client("lambda", region)
+
+            # Event source mappings are what actually wire a stream or queue to a
+            # function (DynamoDB Streams, SQS, Kinesis, MSK). One account-wide
+            # call, grouped by function, rather than one call per function.
+            triggers: Dict[str, List[str]] = {}
+            try:
+                for page in lmb.get_paginator("list_event_source_mappings").paginate():
+                    for esm in page.get("EventSourceMappings", []):
+                        fn_arn = esm.get("FunctionArn")
+                        src = esm.get("EventSourceArn")
+                        if fn_arn and src:
+                            triggers.setdefault(fn_arn, []).append(src)
+            except Exception as exc:
+                if is_transient(exc):
+                    raise
+                logger.debug("list_event_source_mappings failed in %s: %s", region, exc)
+
             pages = lmb.get_paginator("list_functions").paginate()
             results = []
             for page in pages:
@@ -311,6 +341,8 @@ class AWSScanner:
                                 "security_group_ids": fn.get("VpcConfig", {}).get("SecurityGroupIds", []),
                                 "role_arn": fn.get("Role"),
                                 "environment_variables": fn.get("Environment", {}).get("Variables", {}),
+                                # Streams / queues that invoke this function.
+                                "event_source_arns": triggers.get(fn["FunctionArn"], []),
                             },
                             "metadata": {
                                 "last_modified": fn.get("LastModified"),
@@ -356,6 +388,20 @@ class AWSScanner:
                             "config": {
                                 "version": cluster.get("version"),
                                 "role_arn": cluster.get("roleArn"),
+                                # A cluster's network placement — otherwise an EKS
+                                # cluster floats free of the VPC it runs in.
+                                "vpc_id": cluster.get("resourcesVpcConfig", {}).get("vpcId"),
+                                "subnet_ids": cluster.get("resourcesVpcConfig", {}).get("subnetIds", []),
+                                "security_group_ids": (
+                                    cluster.get("resourcesVpcConfig", {}).get("securityGroupIds", [])
+                                    or []
+                                ) + (
+                                    [cluster["resourcesVpcConfig"]["clusterSecurityGroupId"]]
+                                    if cluster.get("resourcesVpcConfig", {}).get("clusterSecurityGroupId")
+                                    else []
+                                ),
+                                "endpoint_public_access": cluster.get(
+                                    "resourcesVpcConfig", {}).get("endpointPublicAccess"),
                             },
                             "metadata": {
                                 "created_at": str(cluster.get("createdAt")),
@@ -451,11 +497,49 @@ class AWSScanner:
                 if is_transient(exc):
                     raise
                 return []
+            # Which instances each load balancer actually forwards to. Target
+            # groups are per-LB, so resolve them once here rather than leaving the
+            # graph with a load balancer that connects to nothing downstream.
+            targets_by_lb: Dict[str, List[str]] = {}
+            tg_names_by_lb: Dict[str, List[str]] = {}
+            if lbs:
+                try:
+                    for page in elbv2.get_paginator("describe_target_groups").paginate():
+                        for tg in page.get("TargetGroups", []):
+                            arns = tg.get("LoadBalancerArns") or []
+                            if not arns:
+                                continue
+                            ids: List[str] = []
+                            try:
+                                health = elbv2.describe_target_health(
+                                    TargetGroupArn=tg["TargetGroupArn"]
+                                )
+                                ids = [
+                                    d["Target"]["Id"]
+                                    for d in health.get("TargetHealthDescriptions", [])
+                                    if d.get("Target", {}).get("Id")
+                                ]
+                            except Exception as exc:  # one bad target group is not fatal
+                                if is_transient(exc):
+                                    raise
+                                logger.debug("target health failed for %s: %s",
+                                             tg.get("TargetGroupName"), exc)
+                            for arn in arns:
+                                targets_by_lb.setdefault(arn, []).extend(ids)
+                                tg_names_by_lb.setdefault(arn, []).append(
+                                    tg.get("TargetGroupName")
+                                )
+                except Exception as exc:
+                    if is_transient(exc):
+                        raise
+                    logger.debug("describe_target_groups failed in %s: %s", region, exc)
+
             results = []
             for lb in lbs:
+                arn = lb["LoadBalancerArn"]
                 results.append(
                     {
-                        "provider_resource_id": lb["LoadBalancerArn"],
+                        "provider_resource_id": arn,
                         "resource_type": "LoadBalancer",
                         "resource_name": lb["LoadBalancerName"],
                         "region_or_zone": region,
@@ -465,6 +549,16 @@ class AWSScanner:
                             "scheme": lb.get("Scheme"),
                             "type": lb.get("Type"),
                             "vpc_id": lb.get("VpcId"),
+                            # The subnets it is attached to, and the instances it
+                            # sends traffic to — both are real edges.
+                            "subnet_ids": [
+                                az.get("SubnetId")
+                                for az in lb.get("AvailabilityZones", [])
+                                if az.get("SubnetId")
+                            ],
+                            "security_group_ids": lb.get("SecurityGroups", []),
+                            "backend_instance_ids": sorted(set(targets_by_lb.get(arn, []))),
+                            "target_groups": tg_names_by_lb.get(arn, []),
                         },
                         "metadata": {
                             "created_time": str(lb.get("CreatedTime")),
@@ -479,6 +573,63 @@ class AWSScanner:
         return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── VPCs ──────────────────────────────────────────────────────────────────
+    # ── Subnets ───────────────────────────────────────────────────────────────
+    async def _scan_subnet(self, region: str) -> List[Dict[str, Any]]:
+        """Subnets, so the subnet_id every EC2 / RDS / ELB already reports has
+        something to point at. Without these rows the topology showed instances
+        hanging off a VPC with the whole subnet tier missing."""
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            ec2 = self.auth.get_client("ec2", region)
+            try:
+                subnets = [
+                    s
+                    for page in ec2.get_paginator("describe_subnets").paginate()
+                    for s in page.get("Subnets", [])
+                ]
+            except Exception as exc:
+                if is_transient(exc):
+                    raise
+                return []
+            results = []
+            for s in subnets:
+                name = next(
+                    (t["Value"] for t in s.get("Tags", []) if t["Key"] == "Name"),
+                    s["SubnetId"],
+                )
+                results.append(
+                    {
+                        "provider_resource_id": s["SubnetId"],
+                        "resource_type": "Subnet",
+                        "resource_name": name,
+                        "region_or_zone": region,
+                        "status": s.get("State"),
+                        "ip_address": s.get("CidrBlock"),
+                        "config": {
+                            # A subnet is AZ-scoped, so this is real placement
+                            # information — it just isn't the region.
+                            "availability_zone": s.get("AvailabilityZone"),
+                            "cidr_block": s.get("CidrBlock"),
+                            "vpc_id": s.get("VpcId"),
+                            "available_ips": s.get("AvailableIpAddressCount"),
+                            "public_ip_on_launch": s.get("MapPublicIpOnLaunch"),
+                            "is_default": s.get("DefaultForAz"),
+                        },
+                        "metadata": {"availability_zone_id": s.get("AvailabilityZoneId")},
+                        "cost_monthly": None,
+                        "tags": {t["Key"]: t["Value"] for t in s.get("Tags", [])},
+                        "raw_data": {
+                            "SubnetId": s.get("SubnetId"),
+                            "VpcId": s.get("VpcId"),
+                            "State": s.get("State"),
+                        },
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
     async def _scan_vpc(self, region: str) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
 
@@ -592,10 +743,82 @@ class AWSScanner:
                 if is_transient(exc):
                     raise
                 return []
+
+            # Managed policy documents are shared across many roles, so fetch each
+            # at most once. Without this, 75 roles all attached to the same handful
+            # of policies would mean hundreds of duplicate IAM calls.
+            doc_cache: Dict[str, Any] = {}
+            # Expanding permissions needs iam:ListAttachedRolePolicies /
+            # GetPolicyVersion / GetRolePolicy. If those are not granted, degrade to
+            # the previous behaviour (identity only) instead of failing the scan.
+            policies_denied = [False]
+
+            def _managed_doc(arn: str):
+                if arn in doc_cache:
+                    return doc_cache[arn]
+                doc = None
+                try:
+                    pol = iam.get_policy(PolicyArn=arn)["Policy"]
+                    ver = iam.get_policy_version(
+                        PolicyArn=arn, VersionId=pol["DefaultVersionId"]
+                    )
+                    doc = ver["PolicyVersion"]["Document"]
+                except Exception as exc:
+                    if is_transient(exc):
+                        raise
+                    if is_denial(exc):
+                        policies_denied[0] = True
+                doc_cache[arn] = doc
+                return doc
+
+            def _role_permissions(role_name: str) -> Dict[str, Any]:
+                """Concrete resources this role can reach, plus wildcard grants."""
+                docs = []
+                try:
+                    for page in iam.get_paginator("list_attached_role_policies").paginate(
+                        RoleName=role_name
+                    ):
+                        for p in page.get("AttachedPolicies", []):
+                            d = _managed_doc(p["PolicyArn"])
+                            if d:
+                                docs.append(d)
+                except Exception as exc:
+                    if is_transient(exc):
+                        raise
+                    if is_denial(exc):
+                        policies_denied[0] = True
+                try:
+                    for page in iam.get_paginator("list_role_policies").paginate(
+                        RoleName=role_name
+                    ):
+                        for pname in page.get("PolicyNames", []):
+                            try:
+                                docs.append(
+                                    iam.get_role_policy(
+                                        RoleName=role_name, PolicyName=pname
+                                    )["PolicyDocument"]
+                                )
+                            except Exception as exc:
+                                if is_transient(exc):
+                                    raise
+                                if is_denial(exc):
+                                    policies_denied[0] = True
+                except Exception as exc:
+                    if is_transient(exc):
+                        raise
+                    if is_denial(exc):
+                        policies_denied[0] = True
+                return summarize_policy_documents(docs)
+
             results = []
             for role in roles:
                 if "aws-service-role" in role.get("Path", ""):
                     continue
+                perms = (
+                    {"accessible_resources": [], "broad_access": []}
+                    if policies_denied[0]
+                    else _role_permissions(role["RoleName"])
+                )
                 results.append(
                     {
                         "provider_resource_id": role["Arn"],
@@ -608,6 +831,12 @@ class AWSScanner:
                         "config": {
                             "path": role.get("Path"),
                             "max_session_duration": role.get("MaxSessionDuration"),
+                            # What this role is actually allowed to touch. This is
+                            # the missing link that left Lambdas unconnected from
+                            # the DynamoDB tables they write to: the role edge was
+                            # recorded, but never what the role grants.
+                            "accessible_resources": perms["accessible_resources"],
+                            "broad_access": perms["broad_access"],
                         },
                         "metadata": {
                             "create_date": str(role.get("CreateDate")),
@@ -905,6 +1134,7 @@ class AWSScanner:
                 (self._scan_elb, "ELB"),
                 (self._scan_dynamodb, "DynamoDB"),
                 (self._scan_vpc, "VPC"),
+                (self._scan_subnet, "Subnet"),
                 (self._scan_security_group, "SecurityGroup"),
                 (self._scan_apigateway, "APIGateway"),
                 (self._scan_bedrock, "Bedrock"),

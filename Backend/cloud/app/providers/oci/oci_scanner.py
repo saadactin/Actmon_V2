@@ -17,6 +17,23 @@ logger = logging.getLogger("cloud_svc.oci.scanner")
 _TIMEOUT = oci.retry.DEFAULT_RETRY_STRATEGY
 
 
+def _oci_port_range(rule) -> Dict[str, Any] | None:
+    """Normalise OCI's per-protocol port-range shape to {min, max}.
+
+    A SecurityRule keeps its port range under `tcp_options` or `udp_options`
+    (mutually exclusive with each other and with `icmp_options`), each with a
+    `destination_port_range` of {min, max}. None of the three means "all ports
+    for this protocol" — returning None here preserves that distinction rather
+    than defaulting to a specific range that would misreport an all-ports rule
+    as narrower than it is.
+    """
+    opts = rule.tcp_options or rule.udp_options
+    if opts and opts.destination_port_range:
+        r = opts.destination_port_range
+        return {"min": r.min, "max": r.max}
+    return None
+
+
 class OCIScanner:
     def __init__(self, auth: OCIAuth) -> None:
         self.auth = auth
@@ -191,8 +208,39 @@ class OCIScanner:
                 except Exception:
                     pass
 
+            # ── Network placement ────────────────────────────────────────────
+            # An instance's subnet and IPs live on its VNIC, not on the instance,
+            # so without this an instance has no link to the network it sits in —
+            # and ip_address stayed None for every instance in the inventory.
+            # One list call per compartment, then one get_vnic per attachment.
+            inst_vnic: Dict[str, Dict[str, Any]] = {}
+            try:
+                net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+                for va in oci.pagination.list_call_get_all_results(
+                    compute.list_vnic_attachments, compartment_id
+                ).data:
+                    if va.lifecycle_state != "ATTACHED" or not va.vnic_id:
+                        continue
+                    if va.instance_id in inst_vnic:
+                        continue  # primary VNIC is enough for placement
+                    try:
+                        vnic = net.get_vnic(va.vnic_id).data
+                    except Exception:
+                        continue
+                    inst_vnic[va.instance_id] = {
+                        "subnet_id": vnic.subnet_id,
+                        "private_ip": vnic.private_ip,
+                        "public_ip": vnic.public_ip,
+                        "nsg_ids": list(vnic.nsg_ids or []),
+                        "hostname": vnic.hostname_label,
+                    }
+            except Exception as exc:
+                # Placement is an enrichment: losing it must not lose the instance.
+                logger.debug("VNIC lookup failed in %s/%s: %s", region, compartment_id, exc)
+
             results = []
             for inst in active:
+                vnic_info = inst_vnic.get(inst.id, {})
                 boot_gb = boot_size.get(inst_boot.get(inst.id))
                 block_gbs = [
                     vol_size[vid] for vid in inst_block.get(inst.id, []) if vid in vol_size
@@ -205,15 +253,26 @@ class OCIScanner:
                         "provider_resource_id": inst.id,
                         "resource_type": "ComputeInstance",
                         "resource_name": inst.display_name,
-                        "region_or_zone": inst.availability_domain,
+                        # The region, not the availability domain. Storing the AD
+                        # here ("hpAD:AP-MUMBAI-1-AD-1") made the dashboard's
+                        # region breakdown list ADs as if they were regions; the
+                        # AD is kept below, where it belongs.
+                        "region_or_zone": region,
                         "status": inst.lifecycle_state,
-                        "ip_address": None,
+                        "ip_address": vnic_info.get("public_ip") or vnic_info.get("private_ip"),
                         "config": {
+                            "availability_domain": inst.availability_domain,
+                            "fault_domain_full": inst.fault_domain,
                             "shape": inst.shape,
                             "ocpus": inst.shape_config.ocpus if inst.shape_config else None,
                             "memory_gb": inst.shape_config.memory_in_gbs if inst.shape_config else None,
                             "image_id": inst.image_id,
                             "fault_domain": inst.fault_domain,
+                            # Network placement, from the instance's primary VNIC.
+                            "subnet_id": vnic_info.get("subnet_id"),
+                            "nsg_ids": vnic_info.get("nsg_ids") or [],
+                            "private_ip": vnic_info.get("private_ip"),
+                            "public_ip": vnic_info.get("public_ip"),
                             # Real provisioned storage (GB) that a stopped instance
                             # keeps paying for; None when the volume APIs were unreadable.
                             "boot_volume_gb": boot_gb,
@@ -295,10 +354,12 @@ class OCIScanner:
                         "provider_resource_id": vol.id,
                         "resource_type": "BlockVolume",
                         "resource_name": vol.display_name,
-                        "region_or_zone": vol.availability_domain,
+                        # Region, not the availability domain (kept in config).
+                        "region_or_zone": region,
                         "status": vol.lifecycle_state,
                         "ip_address": None,
                         "config": {
+                            "availability_domain": vol.availability_domain,
                             "size_gb": vol.size_in_gbs,
                             "vpus_per_gb": vol.vpus_per_gb,
                             "is_auto_tune_enabled": vol.is_auto_tune_enabled,
@@ -462,6 +523,12 @@ class OCIScanner:
                             "dns_label": vcn.dns_label,
                             "domain_name": vcn.vcn_domain_name,
                             "is_ipv6_enabled": getattr(vcn, "is_ipv6_enabled", False),
+                            # OCI auto-creates one of each per VCN — these ids are
+                            # how the route table / security list / DHCP options
+                            # scanners below mark their own rows as default.
+                            "default_route_table_id": vcn.default_route_table_id,
+                            "default_security_list_id": vcn.default_security_list_id,
+                            "default_dhcp_options_id": vcn.default_dhcp_options_id,
                         },
                         "metadata": {
                             "compartment_id": compartment_id,
@@ -471,6 +538,253 @@ class OCIScanner:
                         "cost_monthly": None,
                         "tags": vcn.freeform_tags or {},
                         "raw_data": {"id": vcn.id, "display_name": vcn.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Subnets ───────────────────────────────────────────────────────────────
+
+    async def _scan_subnets(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        """Subnets, so instance and load-balancer placement resolves to something.
+
+        Both compute (via its VNIC) and load balancers report a subnet OCID, but
+        subnets were never discovered — so the whole subnet tier was missing from
+        the topology and those references dangled.
+        """
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+            try:
+                subnets = oci.pagination.list_call_get_all_results(
+                    net.list_subnets, compartment_id=compartment_id
+                ).data
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the
+                # sweep look complete and let the caller prune live rows.
+                self.scan_failures.append(f"Subnet [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for sn in subnets:
+                if sn.lifecycle_state in ("TERMINATED",):
+                    continue
+                results.append(
+                    {
+                        "provider_resource_id": sn.id,
+                        "resource_type": "Subnet",
+                        "resource_name": sn.display_name,
+                        "region_or_zone": region,
+                        "status": sn.lifecycle_state,
+                        "ip_address": sn.cidr_block,
+                        "config": {
+                            # None for a regional subnet, which is the norm.
+                            "availability_domain": sn.availability_domain,
+                            "cidr_block": sn.cidr_block,
+                            "vcn_id": sn.vcn_id,
+                            "is_public": not sn.prohibit_public_ip_on_vnic,
+                            "dns_label": sn.dns_label,
+                            "route_table_id": sn.route_table_id,
+                            "security_list_ids": list(sn.security_list_ids or []),
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(sn.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": sn.freeform_tags or {},
+                        "raw_data": {"id": sn.id, "display_name": sn.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Security Lists ────────────────────────────────────────────────────────
+    # OCI auto-creates one "Default Security List" per VCN, and it is what
+    # actually governs traffic for a subnet that has no NSG attached — the older,
+    # subnet-level firewall mechanism that predates NSGs. Not scanning this left
+    # every instance relying on it reading as "unknown exposure" (a genuine
+    # unknown, not a bug — see exposure_service.py), and it is also the source of
+    # OCI's other "default" objects a user would want to filter out, matching
+    # AWS's default VPC/security group and Azure's default subnet.
+
+    async def _scan_security_lists(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+            try:
+                vcns = oci.pagination.list_call_get_all_results(
+                    net.list_vcns, compartment_id
+                ).data
+                default_ids = {v.default_security_list_id for v in vcns if v.default_security_list_id}
+                seclists = oci.pagination.list_call_get_all_results(
+                    net.list_security_lists, compartment_id
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"SecurityList [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for sl in seclists:
+                if sl.lifecycle_state in ("TERMINATED",):
+                    continue
+
+                def _rules(rule_list, is_ingress):
+                    out = []
+                    for rule in rule_list or []:
+                        parsed = {
+                            "protocol": rule.protocol,
+                            "is_stateless": rule.is_stateless,
+                            "port_range": _oci_port_range(rule),
+                        }
+                        if is_ingress:
+                            parsed["source"] = rule.source
+                            parsed["source_type"] = rule.source_type
+                        else:
+                            parsed["destination"] = rule.destination
+                            parsed["destination_type"] = rule.destination_type
+                        out.append(parsed)
+                    return out
+
+                # Same shape as NSG's ingress_rules/egress_rules on purpose —
+                # exposure_service.py's _oci_open_ports() reads either without
+                # needing to know which mechanism it came from.
+                ingress = _rules(sl.ingress_security_rules, True)
+                egress = _rules(sl.egress_security_rules, False)
+                results.append(
+                    {
+                        "provider_resource_id": sl.id,
+                        "resource_type": "SecurityList",
+                        "resource_name": sl.display_name,
+                        "region_or_zone": region,
+                        "status": sl.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "vcn_id": sl.vcn_id,
+                            "total_rules": len(ingress) + len(egress),
+                            "ingress_rules": ingress,
+                            "egress_rules": egress,
+                            "is_default": sl.id in default_ids,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(sl.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": sl.freeform_tags or {},
+                        "raw_data": {"id": sl.id, "display_name": sl.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Route Tables ──────────────────────────────────────────────────────────
+
+    async def _scan_route_tables(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+            try:
+                vcns = oci.pagination.list_call_get_all_results(
+                    net.list_vcns, compartment_id
+                ).data
+                default_ids = {v.default_route_table_id for v in vcns if v.default_route_table_id}
+                tables = oci.pagination.list_call_get_all_results(
+                    net.list_route_tables, compartment_id
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"RouteTable [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for rt in tables:
+                if rt.lifecycle_state in ("TERMINATED",):
+                    continue
+                rules = [
+                    {
+                        "destination": r.destination,
+                        "destination_type": r.destination_type,
+                        "network_entity_id": r.network_entity_id,
+                        "route_type": r.route_type,
+                    }
+                    for r in (rt.route_rules or [])
+                ]
+                results.append(
+                    {
+                        "provider_resource_id": rt.id,
+                        "resource_type": "RouteTable",
+                        "resource_name": rt.display_name,
+                        "region_or_zone": region,
+                        "status": rt.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "vcn_id": rt.vcn_id,
+                            "route_rule_count": len(rules),
+                            "route_rules": rules,
+                            "is_default": rt.id in default_ids,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(rt.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": rt.freeform_tags or {},
+                        "raw_data": {"id": rt.id, "display_name": rt.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── DHCP Options ──────────────────────────────────────────────────────────
+
+    async def _scan_dhcp_options(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+            try:
+                vcns = oci.pagination.list_call_get_all_results(
+                    net.list_vcns, compartment_id
+                ).data
+                default_ids = {v.default_dhcp_options_id for v in vcns if v.default_dhcp_options_id}
+                opts_list = oci.pagination.list_call_get_all_results(
+                    net.list_dhcp_options, compartment_id
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"DhcpOptions [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for opts in opts_list:
+                if opts.lifecycle_state in ("TERMINATED",):
+                    continue
+                results.append(
+                    {
+                        "provider_resource_id": opts.id,
+                        "resource_type": "DhcpOptions",
+                        "resource_name": opts.display_name,
+                        "region_or_zone": region,
+                        "status": opts.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "vcn_id": opts.vcn_id,
+                            "domain_name_type": opts.domain_name_type,
+                            "is_default": opts.id in default_ids,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(opts.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": opts.freeform_tags or {},
+                        "raw_data": {"id": opts.id, "display_name": opts.display_name},
                     }
                 )
             return results
@@ -497,16 +811,29 @@ class OCIScanner:
             for nsg in nsgs:
                 if nsg.lifecycle_state in ("TERMINATED",):
                     continue
-                # Fetch rules count
+                # The actual rules, not just a count. Internet-exposure analysis
+                # needs to know WHICH ports are open to WHICH source — "1 ingress
+                # rule" answers neither question, so it was discarded right after
+                # being fetched even though the API call had already paid for it.
+                ingress: List[Dict[str, Any]] = []
+                egress: List[Dict[str, Any]] = []
                 try:
-                    rules = net.list_network_security_group_security_rules(nsg.id).data
-                    rule_count = len(rules)
-                    ingress_count = sum(1 for r in rules if r.direction == "INGRESS")
-                    egress_count = sum(1 for r in rules if r.direction == "EGRESS")
-                except Exception:
-                    rule_count = 0
-                    ingress_count = 0
-                    egress_count = 0
+                    for rule in net.list_network_security_group_security_rules(nsg.id).data:
+                        parsed = {
+                            "protocol": rule.protocol,  # "6"=TCP "17"=UDP "1"=ICMP "all"
+                            "is_stateless": rule.is_stateless,
+                            "port_range": _oci_port_range(rule),
+                        }
+                        if rule.direction == "INGRESS":
+                            parsed["source"] = rule.source
+                            parsed["source_type"] = rule.source_type
+                            ingress.append(parsed)
+                        else:
+                            parsed["destination"] = rule.destination
+                            parsed["destination_type"] = rule.destination_type
+                            egress.append(parsed)
+                except Exception as exc:
+                    logger.debug("NSG rules fetch failed for %s: %s", nsg.id, exc)
 
                 results.append(
                     {
@@ -518,9 +845,9 @@ class OCIScanner:
                         "ip_address": None,
                         "config": {
                             "vcn_id": nsg.vcn_id,
-                            "total_rules": rule_count,
-                            "ingress_rules": ingress_count,
-                            "egress_rules": egress_count,
+                            "total_rules": len(ingress) + len(egress),
+                            "ingress_rules": ingress,
+                            "egress_rules": egress,
                         },
                         "metadata": {
                             "compartment_id": compartment_id,
@@ -573,6 +900,16 @@ class OCIScanner:
                                 "ip_addresses": ips,
                                 "subnet_ids": lb.subnet_ids or [],
                                 "backend_sets": list((lb.backend_sets or {}).keys()),
+                                # The actual backends behind those sets. Only the
+                                # set *names* were stored before, which name nothing
+                                # resolvable — so a load balancer had no downstream
+                                # edge to whatever it serves traffic to.
+                                "backend_ips": sorted({
+                                    b.ip_address
+                                    for bs in (lb.backend_sets or {}).values()
+                                    for b in (getattr(bs, "backends", None) or [])
+                                    if getattr(b, "ip_address", None)
+                                }),
                                 "listeners": list((lb.listeners or {}).keys()),
                                 "lb_type": "LoadBalancer",
                             },
@@ -985,6 +1322,10 @@ class OCIScanner:
             (self._scan_object_storage, "ObjectStorage"),
             (self._scan_databases,      "Database"),
             (self._scan_vcn,            "VCN"),
+            (self._scan_subnets,        "Subnet"),
+            (self._scan_security_lists, "SecurityList"),
+            (self._scan_route_tables,   "RouteTable"),
+            (self._scan_dhcp_options,   "DhcpOptions"),
             (self._scan_nsg,            "NSG"),
             (self._scan_load_balancers, "LoadBalancer"),
             (self._scan_functions,      "Functions"),

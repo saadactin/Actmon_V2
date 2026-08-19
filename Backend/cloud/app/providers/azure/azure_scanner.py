@@ -166,6 +166,32 @@ class AzureScanner:
                                 else None
                             ),
                             "power_state": power_state,
+                            # Everything this VM is wired to. ARM gives these as
+                            # full resource IDs on the VM model, so they resolve
+                            # exactly — no name matching.
+                            "nic_ids": [
+                                n.id for n in (vm.network_profile.network_interfaces or [])
+                                if getattr(n, "id", None)
+                            ] if vm.network_profile else [],
+                            "os_disk_id": (
+                                vm.storage_profile.os_disk.managed_disk.id
+                                if vm.storage_profile and vm.storage_profile.os_disk
+                                and vm.storage_profile.os_disk.managed_disk
+                                else None
+                            ),
+                            "data_disk_ids": [
+                                d.managed_disk.id
+                                for d in (vm.storage_profile.data_disks or [])
+                                if getattr(d, "managed_disk", None)
+                                and getattr(d.managed_disk, "id", None)
+                            ] if vm.storage_profile else [],
+                            "availability_set_id": (
+                                vm.availability_set.id if vm.availability_set else None
+                            ),
+                            "identity_id": (
+                                getattr(vm.identity, "principal_id", None)
+                                if getattr(vm, "identity", None) else None
+                            ),
                         },
                         "metadata": {
                             "resource_group": vm.id.split("/resourceGroups/")[1].split("/")[0]
@@ -347,6 +373,180 @@ class AzureScanner:
         return await loop.run_in_executor(scan_pool(), _fetch)
 
     # ── Generic catch-all (every resource type via ARM resources.list) ───────
+    async def _scan_network(self) -> List[Dict[str, Any]]:
+        """Network interfaces, subnets and public-IP associations.
+
+        Azure hangs its whole network topology off the NIC: the NIC is what knows
+        the VM, the subnet, the NSG and the public IP. The generic ARM listing
+        returns NICs as flat rows with none of that, so VMs, subnets, NSGs and
+        public IPs all sat unconnected. Subnets are worse than unconnected —
+        `resources.list()` does not return them at all, because they are
+        sub-resources of a VNet.
+
+        Everything here is read from the ARM models as full resource IDs, so the
+        topology resolves them exactly rather than by name.
+        """
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            from azure.mgmt.network import NetworkManagementClient
+
+            net = NetworkManagementClient(
+                self.auth.get_credential(), self.auth.subscription_id
+            )
+            results: List[Dict[str, Any]] = []
+
+            # ── Subnets (as children of each VNet) ───────────────────────────
+            try:
+                for vnet in net.virtual_networks.list_all():
+                    for sn in (vnet.subnets or []):
+                        results.append({
+                            "provider_resource_id": sn.id,
+                            "resource_type": "Subnet",
+                            "resource_name": sn.name,
+                            "region_or_zone": vnet.location or "global",
+                            "status": sn.provisioning_state,
+                            "ip_address": sn.address_prefix,
+                            "config": {
+                                "address_prefix": sn.address_prefix,
+                                "virtual_network_id": vnet.id,
+                                "network_security_group_id": (
+                                    sn.network_security_group.id
+                                    if sn.network_security_group else None
+                                ),
+                                "route_table_id": (
+                                    sn.route_table.id if sn.route_table else None
+                                ),
+                                "nat_gateway_id": (
+                                    sn.nat_gateway.id if getattr(sn, "nat_gateway", None) else None
+                                ),
+                            },
+                            "metadata": {"resource_group": _resource_group_of(sn.id)},
+                            "cost_monthly": None,
+                            "tags": {},
+                            "raw_data": {"id": sn.id, "name": sn.name},
+                        })
+            except Exception as exc:
+                self.scan_failures.append(f"Subnet: {str(exc)[:160]}")
+
+            # ── Network interfaces ───────────────────────────────────────────
+            try:
+                for nic in net.network_interfaces.list_all():
+                    subnet_ids, pip_ids, private_ips = [], [], []
+                    for cfg in (nic.ip_configurations or []):
+                        if getattr(cfg, "subnet", None) and cfg.subnet.id:
+                            subnet_ids.append(cfg.subnet.id)
+                        if getattr(cfg, "public_ip_address", None) and cfg.public_ip_address.id:
+                            pip_ids.append(cfg.public_ip_address.id)
+                        if getattr(cfg, "private_ip_address", None):
+                            private_ips.append(cfg.private_ip_address)
+                    results.append({
+                        "provider_resource_id": nic.id,
+                        "resource_type": "NetworkInterface",
+                        "resource_name": nic.name,
+                        "region_or_zone": nic.location or "global",
+                        "status": nic.provisioning_state,
+                        "ip_address": private_ips[0] if private_ips else None,
+                        "config": {
+                            # The VM this NIC is plugged into.
+                            "attached_to_id": (
+                                nic.virtual_machine.id if nic.virtual_machine else None
+                            ),
+                            "attachment_status": "Attached" if nic.virtual_machine else "Unattached",
+                            "subnet_ids": subnet_ids,
+                            "public_ip_ids": pip_ids,
+                            "network_security_group_id": (
+                                nic.network_security_group.id
+                                if nic.network_security_group else None
+                            ),
+                            "private_ip": private_ips[0] if private_ips else None,
+                            "accelerated_networking": nic.enable_accelerated_networking,
+                        },
+                        "metadata": {"resource_group": _resource_group_of(nic.id)},
+                        "cost_monthly": None,
+                        "tags": nic.tags or {},
+                        "raw_data": {"id": nic.id, "name": nic.name},
+                    })
+            except Exception as exc:
+                self.scan_failures.append(f"NetworkInterface: {str(exc)[:160]}")
+
+            # ── Public IPs (with the address, which the generic sweep omits) ──
+            try:
+                for pip in net.public_ip_addresses.list_all():
+                    results.append({
+                        "provider_resource_id": pip.id,
+                        "resource_type": "PublicIP",
+                        "resource_name": pip.name,
+                        "region_or_zone": pip.location or "global",
+                        "status": pip.provisioning_state,
+                        "ip_address": pip.ip_address,
+                        "config": {
+                            "allocation_method": getattr(
+                                pip.public_ip_allocation_method, "value",
+                                pip.public_ip_allocation_method),
+                            "sku": pip.sku.name if pip.sku else None,
+                            # What it is bound to (a NIC ip-config, an LB, a gateway).
+                            "attached_to_id": (
+                                pip.ip_configuration.id if pip.ip_configuration else None
+                            ),
+                            "fqdn": (
+                                pip.dns_settings.fqdn if pip.dns_settings else None
+                            ),
+                        },
+                        "metadata": {"resource_group": _resource_group_of(pip.id)},
+                        "cost_monthly": None,
+                        "tags": pip.tags or {},
+                        "raw_data": {"id": pip.id, "name": pip.name},
+                    })
+            except Exception as exc:
+                self.scan_failures.append(f"PublicIP: {str(exc)[:160]}")
+
+            # ── Network Security Groups, with their actual rules ─────────────
+            # The generic ARM sweep returns an NSG as a bare row with only
+            # {azure_type, sku, kind} — none of which is a rule. Without this,
+            # internet-exposure analysis had no way to know what an Azure NSG
+            # actually allows.
+            try:
+                for nsg in net.network_security_groups.list_all():
+                    rules = [
+                        {
+                            "priority": r.priority,
+                            "direction": r.direction,        # Inbound | Outbound
+                            "access": r.access,               # Allow | Deny
+                            "protocol": r.protocol,           # Tcp | Udp | * | ...
+                            "source_address_prefix": r.source_address_prefix,
+                            "destination_port_range": r.destination_port_range,
+                            "destination_port_ranges": r.destination_port_ranges or [],
+                        }
+                        # Effective security rules include the platform defaults
+                        # (AllowVnetInBound, DenyAllInBound, ...); without them a
+                        # gap in the custom rules silently reads as "no rule",
+                        # when Azure's own default is actually to deny.
+                        for r in (nsg.security_rules or []) + (nsg.default_security_rules or [])
+                    ]
+                    results.append({
+                        "provider_resource_id": nsg.id,
+                        "resource_type": "NetworkSecurityGroup",
+                        "resource_name": nsg.name,
+                        "region_or_zone": nsg.location or "global",
+                        "status": nsg.provisioning_state,
+                        "ip_address": None,
+                        "config": {
+                            "ingress_rules": [r for r in rules if r["direction"] == "Inbound"],
+                            "egress_rules": [r for r in rules if r["direction"] == "Outbound"],
+                        },
+                        "metadata": {"resource_group": _resource_group_of(nsg.id)},
+                        "cost_monthly": None,
+                        "tags": nsg.tags or {},
+                        "raw_data": {"id": nsg.id, "name": nsg.name},
+                    })
+            except Exception as exc:
+                self.scan_failures.append(f"NetworkSecurityGroup: {str(exc)[:160]}")
+
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
     async def _scan_generic(self) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
 
@@ -367,6 +567,11 @@ class AzureScanner:
                             "azure_type": res.type,
                             "sku": res.sku.name if res.sku else None,
                             "kind": res.kind,
+                            # ARM reports the resource that owns this one's
+                            # lifecycle (a disk's VM, anything a scale set
+                            # created). It costs nothing extra here and is a real
+                            # relationship the graph had no other way to know.
+                            "managed_by": getattr(res, "managed_by", None),
                         },
                         "metadata": {"resource_group": _resource_group_of(res.id)},
                         "cost_monthly": None,
@@ -399,6 +604,7 @@ class AzureScanner:
             (self._scan_storage, "Storage"),
             (self._scan_sql, "SQL"),
             (self._scan_aks, "AKS"),
+            (self._scan_network, "Network"),
         ]:
             try:
                 results = await scanner_fn()

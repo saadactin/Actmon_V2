@@ -6,11 +6,14 @@ import CloudPageHeader from '../components/CloudPageHeader';
 import CloudToolbar from '../components/CloudToolbar';
 import CloudSection from '../components/CloudSection';
 import CloudFilterBar from '../components/CloudFilterBar';
+import InternetExposurePanel from '../components/InternetExposurePanel';
+import IamAccessReviewPanel from '../components/IamAccessReviewPanel';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
+import Tabs from '@/components/ui/Tabs';
 import { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
-import { ShieldAlert, ShieldCheck, AlertTriangle, Info, ExternalLink, Filter, Wrench } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, AlertTriangle, Info, ExternalLink, Filter, Wrench, Globe, KeyRound } from 'lucide-react';
 
 // Grade → colour is a computed data value (like the score itself), not app
 // chrome, so it stays a direct hex scale rather than a chrome token.
@@ -45,6 +48,12 @@ export const SecurityPosturePage = ({ embedded = false }) => {
   // Filters
   const [severityFilter, setSeverityFilter] = useState('ALL');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [tab, setTab] = useState('findings');
+  const TABS = [
+    { id: 'findings', label: 'Findings' },
+    { id: 'exposure', label: 'Internet Exposure', icon: Globe },
+    { id: 'iam', label: 'IAM Access Review', icon: KeyRound },
+  ];
 
   const { data: posture, isLoading, isError, refetch, isRefetching } = useSecurityPosture(selectedAccountId);
 
@@ -108,7 +117,12 @@ export const SecurityPosturePage = ({ embedded = false }) => {
         />
       )}
 
-      {isError || !posture ? (
+      <Tabs tabs={TABS} value={tab} onChange={setTab} className="mb-4" />
+
+      {tab === 'exposure' && <InternetExposurePanel accountId={selectedAccountId} />}
+      {tab === 'iam' && <IamAccessReviewPanel accountId={selectedAccountId} />}
+
+      {tab === 'findings' && (isError || !posture ? (
         <CloudSection>
           <div className="flex flex-col items-center gap-3 py-10 px-5 text-center">
             <span className="grid h-14 w-14 place-items-center rounded-full bg-danger-soft text-danger-fg">
@@ -277,7 +291,7 @@ export const SecurityPosturePage = ({ embedded = false }) => {
             )}
           </div>
         </div>
-      )}
+      ))}
     </>
   );
 };

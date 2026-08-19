@@ -15,7 +15,10 @@ import {
 
 const TABS = [
   { id: 'general', label: 'General', icon: 'globe' },
-  { id: 'email', label: 'Email', icon: 'mail' },
+  // Email notifications disabled — no SMTP server is configured, so the panel
+  // and its send/test actions could only fail. Re-enable by uncommenting this
+  // tab and the matching block in the render below.
+  // { id: 'email', label: 'Email', icon: 'mail' },
   { id: 'teams', label: 'Teams', icon: 'bot' },
   { id: 'slack', label: 'Slack', icon: 'send' },
   { id: 'telegram', label: 'Telegram', icon: 'send' },
@@ -43,12 +46,14 @@ export default function NotificationsSettingsSection() {
 
       {tab === 'general' && <GeneralSettingsPanel />}
 
+      {/* Email notifications disabled — see the commented-out tab above.
       {tab === 'email' && (
         <div className="space-y-gutter">
           <SmtpSettingsSection />
           <NotificationChannelPanel channelType="email" def={CHANNEL_DEFS.email} />
         </div>
       )}
+      */}
 
       {tab === 'routing' && <SeverityRoutingPanel />}
 
