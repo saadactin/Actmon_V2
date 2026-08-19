@@ -15,6 +15,7 @@ import Badge from '@/components/ui/Badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import useAdminResource from '@/hooks/useAdminResource';
 import { useThemeStore } from '@/theme/themeStore';
+import { uploadsApi } from '@/api/admin';
 
 /** Same 16px/500/18px-lh body-cell size as the Agents list's dark-header
     table (AgentsPage.jsx's CELL_TEXT) — kept as its own copy rather than a
@@ -56,9 +57,63 @@ function Cell({ col, row, identity }) {
   return <span className={cn(CELL_TEXT, identity && 'font-bold text-fg')}>{String(v)}</span>;
 }
 
+/** Upload-and-preview control for `type: 'image'` fields (org logos). The
+    field's value is always a served URL string, same as a text field — this
+    just replaces typing that URL with picking a file, which the backend
+    uploads and hands a URL back for. */
+function ImageFieldControl({ field, value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // lets the same file be re-picked later
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      onChange(await uploadsApi.logo(file));
+    } catch (err) {
+      setError(err?.response?.data?.detail || err.message || 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      {value ? (
+        <img src={encodeURI(value)} alt="" className="h-12 w-12 rounded-control border border-border bg-sunken object-contain" />
+      ) : (
+        <span className="grid h-12 w-12 place-items-center rounded-control border border-dashed border-border text-[10px] text-muted">
+          No logo
+        </span>
+      )}
+      <div className="flex flex-col gap-1">
+        <label className={cn(
+          'inline-flex w-fit items-center gap-2 rounded-control border border-border bg-raised px-3 py-1.5 text-[12px] font-semibold text-fg hover:bg-sunken',
+          (uploading || field.readOnly) ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
+        )}>
+          {uploading ? 'Uploading…' : value ? 'Replace image' : 'Upload image'}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml"
+            className="hidden"
+            disabled={uploading || field.readOnly}
+            onChange={handleFile}
+          />
+        </label>
+        {error && <span className="text-[11px] text-danger">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 /** One form control, driven by the field's `type`. */
 function FieldControl({ field, value, onChange, options }) {
   switch (field.type) {
+    case 'image':
+      return <ImageFieldControl field={field} value={value} onChange={onChange} />;
     case 'textarea':
       return <Textarea rows={3} value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={field.readOnly} />;
     case 'checkbox':
@@ -285,11 +340,17 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
                     {f.label}{f.required && <span className="text-danger"> *</span>}
                   </label>
                   {form.mode === 'view' ? (
-                    <p className="text-[13px] text-fg">
-                      {f.type === 'checkbox' ? (form.values[f.key] ? 'Active' : 'Inactive')
-                        : f.type === 'password' ? 'Configured'
-                        : String(form.values[f.key] ?? '—')}
-                    </p>
+                    f.type === 'image' ? (
+                      form.values[f.key]
+                        ? <img src={encodeURI(form.values[f.key])} alt="" className="h-12 w-12 rounded-control border border-border bg-sunken object-contain" />
+                        : <p className="text-[13px] text-fg">—</p>
+                    ) : (
+                      <p className="text-[13px] text-fg">
+                        {f.type === 'checkbox' ? (form.values[f.key] ? 'Active' : 'Inactive')
+                          : f.type === 'password' ? 'Configured'
+                          : String(form.values[f.key] ?? '—')}
+                      </p>
+                    )
                   ) : (
                     <FieldControl
                       field={f}

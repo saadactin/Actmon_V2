@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import PageHeader from '@/components/layout/PageHeader';
 import Icon from '@/components/ui/Icon';
+import Button from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/Table';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuthStore } from '@/store/authStore';
@@ -116,6 +117,11 @@ export default function AdministrationPage() {
           icon="user-cog"
           description="Select an organization to manage its access control & masters."
           hideBreadcrumbs
+          actions={user?.is_superuser ? (
+            <Button variant="primary" icon="building" onClick={() => navigate('/organizations')}>
+              Manage Organizations
+            </Button>
+          ) : undefined}
         />
         <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {isLoading || orgs.length === 0 ? (

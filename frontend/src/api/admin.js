@@ -44,6 +44,18 @@ export const statusesApi = {
   list: () => client.get('/admin/statuses').then((r) => ensureArray(r.data)),
 };
 
+/** Uploads an image (organization logo) and returns the URL to store on the
+    record — the backend saves the file and hands back a served path, it
+    never gets embedded as base64. */
+export const uploadsApi = {
+  logo: (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return client.post('/admin/uploads/logo', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => r.data.logo_path);
+  },
+};
+
 /**
  * Role → Page permission grants (`group_role_page_permission`). Distinct
  * from the generic factory: `list` takes org_id AND an optional role_id

@@ -27,7 +27,7 @@ import {
  *                after a successful create (handled in EmployeesPage, not
  *                the generic engine, to keep the engine itself config-only)
  *   columns      [{ key, label, width?, align?, type?('status'|'json'), render?(row) }]
- *   fields       [{ key, label, type('text'|'textarea'|'number'|'date'|'checkbox'|'select'|'json'),
+ *   fields       [{ key, label, type('text'|'textarea'|'number'|'date'|'checkbox'|'select'|'json'|'image'),
  *                    required?, readOnly?, options?:[{id,label}], loadOptions?(orgId):[{id,label}],
  *                    autoValue?(rows), help? }]
  */
@@ -205,7 +205,7 @@ export const ADMIN_RESOURCES = {
       { key: 'alternate_contact_no', label: 'Alternate Contact No.', type: 'text' },
       { key: 'email_id', label: 'Email', type: 'text' },
       { key: 'website_url', label: 'Website', type: 'text' },
-      { key: 'logo_path', label: 'Logo URL', type: 'text' },
+      { key: 'logo_path', label: 'Logo', type: 'image', fullWidth: true },
       { key: 'country_name', label: 'Country', type: 'text' },
       { key: 'state_name', label: 'State', type: 'text' },
       { key: 'city_name', label: 'City', type: 'text' },

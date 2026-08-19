@@ -281,6 +281,15 @@ app.include_router(setup_router)   # first-run: create the initial Super Admin
 for _admin_router in admin_crud_routers:
     app.include_router(_admin_router)
 
+# Organization logo upload + the static directory it's served back from.
+# Mounted under /api/v1/ (not a bare /uploads/) so nginx's existing "proxy
+# every /api/ path to this backend" rule already covers it — no new,
+# per-deployment nginx location block needed just for this.
+from fastapi.staticfiles import StaticFiles
+from app.routes.admin.admin_upload_routes import router as admin_upload_router, _UPLOAD_ROOT
+app.include_router(admin_upload_router)
+app.mount("/api/v1/uploads", StaticFiles(directory=_UPLOAD_ROOT), name="uploads")
+
 # Centralized Agent routes
 app.include_router(agent_router)
 app.include_router(db_agent_router)
