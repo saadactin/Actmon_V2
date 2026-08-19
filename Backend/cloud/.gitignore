@@ -21,3 +21,6 @@ htmlcov/
 
 # Local credential drops (never commit)
 *.local.json
+
+# Any .env variant (.env.bak, .env.local ...) - never commit secrets
+.env*

@@ -11,9 +11,10 @@ import {
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
-import { PROVIDER_META } from '../components/CloudProviderSelector';
 import { formatCurrency } from '../utils/formatters';
+import { regionBreakdown } from '../utils/regions';
 import CloudPageHeader from '../components/CloudPageHeader';
+import ProviderLogo from '../components/ProviderLogo';
 import CloudSection from '../components/CloudSection';
 import Tabs from '@/components/ui/Tabs';
 import { PageLoading } from '@/components/ui/Loading';
@@ -145,13 +146,10 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
     ? [...allTypesArr.slice(0, 8), { name: `Other (${otherTypes} types)`, value: otherCount }]
     : allTypesArr;
 
-  // Region breakdown
-  const regionCounts = accountResources.reduce((acc, r) => {
-    const region = r.region_or_zone || 'unknown';
-    acc[region] = (acc[region] || 0) + 1;
-    return acc;
-  }, {});
-  const barData = Object.entries(regionCounts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+  // Region breakdown. Grouped on the normalised region so availability domains
+  // ("hpAD:AP-MUMBAI-1-AD-1") and availability zones ("ap-south-1b") roll up into
+  // their region instead of appearing as extra regions of their own.
+  const barData = regionBreakdown(accountResources).slice(0, 8);
 
   const recentlyDiscovered = [...accountResources]
     .sort((a, b) => new Date(b.discovered_at).getTime() - new Date(a.discovered_at).getTime())
@@ -163,11 +161,8 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         hideBreadcrumbs
         backTo={`/cloud/${routeProviderSlug}-accounts`}
         leading={(
-          <span
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-[20px]"
-            style={{ background: PROVIDER_META[scopedAccount?.provider]?.bg }}
-          >
-            <Cloud size={20} style={{ color: PROVIDER_META[scopedAccount?.provider]?.color }} />
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
+            <ProviderLogo provider={scopedAccount?.provider} size={28} />
           </span>
         )}
         title={scopedAccount?.account_name || 'Account'}

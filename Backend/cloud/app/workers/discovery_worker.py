@@ -150,11 +150,27 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             # None → NA in the UI). Account-level spend comes from the billing API
             # via the cost service — no config-based estimates are fabricated here.
 
+            # Alerts are a side effect of discovery, not its purpose, and they now
+            # write to the DB. Give them their own session so an alerting failure
+            # can't poison the scan's transaction (the handler below still needs a
+            # usable session to record job failure), and swallow errors so a
+            # successful scan is never reported as failed because of them.
             from app.services.alerting_service import check_storage_attachment_alerts
 
-            check_storage_attachment_alerts(
-                account.account_name, resources, account_id=str(account_id)
-            )
+            try:
+                async with AsyncSessionLocal() as alert_db:
+                    await check_storage_attachment_alerts(
+                        alert_db,
+                        account.account_name,
+                        resources,
+                        account_id=account_id,
+                        sweep_complete=not failures,
+                    )
+            except Exception as alert_exc:
+                logger.warning(
+                    "Storage-attachment alert check failed for job=%s: %s",
+                    job_id, alert_exc, exc_info=True,
+                )
 
             # Fire-and-forget: warm the cost cache now so the Cost page's
             # first load after this scan doesn't pay a cold 30-50s billing

@@ -3,15 +3,16 @@ import { ChevronRight, Plus, Server, Settings } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAllResources } from '../hooks/useResources';
 import CloudPageHeader from '../components/CloudPageHeader';
+import ProviderLogo from '../components/ProviderLogo';
 import { usePermissions } from '@/hooks/usePermissions';
 
 // URL slug ↔ stored provider value ("Oracle" from the API counts as OCI's tile).
 const PROVIDERS = [
-  { slug: 'aws', key: 'AWS', name: 'Amazon Web Services', subtitle: 'AWS', emoji: '🟠',
+  { slug: 'aws', key: 'AWS', name: 'Amazon Web Services', subtitle: 'AWS',
     accent: 'bg-gradient-to-br from-orange-400 to-orange-600', lightBg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', hover: 'hover:border-orange-300 hover:shadow-orange-100/60' },
-  { slug: 'azure', key: 'Azure', name: 'Microsoft Azure', subtitle: 'Azure', emoji: '🔵',
+  { slug: 'azure', key: 'Azure', name: 'Microsoft Azure', subtitle: 'Azure',
     accent: 'bg-gradient-to-br from-sky-400 to-sky-700', lightBg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-700', hover: 'hover:border-sky-300 hover:shadow-sky-100/60' },
-  { slug: 'oci', key: 'OCI', name: 'Oracle Cloud Infrastructure', subtitle: 'OCI', emoji: '🔴',
+  { slug: 'oci', key: 'OCI', name: 'Oracle Cloud Infrastructure', subtitle: 'OCI',
     accent: 'bg-gradient-to-br from-red-400 to-red-600', lightBg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', hover: 'hover:border-red-300 hover:shadow-red-100/60' },
 ];
 
@@ -89,8 +90,10 @@ export default function CloudProviderChooser() {
                 <div className={`pointer-events-none absolute top-0 right-0 h-28 w-28 rounded-2xl opacity-0 transition-opacity group-hover:opacity-[0.07] ${p.accent}`} />
 
                 <div className="flex items-start gap-4">
-                  <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl shadow-lg ${p.accent}`}>
-                    <span className="select-none text-2xl">{p.emoji}</span>
+                  {/* White plate rather than the brand gradient: the logos carry
+                      their own brand colours, which a coloured tile would fight. */}
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-border bg-white shadow-md">
+                    <ProviderLogo provider={p.key} size={36} />
                   </div>
                   <div className="min-w-0 flex-1">
                     <h3 className="text-[17px] font-black leading-tight text-fg">{p.name}</h3>

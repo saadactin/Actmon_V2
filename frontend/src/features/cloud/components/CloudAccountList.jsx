@@ -7,6 +7,8 @@ import { useTriggerDiscovery } from '../hooks/useDiscovery';
 import { useAllResources } from '../hooks/useResources';
 import { formatDate } from '../utils/formatters';
 import { providerKeyOf, slugForProvider } from '../utils/providerScope';
+import { accountLocation } from '../utils/regions';
+import ProviderLogo from './ProviderLogo';
 import { usePermissions } from '@/hooks/usePermissions';
 import Table, { EmptyState } from '@/components/ui/Table';
 import Button from '@/components/ui/Button';
@@ -41,11 +43,15 @@ function providerBadgeClass(provider) {
 // (never_scanned | scanning | failed | ok), see CloudAccountService.list_accounts.
 // scanning/never_scanned both read as "needs attention" — neither confirms the
 // connection is actually healthy, the same bar mysql-servers' Warning bucket sets.
+// The label describes whether OUR last discovery scan of the account worked, not
+// whether the cloud itself is up: a subscription that revoked our Reader role is
+// perfectly healthy and still reads "Unreachable" here. "Online"/"Offline" implied
+// the provider was down, so the wording now says what is actually being measured.
 const STATUS_META = {
-  ok: { label: 'Online', tone: 'success', icon: 'check', bucket: 'online' },
+  ok: { label: 'Reachable', tone: 'success', icon: 'check', bucket: 'online' },
   scanning: { label: 'Scanning', tone: 'info', icon: 'refresh', bucket: 'warning' },
   never_scanned: { label: 'Not Scanned', tone: 'warning', icon: 'alert', bucket: 'warning' },
-  failed: { label: 'Offline', tone: 'danger', icon: 'ban', bucket: 'offline' },
+  failed: { label: 'Scan Failed', tone: 'danger', icon: 'ban', bucket: 'offline' },
 };
 const statusMetaOf = (acc) => STATUS_META[acc.last_discovery_status] || STATUS_META.never_scanned;
 
@@ -53,7 +59,8 @@ const COLUMNS = [
   { key: 'srNo', label: 'Sr. No.', align: 'center', width: 64 },
   { key: 'account', label: 'Account', width: 280 },
   { key: 'environment', label: 'Environment', align: 'center' },
-  { key: 'region', label: 'Region', align: 'center' },
+  // Not always a region: Azure accounts may carry a tenant GUID here instead.
+  { key: 'region', label: 'Region / Tenant', align: 'center' },
   { key: 'status', label: 'Status', align: 'center', width: 150 },
   { key: 'resources', label: 'Resources', align: 'center' },
   { key: 'lastScan', label: 'Last Scan', align: 'center' },
@@ -171,15 +178,23 @@ export const CloudAccountList = ({
                   <p className={`truncate text-[13px] ${isSelected ? 'font-bold text-accent-text' : 'font-semibold text-fg'}`}>
                     {acc.account_name}
                   </p>
-                  <span className={`mt-1 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${providerBadgeClass(acc.provider)}`}>
-                    {acc.provider}
+                  <span className="mt-1 inline-flex items-center gap-1.5">
+                    <ProviderLogo provider={acc.provider} size={14} />
+                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${providerBadgeClass(acc.provider)}`}>
+                      {acc.provider}
+                    </span>
                   </span>
                 </div>
                 <Badge tone={meta.tone}><Icon name={meta.icon} size={11} />{meta.label}</Badge>
               </div>
               <div className="grid grid-cols-2 gap-2 text-[12px] text-muted">
                 <div><p className="text-[10px] uppercase tracking-wide text-subtle">Environment</p>{acc.environment || 'NA'}</div>
-                <div><p className="text-[10px] uppercase tracking-wide text-subtle">Region</p>{acc.tenant_or_region || 'NA'}</div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-subtle">
+                    {accountLocation(acc).kind === 'tenant' ? 'Tenant' : 'Region'}
+                  </p>
+                  {accountLocation(acc).text}
+                </div>
                 <div><p className="text-[10px] uppercase tracking-wide text-subtle">Resources</p>{resourceCountOf(acc.id)}</div>
                 <div><p className="text-[10px] uppercase tracking-wide text-subtle">Last Scan</p>{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</div>
               </div>
@@ -203,6 +218,7 @@ export const CloudAccountList = ({
         // shape as AgentsPage.jsx's Agent/Host column.
         account: (
           <div className="flex items-center gap-2">
+            <ProviderLogo provider={acc.provider} size={16} className="shrink-0" />
             <span className={cn(CELL_SIZE, isSelected ? 'font-bold text-accent-text' : 'font-bold text-fg')}>
               {acc.account_name}
             </span>
@@ -212,7 +228,14 @@ export const CloudAccountList = ({
           </div>
         ),
         environment: <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.environment || '—'}</span>,
-        region: <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.tenant_or_region || 'NA'}</span>,
+        region: (() => {
+          const loc = accountLocation(acc);
+          return (
+            <span className={CELL_TEXT} style={CELL_TEXT_STYLE} title={loc.title || undefined}>
+              {loc.text}
+            </span>
+          );
+        })(),
         // Fixed 178×48 pill, same dimensions/typography as AgentsPage.jsx's
         // own Status column (Figma spec), just wearing this account's tone.
         status: (

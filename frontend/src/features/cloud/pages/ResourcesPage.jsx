@@ -5,6 +5,7 @@ import { DiscoveryStatus } from '../components/DiscoveryStatus';
 import CloudPageHeader from '../components/CloudPageHeader';
 import CloudToolbar from '../components/CloudToolbar';
 import { useCloudScope } from '../hooks/useCloudScope';
+import { accountLocation } from '../utils/regions';
 import { useCloudStore } from '../state/cloudStore';
 import { Cloud, Layers, MapPin, Clock, RefreshCw } from 'lucide-react';
 
@@ -12,6 +13,8 @@ const SUMMARY_ICONS = {
   Provider: Cloud,
   Environment: Layers,
   Region: MapPin,
+  // Same slot, different meaning when the account carries a tenant GUID.
+  Tenant: MapPin,
   'Last Scan': Clock,
   'Auto Discovery': RefreshCw,
 };
@@ -85,7 +88,9 @@ export const ResourcesPage = ({ embedded = false }) => {
             {[
               { label: 'Provider', value: selectedAccount.provider },
               { label: 'Environment', value: selectedAccount.environment || 'N/A' },
-              { label: 'Region', value: selectedAccount.tenant_or_region || 'N/A' },
+              // Azure accounts may store a tenant GUID here rather than a region.
+              { label: accountLocation(selectedAccount).kind === 'tenant' ? 'Tenant' : 'Region',
+                value: accountLocation(selectedAccount).text },
               { label: 'Last Scan', value: selectedAccount.last_discovery ? new Date(selectedAccount.last_discovery).toLocaleString() : 'Never' },
               { label: 'Auto Discovery', value: selectedAccount.auto_discovery ? 'Enabled' : 'Disabled' },
             ].map((stat) => {
