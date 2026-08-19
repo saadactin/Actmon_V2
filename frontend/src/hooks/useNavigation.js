@@ -39,14 +39,15 @@ export default function useNavigation() {
   const badges = useMenuStore((s) => s.badges);
 
   return useMemo(() => {
+    // Help Center now has its own module_master/page_master rows (see
+    // migrations/2026-08-19_help_center_page.sql), so the server menu
+    // reports it like any other module — governed by the role's own grant,
+    // same as everything else. No longer force-injected: AppShell's RBAC
+    // route guard would otherwise deny a role that had it revoked while the
+    // nav still showed the link, which is a worse experience than just not
+    // showing it.
     const items = (serverMenu ? serverMenu.map(fromServer) : MENU_ITEMS)
       .filter((i) => !RETIRED_ROUTES.has(i.to));
-    // Help Center isn't a row in module_master yet, so the server menu never
-    // reports it — force it in exactly like the static MENU_ITEMS list already
-    // has it, so the bar doesn't lose the item the moment RBAC data lands.
-    const withHelp = items.some((i) => i.to === '/help-center')
-      ? items
-      : [...items, { id: 'help-center', label: 'Help Center', to: '/help-center', icon: 'help' }];
 
     // Sort by our own route order so the server menu lands in the same
     // arrangement as the fallback. Unknown routes keep their incoming order and
@@ -56,7 +57,7 @@ export default function useNavigation() {
       return i === -1 ? Number.MAX_SAFE_INTEGER : i;
     };
 
-    return [...withHelp]
+    return [...items]
       .sort((a, b) => rank(a.to) - rank(b.to))
       .map((item) => ({
         ...item,
