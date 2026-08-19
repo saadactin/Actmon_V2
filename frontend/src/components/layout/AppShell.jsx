@@ -7,9 +7,11 @@ import AppearanceDrawer from '@/components/appearance/AppearanceDrawer';
 import ChatWidget from '@/components/chat/ChatWidget';
 import Icon from '@/components/ui/Icon';
 import useShortcuts from '@/hooks/useShortcuts';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useUIStore } from '@/store/uiStore';
 import { PageLoading } from '@/components/ui/Loading';
 import { APP, SHORTCUTS } from '@/config/app.config';
+import AccessDeniedPage from '@/pages/AccessDeniedPage';
 
 /**
  * The application frame: module bar + scrolling content.
@@ -29,6 +31,13 @@ export default function AppShell({ user, onSignOut }) {
   const bleed = BLEED_PREFIXES.some((p) => pathname.startsWith(p));
   const navHidden = useUIStore((s) => s.navHidden);
   const toggleNav = useUIStore((s) => s.toggleNav);
+  // The actual RBAC enforcement point: the nav bar only HIDES links a role
+  // can't see, which is discoverability, not access control — a direct visit
+  // (typed URL, bookmark, browser history) skipped it entirely until this
+  // check. isDeniedHere() was already built for exactly this in
+  // usePermissions.js but had no caller anywhere in the app.
+  const { isDeniedHere } = usePermissions();
+  const denied = isDeniedHere();
   useShortcuts();
 
   return (
@@ -60,9 +69,13 @@ export default function AppShell({ user, onSignOut }) {
             }}
           >
             <ErrorBoundary resetKey={pathname}>
-              <Suspense fallback={<PageLoading title="Loading…" />}>
-                <Outlet />
-              </Suspense>
+              {denied ? (
+                <AccessDeniedPage />
+              ) : (
+                <Suspense fallback={<PageLoading title="Loading…" />}>
+                  <Outlet />
+                </Suspense>
+              )}
             </ErrorBoundary>
           </div>
         </main>
