@@ -146,9 +146,18 @@ export function agentState(agent) {
   // actually concluded the service is down — the two "alive" phrasings both mean
   // the host answered, so they must not match as down.
   if (s === 'offline' && agent.last_heartbeat) {
+    // A Host-type agent's "target" IS the machine running the agent itself —
+    // there's no channel independent of the very host being monitored, so
+    // heartbeat silence and "host unreachable" are the same signal. Without
+    // a separate, out-of-band confirmation, this can never honestly claim
+    // "Service Stopped" (that requires positively confirming the service is
+    // down while the host is reachable) — it can only say the host stopped
+    // answering. DB-type agents keep the regex distinction below, since their
+    // engine-service state comes from a genuinely separate OS-level probe.
+    const isHostAgent = String(agent.db_type || '').toLowerCase() === 'host';
     const err = agent.last_error || '';
     const serviceAlive = /did not answer this check|is running \(it answered\)|is running\./i.test(err);
-    const serviceDown = !serviceAlive
+    const serviceDown = !isHostAgent && !serviceAlive
       && /is not running on|is not installed|reports '(inactive|stopped|failed)'/i.test(err);
     return {
       id: serviceDown ? 'service-stopped' : 'offline',
@@ -156,7 +165,9 @@ export function agentState(agent) {
       tone: 'danger',
       icon: 'close',
       tip: agent.last_error
-        || 'Agent stopped reporting - it was uninstalled or the host is unreachable.',
+        || (isHostAgent
+          ? 'This host has stopped reporting — it is unreachable or powered off. Monitoring resumes automatically once it is back online.'
+          : 'Agent stopped reporting - it was uninstalled or the host is unreachable.'),
     };
   }
 
