@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import Popover from '@/components/ui/Popover';
@@ -10,6 +10,7 @@ import { useUIStore } from '@/store/uiStore';
 import { useThemeStore, resolveThemeId } from '@/theme/themeStore';
 import { THEME_MODE } from '@/theme/presets';
 import { APP, SHORTCUTS } from '@/config/app.config';
+import { isModuleActive } from '@/config/moduleRoutePrefixes';
 
 /**
  * The module bar — brand, the eleven modules, the account.
@@ -76,52 +77,56 @@ function BrandMark() {
 /**
  * Icon over label, the active one in white.
  *
- * `end` is false so a module stays lit while you are deeper inside it — on
- * /agents/deploy the Agents item is still the one you are in. Dashboard is the
- * exception and matches exactly, since every route would otherwise be "under" it
- * if it were ever mounted at "/".
+ * Active state is computed here (via isModuleActive), not left to NavLink's
+ * own prefix check — a plain `pathname.startsWith(item.to)` only keeps a
+ * module lit while its sub-pages physically nest under its own path (true for
+ * Agents/Cloud/Infrastructure/Settings), but several modules have sub-pages
+ * that are FLAT sibling routes instead (e.g. Database's /mysql-dashboard/:id,
+ * Administration's /roles, /role-permissions/:orgId, …) — those would
+ * otherwise un-highlight their parent module the moment you're on them.
+ * `moduleRoutePrefixes.js` is the one place that maps those extra prefixes
+ * back to their module, so this stays generic instead of one-off per module.
+ * Dashboard is still an exact match, since every route is technically
+ * "under" it if the app were ever mounted at "/".
  */
 function TopNavItem({ item }) {
+  const { pathname } = useLocation();
+  const active = item.to === '/dashboard' ? pathname === '/dashboard' : isModuleActive(pathname, item.to);
   return (
     <NavLink
       to={item.to}
-      end={item.to === '/dashboard'}
-      className={({ isActive }) => cn(
+      className={cn(
         'group relative flex shrink-0 flex-col items-center rounded-md py-1 transition-colors',
-        isActive ? 'text-topnav-fg' : 'text-topnav-muted hover:text-topnav-fg',
+        active ? 'text-topnav-fg' : 'text-topnav-muted hover:text-topnav-fg',
       )}
       style={{
         gap: 'var(--topnav-stack-gap)',
         paddingInline: 'var(--topnav-item-pad-x)',
       }}
     >
-      {({ isActive }) => (
-        <>
-          <span className="relative grid place-items-center">
-            {/* size= sets the SVG's width/height ATTRIBUTES, which cannot take a
-                var(); the style overrides them so the token still drives it. */}
-            <Icon
-              name={item.icon}
-              size={26}
-              strokeWidth={1.6}
-              style={{ width: 'var(--topnav-icon)', height: 'var(--topnav-icon)' }}
-            />
-            {/* Live count, e.g. firing alerts. Nothing renders unless something
-                sets a badge, so the bar matches the design at rest. */}
-            {item.badge ? (
-              <span className="absolute -top-1.5 -right-2 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-danger px-1 text-[10px] font-bold text-white tabular-nums">
-                {item.badge > 99 ? '99+' : item.badge}
-              </span>
-            ) : null}
+      <span className="relative grid place-items-center">
+        {/* size= sets the SVG's width/height ATTRIBUTES, which cannot take a
+            var(); the style overrides them so the token still drives it. */}
+        <Icon
+          name={item.icon}
+          size={26}
+          strokeWidth={1.6}
+          style={{ width: 'var(--topnav-icon)', height: 'var(--topnav-icon)' }}
+        />
+        {/* Live count, e.g. firing alerts. Nothing renders unless something
+            sets a badge, so the bar matches the design at rest. */}
+        {item.badge ? (
+          <span className="absolute -top-1.5 -right-2 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-danger px-1 text-[10px] font-bold text-white tabular-nums">
+            {item.badge > 99 ? '99+' : item.badge}
           </span>
-          <span
-            className={cn('leading-none whitespace-nowrap', isActive ? 'font-semibold' : 'font-normal')}
-            style={{ fontSize: 'var(--topnav-label)' }}
-          >
-            {item.label}
-          </span>
-        </>
-      )}
+        ) : null}
+      </span>
+      <span
+        className={cn('leading-none whitespace-nowrap', active ? 'font-semibold' : 'font-normal')}
+        style={{ fontSize: 'var(--topnav-label)' }}
+      >
+        {item.label}
+      </span>
     </NavLink>
   );
 }

@@ -532,8 +532,8 @@ export default function GroupRolePagePermission() {
           title="Group Role Permissions"
           icon="shield-check"
           description={`Roles in ${org?.org_name || 'this organization'} — pick one to manage its page access.`}
-          backTo="/role-permissions"
-          backLabel="Organizations"
+          backTo={`/administration/${orgId}`}
+          backLabel="Administration"
         />
         <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visibleRoles.map((r) => (
