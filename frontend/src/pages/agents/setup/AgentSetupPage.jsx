@@ -173,7 +173,7 @@ const NET_SERVICES = [
 // "Add Data → Infrastructure" catalog.
 const INFRA_SERVICES = [
   { id: 'k8s', name: 'Kubernetes Cluster', desc: 'Monitor the health and performance of clusters, namespaces, and nodes. Auto-discover workloads, services, and topology.' },
-  { id: 'hosts', name: 'Hosts', to: '/infra', desc: 'Observe the performance, stability, and health of hosts through multiple monitoring channels.' },
+  { id: 'hosts', name: 'Hosts', to: '/agents/deploy', desc: 'Observe the performance, stability, and health of hosts through multiple monitoring channels.' },
   { id: 'aws', name: 'AWS Services', to: '/cloud', desc: 'Insights into the health and performance of key services such as EC2, EBS, Lambda, S3, and RDS, among others.' },
   { id: 'azure', name: 'Azure Resources', to: '/cloud', desc: 'Monitor the health and performance of key resources such as Azure VM, CDN, Blob Storage, and VPN, among others.' },
   { id: 'gcp', name: 'Google Cloud Platform', to: '/cloud', desc: 'Monitor the health and performance of key resources such as Compute Engine, Cloud Storage among others.' },

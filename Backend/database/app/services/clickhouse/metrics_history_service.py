@@ -29,6 +29,13 @@ logger = logging.getLogger("metrics_history")
 
 TTL_DAYS = int(os.getenv("METRICS_CH_TTL_DAYS", "90") or 90)
 
+# ClickHouse database these tables live in — same var actmon_logs/core.py reads,
+# so both the generic log store and this file's tables stay in sync. Defaulting
+# to "actmon" keeps existing installs unaffected; a separate deployment (e.g.
+# actmon-b1) can point this at its own database via .env so its history never
+# mixes with another install sharing the same ClickHouse server.
+CH_DB = os.getenv("ACTMON_LOGS_CH_DB", "actmon")
+
 # Numeric fields carried through the pipeline (mirror of AgentMetric).
 FIELDS = ("host_cpu", "host_memory", "host_disk", "db_cpu", "active_sessions", "connections_used",
           "connections_max", "cache_hit_pct", "qps", "tps", "uptime_seconds")
@@ -75,10 +82,10 @@ def ensure_table(cli, table):
         return True
     try:
         if not _db_ready:
-            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            cli.command(f"CREATE DATABASE IF NOT EXISTS {CH_DB}")
             _db_ready = True
         cli.command(f"""
-            CREATE TABLE IF NOT EXISTS actmon.{table} (
+            CREATE TABLE IF NOT EXISTS {CH_DB}.{table} (
                 ts               DateTime,
                 kind             LowCardinality(String),
                 tech             LowCardinality(String),
@@ -103,7 +110,7 @@ def ensure_table(cli, table):
         # CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists from
         # before a field was added here — ADD COLUMN IF NOT EXISTS is what actually
         # backfills the schema on every table this process has ever created.
-        cli.command(f"ALTER TABLE actmon.{table} ADD COLUMN IF NOT EXISTS host_disk Float64 DEFAULT 0")
+        cli.command(f"ALTER TABLE {CH_DB}.{table} ADD COLUMN IF NOT EXISTS host_disk Float64 DEFAULT 0")
         _tables_ready.add(table)
         return True
     except Exception as e:  # noqa: BLE001
@@ -133,7 +140,7 @@ def flush_sample(agent_name, sample):
         for f in FIELDS:
             v = sample.get(f, 0) or 0
             row.append(int(v) if f in INT_FIELDS else float(v))
-        cli.insert("actmon.%s" % table, [row], column_names=COLUMNS)
+        cli.insert("%s.%s" % (CH_DB, table), [row], column_names=COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] insert (%s): %s", table, e)
         mark_down()
@@ -149,14 +156,14 @@ WAIT_COLUMNS = ["ts", "agent", "event_name", "wait_class", "time_waited_ms", "av
 
 _EXTRA_DDL = {
     "top_sql": f"""
-        CREATE TABLE IF NOT EXISTS actmon.top_sql (
+        CREATE TABLE IF NOT EXISTS {CH_DB}.top_sql (
             ts DateTime, agent LowCardinality(String), sql_id String, sql_text String,
             executions Int64, avg_elapsed_ms Float64, cpu_time_ms Float64,
             buffer_gets Int64, total_ms Float64, max_ms Float64
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (agent, ts) TTL ts + INTERVAL {TTL_DAYS} DAY""",
     "wait_events": f"""
-        CREATE TABLE IF NOT EXISTS actmon.wait_events (
+        CREATE TABLE IF NOT EXISTS {CH_DB}.wait_events (
             ts DateTime, agent LowCardinality(String), event_name String,
             wait_class LowCardinality(String), time_waited_ms Float64,
             avg_ms Float64, count Int64
@@ -171,7 +178,7 @@ def _ensure_extra(cli, table):
         return True
     try:
         if not _db_ready:
-            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            cli.command(f"CREATE DATABASE IF NOT EXISTS {CH_DB}")
             _db_ready = True
         cli.command(_EXTRA_DDL[table])
         _tables_ready.add(table)
@@ -200,7 +207,7 @@ MYSQL_REPL_COLUMNS = ["ts", "agent", "conn_id", "configured", "role", "io_thread
 
 _MYSQL_EXTRA_DDL = {
     "actmon_mysql_slow_queries": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_slow_queries (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_mysql_slow_queries (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             db_name LowCardinality(String), query_hash String, query_text String,
             execution_time Float64, lock_time Float64, rows_sent UInt32, rows_examined UInt32,
@@ -209,14 +216,14 @@ _MYSQL_EXTRA_DDL = {
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_mysql_error_logs": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_error_logs (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_mysql_error_logs (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             severity LowCardinality(String), error_code String,
             source LowCardinality(String), message String, log_file String
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_mysql_binlog_history": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_binlog_history (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_mysql_binlog_history (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             binary_logging UInt8, log_bin UInt8, binlog_format LowCardinality(String),
             server_id UInt32, current_log_file String, current_position UInt64,
@@ -224,7 +231,7 @@ _MYSQL_EXTRA_DDL = {
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_mysql_replication_history": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_mysql_replication_history (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_mysql_replication_history (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             configured UInt8, role LowCardinality(String),
             io_thread_running UInt8, sql_thread_running UInt8,
@@ -258,14 +265,14 @@ def _ensure_mysql_table(cli, table):
     global _db_ready
     try:
         if not _db_ready:
-            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            cli.command(f"CREATE DATABASE IF NOT EXISTS {CH_DB}")
             _db_ready = True
         days = _mysql_retention_days(table)
         if table not in _tables_ready:
-            cli.command(_MYSQL_EXTRA_DDL[table] % {"days": int(days)})
+            cli.command(_MYSQL_EXTRA_DDL[table] % {"days": int(days), "db": CH_DB})
             _tables_ready.add(table)
         else:
-            cli.command(f"ALTER TABLE actmon.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
+            cli.command(f"ALTER TABLE {CH_DB}.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] schema (%s): %s", table, e)
@@ -285,7 +292,7 @@ def flush_mysql_slow_queries(rows):
     try:
         import datetime
         data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in MYSQL_SLOWQ_COLUMNS[1:]] for r in rows]
-        cli.insert("actmon.actmon_mysql_slow_queries", data, column_names=MYSQL_SLOWQ_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_mysql_slow_queries", data, column_names=MYSQL_SLOWQ_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_slow_queries: %s", e)
         mark_down()
@@ -300,7 +307,7 @@ def flush_mysql_error_logs(rows):
     try:
         import datetime
         data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in MYSQL_ERRLOG_COLUMNS[1:]] for r in rows]
-        cli.insert("actmon.actmon_mysql_error_logs", data, column_names=MYSQL_ERRLOG_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_mysql_error_logs", data, column_names=MYSQL_ERRLOG_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_error_logs: %s", e)
         mark_down()
@@ -313,7 +320,7 @@ def flush_mysql_binlog_snapshot(row):
     try:
         import datetime
         data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in MYSQL_BINLOG_COLUMNS[1:]]]
-        cli.insert("actmon.actmon_mysql_binlog_history", data, column_names=MYSQL_BINLOG_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_mysql_binlog_history", data, column_names=MYSQL_BINLOG_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_binlog_snapshot: %s", e)
         mark_down()
@@ -329,7 +336,7 @@ def flush_mysql_replication_snapshot(row):
     try:
         import datetime
         data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in MYSQL_REPL_COLUMNS[1:]]]
-        cli.insert("actmon.actmon_mysql_replication_history", data, column_names=MYSQL_REPL_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_mysql_replication_history", data, column_names=MYSQL_REPL_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_replication_snapshot: %s", e)
         mark_down()
@@ -362,7 +369,7 @@ def query_mysql_slow_queries(conn_id, minutes=None, since=None, until=None, limi
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, db_name, query_hash, query_text, execution_time, "
             "lock_time, rows_sent, rows_examined, user, host, severity, source_log_file "
-            "FROM actmon.actmon_mysql_slow_queries WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_mysql_slow_queries WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "db_name", "query_hash", "query_text", "execution_time", "lock_time",
                 "rows_sent", "rows_examined", "user", "host", "severity", "source_log_file"]
@@ -381,7 +388,7 @@ def query_mysql_error_logs(conn_id, minutes=None, since=None, until=None, limit=
         where, params = _window_where(conn_id, minutes, since, until)
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, severity, error_code, source, message, log_file "
-            "FROM actmon.actmon_mysql_error_logs WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_mysql_error_logs WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "severity", "error_code", "source", "message", "log_file"]
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
@@ -400,7 +407,7 @@ def query_mysql_binlog_history(conn_id, minutes=None, since=None, until=None, li
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, binary_logging, log_bin, binlog_format, server_id, "
             "current_log_file, current_position, number_of_log_files, total_size_bytes "
-            "FROM actmon.actmon_mysql_binlog_history WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_mysql_binlog_history WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "binary_logging", "log_bin", "binlog_format", "server_id",
                 "current_log_file", "current_position", "number_of_log_files", "total_size_bytes"]
@@ -422,7 +429,7 @@ def query_mysql_replication_history(conn_id, minutes=None, since=None, until=Non
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, configured, role, io_thread_running, sql_thread_running, "
             "seconds_behind_source, last_error "
-            "FROM actmon.actmon_mysql_replication_history WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_mysql_replication_history WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "configured", "role", "io_thread_running", "sql_thread_running",
                 "seconds_behind_source", "last_error"]
@@ -490,15 +497,15 @@ def flush_batch(items):
         for table, rows in grouped.items():
             if not ensure_table(cli, table):
                 return False
-            cli.insert("actmon.%s" % table, rows, column_names=COLUMNS)
+            cli.insert("%s.%s" % (CH_DB, table), rows, column_names=COLUMNS)
         if extra_topsql:
             if not _ensure_extra(cli, "top_sql"):
                 return False
-            cli.insert("actmon.top_sql", extra_topsql, column_names=TOPSQL_COLUMNS)
+            cli.insert(f"{CH_DB}.top_sql", extra_topsql, column_names=TOPSQL_COLUMNS)
         if extra_waits:
             if not _ensure_extra(cli, "wait_events"):
                 return False
-            cli.insert("actmon.wait_events", extra_waits, column_names=WAIT_COLUMNS)
+            cli.insert(f"{CH_DB}.wait_events", extra_waits, column_names=WAIT_COLUMNS)
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_batch: %s", e)
@@ -514,9 +521,9 @@ def history(agent_name=None, minutes=60, kind=None, tech=None, conn_id=None):
         return []
     try:
         if kind or tech:
-            source = "actmon.%s" % table_for(kind or ("infra" if tech == "host" else "database"), tech)
+            source = "%s.%s" % (CH_DB, table_for(kind or ("infra" if tech == "host" else "database"), tech))
         else:
-            source = "merge('actmon', '^metrics_')"
+            source = "merge('%s', '^metrics_')" % CH_DB
         where, params = ["ts > now() - INTERVAL %(m)s MINUTE"], {"m": int(minutes)}
         if agent_name:
             where.append("agent = %(a)s"); params["a"] = agent_name
@@ -555,9 +562,9 @@ def history_bucketed(agent_name=None, minutes=60, bucket_seconds=60, kind=None, 
         return []
     try:
         if kind or tech:
-            source = "actmon.%s" % table_for(kind or ("infra" if tech == "host" else "database"), tech)
+            source = "%s.%s" % (CH_DB, table_for(kind or ("infra" if tech == "host" else "database"), tech))
         else:
-            source = "merge('actmon', '^metrics_')"
+            source = "merge('%s', '^metrics_')" % CH_DB
         where, params = ["ts > now() - INTERVAL %(m)s MINUTE"], {"m": int(minutes), "b": int(bucket_seconds)}
         if agent_name:
             where.append("agent = %(a)s"); params["a"] = agent_name
@@ -599,7 +606,7 @@ def list_tables():
     if cli is None:
         return []
     try:
-        res = cli.query("SELECT name FROM system.tables WHERE database='actmon' "
+        res = cli.query(f"SELECT name FROM system.tables WHERE database='{CH_DB}' "
                         "AND name LIKE 'metrics_%' ORDER BY name")
         return [row[0] for row in res.result_rows]
     except Exception:  # noqa: BLE001
@@ -635,7 +642,7 @@ ORACLE_ROLE_TRANSITION_COLUMNS = ["ts", "agent", "conn_id", "previous_role", "ne
 
 _ORACLE_EXTRA_DDL = {
     "actmon_oracle_rac_nodes": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_rac_nodes (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_rac_nodes (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             instance_number UInt16, instance_name LowCardinality(String),
             host_name LowCardinality(String), instance_status LowCardinality(String),
@@ -643,14 +650,14 @@ _ORACLE_EXTRA_DDL = {
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, instance_number, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_oracle_services": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_services (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_services (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             service_name LowCardinality(String), instance_number UInt16,
             status LowCardinality(String)
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, service_name, instance_number, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_oracle_dataguard_history": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_dataguard_history (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_dataguard_history (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             role LowCardinality(String), protection_mode LowCardinality(String),
             protection_level LowCardinality(String), open_mode LowCardinality(String),
@@ -661,7 +668,7 @@ _ORACLE_EXTRA_DDL = {
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_oracle_asm_history": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_asm_history (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_asm_history (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             diskgroup_name LowCardinality(String), state LowCardinality(String),
             total_mb Int64, used_mb Int64, free_mb Int64,
@@ -669,7 +676,7 @@ _ORACLE_EXTRA_DDL = {
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, diskgroup_name, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_oracle_role_transitions": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_oracle_role_transitions (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_role_transitions (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             previous_role LowCardinality(String), new_role LowCardinality(String), reason String
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
@@ -690,14 +697,14 @@ def _ensure_oracle_table(cli, table):
     global _db_ready
     try:
         if not _db_ready:
-            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            cli.command(f"CREATE DATABASE IF NOT EXISTS {CH_DB}")
             _db_ready = True
         days = _oracle_retention_days()
         if table not in _tables_ready:
-            cli.command(_ORACLE_EXTRA_DDL[table] % {"days": int(days)})
+            cli.command(_ORACLE_EXTRA_DDL[table] % {"days": int(days), "db": CH_DB})
             _tables_ready.add(table)
         else:
-            cli.command(f"ALTER TABLE actmon.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
+            cli.command(f"ALTER TABLE {CH_DB}.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] schema (%s): %s", table, e)
@@ -717,7 +724,7 @@ def flush_oracle_rac_nodes(rows):
     try:
         import datetime
         data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_RAC_NODE_COLUMNS[1:]] for r in rows]
-        cli.insert("actmon.actmon_oracle_rac_nodes", data, column_names=ORACLE_RAC_NODE_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_oracle_rac_nodes", data, column_names=ORACLE_RAC_NODE_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_rac_nodes: %s", e)
         mark_down()
@@ -732,7 +739,7 @@ def flush_oracle_services(rows):
     try:
         import datetime
         data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_SERVICE_COLUMNS[1:]] for r in rows]
-        cli.insert("actmon.actmon_oracle_services", data, column_names=ORACLE_SERVICE_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_oracle_services", data, column_names=ORACLE_SERVICE_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_services: %s", e)
         mark_down()
@@ -748,7 +755,7 @@ def flush_oracle_dataguard_snapshot(row):
     try:
         import datetime
         data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in ORACLE_DATAGUARD_COLUMNS[1:]]]
-        cli.insert("actmon.actmon_oracle_dataguard_history", data, column_names=ORACLE_DATAGUARD_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_oracle_dataguard_history", data, column_names=ORACLE_DATAGUARD_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_dataguard_snapshot: %s", e)
         mark_down()
@@ -764,7 +771,7 @@ def flush_oracle_asm(rows):
     try:
         import datetime
         data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_ASM_COLUMNS[1:]] for r in rows]
-        cli.insert("actmon.actmon_oracle_asm_history", data, column_names=ORACLE_ASM_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_oracle_asm_history", data, column_names=ORACLE_ASM_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_asm: %s", e)
         mark_down()
@@ -781,7 +788,7 @@ def flush_oracle_role_transition(row):
     try:
         import datetime
         data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in ORACLE_ROLE_TRANSITION_COLUMNS[1:]]]
-        cli.insert("actmon.actmon_oracle_role_transitions", data, column_names=ORACLE_ROLE_TRANSITION_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_oracle_role_transitions", data, column_names=ORACLE_ROLE_TRANSITION_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_role_transition: %s", e)
         mark_down()
@@ -796,7 +803,7 @@ def query_oracle_rac_nodes(conn_id, minutes=None, since=None, until=None, limit=
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, instance_number, instance_name, host_name, "
             "instance_status, database_status, thread_status "
-            "FROM actmon.actmon_oracle_rac_nodes WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_oracle_rac_nodes WHERE " + " AND ".join(where) +
             " ORDER BY instance_number, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "instance_number", "instance_name", "host_name",
                 "instance_status", "database_status", "thread_status"]
@@ -815,7 +822,7 @@ def query_oracle_services(conn_id, minutes=None, since=None, until=None, limit=5
         where, params = _window_where(conn_id, minutes, since, until)
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, service_name, instance_number, status "
-            "FROM actmon.actmon_oracle_services WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_oracle_services WHERE " + " AND ".join(where) +
             " ORDER BY service_name, instance_number, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "service_name", "instance_number", "status"]
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
@@ -837,7 +844,7 @@ def query_oracle_dataguard_history(conn_id, minutes=None, since=None, until=None
             "SELECT toTimeZone(ts,'UTC') AS ts, role, protection_mode, protection_level, open_mode, "
             "transport_status, apply_status, transport_lag_sec, apply_lag_sec, "
             "last_received_seq, last_applied_seq, archive_gap, last_error "
-            "FROM actmon.actmon_oracle_dataguard_history WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_oracle_dataguard_history WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "role", "protection_mode", "protection_level", "open_mode",
                 "transport_status", "apply_status", "transport_lag_sec", "apply_lag_sec",
@@ -858,7 +865,7 @@ def query_oracle_asm(conn_id, minutes=None, since=None, until=None, limit=1000):
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, diskgroup_name, state, total_mb, used_mb, "
             "free_mb, offline_disks, rebalance_active "
-            "FROM actmon.actmon_oracle_asm_history WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_oracle_asm_history WHERE " + " AND ".join(where) +
             " ORDER BY diskgroup_name, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "diskgroup_name", "state", "total_mb", "used_mb",
                 "free_mb", "offline_disks", "rebalance_active"]
@@ -877,7 +884,7 @@ def query_oracle_role_transitions(conn_id, minutes=None, since=None, until=None,
         where, params = _window_where(conn_id, minutes, since, until)
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, previous_role, new_role, reason "
-            "FROM actmon.actmon_oracle_role_transitions WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_oracle_role_transitions WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "previous_role", "new_role", "reason"]
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
@@ -899,7 +906,7 @@ POSTGRES_PATRONI_TRANSITION_COLUMNS = ["ts", "agent", "conn_id", "event_type",
 
 _POSTGRES_PATRONI_DDL = {
     "actmon_postgres_patroni_members": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_postgres_patroni_members (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_postgres_patroni_members (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             member_name LowCardinality(String), role LowCardinality(String),
             state LowCardinality(String), timeline UInt32,
@@ -907,7 +914,7 @@ _POSTGRES_PATRONI_DDL = {
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, member_name, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_postgres_patroni_transitions": """
-        CREATE TABLE IF NOT EXISTS actmon.actmon_postgres_patroni_transitions (
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_postgres_patroni_transitions (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
             event_type LowCardinality(String), previous_leader LowCardinality(String),
             new_leader LowCardinality(String), reason String
@@ -928,14 +935,14 @@ def _ensure_postgres_patroni_table(cli, table):
     global _db_ready
     try:
         if not _db_ready:
-            cli.command("CREATE DATABASE IF NOT EXISTS actmon")
+            cli.command(f"CREATE DATABASE IF NOT EXISTS {CH_DB}")
             _db_ready = True
         days = _postgres_patroni_retention_days()
         if table not in _tables_ready:
-            cli.command(_POSTGRES_PATRONI_DDL[table] % {"days": int(days)})
+            cli.command(_POSTGRES_PATRONI_DDL[table] % {"days": int(days), "db": CH_DB})
             _tables_ready.add(table)
         else:
-            cli.command(f"ALTER TABLE actmon.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
+            cli.command(f"ALTER TABLE {CH_DB}.{table} MODIFY TTL ts + INTERVAL {int(days)} DAY")
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] schema (%s): %s", table, e)
@@ -954,7 +961,7 @@ def flush_postgres_patroni_members(rows):
     try:
         import datetime
         data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in POSTGRES_PATRONI_MEMBER_COLUMNS[1:]] for r in rows]
-        cli.insert("actmon.actmon_postgres_patroni_members", data, column_names=POSTGRES_PATRONI_MEMBER_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_postgres_patroni_members", data, column_names=POSTGRES_PATRONI_MEMBER_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_postgres_patroni_members: %s", e)
         mark_down()
@@ -970,7 +977,7 @@ def flush_postgres_patroni_transition(row):
     try:
         import datetime
         data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in POSTGRES_PATRONI_TRANSITION_COLUMNS[1:]]]
-        cli.insert("actmon.actmon_postgres_patroni_transitions", data, column_names=POSTGRES_PATRONI_TRANSITION_COLUMNS)
+        cli.insert(f"{CH_DB}.actmon_postgres_patroni_transitions", data, column_names=POSTGRES_PATRONI_TRANSITION_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_postgres_patroni_transition: %s", e)
         mark_down()
@@ -985,7 +992,7 @@ def query_postgres_patroni_members(conn_id, minutes=None, since=None, until=None
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, member_name, role, state, timeline, "
             "receive_lag, replay_lag, patroni_state "
-            "FROM actmon.actmon_postgres_patroni_members WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_postgres_patroni_members WHERE " + " AND ".join(where) +
             " ORDER BY member_name, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "member_name", "role", "state", "timeline", "receive_lag", "replay_lag", "patroni_state"]
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
@@ -1003,7 +1010,7 @@ def query_postgres_patroni_transitions(conn_id, minutes=None, since=None, until=
         where, params = _window_where(conn_id, minutes, since, until)
         res = cli.query(
             "SELECT toTimeZone(ts,'UTC') AS ts, event_type, previous_leader, new_leader, reason "
-            "FROM actmon.actmon_postgres_patroni_transitions WHERE " + " AND ".join(where) +
+            f"FROM {CH_DB}.actmon_postgres_patroni_transitions WHERE " + " AND ".join(where) +
             " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
         cols = ["ts", "event_type", "previous_leader", "new_leader", "reason"]
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]

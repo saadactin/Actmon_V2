@@ -43,9 +43,10 @@ if [ ! -x "$WIX/candle.exe" ]; then
 fi
 
 echo "[2/3] Compiling WiX ..."
-"$WIX/candle.exe" -nologo -arch x64 -dAgentExe="dist/actmon-agent.exe" -ext WixUtilExtension -out wix/product.wixobj wix/product.wxs
+"$WIX/candle.exe" -nologo -arch x64 -dAgentExe="dist/actmon-agent.exe" -dLicenseRtf="wix/license.rtf" \
+  -ext WixUtilExtension -ext WixUIExtension -out wix/product.wixobj wix/product.wxs
 
 echo "[3/3] Linking MSI ..."
-"$WIX/light.exe" -nologo -ext WixUtilExtension -out dist/actmon-agent.msi wix/product.wixobj
+"$WIX/light.exe" -nologo -ext WixUtilExtension -ext WixUIExtension -out dist/actmon-agent.msi wix/product.wixobj
 
 echo "Done -> dist/actmon-agent.msi"

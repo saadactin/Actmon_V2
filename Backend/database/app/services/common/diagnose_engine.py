@@ -707,7 +707,7 @@ def run_check(conn_id: int, check_id: str, db: Session) -> dict:
                 "detail": detail, "evidence": evidence, "output": evidence,
                 "command": command, "duration_ms": duration_ms, "exit_code": 0, "permission_issue": None,
                 "service_name": resolved,
-                "analysis": _step_analysis(check_id, st, "" if st == "passed" else "service inactive", p)}
+                "analysis": _step_analysis(check_id, st, "" if st == "passed" else "service inactive", p, windows)}
 
     t = Transport(rec, db)
     if not t.connect():
@@ -730,7 +730,7 @@ def run_check(conn_id: int, check_id: str, db: Session) -> dict:
               "output": (out or "").strip()[:4000],
               "command": command, "duration_ms": duration_ms, "exit_code": code,
               "permission_issue": _permission_issue(check_id, out),
-              "analysis": _step_analysis(check_id, st, out, p)}
+              "analysis": _step_analysis(check_id, st, out, p, windows)}
     if check_id == "service" and not windows:
         # Which of the candidate units actually answered (_cmd()'s loop prints
         # "<unit>=<state>" for each one it could query) — Recommended Actions
@@ -740,7 +740,7 @@ def run_check(conn_id: int, check_id: str, db: Session) -> dict:
     return result
 
 
-def _step_analysis(check_id: str, status: str, out: str, p: dict) -> dict:
+def _step_analysis(check_id: str, status: str, out: str, p: dict, windows: bool = False) -> dict:
     """Per-step structured analysis shown in the step's Analysis panel."""
     eng = p.get("label", "Database")
     low = (out or "").lower()
@@ -753,8 +753,12 @@ def _step_analysis(check_id: str, status: str, out: str, p: dict) -> dict:
     if check_id == "service":
         cause = f"The {eng} service is not active."
         impact = f"{eng} is unavailable; applications cannot connect."
-        fixes = [f"Start the service: systemctl start {(p.get('services') or ['service'])[0]}",
-                 "If it fails to start, check Error Logs & System Journal steps."]
+        if windows:
+            fixes = ["Start it via Services (services.msc) or PowerShell: Start-Service <name>",
+                     "If it fails to start, check Error Logs & System Journal steps."]
+        else:
+            fixes = [f"Start the service: systemctl start {(p.get('services') or ['service'])[0]}",
+                     "If it fails to start, check Error Logs & System Journal steps."]
     elif check_id == "process":
         cause = f"No {eng} process is running."; impact = "Database is down."
         fixes = ["Start the service and confirm the process appears."]
@@ -840,6 +844,9 @@ def context(conn_id: int, db: Session) -> dict:
 def build_rca(conn_id: int, results: list, db: Session) -> dict:
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     port = (rec.port if rec else 0) or 0
+    windows = _is_windows(os_type_for_conn(conn_id, db))
+    start_cmd = "Start-Service <name>  (PowerShell, or via services.msc)" if windows else "systemctl start <service>"
+    log_cmd = "Get-WinEvent -LogName Application -MaxEvents 50" if windows else "journalctl -u <service> -n 50 --no-pager"
     by = {r.get("id"): r for r in (results or [])}
     ev, affected, failed = [], [], []
 
@@ -866,7 +873,7 @@ def build_rca(conn_id: int, results: list, db: Session) -> dict:
     elif st("port") == "failed" and st("process") == "failed" and st("service") in ("failed",):
         root, sev, conf = "The database service is stopped — process down and port not listening.", "High", 85
         failed += ["service"]; fix = "Start the database service; if it fails, inspect logs/journal."
-        recov = ["systemctl start <service>", "journalctl -u <service> -n 50 --no-pager"]
+        recov = [start_cmd, log_cmd]
     elif "permission denied" in joined:
         root, sev, conf = "Permission denied on data files (ownership/mode).", "High", 84
         failed += ["permissions"]; affected += ["data directory"]
@@ -880,7 +887,7 @@ def build_rca(conn_id: int, results: list, db: Session) -> dict:
     elif st("service") == "failed" or st("process") == "failed":
         root, sev, conf = "The database service is not running.", "High", 75
         failed += ["service"]; fix = "Start the service and confirm it stays up."
-        recov = ["systemctl start <service>"]
+        recov = [start_cmd]
     elif st("port") == "failed":
         root, sev, conf = "The database is running but not listening on its port.", "Medium", 68
         fix = "Check listen address/port configuration and firewall."

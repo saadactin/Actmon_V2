@@ -390,11 +390,25 @@ def grant_monitor(connection_id: int, db: Session) -> dict:
                 c.execute(text(f'GRANT pg_monitor TO "{user}"'))
         return {"status": "success", "message": f"Granted pg_monitor to \"{user}\". Full query visibility is now enabled."}
     except Exception as e:
+        # `sudo -u postgres` is a Linux-only convention (peer-auth as the OS
+        # postgres account) — this engine is also monitored on Windows (see
+        # postgres_connection_service.py's Windows log-path handling), where
+        # there's no such thing; the Windows equivalent is authenticating as
+        # the postgres role directly, password prompt included.
+        from app.services.common.diagnose_engine import os_type_for_conn, _is_windows
+        windows = _is_windows(os_type_for_conn(connection_id, db))
+        dbname = conn.database_name or 'postgres'
+        manual_shell = (
+            f'psql -U postgres -d {dbname} -c "GRANT pg_monitor TO \\"{user}\\";"  '
+            "(run on the DB server itself; it will prompt for the postgres role's password)"
+            if windows else
+            f"sudo -u postgres psql -d {dbname} -c 'GRANT pg_monitor TO \"{user}\";'"
+        )
         return {
             "status": "failed",
             "message": f"Couldn't auto-grant — this requires a superuser. Ask your DBA to run the command below. ({str(e).splitlines()[0]})",
             "manual_sql": f'GRANT pg_monitor TO "{user}";',
-            "manual_shell": f"sudo -u postgres psql -d {conn.database_name or 'postgres'} -c 'GRANT pg_monitor TO \"{user}\";'",
+            "manual_shell": manual_shell,
         }
 
 

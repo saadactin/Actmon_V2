@@ -27,6 +27,27 @@ client.interceptors.request.use((config) => {
 // login page to itself mid-attempt.
 const AUTH_FLOW_PATHS = ['/auth/login', '/auth/verify-otp', '/auth/resend-otp'];
 
+// FastAPI's `detail` is a plain string for a raised HTTPException, but for a
+// 422 request-validation failure it's an ARRAY of {loc, msg, type} objects —
+// passing that straight into `new Error(...)` stringifies each object to the
+// literal text "[object Object]" (JS's default Object.toString()), which is
+// exactly what every page rendering a validation error was silently showing.
+// This renders the actual field + message instead.
+function detailToMessage(detail) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => {
+        if (typeof d === 'string') return d;
+        const field = Array.isArray(d?.loc) ? d.loc.filter((p) => p !== 'body').join('.') : null;
+        return field ? `${field}: ${d?.msg || 'invalid'}` : d?.msg || JSON.stringify(d);
+      })
+      .join('; ');
+  }
+  if (detail && typeof detail === 'object') return detail.msg || JSON.stringify(detail);
+  return null;
+}
+
 client.interceptors.response.use(
   (res) => res,
   (error) => {
@@ -56,7 +77,7 @@ client.interceptors.response.use(
         window.location.href = `${APP.loginRoute}?expired=true`;
       }
 
-      const err = new Error(data?.detail || data?.message || `Request failed (${status})`);
+      const err = new Error(detailToMessage(data?.detail) || data?.message || `Request failed (${status})`);
       err.status = status;
       return Promise.reject(err);
     }
@@ -78,7 +99,7 @@ client.interceptors.response.use(
  * through to its own generic string. This is the one place that knows the shape.
  */
 export function errorText(error, fallback = 'The request failed.') {
-  return error?.message || error?.response?.data?.detail || fallback;
+  return error?.message || detailToMessage(error?.response?.data?.detail) || fallback;
 }
 
 /**

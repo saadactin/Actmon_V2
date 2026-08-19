@@ -1252,8 +1252,12 @@ CREATE TABLE public.agent_metrics (
     id integer NOT NULL,
     agent_name character varying(255) NOT NULL,
     "timestamp" timestamp with time zone DEFAULT now(),
+    kind character varying(32),
+    tech character varying(64),
+    conn_id integer,
     host_cpu double precision,
     host_memory double precision,
+    host_disk double precision,
     db_cpu double precision,
     active_sessions integer,
     connections_used integer,
@@ -1599,7 +1603,7 @@ ALTER SEQUENCE public.agents_id_seq OWNED BY public.agents.id;
 --
 
 CREATE TABLE public.alert_rules (
-    id integer NOT NULL,
+    id integer NOT NULL PRIMARY KEY,
     org_id integer,
     name character varying(200) NOT NULL,
     description text,
@@ -1719,10 +1723,15 @@ CREATE TABLE public.notification_settings (
     updated_at timestamp without time zone
 );
 
+-- connection_id's FK to connection_master is added later (deferred ALTER
+-- TABLE, alongside the other _fkey constraints) instead of inline here,
+-- because connection_master's own CREATE TABLE appears further down this
+-- file — an inline REFERENCES here would fail with "relation does not
+-- exist" on a genuinely fresh, top-to-bottom apply.
 CREATE TABLE public.diagnosis_runs (
     id SERIAL PRIMARY KEY,
     org_id integer NOT NULL DEFAULT 1,
-    connection_id integer NOT NULL REFERENCES public.connection_master(id) ON DELETE CASCADE,
+    connection_id integer NOT NULL,
     started_at timestamp without time zone NOT NULL DEFAULT now(),
     finished_at timestamp without time zone,
     status character varying(30),
@@ -1736,10 +1745,11 @@ CREATE TABLE public.diagnosis_runs (
 
 CREATE INDEX idx_diagnosis_runs_conn_started ON public.diagnosis_runs (connection_id, started_at DESC);
 
+-- Same deferred-FK reasoning as diagnosis_runs above.
 CREATE TABLE public.db_check_runs (
     id SERIAL PRIMARY KEY,
     org_id integer NOT NULL DEFAULT 1,
-    connection_id integer NOT NULL REFERENCES public.connection_master(id) ON DELETE CASCADE,
+    connection_id integer NOT NULL,
     check_id character varying(50) NOT NULL,
     checked_at timestamp without time zone DEFAULT now(),
     status character varying(20) NOT NULL,
@@ -1949,7 +1959,7 @@ CREATE TABLE public.cloud_resources (
 --
 
 CREATE TABLE public.connection_master (
-    id integer NOT NULL,
+    id integer NOT NULL PRIMARY KEY,
     connection_name character varying(255),
     db_type character varying(100),
     registration_mode character varying(100),
@@ -1985,7 +1995,9 @@ CREATE TABLE public.connection_master (
     cloud_container_name character varying(255),
     cloud_partition_key character varying(255),
     cloud_config jsonb,
-    cloud_monitor_client_secret_enc text
+    cloud_monitor_client_secret_enc text,
+    oracle_deployment_type character varying(50),
+    oracle_role character varying(50)
 );
 
 
@@ -2503,6 +2515,7 @@ CREATE TABLE public.os_servers (
     environment character varying(100),
     node_type character varying(100),
     cluster_name character varying(255),
+    patroni_api_port integer,
     ssh_port integer,
     ssh_username character varying(255),
     ssh_password character varying(500),
@@ -3577,13 +3590,11 @@ ALTER TABLE ONLY public.agents
     ADD CONSTRAINT agents_pkey PRIMARY KEY (id);
 
 
---
--- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.alert_rules
-    ADD CONSTRAINT alert_rules_pkey PRIMARY KEY (id);
-
+-- alert_rules_pkey: now declared inline on the CREATE TABLE above (id integer
+-- NOT NULL PRIMARY KEY) instead of here, because other tables further up in
+-- this file (alert_fired_state, notification_queue, notification_history)
+-- inline-REFERENCES alert_rules(id) — a single-transaction, top-to-bottom
+-- apply needs that PK to already exist by the time those run, not later.
 
 --
 -- Name: backup_jobs backup_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -3625,13 +3636,11 @@ ALTER TABLE ONLY public.cloud_resources
     ADD CONSTRAINT cloud_resources_pkey PRIMARY KEY (id);
 
 
---
--- Name: connection_master connection_master_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.connection_master
-    ADD CONSTRAINT connection_master_pkey PRIMARY KEY (id);
-
+-- connection_master_pkey: now declared inline on the CREATE TABLE above (id
+-- integer NOT NULL PRIMARY KEY) instead of here, because other tables further
+-- up in this file (diagnosis_runs, db_check_runs) inline-REFERENCES
+-- connection_master(id) — a single-transaction, top-to-bottom apply needs
+-- that PK to already exist by the time those run, not later.
 
 --
 -- Name: database_instances database_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -4629,6 +4638,22 @@ ALTER TABLE ONLY public.cloud_resources
 
 ALTER TABLE ONLY public.database_instances
     ADD CONSTRAINT database_instances_server_id_fkey FOREIGN KEY (server_id) REFERENCES public.os_servers(id);
+
+
+--
+-- Name: db_check_runs db_check_runs_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.db_check_runs
+    ADD CONSTRAINT db_check_runs_connection_id_fkey FOREIGN KEY (connection_id) REFERENCES public.connection_master(id) ON DELETE CASCADE;
+
+
+--
+-- Name: diagnosis_runs diagnosis_runs_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.diagnosis_runs
+    ADD CONSTRAINT diagnosis_runs_connection_id_fkey FOREIGN KEY (connection_id) REFERENCES public.connection_master(id) ON DELETE CASCADE;
 
 
 --

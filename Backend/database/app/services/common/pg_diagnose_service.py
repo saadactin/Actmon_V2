@@ -274,6 +274,27 @@ def pg_deep_diagnose(conn_id: int, db: Session) -> dict:
         base["sections"] = {}
         return base
 
+    # This entire diagnostic (_build_script below) is bash/systemd-specific —
+    # it would run under cmd.exe on a Windows agent host and return wrong,
+    # misleading "fixes" rather than failing loudly. PostgreSQL is monitored
+    # on Windows too (postgres_connection_service.py has a dedicated Windows
+    # log-path fallback) — say plainly this deep-diagnosis isn't ported yet,
+    # rather than silently running Linux commands against Windows and
+    # reporting whatever garbage comes back as a confident root cause.
+    from app.services.common.diagnose_engine import os_type_for_conn, _is_windows
+    if _is_windows(os_type_for_conn(conn_id, db)):
+        base["rca"] = {
+            "overall_health": "Unknown",
+            "root_cause": "Deep diagnosis isn't available for a Windows-hosted PostgreSQL host yet "
+                          "(this check is Linux/systemd-specific). Use the Diagnosis Center's basic "
+                          "service/port checks instead, which do support Windows.",
+            "severity": "Medium", "confidence": 0, "evidence": [], "affected_files": [],
+            "failed_components": [], "recommended_fix": "Use the basic Diagnosis Center checks for this host.",
+            "recovery_commands": [], "estimated_downtime": "Unknown", "preventive": [],
+        }
+        base["sections"] = {}
+        return base
+
     out = _agent_shell(token, _build_script(port), timeout=120)
     if out is None:
         base["rca"] = {"overall_health": "Unknown", "root_cause": "The agent on the DB host did not respond to the diagnostic.",

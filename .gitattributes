@@ -1,0 +1,7 @@
+# Shell scripts must always check out with LF line endings, regardless of
+# the cloning machine's OS or core.autocrlf setting — a CRLF shebang line
+# (`#!/usr/bin/env bash\r`) fails with "bad interpreter" on Linux, and CRLF
+# inside heredocs/quoted strings silently corrupts generated config files
+# (systemd units, nginx config, .env). install.sh runs as root on a Linux
+# server, so this is not optional.
+*.sh text eol=lf

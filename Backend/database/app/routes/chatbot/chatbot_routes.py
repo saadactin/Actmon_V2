@@ -474,10 +474,26 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
     # Fleet-wide dashboard questions (current-state summary, "which X has the most Y"
     # analysis, recommendation naming no specific host) have no single resource to
     # resolve — skip straight to the same rollup the Dashboard page itself shows.
+    #
+    # This also has to catch "Check system health" and its siblings ("check agent
+    # health", "find slow queries", ...) with NO resource named at all — the
+    # classifier's module taxonomy (health, metrics, slow_query, cluster_ha, logs,
+    # agent) describes WHAT ASPECT the user is asking about, not whether they named
+    # a specific host/connection, and only literal module=="dashboard" used to get
+    # this fleet-wide treatment. Everything else fell through to single-resource
+    # resolution below, which — given no name was ever provided — always failed
+    # and asked "Which connection did you mean? I don't see one named in your
+    # message," for a preset quick-action button that never intended to name one.
+    # Scoped to modules that resolve to "database"/"infra" only (not "alerts"),
+    # since resource_resolver.resolve() already treats a resource-less alerts
+    # lookup as "all active alerts org-wide" correctly on its own — diverting it
+    # here too would break "Show active alerts" by skipping that path entirely.
+    #
     # Historical is the one thing this page genuinely cannot answer: there is no
     # stored trend for the fleet as a whole, only per-host history (Infrastructure/
     # Database modules) — say so plainly rather than fabricating a trend.
-    if module == "dashboard":
+    resolver_module = _resolver_module(module)
+    if module == "dashboard" or (not resource_hint and resolver_module in ("database", "infra")):
         if category == "historical":
             result = _unavailable_dashboard_history()
         else:
@@ -490,7 +506,6 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
         messages = _build_messages(system, payload.history, payload.message)
         return _llm_stream(messages)
 
-    resolver_module = _resolver_module(module)
     resolved = resource_resolver.resolve(db, org_id, resource_hint, resolver_module, intent.get("engine"), payload.context)
     if resolved["outcome"] != "resolved":
         return _sse_stream(_clarify_resource(resolved, resolver_module, resource_hint))

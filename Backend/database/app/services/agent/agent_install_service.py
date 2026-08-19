@@ -51,6 +51,7 @@ import threading as _threading
 
 _WIX_DIR = os.path.join(_BACKEND_DIR, "agent", "wix", "wix311")
 _WXS_PATH = os.path.join(_BACKEND_DIR, "agent", "wix", "product.wxs")
+_LICENSE_RTF_PATH = os.path.join(_BACKEND_DIR, "agent", "wix", "license.rtf")
 _MSI_BUILD_LOCK = _threading.Lock()
 
 
@@ -77,11 +78,13 @@ def build_token_msi(token: str, url: str) -> str:
     with _MSI_BUILD_LOCK:   # candle/light write fixed intermediate names → serialize
         _subprocess.run(
             [candle, "-nologo", "-arch", "x64", f"-dAgentExe={EXE_PATH}",
-             f"-dToken={safe_token}", f"-dUrl={safe_url}", "-ext", "WixUtilExtension",
+             f"-dLicenseRtf={_LICENSE_RTF_PATH}",
+             f"-dToken={safe_token}", f"-dUrl={safe_url}",
+             "-ext", "WixUtilExtension", "-ext", "WixUIExtension",
              "-out", wixobj, _WXS_PATH],
             check=True, capture_output=True, text=True, timeout=90)
         _subprocess.run(
-            [light, "-nologo", "-ext", "WixUtilExtension", "-out", msi, wixobj],
+            [light, "-nologo", "-ext", "WixUtilExtension", "-ext", "WixUIExtension", "-out", msi, wixobj],
             check=True, capture_output=True, text=True, timeout=90)
     return msi
 
@@ -520,10 +523,17 @@ def build_windows_install_bat(token: str, url: str) -> str:
     and msiexec installing a downloaded .msi is about as ordinary a Windows
     operation as exists, which also makes it less likely to draw EDR attention
     than a PowerShell-driven exe-and-scheduled-task setup ever was."""
-    from urllib.parse import quote
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
     safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
-    msi_url = f"{safe_url}/agents/install/actmon-agent.msi?token={safe_token}&url={quote(safe_url, safe='')}"
+    # The STATIC, pre-built MSI (Backend/agent/dist/actmon-agent.msi) — not the
+    # per-request /install/actmon-agent.msi route, which server-side compiles a
+    # fresh MSI by shelling out to candle.exe/light.exe. Those are Windows
+    # binaries; a Linux-hosted backend has no way to run them without Wine.
+    # ACCESS_TOKEN/ACTMON_URL are WiX `Secure` properties precisely so they can
+    # be supplied on the msiexec command line instead of baked in at build
+    # time — same end result (a configured agent), zero server-side WiX
+    # dependency for this, the actual deploy path.
+    msi_url = f"{safe_url}/agents/download/windows"
     # cmd.exe's batch parser expands ANY %N (digit) or %VAR% pattern it finds in a
     # .bat file's text BEFORE the line ever reaches the program it's quoted for —
     # including inside a quoted -Command argument. A percent-encoded URL (%3A,
@@ -533,6 +543,7 @@ def build_windows_install_bat(token: str, url: str) -> str:
     # hostname. Doubling every % to %% is the standard batch-file escape that
     # survives that pass intact and comes out as a single % on the other side.
     msi_url_bat = msi_url.replace("%", "%%")
+    safe_url_bat = safe_url.replace("%", "%%")
     # CRLF line endings — it's a Windows batch file.
     lines = [
         "@echo off",
@@ -552,8 +563,12 @@ def build_windows_install_bat(token: str, url: str) -> str:
         "  pause",
         "  exit /b 1",
         ")",
-        "echo Running the installer ^(this installs and starts the ActMon Agent service^)...",
-        "msiexec /i \"%ACTMON_MSI%\" /qn /norestart /l*v \"%ACTMON_MSILOG%\"",
+        "echo Opening the ActMon Agent installer - follow the on-screen wizard to continue...",
+        # No /qn: shows the real wizard (Welcome, License, Permissions,
+        # Install Dir, Progress, Finish). msiexec still BLOCKS this script
+        # until the user finishes it (or cancels), same as a silent install
+        # would, so everything below still runs only once it's really done.
+        f"msiexec /i \"%ACTMON_MSI%\" ACCESS_TOKEN=\"{safe_token}\" ACTMON_URL=\"{safe_url_bat}\" /norestart /l*v \"%ACTMON_MSILOG%\"",
         "set \"ACTMON_MSIEXIT=%errorlevel%\"",
         "del /f /q \"%ACTMON_MSI%\" >nul 2>&1",
         # 0 = success, 3010 = success but a reboot is recommended (never required
@@ -611,14 +626,17 @@ def build_windows_setup_ps1(token: str, url: str) -> str:
     outcome: one Service, SCM's own indefinite restart-on-failure, nothing
     home-grown to keep in sync across three different code paths.
     """
-    from urllib.parse import quote
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
     safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
     if not safe_url.lower().startswith("http"):
         safe_url = ""
-    msi_url = f"{safe_url}/agents/install/actmon-agent.msi?token={quote(safe_token)}&url={quote(safe_url, safe='')}"
+    # The STATIC, pre-built MSI — see build_windows_install_bat's comment on
+    # why this deliberately avoids the per-request /install/actmon-agent.msi
+    # (candle.exe/light.exe, Windows-only, no Wine on this Linux backend).
+    msi_url = f"{safe_url}/agents/download/windows"
     script = f"""$ErrorActionPreference = 'Stop'
 $url    = '{safe_url}'
+$token  = '{safe_token}'
 $dir    = 'C:\\ProgramData\\ActMon'
 $log    = "$dir\\install.log"
 $msi    = "$env:TEMP\\actmon-agent.msi"
@@ -635,14 +653,22 @@ try {{
   if (-not $url)   {{ throw "No ActMon server URL was provided." }}
 
   Log "ActMon Agent install starting. Server: $url"
-  Log "Downloading self-configured installer from $url/agents/install/actmon-agent.msi"
+  Log "Downloading installer from $url/agents/download/windows"
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   Invoke-WebRequest -Uri "{msi_url}" -OutFile $msi -UseBasicParsing
   $size = (Get-Item $msi).Length
   if ($size -lt 1000000) {{ throw "Downloaded installer is too small ($size bytes). Is the ActMon server URL reachable from THIS machine?" }}
   Log ("Downloaded {{0:N1}} MB." -f ($size / 1MB))
 
-  $proc = Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$msiLog`"") -Wait -PassThru
+  Log "Opening the ActMon Agent installer - follow the on-screen wizard to continue."
+  # No /qn: shows the real wizard (Welcome, License, Permissions, Install
+  # Dir, Progress, Finish). -Wait still blocks until the user finishes it
+  # (or cancels) before this script continues, same as a silent install.
+  $proc = Start-Process msiexec.exe -ArgumentList @(
+    '/i', "`"$msi`"",
+    "ACCESS_TOKEN=`"$token`"", "ACTMON_URL=`"$url`"",
+    '/norestart', '/l*v', "`"$msiLog`""
+  ) -Wait -PassThru
   Remove-Item $msi -Force -ErrorAction SilentlyContinue
   if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {{
     throw "msiexec failed with exit code $($proc.ExitCode). Full log: $msiLog"

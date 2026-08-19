@@ -347,15 +347,41 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
                     except Exception:
                         pass
 
-                if os.path.exists(full_slow_file):
+                # Prefer reading the log straight off the host's own disk through
+                # its agent (if one is enrolled) — a plain file read, so it never
+                # touches secure_file_priv or the connecting user's FILE
+                # privilege at all. LOAD_FILE()/SSH/local-disk below only run if
+                # there's no agent, or the agent read itself failed (offline,
+                # timeout, OS permissions on that host) — `agent_handled` tracks
+                # whether the agent actually answered, distinct from whether the
+                # content it returned happened to parse into any rows.
+                agent_handled = False
+                agent_row = db_proxy_service.agent_host_for_conn(conn_id, db)
+                if agent_row and agent_row.token:
+                    from app.services.agent import agent_fs_service
+                    try:
+                        raw = agent_fs_service.request(agent_row.token, "getfile", full_slow_file, timeout=15)
+                        if raw is not None:
+                            agent_handled = True
+                            content_str = raw.decode("utf-8", errors="ignore")
+                            file_queries = _parse_slow_log_content(content_str, rec.database_name or "")
+                            if not file_queries:
+                                file_error = "Slow query log read via the host agent, but no slow queries found yet."
+                        else:
+                            file_error = "The host agent did not respond in time while reading the slow query log."
+                    except Exception as e:
+                        file_error = f"Agent file read failed: {e}"
+
+                if not agent_handled and os.path.exists(full_slow_file):
                     try:
                         file_queries = _parse_slow_log_content(
                             open(full_slow_file, encoding="utf-8", errors="ignore").read(),
                             rec.database_name or "",
                         )
+                        file_error = None
                     except Exception as e:
                         file_error = str(e)
-                else:
+                elif not agent_handled:
                     try:
                         raw = conn.execute(text("SELECT LOAD_FILE(:p)"), {"p": full_slow_file}).scalar()
                         if raw is not None:
@@ -382,10 +408,24 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
                                     f"Run on the DB server: GRANT FILE ON *.* TO '{rec.username}'@'%'; FLUSH PRIVILEGES;"
                                 )
                             elif sfp and sfp != "":
-                                file_error = (
-                                    f"LOAD_FILE returned NULL — secure_file_priv='{sfp}' blocks read. "
-                                    "Fix: set secure_file_priv='' in /etc/mysql/mariadb.conf.d/50-server.cnf, restart MariaDB."
-                                )
+                                # The DB server's own OS, not this ActMon backend's — the fix
+                                # location differs completely, and `secure_file_priv`'s own
+                                # value already reveals which one we're talking to (a Windows
+                                # path has a drive letter/backslashes; a Unix one doesn't).
+                                is_windows_target = bool(re.match(r"^[A-Za-z]:\\", sfp)) or "\\" in sfp
+                                if is_windows_target:
+                                    fix = (
+                                        "Fix: open my.ini (in the MySQL install directory, e.g. "
+                                        "\"C:\\ProgramData\\MySQL\\MySQL Server 8.0\\my.ini\"), set "
+                                        "secure_file_priv= (empty) under [mysqld], then restart the "
+                                        "MySQL Windows service (services.msc, or: net stop MySQL80 && net start MySQL80)."
+                                    )
+                                else:
+                                    fix = (
+                                        "Fix: set secure_file_priv='' in /etc/mysql/mariadb.conf.d/50-server.cnf "
+                                        "(or /etc/my.cnf on non-Debian distros), then restart MySQL/MariaDB."
+                                    )
+                                file_error = f"LOAD_FILE returned NULL — secure_file_priv='{sfp}' blocks read. {fix}"
                             else:
                                 file_error = (
                                     f"LOAD_FILE({full_slow_file}) returned NULL — file may not exist "
@@ -987,9 +1027,21 @@ def build_export_csv(conn_id: int, period: str, db: Session) -> dict:
 
             if log_file:
                 content_str = None
-                if os.path.exists(log_file):
+                # Same preference order as get_slow_queries(): the host's own
+                # agent (plain file read, no secure_file_priv/FILE-privilege
+                # dependency) first, then local disk / LOAD_FILE() / SSH.
+                agent_row = db_proxy_service.agent_host_for_conn(conn_id, db)
+                if agent_row and agent_row.token:
+                    from app.services.agent import agent_fs_service
+                    try:
+                        raw = agent_fs_service.request(agent_row.token, "getfile", log_file, timeout=15)
+                        if raw is not None:
+                            content_str = raw.decode("utf-8", errors="ignore")
+                    except Exception:
+                        pass
+                if content_str is None and os.path.exists(log_file):
                     content_str = open(log_file, encoding="utf-8", errors="ignore").read()
-                else:
+                elif content_str is None:
                     raw = conn.execute(text("SELECT LOAD_FILE(:p)"), {"p": log_file}).scalar()
                     if raw is not None:
                         content_str = raw if isinstance(raw, str) else raw.decode("utf-8", errors="ignore")

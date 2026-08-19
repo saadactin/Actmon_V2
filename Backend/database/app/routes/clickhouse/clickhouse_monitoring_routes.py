@@ -74,12 +74,12 @@ def analyze_ch_slow_query(
 
 
 class ChExplainRequest(BaseModel):
-    query_text: str
+    sql_text: str
 
 
 @router.post("/{conn_id}/ch-slow-queries/explain")
 def explain_ch_slow_query(conn_id: int, payload: ChExplainRequest, db: Session = Depends(get_db)):
-    return clickhouse_monitoring_service.explain_query(conn_id, payload.query_text, db)
+    return clickhouse_monitoring_service.explain_query(conn_id, payload.sql_text, db)
 
 
 @router.get("/{conn_id}/ch-tables")

@@ -10,7 +10,7 @@ _raw_url = os.getenv("DATABASE_URL", "")
 
 if not _raw_url:
     _user = os.getenv("DB_USER", "sa")
-    _pass = quote_plus(os.getenv("DB_PASS", "Actin@#2931"))
+    _pass = quote_plus(os.getenv("DB_PASS", "change-me"))
     _host = os.getenv("DB_HOST", "localhost")
     _port = os.getenv("DB_PORT", "5432")
     _name = os.getenv("DB_NAME", "actmon")

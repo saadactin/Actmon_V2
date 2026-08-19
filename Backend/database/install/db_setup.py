@@ -408,6 +408,23 @@ END; $_$""",
     """ALTER TABLE connection_master
          ADD COLUMN IF NOT EXISTS oracle_deployment_type VARCHAR(50),
          ADD COLUMN IF NOT EXISTS oracle_role             VARCHAR(50)""",
+    # Patroni's own REST API port for a Patroni-managed PostgreSQL OS server —
+    # added to the ORM model (os_server_model.py) without a matching schema.sql/
+    # migration entry, so every fresh install's alert-evaluator background
+    # loop (which does `SELECT * FROM os_servers`) crashed every tick with
+    # "column os_servers.patroni_api_port does not exist" until this patch.
+    """ALTER TABLE os_servers
+         ADD COLUMN IF NOT EXISTS patroni_api_port INTEGER""",
+    # Same class of gap as patroni_api_port above — agent_model.py's
+    # AgentMetric grew kind/tech/conn_id/host_disk without a matching
+    # schema.sql/migration entry. Every agent host-infra push failed its
+    # INSERT on this (rolling back the whole transaction, including the
+    # Agent/OsServer row updates in the same commit) until this patch.
+    """ALTER TABLE agent_metrics
+         ADD COLUMN IF NOT EXISTS kind VARCHAR(32),
+         ADD COLUMN IF NOT EXISTS tech VARCHAR(64),
+         ADD COLUMN IF NOT EXISTS conn_id INTEGER,
+         ADD COLUMN IF NOT EXISTS host_disk DOUBLE PRECISION""",
 ]
 
 
@@ -436,6 +453,16 @@ def apply_patches(conn):
 
 
 def apply_schema(conn):
+    # apply_patches() ALWAYS runs, on every branch below — schema.sql itself can
+    # (and has) lagged behind a model that already grew a new column, so a
+    # patch-only column must not depend on a SECOND db_setup.py run to land. A
+    # genuinely fresh install used to skip straight past this (this branch
+    # returned before ever calling apply_patches()), leaving a real window
+    # where e.g. connection_master.oracle_deployment_type/oracle_role existed
+    # in the ORM model and in _SCHEMA_PATCHES, but not yet in the database,
+    # until whatever NEXT ran db_setup.py — exactly the failure class three
+    # other now-fixed columns (os_servers.patroni_api_port, agent_metrics.
+    # kind/tech/conn_id/host_disk) hit live before this was caught.
     if _table_exists(conn, "page_master"):
         log("schema", "schema already present - skipping structure apply")
         apply_patches(conn)
@@ -454,6 +481,7 @@ def apply_schema(conn):
         cur.execute(sql)
     _set_public(conn)
     log("schema", f"applied schema.sql ({_count_objects(conn)} tables, views & functions)")
+    apply_patches(conn)
     return True
 
 

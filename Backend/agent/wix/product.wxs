@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Production ActMon Agent MSI.
-     - Installs actmon-agent.exe to C:\Program Files\ActMon
+     - Installs actmon-agent.exe to C:\Program Files\ActMon (user-choosable via the wizard)
      - Stores Server URL + Token in HKLM\SOFTWARE\ActMon\Agent
-     - Registers a Windows SERVICE (ActMonAgent), auto-start, LocalSystem
+     - Registers a Windows SERVICE (ActMonAgent), auto-start (unless declined in the
+       wizard), LocalSystem
      - Configures the service to restart on failure
-     - Starts the service immediately; stops+removes it on uninstall
-     - Supports silent install (msiexec /qn), upgrade, repair, clean uninstall
+     - Starts the service immediately (unless declined); stops+removes it on uninstall
+     - Full interactive wizard (Welcome / License / Permissions / Install Dir / Verify /
+       Progress / Finish) when run without /qn; still supports silent install
+       (msiexec /qn), upgrade, repair, clean uninstall
      Token/URL are baked at build time (candle -dToken=... -dUrl=...); still
      overridable on the command line: msiexec /i actmon-agent.msi ACCESS_TOKEN=.. ACTMON_URL=.. -->
 <?ifndef Token ?><?define Token = "" ?><?endif ?>
@@ -35,6 +38,12 @@
     <Property Id="ACTMON_URL" Secure="yes" />
     <?endif?>
 
+    <!-- Wizard-only choices (default to the previous, always-on behavior — a
+         silent/unattended msiexec /qn install, which never visits the
+         Permissions dialog, still gets exactly today's behavior). -->
+    <Property Id="STARTSERVICE" Value="1" />
+    <Property Id="HOSTMONITORING" Value="1" />
+
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="ActMon" />
@@ -63,7 +72,11 @@
                               ResetPeriodInDays="1" />
         </ServiceInstall>
 
-        <!-- Start on install; stop on uninstall; remove on uninstall. -->
+        <!-- Always start on install — if the wizard's "start automatically"
+             box was unchecked, StopAgentServiceIfDeclined (below) stops it
+             again immediately after, since ServiceControl itself has no
+             Condition support in WiX 3's schema. Stop on uninstall either
+             way; remove on uninstall. -->
         <ServiceControl Id="ActMonServiceControl"
                         Name="ActMonAgent"
                         Start="install"
@@ -72,11 +85,13 @@
                         Wait="no" />
       </Component>
 
-      <!-- Server URL + token in the registry (the service reads these on start). -->
+      <!-- Server URL + token + the wizard's host-monitoring choice in the
+           registry (the service reads these on start). -->
       <Component Id="AgentConfig" Guid="*">
         <RegistryKey Root="HKLM" Key="SOFTWARE\ActMon\Agent">
           <RegistryValue Type="string" Name="Token" Value="[ACCESS_TOKEN]" KeyPath="yes" />
           <RegistryValue Type="string" Name="Url" Value="[ACTMON_URL]" />
+          <RegistryValue Type="string" Name="HostMonitoring" Value="[HOSTMONITORING]" />
         </RegistryKey>
       </Component>
     </ComponentGroup>
@@ -84,5 +99,103 @@
     <Feature Id="MainFeature" Title="ActMon Agent" Level="1">
       <ComponentGroupRef Id="AgentComponents" />
     </Feature>
+
+    <!-- If the wizard's "start automatically" checkbox was unchecked, stop
+         the service right after it's started (ServiceControl above has no
+         Condition support, so this is the supported way to make that
+         checkbox actually do something) — sc.exe stop is a no-op/harmless
+         if the service isn't running. A silent (/qn) install never touches
+         this (STARTSERVICE defaults to "1"), so today's always-start
+         behavior is unchanged unless the wizard's checkbox is used. -->
+    <CustomAction Id="SetStopAgentServiceCmd" Property="StopAgentServiceIfDeclined"
+                  Value="&quot;[SystemFolder]sc.exe&quot; stop ActMonAgent" />
+    <CustomAction Id="StopAgentServiceIfDeclined" BinaryKey="WixCA" DllEntry="CAQuietExec"
+                  Execute="deferred" Return="ignore" Impersonate="no" />
+    <InstallExecuteSequence>
+      <Custom Action="SetStopAgentServiceCmd" Before="StopAgentServiceIfDeclined">NOT STARTSERVICE = "1" AND NOT Installed</Custom>
+      <Custom Action="StopAgentServiceIfDeclined" After="StartServices">NOT STARTSERVICE = "1" AND NOT Installed</Custom>
+    </InstallExecuteSequence>
+
+    <!-- ── Wizard UI ──────────────────────────────────────────────────────────
+         Welcome -> License -> Permissions (custom) -> Install Dir -> Verify
+         Ready -> Progress -> Finish, with working Back/Next/Cancel throughout.
+         A silent run (msiexec /qn) never shows any of this and gets the
+         Property defaults above (service starts, host monitoring on) — same
+         as before this UI existed. -->
+    <UIRef Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <UI>
+      <!-- Server URL + Token are editable here (not just command-line
+           overrides) so a plain double-click of the UNCONFIGURED MSI —
+           downloaded straight from the server, no per-token server-side
+           rebuild involved — can still be fully self-service. If they were
+           supplied via msiexec ACCESS_TOKEN=/ACTMON_URL= (the .bat/.ps1/
+           one-liner deploy paths) or baked in at build time, these fields
+           just start pre-filled and the user can skip straight past them. -->
+      <Dialog Id="PermissionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="ActMon Agent Configuration" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="Confirm where this agent reports to, then choose its permissions." />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+
+        <Control Id="ServerUrlLabel" Type="Text" X="25" Y="52" Width="320" Height="10" Transparent="yes" NoPrefix="yes"
+                 Text="ActMon Server URL:" />
+        <Control Id="ServerUrlEdit" Type="Edit" X="25" Y="64" Width="320" Height="18" Property="ACTMON_URL" />
+
+        <Control Id="TokenLabel" Type="Text" X="25" Y="86" Width="320" Height="10" Transparent="yes" NoPrefix="yes"
+                 Text="Enrollment Token:" />
+        <Control Id="TokenEdit" Type="Edit" X="25" Y="98" Width="320" Height="18" Property="ACCESS_TOKEN" />
+
+        <Control Id="MidLine" Type="Line" X="0" Y="122" Width="370" Height="0" />
+
+        <Control Id="StartServiceCheckBox" Type="CheckBox" X="25" Y="130" Width="320" Height="18"
+                 Property="STARTSERVICE" CheckBoxValue="1"
+                 Text="Start the ActMon Agent service automatically after installation" />
+        <Control Id="StartServiceNote" Type="Text" X="40" Y="147" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
+                 Text="Runs as LocalSystem, starts at boot, and restarts itself if it ever stops." />
+
+        <Control Id="HostMonitoringCheckBox" Type="CheckBox" X="25" Y="174" Width="320" Height="18"
+                 Property="HOSTMONITORING" CheckBoxValue="1"
+                 Text="Enable host-level monitoring (CPU, memory, disk metrics)" />
+        <Control Id="HostMonitoringNote" Type="Text" X="40" Y="191" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
+                 Text="Uncheck to report database metrics only, without this host's own resource usage." />
+
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+          <Publish Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+          <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+          <!-- Disabled until a Server URL is entered — the one field this
+               agent genuinely cannot run without. Token is left optional
+               here (blank is a valid, if useless, install) rather than
+               hard-blocking on it. -->
+          <Condition Action="disable">ACTMON_URL = ""</Condition>
+          <Condition Action="enable">ACTMON_URL &lt;&gt; ""</Condition>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+      </Dialog>
+
+      <!-- Splice PermissionsDlg in between the standard License and Install
+           Dir dialogs — UNLESS both the Server URL and Token are already
+           supplied (baked at build time, or via msiexec ACCESS_TOKEN=/
+           ACTMON_URL= command-line overrides, which is how every generated
+           install command — .bat/.ps1/one-liner — already runs it). In that
+           case there is nothing left to configure and nothing left for the
+           user to see or copy, so the wizard skips straight to InstallDirDlg
+           and takes the STARTSERVICE/HOSTMONITORING property defaults (both
+           "1") exactly as a silent /qn install already does. Order="1" is
+           checked first; Order="2" is WixUI_InstallDir's own fallback jump. -->
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="1">LicenseAccepted = "1" AND ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; ""</Publish>
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="PermissionsDlg" Order="2">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Order="1">ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; ""</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="PermissionsDlg" Order="2">1</Publish>
+    </UI>
   </Product>
 </Wix>

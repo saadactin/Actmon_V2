@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -60,8 +61,12 @@ class Settings:
             elif url.startswith("postgres://"):
                 url = url.replace("postgres://", "postgresql+asyncpg://", 1)
             return url
+        # DB_USER/DB_PASS are raw values from .env — URL-encode them (a
+        # password containing '@', '#', ':', '/', etc. would otherwise be
+        # misparsed, e.g. an unescaped '@' reads as an extra userinfo/host
+        # separator and the "host" asyncpg ends up with is garbage).
         return (
-            f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}"
+            f"postgresql+asyncpg://{quote_plus(self.DB_USER)}:{quote_plus(self.DB_PASS)}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 
@@ -74,7 +79,7 @@ class Settings:
                 url = url.replace("+asyncpg", "")
             return url
         return (
-            f"postgresql+psycopg2://{self.DB_USER}:{self.DB_PASS}"
+            f"postgresql+psycopg2://{quote_plus(self.DB_USER)}:{quote_plus(self.DB_PASS)}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 

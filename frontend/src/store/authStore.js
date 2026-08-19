@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { jwtDecode } from 'jwt-decode';
+import { useMenuStore } from '@/hooks/useNavigation';
 
 let logoutTimer = null;
 
@@ -50,11 +51,17 @@ export const useAuthStore = create((set, get) => {
 
   const readJSON = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } };
 
+  // Feed the navbar's own store from whatever menu we have on boot — otherwise
+  // useNavigation() never learns about it and falls back to the static,
+  // unfiltered MENU_ITEMS list until the next login.
+  const initialMenu = readJSON('actmon_menu', []);
+  setTimeout(() => { useMenuStore.getState().setServerMenu(initialMenu); }, 0);
+
   return {
     token: initialToken,
     user: readJSON('actmon_user', null),
     // ── RBAC state (persisted for reloads) ──
-    menu: readJSON('actmon_menu', []),
+    menu: initialMenu,
     permissions: readJSON('actmon_perms', []),
     permissionCatalog: readJSON('actmon_perm_catalog', []),
     governedUrls: readJSON('actmon_governed', []),
@@ -81,13 +88,14 @@ export const useAuthStore = create((set, get) => {
       localStorage.setItem('actmon_perm_catalog', JSON.stringify(permission_catalog));
       localStorage.setItem('actmon_governed', JSON.stringify(governed_urls));
       set({ token, user: mergedUser, menu, permissions, permissionCatalog: permission_catalog, governedUrls: governed_urls });
+      useMenuStore.getState().setServerMenu(menu);
       setupAutoLogout(token);
     },
 
     /** Refresh just the RBAC data (menu/permissions) without touching the token. */
     setAccess: ({ menu, permissions, permission_catalog, governed_urls }) => {
       const patch = {};
-      if (menu) { patch.menu = menu; localStorage.setItem('actmon_menu', JSON.stringify(menu)); }
+      if (menu) { patch.menu = menu; localStorage.setItem('actmon_menu', JSON.stringify(menu)); useMenuStore.getState().setServerMenu(menu); }
       if (permissions) { patch.permissions = permissions; localStorage.setItem('actmon_perms', JSON.stringify(permissions)); }
       if (permission_catalog) { patch.permissionCatalog = permission_catalog; localStorage.setItem('actmon_perm_catalog', JSON.stringify(permission_catalog)); }
       if (governed_urls) { patch.governedUrls = governed_urls; localStorage.setItem('actmon_governed', JSON.stringify(governed_urls)); }
@@ -97,6 +105,7 @@ export const useAuthStore = create((set, get) => {
     clearToken: () => {
       ['actmon_token', 'actmon_user', 'actmon_menu', 'actmon_perms', 'actmon_perm_catalog', 'actmon_governed'].forEach((k) => localStorage.removeItem(k));
       set({ token: null, user: null, menu: [], permissions: [], permissionCatalog: [], governedUrls: [] });
+      useMenuStore.getState().setServerMenu(null);
       if (logoutTimer) {
         clearTimeout(logoutTimer);
         logoutTimer = null;

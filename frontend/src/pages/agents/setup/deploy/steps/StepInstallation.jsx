@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Copy, Check, Info, Loader2, CheckCircle2, Globe, Download } from 'lucide-react';
 import { createInstallToken, listAgents, getHostIps } from '@/api/agents';
+import { toPowerShellEncodedCommand } from '@/utils/powershell';
 
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
 const IS_LOCAL = /^(localhost|127\.)/i.test(typeof window !== 'undefined' ? window.location.hostname : '');
@@ -16,10 +17,16 @@ function buildScript(data, url) {
   const arch = data.arch || 'amd64';
   if (data.os === 'windows') {
     if (data.method === 'installer') {
-      // One elevated step (UAC): downloads a self-configured MSI (token/URL
-      // already baked in server-side) and installs it via msiexec — a Windows
-      // SERVICE, the same mechanism every other always-on Windows application
-      // uses. This used to download+run actmon-setup.ps1, which installed a
+      // One elevated step (UAC): downloads the static, pre-built MSI and
+      // installs it via msiexec, passing the token/URL as command-line
+      // property overrides (ACCESS_TOKEN/ACTMON_URL are WiX `Secure`
+      // properties, settable this way by design) rather than a per-request
+      // server-side rebuild — the database backend may run on Linux, which
+      // has no way to invoke the Windows-only candle.exe/light.exe WiX
+      // compiler that baking a token in at build time would require.
+      // Installs via msiexec — a Windows SERVICE, the same mechanism every
+      // other always-on Windows application uses. This used to download+run
+      // actmon-setup.ps1, which installed a
       // SCHEDULED TASK instead: that path's only defence against the task
       // manager giving up after repeated failures was a hand-rolled recheck
       // trigger, which had a real bug (an out-of-range duration) that meant it
@@ -27,15 +34,27 @@ function buildScript(data, url) {
       // went dark for 46 minutes, then again overnight, before that was found.
       // A Service's restart-on-failure is a mature primitive with no such cap.
       //
-      // Single quotes only inside `inner` — it gets wrapped in the OUTER
-      // double-quoted -Command argument below, and PowerShell nests a single-
-      // quoted string inside a double-quoted one with no escaping required;
-      // a double quote in here would collide with that wrapper and truncate
-      // the command silently. `$env:TEMP` is a bare variable reference (no
-      // quotes needed) concatenated with a single-quoted literal suffix.
-      const msi = `${url}/agents/install/actmon-agent.msi?token=${token}&url=${encodeURIComponent(url)}`;
-      const inner = `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $m=$env:TEMP+'\\actmon-agent.msi'; Invoke-WebRequest -Uri '${msi}' -OutFile $m -UseBasicParsing; Start-Process msiexec.exe -ArgumentList @('/i',$m,'/qn','/norestart') -Wait; Remove-Item $m -Force -ErrorAction SilentlyContinue`;
-      return `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command',"${inner}"`;
+      // `inner` is meant to run ONLY inside the new elevated process — but
+      // wrapping it in a double-quoted -Command argument doesn't defer that:
+      // when this whole line is pasted into an already-open PowerShell
+      // prompt (the normal way users run it), THAT prompt's own parser sees
+      // the double quotes as a real interpolated string and expands
+      // `$env:TEMP` / `$m` itself, right then — `$m` is undefined in the
+      // outer scope, so it silently becomes "", turning
+      // `$m=$env:TEMP+'\actmon-agent.msi'` into a bare `=C:\Users\...\actmon-
+      // agent.msi`, which then fails as "not recognized". No amount of
+      // quote-nesting fixes this reliably (PowerShell always interpolates
+      // double-quoted strings at the parser that currently owns the line).
+      // -EncodedCommand sidesteps the whole class of problem: the payload is
+      // base64 of UTF-16LE, which contains none of PowerShell's special
+      // characters, so it can never be touched by the outer shell's parser.
+      const msi = `${url}/agents/download/windows`;
+      // No /qn — shows the real installer wizard (Welcome, License,
+      // Permissions, Install Dir, Progress, Finish). -Wait still blocks
+      // until the user finishes it (or cancels) before this continues.
+      const inner = `[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $m=$env:TEMP+'\\actmon-agent.msi'; Invoke-WebRequest -Uri '${msi}' -OutFile $m -UseBasicParsing; Start-Process msiexec.exe -ArgumentList @('/i',$m,'ACCESS_TOKEN=${token}','ACTMON_URL=${url}','/norestart') -Wait; Remove-Item $m -Force -ErrorAction SilentlyContinue`;
+      const encoded = toPowerShellEncodedCommand(inner);
+      return `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}'`;
     }
     return `$env:ACTMON_ACCESS_TOKEN="${token}"; $env:ACTMON_METADATA="${meta}"; $env:ACTMON_URL="${url}"; iex ((New-Object System.Net.WebClient).DownloadString('${url}/agents/install/actmon-agent.ps1'))`;
   }
@@ -159,17 +178,21 @@ export default function StepInstallation({ data, onInstalled }) {
         </a>
       )}
 
-      {/* Windows downloads. .bat and .msi both resolve to the SAME server route
-          (/agents/install/actmon-agent.msi) — it builds a fresh MSI per request
-          with THIS wizard's token/URL baked in as its defaults, so either one is
-          a real double-click install with nothing to type. (There's also a
-          generic, unconfigured MSI at /agents/download/windows?fmt=msi for
-          scripted mass-deployment where the caller supplies its own per-host
-          token — that one is deliberately NOT used here, since this wizard
-          already has a concrete token in hand and serving the blank one would
-          just be confusing.) Only the raw .exe has no installer wrapper to carry
-          a default into, so it still needs the token/URL supplied manually —
-          called out below rather than hidden. */}
+      {/* Windows downloads. The database backend runs on Linux here, which has
+          no way to run candle.exe/light.exe (Windows-only WiX tools) without
+          Wine — so nothing is baked into a per-request MSI server-side any
+          more. Instead:
+            .bat  → server-generated text (no WiX involved) that downloads the
+                    STATIC pre-built MSI and passes ACCESS_TOKEN/ACTMON_URL as
+                    msiexec command-line properties — real double-click,
+                    nothing to type, same as before.
+            .msi  → the same static file, undecorated. Its installer wizard
+                    now has its own Server URL/Token fields, pre-filled if
+                    supplied via msiexec properties and editable either way —
+                    so a bare double-click still works, it just asks.
+            .exe  → no installer wrapper to carry any default into at all, so
+                    it always needs the token/URL supplied manually (env vars,
+                    called out below). */}
       {isWin && (
         <div className="mt-4">
           <div className="flex flex-wrap items-stretch gap-3">
@@ -181,11 +204,11 @@ export default function StepInstallation({ data, onInstalled }) {
               <p className="text-[12px] text-emerald-700 font-semibold mt-1.5">Recommended — nothing to type, double-click and click Yes.</p>
             </div>
             <div>
-              <a href={`${apiBase}/agents/install/actmon-agent.msi?token=${data.token}&url=${encodeURIComponent(apiBase)}`} download
+              <a href={`${apiBase}/agents/download/windows`} download
                 className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
                 <Download size={16} /> Download Agent .msi
               </a>
-              <p className="text-[12px] text-emerald-700 font-semibold mt-1.5">Also pre-configured — same token/URL baked in.</p>
+              <p className="text-[12px] text-slate-500 mt-1.5">The installer wizard asks for the Server URL/Token — see below.</p>
             </div>
             <div>
               <a href={`${apiBase}/agents/download/windows?fmt=exe`} download

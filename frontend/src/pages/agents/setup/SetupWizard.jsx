@@ -11,6 +11,7 @@ import StepSummary from './steps/StepSummary';
 import { techById } from './techConfig';
 import { TechLogo } from './logos';
 import { createInstallToken, saveAgentDbConfig } from '@/api/agents';
+import { toPowerShellEncodedCommand } from '@/utils/powershell';
 import { QK } from '@/api/queryKeys';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { useConfirmExit, useWizardDraft, useWizardStep } from '@/hooks/useWizard';
@@ -124,7 +125,9 @@ export default function SetupWizard() {
   const agentCommand = () => {
     const base = `${window.location.origin}/api/v1`;
     const setup = `${base}/agents/install/actmon-setup.ps1?token=${token}&url=${encodeURIComponent(base)}`;
-    return `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command',"iex ((New-Object Net.WebClient).DownloadString('${setup}'))"`;
+    const inner = `iex ((New-Object Net.WebClient).DownloadString('${setup}'))`;
+    const encoded = toPowerShellEncodedCommand(inner);
+    return `Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}'`;
   };
 
   return (
