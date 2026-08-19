@@ -86,7 +86,7 @@ function GridCard({ icon, title, subtitle, badge, image, onClick }) {
  * stays visible while the list is open, and stays open across multiple picks
  * — both are what the "picking permissions" flow should always have done.
  */
-function PermissionPicker({ options, selected, onToggle }) {
+function PermissionPicker({ options, selected, onToggle, onToggleAll }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btnRef = useRef(null);
@@ -137,6 +137,7 @@ function PermissionPicker({ options, selected, onToggle }) {
   }, [open]);
 
   const selectedIds = useMemo(() => new Set(selected.map((p) => p.permission_id)), [selected]);
+  const allSelected = options.length > 0 && selected.length === options.length;
 
   return (
     <>
@@ -163,7 +164,21 @@ function PermissionPicker({ options, selected, onToggle }) {
         >
           {options.length === 0 ? (
             <p className="px-3 py-2 text-[12px] text-subtle">No permissions available.</p>
-          ) : options.map((p) => {
+          ) : (
+            <button
+              type="button"
+              role="option"
+              aria-selected={allSelected}
+              onClick={() => onToggleAll?.(!allSelected)}
+              className="flex w-full items-center gap-2 border-b border-border px-3 py-1.5 text-left text-[13px] font-semibold text-accent-text transition-colors hover:bg-sunken"
+            >
+              <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${allSelected ? 'border-accent bg-accent text-on-accent' : 'border-strong'}`}>
+                {allSelected && <Icon name="check" size={10} />}
+              </span>
+              {allSelected ? 'Deselect All' : 'Select All'}
+            </button>
+          )}
+          {options.map((p) => {
             const isSelected = selectedIds.has(p.permission_id);
             return (
               <button
@@ -188,6 +203,72 @@ function PermissionPicker({ options, selected, onToggle }) {
         document.body,
       )}
     </>
+  );
+}
+
+/**
+ * Clone-permissions dialog — pulled out so BOTH the role's module-grid view
+ * and its module page-list view can trigger the exact same clone flow
+ * (same state, same endpoint) instead of the feature being reachable from
+ * only one of the two screens.
+ */
+function CloneDialog({ open, clone, setClone, sourceRoleName, roles, excludeRoleId, onCancel, onSubmit }) {
+  if (!open) return null;
+  return (
+    <Dialog
+      open
+      onClose={onCancel}
+      icon="copy"
+      title="Clone Permissions"
+      footer={(
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button variant="primary" disabled={!clone.targetRoleId} onClick={onSubmit}>Copy Permissions</Button>
+        </div>
+      )}
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="mb-1 block text-[12px] font-semibold text-muted">Copy {sourceRoleName}’s permissions to</label>
+          <Select
+            value={clone.targetRoleId}
+            onChange={(v) => setClone((c) => ({ ...c, targetRoleId: v }))}
+            options={roles.filter((r) => r.role_id !== excludeRoleId).map((r) => ({ id: String(r.role_id), label: r.role_name }))}
+            placeholder="— Select target role —"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            { id: 'merge', label: 'Merge', desc: 'Add/overwrite the target’s grants — keeps its existing extras.' },
+            { id: 'replace', label: 'Replace', desc: 'Make the target an exact copy — removes its extras.' },
+          ].map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setClone((c) => ({ ...c, mode: opt.id }))}
+              className={`rounded-control border p-3 text-left transition-colors ${
+                clone.mode === opt.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-sunken'}`}
+            >
+              <p className="text-[13px] font-bold text-fg">{opt.label}</p>
+              <p className="mt-0.5 text-[11px] text-muted">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Same toast shape used across the app's admin pages — pulled out here so
+    both render branches below can show one without duplicating the markup. */
+function Toast({ toast }) {
+  if (!toast) return null;
+  return (
+    <div className={`fixed right-6 bottom-6 z-[95] rounded-control px-4 py-2.5 text-[13px] font-semibold shadow-lg ${
+      toast.tone === 'danger' ? 'bg-danger text-white' : 'bg-success text-white'}`}
+    >
+      {toast.text}
+    </div>
   );
 }
 
@@ -367,6 +448,11 @@ export default function GroupRolePagePermission() {
     });
   }
   function removePerm(id) { setForm((f) => ({ ...f, selectedPerms: f.selectedPerms.filter((p) => p.permission_id !== id) })); }
+  /** Select All toggles the whole catalog on/off; individual togglePerm calls
+      still work normally afterward since this only replaces the same array. */
+  function toggleAllPerms(selectAll) {
+    setForm((f) => ({ ...f, selectedPerms: selectAll ? selectablePerms : [] }));
+  }
 
   async function submitGrant() {
     if (!targetPageId) { flash('Choose a page to grant.', 'danger'); return; }
@@ -477,6 +563,9 @@ export default function GroupRolePagePermission() {
           description="Pick a module to manage which of its pages this role can access."
           backTo={`/role-permissions/${orgId}`}
           backLabel="Roles"
+          actions={!readOnly && canHere('edit') ? (
+            <Button variant="secondary" icon="copy" onClick={() => setClone({ targetRoleId: '', mode: 'merge' })}>Clone to…</Button>
+          ) : undefined}
         />
         {viewingOwnRole && (
           <div className="card mt-6 flex items-center gap-2 border-warning-soft bg-warning-soft px-card py-3 text-[13px] text-warning-fg">
@@ -495,6 +584,18 @@ export default function GroupRolePagePermission() {
             />
           ))}
         </div>
+
+        <CloneDialog
+          open={!!clone}
+          clone={clone || {}}
+          setClone={setClone}
+          sourceRoleName={role?.role_name}
+          roles={roles}
+          excludeRoleId={roleId}
+          onCancel={() => setClone(null)}
+          onSubmit={submitClone}
+        />
+        <Toast toast={toast} />
       </>
     );
   }
@@ -588,7 +689,7 @@ export default function GroupRolePagePermission() {
             ) : (
               <div className="max-w-xl">
                 <label className="mb-1 block text-[12px] font-semibold text-muted">Permissions</label>
-                <PermissionPicker options={selectablePerms} selected={form.selectedPerms} onToggle={togglePerm} />
+                <PermissionPicker options={selectablePerms} selected={form.selectedPerms} onToggle={togglePerm} onToggleAll={toggleAllPerms} />
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {form.selectedPerms.map((p) => (
                     <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text">
@@ -688,49 +789,16 @@ export default function GroupRolePagePermission() {
         })}
       </div>
 
-      {clone && (
-        <Dialog
-          open
-          onClose={() => setClone(null)}
-          icon="copy"
-          title="Clone Permissions"
-          footer={(
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="secondary" onClick={() => setClone(null)}>Cancel</Button>
-              <Button variant="primary" disabled={!clone.targetRoleId} onClick={submitClone}>Copy Permissions</Button>
-            </div>
-          )}
-        >
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-[12px] font-semibold text-muted">Copy {role?.role_name}’s permissions to</label>
-              <Select
-                value={clone.targetRoleId}
-                onChange={(v) => setClone((c) => ({ ...c, targetRoleId: v }))}
-                options={roles.filter((r) => r.role_id !== roleId).map((r) => ({ id: String(r.role_id), label: r.role_name }))}
-                placeholder="— Select target role —"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { id: 'merge', label: 'Merge', desc: 'Add/overwrite the target’s grants — keeps its existing extras.' },
-                { id: 'replace', label: 'Replace', desc: 'Make the target an exact copy — removes its extras.' },
-              ].map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setClone((c) => ({ ...c, mode: opt.id }))}
-                  className={`rounded-control border p-3 text-left transition-colors ${
-                    clone.mode === opt.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-sunken'}`}
-                >
-                  <p className="text-[13px] font-bold text-fg">{opt.label}</p>
-                  <p className="mt-0.5 text-[11px] text-muted">{opt.desc}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        </Dialog>
-      )}
+      <CloneDialog
+        open={!!clone}
+        clone={clone || {}}
+        setClone={setClone}
+        sourceRoleName={role?.role_name}
+        roles={roles}
+        excludeRoleId={roleId}
+        onCancel={() => setClone(null)}
+        onSubmit={submitClone}
+      />
 
       <ConfirmDialog
         open={!!deleteTarget}
@@ -743,13 +811,7 @@ export default function GroupRolePagePermission() {
         onCancel={() => setDeleteTarget(null)}
       />
 
-      {toast && (
-        <div className={`fixed right-6 bottom-6 z-[95] rounded-control px-4 py-2.5 text-[13px] font-semibold shadow-lg ${
-          toast.tone === 'danger' ? 'bg-danger text-white' : 'bg-success text-white'}`}
-        >
-          {toast.text}
-        </div>
-      )}
+      <Toast toast={toast} />
     </>
   );
 }
