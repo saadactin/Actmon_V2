@@ -59,15 +59,21 @@ const orgOptions = async () => (await organizationsApi.list())
 /** Format a database timestamp in the Logs module's selected display
     timezone (see store/logsTimezoneStore.js and its dropdown in
     AdminResourcePage.jsx). The raw value has no timezone marker — Postgres
-    `timestamp without time zone` — so it's treated as UTC (appends 'Z' if
-    the value doesn't already carry a zone marker), then Intl.DateTimeFormat
-    converts that instant into whichever zone the dropdown picked. Reads the
-    store via getState() rather than a hook (this is a plain function used
-    inside column `render`, not a component) — AdminResourcePage subscribes
-    to the store itself so a dropdown change still re-renders these cells. */
+    `timestamp without time zone` — but is NOT UTC: confirmed live
+    (`SHOW TimeZone` on the production DB) that the server's session
+    timezone is Asia/Kolkata, so CURRENT_TIMESTAMP writes IST wall-clock
+    values verbatim. Appending '+05:30' (IST has no DST, so this is exact,
+    not an approximation) tells Date the value's TRUE UTC instant correctly;
+    Intl.DateTimeFormat then converts that instant into whichever zone the
+    dropdown picked — including India itself, which round-trips back to the
+    original wall-clock value as it should. Reads the store via getState()
+    rather than a hook (this is a plain function used inside column
+    `render`, not a component) — AdminResourcePage subscribes to the store
+    itself so a dropdown change still re-renders these cells. */
+const DB_TZ_OFFSET = '+05:30'; // Asia/Kolkata — the production DB's confirmed session TimeZone
 const dt = (v) => {
   if (!v) return '—';
-  const iso = /[Zz]|[+-]\d{2}:?\d{2}$/.test(v) ? v : `${v}Z`;
+  const iso = /[Zz]|[+-]\d{2}:?\d{2}$/.test(v) ? v : `${v}${DB_TZ_OFFSET}`;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
   try {
