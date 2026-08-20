@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
+from app.services.common import db_proxy_service
 from app.services.mysql.mysql_ai_analysis import analyze_mysql_error
 from app.services.mysql.mysql_self_heal_service import run_mysql_self_heal
 
@@ -420,6 +421,21 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
                 r"C:\ProgramData\MySQL\MySQL Server 8.0\Data",
                 mysql_error_path.replace(".\\", ""),
             )
+        # `log_error` comes back genuinely empty on some installs (never set
+        # in my.ini) even though MySQL is still writing errors somewhere —
+        # its own documented default is "<hostname>.err" in the data
+        # directory, so derive that same default from MySQL's own reported
+        # values rather than giving up immediately.
+        if not mysql_error_path:
+            try:
+                with engine.connect() as conn2:
+                    dd_row = conn2.execute(text("SELECT @@datadir, @@hostname")).fetchone()
+                datadir, host_var = dd_row[0], dd_row[1]
+                if datadir and host_var:
+                    sep = "\\" if "\\" in datadir else "/"
+                    mysql_error_path = datadir.rstrip("/\\") + sep + f"{host_var}.err"
+            except Exception:
+                pass
     except Exception:
         mysql_is_down = True
         if _is_local_host:
@@ -440,6 +456,30 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
                         if f.endswith(".err") or f.endswith(".log"):
                             mysql_error_path = os.path.join(data_dir, f)
                             break
+
+    # 2b. Prefer reading straight off the host's own disk through its agent
+    # (if one is enrolled) — a plain file read, same preference order already
+    # used for the slow query log (mysql_slow_query_service.py). Tried
+    # whenever we have SOME candidate path, since the `os.path.exists` check
+    # below only ever tests THIS backend's own filesystem, never the actual
+    # (usually remote) MySQL host's.
+    if mysql_error_path and not mysql_is_down:
+        agent_row = db_proxy_service.agent_host_for_conn(conn_id, db)
+        if agent_row and agent_row.token:
+            from app.services.agent import agent_fs_service
+            try:
+                raw = agent_fs_service.request(agent_row.token, "getfile", mysql_error_path, timeout=15)
+                if raw is not None:
+                    content_str = raw.decode("utf-8", errors="ignore")
+                    raw_lines = [l for l in content_str.splitlines()[-500:] if l.strip()]
+                    agent_logs = _parse_ssh_log_lines(raw_lines, mysql_is_down)
+                    return {
+                        "status": "success", "source": "agent_file", "log_path": mysql_error_path,
+                        "mysql_down": mysql_is_down, "total": len(agent_logs),
+                        "summary": build_mysql_log_summary(agent_logs), "logs": agent_logs,
+                    }
+            except Exception:
+                pass
 
     # 3. SSH fallback when file not accessible
     if not mysql_error_path or not os.path.exists(mysql_error_path):
