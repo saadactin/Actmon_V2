@@ -2,8 +2,10 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/layout/PageHeader';
 import Icon from '@/components/ui/Icon';
+import Select from '@/components/ui/Select';
 import { EmptyState } from '@/components/ui/Table';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useLogsTimezoneStore, LOG_TIMEZONES } from '@/store/logsTimezoneStore';
 
 /**
  * Logs hub — centralized system/audit activity, consolidated here instead of
@@ -46,6 +48,8 @@ function GridCard({ icon, title, subtitle, onClick }) {
 export default function LogsPage() {
   const navigate = useNavigate();
   const { can } = usePermissions();
+  const logsTz = useLogsTimezoneStore((s) => s.tz);
+  const setLogsTz = useLogsTimezoneStore((s) => s.setTz);
 
   const visible = useMemo(() => LOG_PAGES.filter((p) => can(p.to, 'view')), [can]);
 
@@ -56,6 +60,15 @@ export default function LogsPage() {
         icon="logs"
         description="System and audit activity across the app."
         hideBreadcrumbs
+        actions={(
+          <div className="w-44">
+            <Select
+              value={logsTz}
+              onChange={setLogsTz}
+              options={LOG_TIMEZONES.map((t) => ({ id: t.id, label: t.label }))}
+            />
+          </div>
+        )}
       />
       <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {visible.length === 0 ? (

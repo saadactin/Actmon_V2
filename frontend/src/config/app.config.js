@@ -14,8 +14,10 @@ export const APP = {
   tagline: env.VITE_APP_TAGLINE || 'Unified Observability',
   company: env.VITE_APP_COMPANY || 'Actin Technologies',
   version: env.VITE_APP_VERSION || '1.1.0',
-  /** Logo: an inline mark is used by default; drop a file in /public and set this. */
-  logoUrl: env.VITE_APP_LOGO || '',
+  /** Logo: the real ActMon mark by default (public/actmon-logo.png) — override
+      via VITE_APP_LOGO for a white-label build, or set both to '' to fall
+      back to the drawn inline mark in LogoMark.jsx. */
+  logoUrl: env.VITE_APP_LOGO || '/actmon-logo.png',
   /** ActMon AI's mark. Point this at the Figma export (e.g. /actmon-ai.svg
       dropped in public/) and it replaces the drawn fallback everywhere. */
   aiLogoUrl: env.VITE_APP_AI_LOGO || '',

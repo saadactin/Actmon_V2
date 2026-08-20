@@ -4,6 +4,7 @@ import {
   departmentsApi, designationsApi, employeesApi, usersApi,
   auditLogsApi, loginHistoryApi, userSessionsApi, passwordHistoryApi,
 } from '@/api/admin';
+import { useLogsTimezoneStore } from '@/store/logsTimezoneStore';
 
 /**
  * ADMINISTRATION — one config object per sub-page, consumed by the generic
@@ -28,6 +29,10 @@ import {
  *                button to Administration; set this to point it somewhere
  *                else instead (the 4 log/history pages point to Logs, since
  *                that's where they're actually reached from)
+ *   showTimezoneSelector true → renders the Logs module's timezone dropdown
+ *                in the page header (see store/logsTimezoneStore.js); only
+ *                meaningful for the 4 log/history pages, whose columns use
+ *                `dt()` below
  *   autoCreateLogin true → Employees only; offers to create a linked User
  *                after a successful create (handled in EmployeesPage, not
  *                the generic engine, to keep the engine itself config-only)
@@ -51,7 +56,30 @@ const PILL_STYLE = { paddingTop: '0.25rem', paddingRight: '0.5rem', paddingBotto
 const orgOptions = async () => (await organizationsApi.list())
   .map((o) => ({ id: o.org_id, label: o.org_name }));
 
-const dt = (v) => (v ? new Date(v).toLocaleString() : '—');
+/** Format a database timestamp in the Logs module's selected display
+    timezone (see store/logsTimezoneStore.js and its dropdown in
+    AdminResourcePage.jsx). The raw value has no timezone marker — Postgres
+    `timestamp without time zone` — so it's treated as UTC (appends 'Z' if
+    the value doesn't already carry a zone marker), then Intl.DateTimeFormat
+    converts that instant into whichever zone the dropdown picked. Reads the
+    store via getState() rather than a hook (this is a plain function used
+    inside column `render`, not a component) — AdminResourcePage subscribes
+    to the store itself so a dropdown change still re-renders these cells. */
+const dt = (v) => {
+  if (!v) return '—';
+  const iso = /[Zz]|[+-]\d{2}:?\d{2}$/.test(v) ? v : `${v}Z`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: useLogsTimezoneStore.getState().tz,
+      year: 'numeric', month: 'short', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+    }).format(d);
+  } catch {
+    return d.toLocaleString();
+  }
+};
 
 export const ADMIN_RESOURCES = {
   roles: {
@@ -364,6 +392,7 @@ export const ADMIN_RESOURCES = {
     idKey: 'audit_id',
     readOnly: true,
     hub: { to: '/logs', label: 'Logs' },
+    showTimezoneSelector: true,
     searchKeys: ['table_name', 'action_type', 'user_name'],
     columns: [
       { key: 'audit_id', label: 'ID', width: 80 },
@@ -399,6 +428,7 @@ export const ADMIN_RESOURCES = {
     idKey: 'login_history_id',
     readOnly: true,
     hub: { to: '/logs', label: 'Logs' },
+    showTimezoneSelector: true,
     searchKeys: ['user_name', 'employee_name', 'ip_address'],
     columns: [
       { key: 'login_history_id', label: 'ID', width: 80 },
@@ -434,6 +464,7 @@ export const ADMIN_RESOURCES = {
     idKey: 'session_id',
     readOnly: true,
     hub: { to: '/logs', label: 'Logs' },
+    showTimezoneSelector: true,
     searchKeys: ['user_name', 'employee_name', 'ip_address'],
     columns: [
       { key: 'session_id', label: 'ID', width: 80 },
@@ -464,6 +495,7 @@ export const ADMIN_RESOURCES = {
     idKey: 'password_history_id',
     readOnly: true,
     hub: { to: '/logs', label: 'Logs' },
+    showTimezoneSelector: true,
     searchKeys: ['user_name', 'employee_name'],
     columns: [
       { key: 'password_history_id', label: 'ID', width: 80 },

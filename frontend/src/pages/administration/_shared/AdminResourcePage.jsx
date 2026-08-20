@@ -16,6 +16,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import useAdminResource from '@/hooks/useAdminResource';
 import { useThemeStore } from '@/theme/themeStore';
 import { uploadsApi } from '@/api/admin';
+import { useLogsTimezoneStore, LOG_TIMEZONES } from '@/store/logsTimezoneStore';
 
 /** Same 16px/500/18px-lh body-cell size as the Agents list's dark-header
     table (AgentsPage.jsx's CELL_TEXT) — kept as its own copy rather than a
@@ -177,6 +178,14 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
   const allowAdd = !config.readOnly && canHere('add');
   const allowEdit = !config.readOnly && canHere('edit');
   const allowDelete = !config.readOnly && canHere('delete');
+
+  // Subscribing here (not just reading it inside dt()'s getState() call) is
+  // what makes changing the dropdown actually repaint the table — dt() is a
+  // plain function used inside column `render`, not a component, so it can't
+  // subscribe itself; this re-renders the whole page (and every cell with
+  // it) whenever the selected timezone changes.
+  const logsTz = useLogsTimezoneStore((s) => s.tz);
+  const setLogsTz = useLogsTimezoneStore((s) => s.setTz);
 
   const {
     rows, isLoading, isFetching, refresh,
@@ -402,6 +411,15 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
         backLabel={config.orgScoped ? 'Administration' : (config.hub?.label || 'Administration')}
         actions={(
           <div className="flex items-center gap-2">
+            {config.showTimezoneSelector && (
+              <div className="w-44">
+                <Select
+                  value={logsTz}
+                  onChange={setLogsTz}
+                  options={LOG_TIMEZONES.map((t) => ({ id: t.id, label: t.label }))}
+                />
+              </div>
+            )}
             <IconButton icon="refresh" label="Refresh" onClick={refresh} iconClassName={isFetching ? 'animate-spin' : undefined} />
             {allowAdd && <Button variant="primary" icon="plus" onClick={openCreate}>Add {singular}</Button>}
           </div>
