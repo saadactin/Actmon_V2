@@ -30,6 +30,7 @@ const AgentDetailPage = lazy(() => import('@/pages/agents/AgentDetailPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
 const HelpCenterPage = lazy(() => import('@/pages/help/HelpCenterPage'));
 const AiAssistantPage = lazy(() => import('@/pages/chat/AiAssistantPage'));
+const LogsPage = lazy(() => import('@/pages/logs/LogsPage'));
 
 // Cloud (AWS/Azure/OCI discovery) — ported from the existing module's
 // features/cloud/ tree, restyled to plain JS. CloudShell is the layout shell;
@@ -165,7 +166,7 @@ export default function App() {
   }, [token, user]);
 
   // Routes we define explicitly must not be shadowed by generated ones.
-  const explicit = new Set(['/dashboard', '/alerts', '/agents', '/databases', '/settings', '/infra', '/administration', '/help-center', '/cloud']);
+  const explicit = new Set(['/dashboard', '/alerts', '/agents', '/databases', '/settings', '/infra', '/administration', '/help-center', '/cloud', '/logs']);
   const generated = NAV_INDEX.filter((n) => !explicit.has(n.to));
 
   return (
@@ -190,6 +191,7 @@ export default function App() {
         <Route path="/settings/notifications" element={<SettingsPage />} />
         <Route path="/help-center" element={<HelpCenterPage />} />
         <Route path="/ai-assistant" element={<AiAssistantPage />} />
+        <Route path="/logs" element={<LogsPage />} />
 
         {/* Cloud (AWS/Azure/OCI discovery) — CloudShell is the layout shell,
             everything below is one of its nested routes (its own <Outlet/>).

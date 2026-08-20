@@ -398,8 +398,8 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
         title={config.title}
         icon={config.icon}
         description={orgName ? `${config.subtitle} · ${orgName}` : config.subtitle}
-        backTo={config.orgScoped && orgId ? `/administration/${orgId}` : '/administration'}
-        backLabel="Administration"
+        backTo={config.orgScoped && orgId ? `/administration/${orgId}` : (config.hub?.to || '/administration')}
+        backLabel={config.orgScoped ? 'Administration' : (config.hub?.label || 'Administration')}
         actions={(
           <div className="flex items-center gap-2">
             <IconButton icon="refresh" label="Refresh" onClick={refresh} iconClassName={isFetching ? 'animate-spin' : undefined} />

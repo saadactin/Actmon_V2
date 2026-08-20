@@ -28,8 +28,12 @@ export const EXTRA_MODULE_PREFIXES = {
     '/role-permissions',
     '/roles', '/permissions', '/modules', '/pages', '/organizations',
     '/departments', '/designations', '/employees', '/users',
-    '/audit-logs', '/login-history', '/user-sessions', '/password-history',
     '/ai-chat-sessions', '/help-center-appearance',
+  ],
+  // Moved here from Administration (migrations/2026-08-20_logs_module.sql) —
+  // flat routes, not nested under /logs, so they need the same treatment.
+  '/logs': [
+    '/audit-logs', '/login-history', '/user-sessions', '/password-history',
   ],
 };
 

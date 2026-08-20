@@ -27,10 +27,6 @@ const MODULES = [
   { title: 'Permissions', to: '/permissions', icon: 'key', scope: 'global', desc: 'The bit-flag catalog every role’s access is built from.' },
   { title: 'Modules', to: '/modules', icon: 'boxes', scope: 'global', desc: 'The top-level areas of the app that pages belong to.' },
   { title: 'Pages', to: '/pages', icon: 'route', scope: 'global', desc: 'Every routable page/menu entry, by module and parent.' },
-  { title: 'Audit Logs', to: '/audit-logs', icon: 'logs', scope: 'global', desc: 'Every insert/update/delete the app has made.' },
-  { title: 'Login History', to: '/login-history', icon: 'history', scope: 'global', desc: 'Every sign-in attempt, successful or not.' },
-  { title: 'User Sessions', to: '/user-sessions', icon: 'activity', scope: 'global', desc: 'Active and expired sessions issued to users.' },
-  { title: 'Password History', to: '/password-history', icon: 'lock', scope: 'global', desc: 'When each user’s password was last changed.' },
   { title: 'AI Chat Sessions', to: '/ai-chat-sessions', icon: 'chat', scope: 'global', desc: 'Every ActMon AI conversation across your users, for audit and support.' },
   { title: 'Help Center Appearance', to: '/help-center-appearance', icon: 'palette', scope: 'global', desc: 'Card themes, colors, sizing, and layout for the documentation library.' },
 ];

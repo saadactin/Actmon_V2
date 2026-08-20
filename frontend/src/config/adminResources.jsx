@@ -22,7 +22,12 @@ import {
  *   searchKeys   fields the search box matches (defaults to all column keys)
  *   orgScoped    true → the page needs an org context (?org=&orgName= from
  *                the Administration hub) and stamps org_id on create
+
  *   readOnly     true → no Add/Edit/Delete, used by the 4 log/history pages
+ *   hub          {to, label} → non-org-scoped resources default their Back
+ *                button to Administration; set this to point it somewhere
+ *                else instead (the 4 log/history pages point to Logs, since
+ *                that's where they're actually reached from)
  *   autoCreateLogin true → Employees only; offers to create a linked User
  *                after a successful create (handled in EmployeesPage, not
  *                the generic engine, to keep the engine itself config-only)
@@ -358,6 +363,7 @@ export const ADMIN_RESOURCES = {
     api: auditLogsApi,
     idKey: 'audit_id',
     readOnly: true,
+    hub: { to: '/logs', label: 'Logs' },
     searchKeys: ['table_name', 'action_type', 'user_name'],
     columns: [
       { key: 'audit_id', label: 'ID', width: 80 },
@@ -392,6 +398,7 @@ export const ADMIN_RESOURCES = {
     api: loginHistoryApi,
     idKey: 'login_history_id',
     readOnly: true,
+    hub: { to: '/logs', label: 'Logs' },
     searchKeys: ['user_name', 'employee_name', 'ip_address'],
     columns: [
       { key: 'login_history_id', label: 'ID', width: 80 },
@@ -426,6 +433,7 @@ export const ADMIN_RESOURCES = {
     api: userSessionsApi,
     idKey: 'session_id',
     readOnly: true,
+    hub: { to: '/logs', label: 'Logs' },
     searchKeys: ['user_name', 'employee_name', 'ip_address'],
     columns: [
       { key: 'session_id', label: 'ID', width: 80 },
@@ -455,6 +463,7 @@ export const ADMIN_RESOURCES = {
     api: passwordHistoryApi,
     idKey: 'password_history_id',
     readOnly: true,
+    hub: { to: '/logs', label: 'Logs' },
     searchKeys: ['user_name', 'employee_name'],
     columns: [
       { key: 'password_history_id', label: 'ID', width: 80 },
