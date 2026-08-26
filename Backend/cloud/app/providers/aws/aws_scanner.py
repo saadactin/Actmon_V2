@@ -226,6 +226,206 @@ class AWSScanner:
 
         return await loop.run_in_executor(scan_pool(), _fetch)
 
+    # ── RDS / Aurora / DocumentDB / Neptune Clusters ─────────────────────────
+    # A DB Cluster is a SEPARATE billed object from its member DB Instances —
+    # Aurora storage and I/O bill at the cluster level, not per instance. Only
+    # scanning describe_db_instances (as this file did before) means an
+    # Aurora/DocumentDB/Neptune cluster's own storage cost has nothing in
+    # inventory to match against, the same class of gap OCI's DB Systems had.
+    # All three engines share this one API, differentiated by Engine.
+    async def _scan_db_clusters(self, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            rds = self.auth.get_client("rds", region)
+            pages = rds.get_paginator("describe_db_clusters").paginate()
+            results = []
+            for page in pages:
+                for c in page.get("DBClusters", []):
+                    engine = (c.get("Engine") or "").lower()
+                    if "neptune" in engine:
+                        rtype = "NeptuneCluster"
+                    elif "docdb" in engine:
+                        rtype = "DocumentDBCluster"
+                    else:
+                        rtype = "AuroraCluster"
+                    results.append(
+                        {
+                            "provider_resource_id": c.get("DBClusterArn") or c["DBClusterIdentifier"],
+                            "resource_type": rtype,
+                            "resource_name": c["DBClusterIdentifier"],
+                            "region_or_zone": region,
+                            "status": c.get("Status"),
+                            "ip_address": c.get("Endpoint"),
+                            "config": {
+                                "engine": c.get("Engine"),
+                                "engine_version": c.get("EngineVersion"),
+                                "storage_gb": c.get("AllocatedStorage"),
+                                "multi_az": c.get("MultiAZ"),
+                                "storage_encrypted": c.get("StorageEncrypted", False),
+                                "publicly_accessible": c.get("PubliclyAccessible"),
+                                "vpc_id": None,  # not exposed at cluster level; see member instances
+                                "security_group_ids": [
+                                    sg["VpcSecurityGroupId"] for sg in c.get("VpcSecurityGroups", [])
+                                ],
+                                "member_instance_count": len(c.get("DBClusterMembers", [])),
+                                "reader_endpoint": c.get("ReaderEndpoint"),
+                            },
+                            "metadata": {
+                                "db_name": c.get("DatabaseName"),
+                                "master_username": c.get("MasterUsername"),
+                                "port": c.get("Port"),
+                                "backup_retention_days": c.get("BackupRetentionPeriod"),
+                            },
+                            "cost_monthly": None,
+                            "tags": {t["Key"]: t["Value"] for t in c.get("TagList", [])},
+                            "raw_data": {
+                                "DBClusterIdentifier": c.get("DBClusterIdentifier"),
+                                "Engine": c.get("Engine"),
+                                "Status": c.get("Status"),
+                            },
+                        }
+                    )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── ElastiCache (Redis / Memcached) ──────────────────────────────────────
+    async def _scan_elasticache(self, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            ec = self.auth.get_client("elasticache", region)
+            results = []
+
+            # Modern Redis: replication groups (covers both single-primary and
+            # cluster-mode-enabled deployments) — the unit ElastiCache actually
+            # bills and reports on for Redis.
+            for page in ec.get_paginator("describe_replication_groups").paginate():
+                for rg in page.get("ReplicationGroups", []):
+                    endpoint = (rg.get("ConfigurationEndpoint") or {}).get("Address")
+                    if not endpoint and rg.get("NodeGroups"):
+                        endpoint = (rg["NodeGroups"][0].get("PrimaryEndpoint") or {}).get("Address")
+                    results.append(
+                        {
+                            "provider_resource_id": rg.get("ARN") or rg["ReplicationGroupId"],
+                            "resource_type": "ElastiCacheRedis",
+                            "resource_name": rg["ReplicationGroupId"],
+                            "region_or_zone": region,
+                            "status": rg.get("Status"),
+                            "ip_address": endpoint,
+                            "config": {
+                                "engine": "redis",
+                                # ReplicationGroup has no EngineVersion field at
+                                # all (only individual CacheClusters do) — report
+                                # the honest gap rather than substituting the node
+                                # type (e.g. "cache.t3.micro") under this label.
+                                "engine_version": None,
+                                "node_type": rg.get("CacheNodeType"),
+                                "cluster_enabled": rg.get("ClusterEnabled", False),
+                                "multi_az": rg.get("MultiAZ"),
+                                "at_rest_encrypted": rg.get("AtRestEncryptionEnabled", False),
+                                "transit_encrypted": rg.get("TransitEncryptionEnabled", False),
+                                "node_count": sum(
+                                    len(ng.get("NodeGroupMembers", [])) for ng in rg.get("NodeGroups", [])
+                                ),
+                            },
+                            "metadata": {"description": rg.get("Description")},
+                            "cost_monthly": None,
+                            "tags": {},
+                            "raw_data": {"ReplicationGroupId": rg.get("ReplicationGroupId"),
+                                         "Status": rg.get("Status")},
+                        }
+                    )
+
+            # Standalone clusters not part of a replication group — this is
+            # where Memcached lives (it has no replication-group concept).
+            grouped_cluster_ids = set()
+            for page in ec.get_paginator("describe_replication_groups").paginate():
+                for rg in page.get("ReplicationGroups", []):
+                    for ng in rg.get("NodeGroups", []):
+                        for m in ng.get("NodeGroupMembers", []):
+                            if m.get("CacheClusterId"):
+                                grouped_cluster_ids.add(m["CacheClusterId"])
+
+            for page in ec.get_paginator("describe_cache_clusters").paginate(ShowCacheNodeInfo=True):
+                for cc in page.get("CacheClusters", []):
+                    if cc["CacheClusterId"] in grouped_cluster_ids:
+                        continue  # already represented by its replication group
+                    endpoint = (cc.get("ConfigurationEndpoint") or {}).get("Address")
+                    if not endpoint and cc.get("CacheNodes"):
+                        endpoint = (cc["CacheNodes"][0].get("Endpoint") or {}).get("Address")
+                    results.append(
+                        {
+                            "provider_resource_id": cc.get("ARN") or cc["CacheClusterId"],
+                            "resource_type": "ElastiCacheMemcached" if (cc.get("Engine") or "").lower() == "memcached" else "ElastiCacheRedis",
+                            "resource_name": cc["CacheClusterId"],
+                            "region_or_zone": region,
+                            "status": cc.get("CacheClusterStatus"),
+                            "ip_address": endpoint,
+                            "config": {
+                                "engine": cc.get("Engine"),
+                                "engine_version": cc.get("EngineVersion"),
+                                "node_type": cc.get("CacheNodeType"),
+                                "node_count": cc.get("NumCacheNodes"),
+                                "security_group_ids": [
+                                    sg["SecurityGroupId"] for sg in cc.get("SecurityGroups", [])
+                                ],
+                            },
+                            "metadata": {},
+                            "cost_monthly": None,
+                            "tags": {},
+                            "raw_data": {"CacheClusterId": cc.get("CacheClusterId"),
+                                         "CacheClusterStatus": cc.get("CacheClusterStatus")},
+                        }
+                    )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Redshift ──────────────────────────────────────────────────────────────
+    async def _scan_redshift(self, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            rs = self.auth.get_client("redshift", region)
+            results = []
+            for page in rs.get_paginator("describe_clusters").paginate():
+                for c in page.get("Clusters", []):
+                    endpoint = (c.get("Endpoint") or {}).get("Address")
+                    results.append(
+                        {
+                            "provider_resource_id": c["ClusterIdentifier"],
+                            "resource_type": "RedshiftCluster",
+                            "resource_name": c["ClusterIdentifier"],
+                            "region_or_zone": region,
+                            "status": c.get("ClusterStatus"),
+                            "ip_address": endpoint,
+                            "config": {
+                                "node_type": c.get("NodeType"),
+                                "node_count": c.get("NumberOfNodes"),
+                                "publicly_accessible": c.get("PubliclyAccessible"),
+                                "encrypted": c.get("Encrypted", False),
+                                "vpc_id": c.get("VpcId"),
+                                "security_group_ids": [
+                                    sg["VpcSecurityGroupId"] for sg in c.get("VpcSecurityGroups", [])
+                                ],
+                            },
+                            "metadata": {
+                                "db_name": c.get("DBName"),
+                                "master_username": c.get("MasterUsername"),
+                                "port": (c.get("Endpoint") or {}).get("Port"),
+                            },
+                            "cost_monthly": None,
+                            "tags": {t["Key"]: t["Value"] for t in c.get("Tags", [])},
+                            "raw_data": {"ClusterIdentifier": c.get("ClusterIdentifier"),
+                                         "ClusterStatus": c.get("ClusterStatus")},
+                        }
+                    )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
     # ── S3 Buckets ────────────────────────────────────────────────────────────
     async def _scan_s3(self) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
@@ -1129,6 +1329,9 @@ class AWSScanner:
                 (self._scan_ec2, "EC2"),
                 (self._scan_ebs, "EBS"),
                 (self._scan_rds, "RDS"),
+                (self._scan_db_clusters, "DBCluster"),
+                (self._scan_elasticache, "ElastiCache"),
+                (self._scan_redshift, "Redshift"),
                 (self._scan_lambda, "Lambda"),
                 (self._scan_eks, "EKS"),
                 (self._scan_elb, "ELB"),

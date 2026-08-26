@@ -116,7 +116,15 @@ class AWSProvider(BaseCloudProvider):
                     TimePeriod={"Start": start, "End": end},
                     Granularity="DAILY",
                     Metrics=["BlendedCost"],
-                    GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
+                    # USAGE_TYPE is a real, always-available CE dimension (e.g.
+                    # "BoxUsage:t3.micro", "TimedStorage-ByteHrs") — this is as
+                    # close to a Resource-Type breakdown as AWS offers without a
+                    # separate Cost & Usage Report/Athena pipeline, since CE has
+                    # no per-resource-ID grouping dimension at all.
+                    GroupBy=[
+                        {"Type": "DIMENSION", "Key": "SERVICE"},
+                        {"Type": "DIMENSION", "Key": "USAGE_TYPE"},
+                    ],
                 )
                 if next_token:
                     kwargs["NextPageToken"] = next_token
@@ -124,12 +132,14 @@ class AWSProvider(BaseCloudProvider):
                 for result in response.get("ResultsByTime", []):
                     usage_date = result.get("TimePeriod", {}).get("Start")
                     for group in result.get("Groups", []):
-                        keys = group.get("Keys", [""])
+                        keys = group.get("Keys", ["", ""])
                         service = keys[0] if keys else "Unknown"
+                        usage_type = keys[1] if len(keys) > 1 else None
                         metric = group.get("Metrics", {}).get("BlendedCost", {})
                         rows.append({
                             "date": usage_date,
                             "service": service,
+                            "resource_type": usage_type,
                             "region": None,
                             "cost": round(float(metric.get("Amount", 0)), 4),
                             "currency": metric.get("Unit"),

@@ -13,12 +13,13 @@ import cn from '@/lib/cn';
 import {
   Server, HardDrive, SquareFunction, Database, Container, Scale, Inbox,
   Megaphone, Globe, Lock, Shield, User, Bot, Brain, BookOpen, Cloud,
-  MapPin, Link2, Unlink, Milestone, Route,
+  MapPin, Link2, Unlink, Milestone, Route, Zap, FolderOpen, BarChart3,
+  ShieldAlert, Cable, Workflow,
 } from 'lucide-react';
 
 // Resource types that represent detachable block storage across providers —
 // these are the only ones with a meaningful Attached/Unattached state.
-const STORAGE_TYPES = new Set(['BlockVolume', 'ManagedDisk', 'EBSVolume']);
+const STORAGE_TYPES = new Set(['BlockVolume', 'ManagedDisk', 'EBSVolume', 'BootVolume']);
 
 // Tone classes mirror Badge's own tone palette, so the icon avatar beside a
 // resource's name always matches the tone of its type pill (rendered via <Badge>).
@@ -36,6 +37,22 @@ const TYPE_META = {
   LambdaFunction: { Icon: SquareFunction, tone: 'info' },
   DynamoDBTable: { Icon: Database, tone: 'success' },
   RDSInstance: { Icon: Database, tone: 'success' },
+  AutonomousDatabase: { Icon: Database, tone: 'success' },
+  DbSystem: { Icon: Database, tone: 'success' },
+  MySQLDbSystem: { Icon: Database, tone: 'success' },
+  NoSQLTable: { Icon: Database, tone: 'success' },
+  AuroraCluster: { Icon: Database, tone: 'success' },
+  DocumentDBCluster: { Icon: Database, tone: 'success' },
+  NeptuneCluster: { Icon: Database, tone: 'success' },
+  RedshiftCluster: { Icon: Database, tone: 'success' },
+  MySQLServer: { Icon: Database, tone: 'success' },
+  PostgreSQLServer: { Icon: Database, tone: 'success' },
+  CosmosDB: { Icon: Database, tone: 'success' },
+  // Caches, not durable stores — same family as the databases above but a
+  // distinct icon so "in-memory, ephemeral" reads differently at a glance.
+  ElastiCacheRedis: { Icon: Zap, tone: 'warning' },
+  ElastiCacheMemcached: { Icon: Zap, tone: 'warning' },
+  RedisCache: { Icon: Zap, tone: 'warning' },
   EKSCluster: { Icon: Container, tone: 'warning' },
   LoadBalancer: { Icon: Scale, tone: 'neutral' },
   SQSQueue: { Icon: Inbox, tone: 'neutral' },
@@ -51,12 +68,18 @@ const TYPE_META = {
   BlockVolume: { Icon: HardDrive, tone: 'warning' },
   ManagedDisk: { Icon: HardDrive, tone: 'warning' },
   EBSVolume: { Icon: HardDrive, tone: 'warning' },
+  BootVolume: { Icon: HardDrive, tone: 'warning' },
   // OCI's per-VCN objects — Security Lists are a real security boundary
   // (same tone as SecurityGroup/NSG); Route Tables and DHCP Options are
   // network plumbing, not security-relevant, so neutral.
   SecurityList: { Icon: Shield, tone: 'neutral' },
   RouteTable: { Icon: Route, tone: 'neutral' },
   DhcpOptions: { Icon: Milestone, tone: 'neutral' },
+  FileSystem: { Icon: FolderOpen, tone: 'accent' },
+  AnalyticsInstance: { Icon: BarChart3, tone: 'info' },
+  WebAppFirewall: { Icon: ShieldAlert, tone: 'warning' },
+  VirtualCircuit: { Icon: Cable, tone: 'accent' },
+  DrgAttachment: { Icon: Workflow, tone: 'accent' },
 };
 
 function getMeta(type) {

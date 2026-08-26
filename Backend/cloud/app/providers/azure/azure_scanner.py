@@ -337,6 +337,193 @@ class AzureScanner:
 
         return await loop.run_in_executor(scan_pool(), _fetch)
 
+    # ── PostgreSQL / MySQL Flexible Servers ──────────────────────────────────
+    # The generic ARM sweep already discovers these (as PostgreSQLServer /
+    # MySQLServer via _TYPE_MAP), so they were never invisible to inventory or
+    # cost matching — but the sweep gives every resource the same
+    # {sku, kind, azure_type} stub regardless of type, with no version, storage
+    # size, HA config, or public-network-access flag. That last one especially
+    # is a real security signal (an internet-reachable managed database) this
+    # service otherwise has no way to check. Dedicated scanners here enrich
+    # the SAME provider_resource_id the sweep already uses, so upsert_resources
+    # replaces the stub with the richer row rather than duplicating it.
+    async def _scan_postgresql(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClient
+
+            client = PostgreSQLManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            results = []
+            for s in client.servers.list():
+                ha = getattr(s, "high_availability", None)
+                net = getattr(s, "network", None)
+                backup = getattr(s, "backup", None)
+                results.append(
+                    {
+                        "provider_resource_id": s.id,
+                        "resource_type": "PostgreSQLServer",
+                        "resource_name": s.name,
+                        "region_or_zone": s.location,
+                        "status": s.state,
+                        "ip_address": s.fully_qualified_domain_name,
+                        "config": {
+                            "sku": s.sku.name if s.sku else None,
+                            "tier": s.sku.tier if s.sku else None,
+                            "version": s.version,
+                            "storage_gb": getattr(s.storage, "storage_size_gb", None) if s.storage else None,
+                            "public_network_access": getattr(net, "public_network_access", None),
+                            "high_availability_mode": getattr(ha, "mode", None),
+                            "geo_redundant_backup": getattr(backup, "geo_redundant_backup", None),
+                            "backup_retention_days": getattr(backup, "backup_retention_days", None),
+                            "availability_zone": s.availability_zone,
+                        },
+                        "metadata": {
+                            "resource_group": _resource_group_of(s.id),
+                            "administrator_login": s.administrator_login,
+                        },
+                        "cost_monthly": None,
+                        "tags": s.tags or {},
+                        "raw_data": {"id": s.id, "name": s.name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    async def _scan_mysql(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            from azure.mgmt.rdbms.mysql_flexibleservers import MySQLManagementClient
+
+            client = MySQLManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            results = []
+            for s in client.servers.list():
+                ha = getattr(s, "high_availability", None)
+                net = getattr(s, "network", None)
+                backup = getattr(s, "backup", None)
+                results.append(
+                    {
+                        "provider_resource_id": s.id,
+                        "resource_type": "MySQLServer",
+                        "resource_name": s.name,
+                        "region_or_zone": s.location,
+                        "status": s.state,
+                        "ip_address": s.fully_qualified_domain_name,
+                        "config": {
+                            "sku": s.sku.name if s.sku else None,
+                            "tier": s.sku.tier if s.sku else None,
+                            "version": s.version,
+                            "storage_gb": getattr(s.storage, "storage_size_gb", None) if s.storage else None,
+                            "public_network_access": getattr(net, "public_network_access", None),
+                            "high_availability_mode": getattr(ha, "mode", None),
+                            "geo_redundant_backup": getattr(backup, "geo_redundant_backup", None),
+                            "backup_retention_days": getattr(backup, "backup_retention_days", None),
+                            "availability_zone": s.availability_zone,
+                        },
+                        "metadata": {
+                            "resource_group": _resource_group_of(s.id),
+                            "administrator_login": s.administrator_login,
+                        },
+                        "cost_monthly": None,
+                        "tags": s.tags or {},
+                        "raw_data": {"id": s.id, "name": s.name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Cosmos DB ─────────────────────────────────────────────────────────────
+    async def _scan_cosmosdb(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            from azure.mgmt.cosmosdb import CosmosDBManagementClient
+
+            client = CosmosDBManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            results = []
+            for acct in client.database_accounts.list():
+                # Unlike SQL/AKS/older Azure SDKs, this generation of
+                # azure-mgmt-cosmosdb does NOT flatten `properties.*` onto the
+                # top-level resource object — id/name/location/kind/tags are
+                # top-level, but provisioning_state, document_endpoint,
+                # public_network_access etc. all live one level down, under
+                # `.properties`. Accessing them directly on `acct` raises
+                # AttributeError.
+                props = acct.properties
+                capabilities = [c.name for c in (props.capabilities or [])] if props else []
+                consistency = props.consistency_policy if props else None
+                results.append(
+                    {
+                        "provider_resource_id": acct.id,
+                        "resource_type": "CosmosDB",
+                        "resource_name": acct.name,
+                        "region_or_zone": acct.location,
+                        "status": props.provisioning_state if props else None,
+                        "ip_address": props.document_endpoint if props else None,
+                        "config": {
+                            "kind": acct.kind,
+                            "consistency_level": consistency.default_consistency_level if consistency else None,
+                            "public_network_access": props.public_network_access if props else None,
+                            "is_virtual_network_filter_enabled": (
+                                props.is_virtual_network_filter_enabled if props else None
+                            ),
+                            "enable_multiple_write_locations": (
+                                props.enable_multiple_write_locations if props else None
+                            ),
+                            "serverless": "EnableServerless" in capabilities,
+                            "capabilities": capabilities,
+                            "read_region_count": len(props.read_locations or []) if props else 0,
+                        },
+                        "metadata": {"resource_group": _resource_group_of(acct.id)},
+                        "cost_monthly": None,
+                        "tags": acct.tags or {},
+                        "raw_data": {"id": acct.id, "name": acct.name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Azure Cache for Redis ─────────────────────────────────────────────────
+    async def _scan_redis(self) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            from azure.mgmt.redis import RedisManagementClient
+
+            client = RedisManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            results = []
+            for r in client.redis.list_by_subscription():
+                results.append(
+                    {
+                        "provider_resource_id": r.id,
+                        "resource_type": "RedisCache",
+                        "resource_name": r.name,
+                        "region_or_zone": r.location,
+                        "status": r.provisioning_state,
+                        "ip_address": r.host_name,
+                        "config": {
+                            "sku": r.sku.name if r.sku else None,
+                            "family": r.sku.family if r.sku else None,
+                            "capacity": r.sku.capacity if r.sku else None,
+                            "redis_version": r.redis_version,
+                            "public_network_access": r.public_network_access,
+                            "ssl_port": r.ssl_port,
+                            "non_ssl_port_enabled": r.enable_non_ssl_port,
+                        },
+                        "metadata": {"resource_group": _resource_group_of(r.id)},
+                        "cost_monthly": None,
+                        "tags": r.tags or {},
+                        "raw_data": {"id": r.id, "name": r.name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
     # ── AKS Clusters ─────────────────────────────────────────────────────────
     async def _scan_aks(self) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
@@ -603,6 +790,10 @@ class AzureScanner:
             (self._scan_disks, "Disks"),
             (self._scan_storage, "Storage"),
             (self._scan_sql, "SQL"),
+            (self._scan_postgresql, "PostgreSQL"),
+            (self._scan_mysql, "MySQL"),
+            (self._scan_cosmosdb, "CosmosDB"),
+            (self._scan_redis, "Redis"),
             (self._scan_aks, "AKS"),
             (self._scan_network, "Network"),
         ]:

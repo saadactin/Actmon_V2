@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCostAnalytics } from '../hooks/useCost';
 import { useCloudScope } from '../hooks/useCloudScope';
 import { RecommendationDetailModal } from '../components/RecommendationDetailModal';
-import { CostFilterTree, EMPTY_TREE_SELECTION, matchesTreeSelection } from '../components/CostFilterTree';
+import { CostExplorerPanel } from '../components/CostExplorerPanel';
 import { CostReportPanel } from '../components/CostReportPanel';
 import { DiagnosticModal } from '../components/DiagnosticModal';
 import CloudPageHeader from '../components/CloudPageHeader';
@@ -13,8 +13,8 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { PageLoading } from '@/components/ui/Loading';
 import {
-  DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, ChevronRight, ChevronDown,
-  Info, PowerOff, Filter, HelpCircle,
+  DollarSign, TrendingUp, Sparkles, AlertTriangle, ShieldCheck, ChevronRight,
+  Info, HelpCircle, Layers,
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
@@ -33,9 +33,6 @@ export const CostPage = ({ embedded = false }) => {
   const [accountView, setAccountView] = useState('ALL');
   // Recommendation whose detail popup is open
   const [activeOpt, setActiveOpt] = useState(null);
-  // Drill-down tree filter for the Stopped Instances table below
-  const [treeSelection, setTreeSelection] = useState(EMPTY_TREE_SELECTION);
-  const [expandedStoppedRow, setExpandedStoppedRow] = useState(null);
   // Detailed cross-provider report — opened from the header button, next to
   // the account picker, so it's reachable without scrolling to the bottom.
   const [reportOpen, setReportOpen] = useState(false);
@@ -74,8 +71,6 @@ export const CostPage = ({ embedded = false }) => {
 
   const trends = analytics?.trends || [];
   const optimizations = analytics?.optimizations || [];
-  const stoppedInstances = analytics?.stopped_instances || [];
-  const filteredStopped = stoppedInstances.filter((i) => matchesTreeSelection(i, treeSelection));
   const isBilled = analytics?.cost_source === 'billing_api';
   // No currency default: when the API reports no currency, render amounts without a
   // symbol and disclose 'currency: NA' explicitly.
@@ -281,140 +276,32 @@ export const CostPage = ({ embedded = false }) => {
             </div>
           </CloudSection>
 
-          {/* Stopped Instances — Last 30 Days Billing */}
+          {/* Cost Explorer — generic Provider -> Account -> Region -> Service ->
+              Resource Type -> Resource drill-down over real billing data, freely
+              groupable (not locked to Compute Instances). Stopped-instance
+              billing is now a "Stopped only" quick filter within this view
+              rather than a separate table. */}
           <CloudSection
             title={(
               <span className="inline-flex items-center gap-2">
-                <PowerOff size={15} className="text-danger" />
-                Stopped Instances — Last 30 Days Billing
+                <Layers size={15} className="text-accent-text" />
+                Cost Explorer
               </span>
             )}
-            action={<Badge tone="neutral">{stoppedInstances.length} stopped</Badge>}
           >
-            {stoppedInstances.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <ShieldCheck size={40} className="mb-3 text-success" />
-                <h4 className="mb-1 text-base font-semibold text-fg">No Stopped Instances</h4>
-                <p className="max-w-md text-sm text-muted">
-                  Every discovered compute instance in this view is currently running.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr]">
-                {/* Drill-down tree filter */}
-                <div className="rounded-control border border-border bg-sunken p-3">
-                  <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
-                    <Filter size={12} /> Drill Down
-                  </div>
-                  <CostFilterTree items={stoppedInstances} selection={treeSelection} onChange={setTreeSelection} />
-                </div>
-
-                {/* Results table */}
-                <div className="card overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse">
-                      <thead className="bg-sunken">
-                        <tr>
-                          <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-subtle">Instance</th>
-                          <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-subtle">Account</th>
-                          <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-subtle">Region</th>
-                          <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-subtle">Status</th>
-                          <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-subtle">Own Cost</th>
-                          <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-subtle">Attached Storage</th>
-                          <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-subtle">Total / mo</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {filteredStopped.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted">
-                              No stopped instances match this filter.
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredStopped.map((inst) => {
-                            const isExpanded = expandedStoppedRow === inst.resource_id;
-                            const sym = symbolFor(inst.currency);
-                            const hasStorage = (inst.attached_storage || []).length > 0;
-                            return (
-                              <Fragment key={inst.resource_id}>
-                                <tr
-                                  onClick={() => navigate(`/cloud/resources/${inst.resource_id}`)}
-                                  className="cursor-pointer transition-colors hover:bg-sunken"
-                                >
-                                  <td className="whitespace-nowrap px-4 py-3 text-sm">
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-semibold text-fg">{inst.resource_name}</span>
-                                      <span className="font-mono text-[10px] text-subtle">{inst.resource_type}</span>
-                                    </div>
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-sm text-muted">{inst.account_name || '—'}</td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-sm text-muted">{inst.region || '—'}</td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-sm">
-                                    <Badge tone="danger">
-                                      <PowerOff size={10} /> {inst.status || 'STOPPED'}
-                                    </Badge>
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-fg">
-                                    {inst.own_cost_monthly == null ? 'NA' : `${sym}${inst.own_cost_monthly.toFixed(2)}`}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-right text-sm">
-                                    {hasStorage ? (
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); setExpandedStoppedRow(isExpanded ? null : inst.resource_id); }}
-                                        className="inline-flex items-center gap-1 font-semibold text-accent-text hover:opacity-80"
-                                      >
-                                        {inst.attached_storage_cost_monthly == null ? 'NA' : `${sym}${inst.attached_storage_cost_monthly.toFixed(2)}`}
-                                        {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                      </button>
-                                    ) : (
-                                      <span className="text-subtle">None</span>
-                                    )}
-                                  </td>
-                                  <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-bold text-fg">
-                                    {inst.total_cost_monthly == null ? 'NA' : `${sym}${inst.total_cost_monthly.toFixed(2)}`}
-                                  </td>
-                                </tr>
-                                {isExpanded && hasStorage && (
-                                  <tr className="bg-sunken/60">
-                                    <td colSpan={7} className="px-4 py-2.5">
-                                      <div className="space-y-1 pl-6">
-                                        {inst.attached_storage.map((sr, idx) => (
-                                          <div key={idx} className="flex items-center justify-between rounded-control border border-border bg-surface px-2.5 py-1.5 text-xs">
-                                            <span className="font-mono text-muted">{sr.resource_name} <span className="text-subtle">({sr.resource_type})</span></span>
-                                            <span className="font-semibold text-fg">
-                                              {sr.monthly_cost == null ? 'NA' : `${sym}${sr.monthly_cost.toFixed(2)}/mo`}
-                                            </span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex items-center justify-between border-t border-border bg-sunken px-4 py-2.5">
-                    <span className="text-xs text-muted">
-                      Showing <strong className="font-semibold text-fg">{filteredStopped.length}</strong> of{' '}
-                      <strong className="font-semibold text-fg">{stoppedInstances.length}</strong> stopped instances
-                    </span>
-                    {treeSelection.provider && (
-                      <button
-                        onClick={() => setTreeSelection(EMPTY_TREE_SELECTION)}
-                        className="text-xs font-semibold text-accent-text hover:opacity-80"
-                      >
-                        Clear drill-down
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+            {/* key forces a full remount on account switch — without it, the
+                account can change (via the header's account picker, no route
+                change) while groupBy/filters/pagination state carries over
+                from whatever account was open before, which is wrong for a
+                per-account explorer (e.g. an AWS account's forced "no per-
+                resource billing" fallback state leaking into the next OCI
+                account that DOES have resource-level data). */}
+            <CostExplorerPanel
+              key={currentAccountView}
+              accountId={currentAccountView}
+              potentialSavings={analytics.potential_savings}
+              savingsCurrency={currencyCode}
+            />
           </CloudSection>
 
           {/* Cost Optimization Recommendations */}

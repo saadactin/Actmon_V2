@@ -295,9 +295,17 @@ async def get_topology(account_id: uuid.UUID | str, db: AsyncSession) -> Dict[st
         # Security groups / NSGs / OCI Security Lists (the older, subnet-level
         # mechanism NSGs were added alongside, not a replacement for — a subnet
         # can be governed by either or both).
+        #
+        # "nsg_id" (singular) was checked here but nothing ever wrote that key —
+        # OCI's own scanners store it as "nsg_ids" (plural, a VNIC/DB System can
+        # belong to more than one NSG) — so no OCI compute or DB System resource
+        # ever drew a security edge to its NSG. Checking both the compartment's
+        # actual field name and the old key (harmless if nothing sets it) fixes
+        # that without assuming which one a future scanner will use.
         for ident in (_as_list(config.get("security_group_ids"))
                       + _as_list(config.get("security_groups"))
                       + _as_list(config.get("nsg_id"))
+                      + _as_list(config.get("nsg_ids"))
                       + _as_list(config.get("network_security_group_id"))
                       + _as_list(config.get("security_list_ids"))):
             link(rid, ident, "security", "guarded by",

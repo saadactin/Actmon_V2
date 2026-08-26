@@ -204,7 +204,13 @@ class AzureProvider(BaseCloudProvider):
 
             cm = CostManagementClient(self.auth.get_credential())
             end_dt = datetime.utcnow()
-            start_dt = end_dt - timedelta(days=days)
+            # Cost Management hard-rejects a query definition spanning more
+            # than 1 year ('Invalid query definition: The time period for
+            # pulling the data cannot exceed 1 year(s)') — confirmed live: a
+            # 365-day request tripped it, since end_dt carries the current
+            # time-of-day and 365*24h from "now" can land a hair over Azure's
+            # exact boundary. 364 days leaves a full day of margin.
+            start_dt = end_dt - timedelta(days=min(days, 364))
             scope = f"/subscriptions/{self.auth.subscription_id}"
             rows = self._cm_query(
                 cm, scope, None, ["ResourceId", "ServiceName", "ResourceLocation"],
@@ -245,7 +251,8 @@ class AzureProvider(BaseCloudProvider):
 
             cm = CostManagementClient(self.auth.get_credential())
             end_dt = datetime.utcnow()
-            start_dt = end_dt - timedelta(days=days)
+            # See get_cost_by_resource — Cost Management rejects >1 year spans.
+            start_dt = end_dt - timedelta(days=min(days, 364))
             scope = f"/subscriptions/{self.auth.subscription_id}"
             rows = self._cm_query(
                 cm, scope, "Daily", ["ServiceName", "ResourceLocation"], start_dt, end_dt

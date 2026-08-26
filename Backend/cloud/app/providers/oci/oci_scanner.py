@@ -40,6 +40,11 @@ class OCIScanner:
         self.config = auth.get_config()
         # compartment OCID -> readable name, populated during compartment discovery
         self._compartment_names: Dict[str, str] = {}
+        # region -> [availability domain names], lazily populated. Boot volumes
+        # and file systems are listed per-AD (unlike regular block volumes),
+        # and ADs are tenancy-wide, so this is fetched once per region rather
+        # than once per (region, compartment) scanner call.
+        self._ads_cache: Dict[str, List[str]] = {}
         # Scopes (region/compartment/service) whose enumeration failed this run.
         # Non-empty means the sweep is INCOMPLETE and its result must never be
         # treated as the full inventory — pruning against a partial sweep would
@@ -137,6 +142,26 @@ class OCIScanner:
         ids, names = await loop.run_in_executor(scan_pool(), _fetch)
         self._compartment_names = names
         return ids
+
+    def _ads_for_region(self, region: str) -> List[str]:
+        """Availability domain names for a region (tenancy-wide, so cached per
+        region rather than refetched for every compartment). Called from
+        inside a scanner's own executor thread, not the event loop."""
+        cached = self._ads_cache.get(region)
+        if cached is not None:
+            return cached
+        try:
+            identity = self._client_for_region(oci.identity.IdentityClient, region)
+            ads = [
+                ad.name for ad in oci.pagination.list_call_get_all_results(
+                    identity.list_availability_domains, self.auth.tenancy_ocid
+                ).data
+            ]
+        except Exception as exc:
+            logger.warning("OCI AD discovery failed in %s: %s", region, exc)
+            ads = []
+        self._ads_cache[region] = ads
+        return ads
 
     # ── Compute Instances ─────────────────────────────────────────────────────
 
@@ -382,6 +407,94 @@ class OCIScanner:
 
         return await loop.run_in_executor(scan_pool(), _fetch)
 
+    # ── Boot Volumes ─────────────────────────────────────────────────────────
+    # Previously only visible as config on their attached ComputeInstance
+    # (boot_volume_gb), so a boot volume billed after its instance was deleted
+    # — or one whose instance a scan pass couldn't reach — had no inventory
+    # row of its own and showed as "not in inventory" on the cost report.
+
+    async def _scan_boot_volumes(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            block = self._client_for_region(oci.core.BlockstorageClient, region)
+            compute = self._client_for_region(oci.core.ComputeClient, region)
+            ads = self._ads_for_region(region)
+            if not ads:
+                self.scan_failures.append(f"BootVolume [{region}]: no availability domains resolved")
+                return []
+
+            volumes = []
+            for ad in ads:
+                try:
+                    volumes.extend(oci.pagination.list_call_get_all_results(
+                        block.list_boot_volumes, availability_domain=ad, compartment_id=compartment_id,
+                    ).data)
+                except Exception as exc:
+                    self.scan_failures.append(f"BootVolume [{region}/{ad}]: {str(exc)[:160]}")
+
+            # Same attach-mapping approach as _scan_block_volumes, via boot
+            # volume attachments (a separate API from regular volume attachments).
+            vol_instance: Dict[str, str] = {}
+            for ad in ads:
+                try:
+                    for a in oci.pagination.list_call_get_all_results(
+                        compute.list_boot_volume_attachments, ad, compartment_id
+                    ).data:
+                        if a.lifecycle_state == "DETACHED":
+                            continue
+                        vol_instance[a.boot_volume_id] = a.instance_id
+                except Exception:
+                    pass
+
+            instance_info: Dict[str, Dict[str, str]] = {}
+            if vol_instance:
+                try:
+                    for inst in oci.pagination.list_call_get_all_results(
+                        compute.list_instances, compartment_id
+                    ).data:
+                        instance_info[inst.id] = {"name": inst.display_name, "status": inst.lifecycle_state}
+                except Exception:
+                    pass
+
+            results = []
+            for vol in volumes:
+                if vol.lifecycle_state in ("TERMINATED", "TERMINATING"):
+                    continue
+                inst_id = vol_instance.get(vol.id)
+                inst = instance_info.get(inst_id) if inst_id else None
+                results.append(
+                    {
+                        "provider_resource_id": vol.id,
+                        "resource_type": "BootVolume",
+                        "resource_name": vol.display_name,
+                        "region_or_zone": region,
+                        "status": vol.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "availability_domain": vol.availability_domain,
+                            "size_gb": vol.size_in_gbs,
+                            "vpus_per_gb": vol.vpus_per_gb,
+                            "image_id": vol.image_id,
+                            "attachment_status": "Attached" if inst_id else "Unattached",
+                            "attached_to_id": inst_id,
+                            "attached_to_name": inst["name"] if inst else None,
+                            "attached_to_status": inst["status"] if inst else None,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(vol.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": vol.freeform_tags or {},
+                        "raw_data": {"id": vol.id, "display_name": vol.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
     # ── Object Storage Buckets ────────────────────────────────────────────────
 
     async def _scan_object_storage(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
@@ -437,6 +550,262 @@ class OCIScanner:
 
         return await loop.run_in_executor(scan_pool(), _fetch)
 
+    # ── File Storage File Systems ────────────────────────────────────────────
+
+    async def _scan_file_systems(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            fs_client = self._client_for_region(oci.file_storage.FileStorageClient, region)
+            ads = self._ads_for_region(region)
+            if not ads:
+                self.scan_failures.append(f"FileSystem [{region}]: no availability domains resolved")
+                return []
+
+            filesystems = []
+            for ad in ads:
+                try:
+                    filesystems.extend(oci.pagination.list_call_get_all_results(
+                        fs_client.list_file_systems, compartment_id=compartment_id, availability_domain=ad,
+                    ).data)
+                except Exception as exc:
+                    self.scan_failures.append(f"FileSystem [{region}/{ad}]: {str(exc)[:160]}")
+
+            results = []
+            for fs in filesystems:
+                if fs.lifecycle_state in ("DELETED", "DELETING"):
+                    continue
+                results.append(
+                    {
+                        "provider_resource_id": fs.id,
+                        "resource_type": "FileSystem",
+                        "resource_name": fs.display_name,
+                        "region_or_zone": region,
+                        "status": fs.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "availability_domain": fs.availability_domain,
+                            # Real metered size (bytes, includes snapshots) — the
+                            # only size OCI reports for a file system; there is
+                            # no separately-provisioned capacity to show instead.
+                            "metered_bytes": fs.metered_bytes,
+                            "kms_key_id": fs.kms_key_id,
+                            "is_clone_parent": fs.is_clone_parent,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(fs.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": fs.freeform_tags or {},
+                        "raw_data": {"id": fs.id, "display_name": fs.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Analytics Cloud Instances ─────────────────────────────────────────────
+
+    async def _scan_analytics_instances(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            an_client = self._client_for_region(oci.analytics.AnalyticsClient, region)
+            try:
+                instances = oci.pagination.list_call_get_all_results(
+                    an_client.list_analytics_instances, compartment_id=compartment_id,
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"AnalyticsInstance [{region}]: {str(exc)[:160]}")
+                return []
+
+            results = []
+            for inst in instances:
+                if inst.lifecycle_state in ("DELETED",):
+                    continue
+                cap = inst.capacity
+                results.append(
+                    {
+                        "provider_resource_id": inst.id,
+                        "resource_type": "AnalyticsInstance",
+                        # This model's own field is literally "name", not
+                        # "display_name" — verified against the installed SDK,
+                        # not assumed from the pattern every other model uses.
+                        "resource_name": inst.name,
+                        "region_or_zone": region,
+                        "status": inst.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "feature_set": inst.feature_set,
+                            "license_type": inst.license_type,
+                            "capacity_type": cap.capacity_type if cap else None,
+                            "capacity_value": cap.capacity_value if cap else None,
+                            "service_url": inst.service_url,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(inst.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": inst.freeform_tags or {},
+                        "raw_data": {"id": inst.id, "name": inst.name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Web Application Firewalls ────────────────────────────────────────────
+
+    async def _scan_waf(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            waf_client = self._client_for_region(oci.waf.WafClient, region)
+            try:
+                # list_web_app_firewalls returns a WebAppFirewallCollection —
+                # the summaries live at .items, not the response data itself.
+                firewalls = oci.pagination.list_call_get_all_results(
+                    waf_client.list_web_app_firewalls, compartment_id=compartment_id,
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"WAF [{region}]: {str(exc)[:160]}")
+                return []
+
+            results = []
+            for fw in firewalls:
+                if fw.lifecycle_state in ("DELETED",):
+                    continue
+                results.append(
+                    {
+                        "provider_resource_id": fw.id,
+                        "resource_type": "WebAppFirewall",
+                        "resource_name": fw.display_name,
+                        "region_or_zone": region,
+                        "status": fw.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "backend_type": fw.backend_type,
+                            "web_app_firewall_policy_id": fw.web_app_firewall_policy_id,
+                            # Only present on the LOAD_BALANCER backend subtype,
+                            # not the WebAppFirewallSummary base — absent (None)
+                            # for any other backend_type.
+                            "load_balancer_id": getattr(fw, "load_balancer_id", None),
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(fw.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": fw.freeform_tags or {},
+                        "raw_data": {"id": fw.id, "display_name": fw.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── FastConnect (Virtual Circuits + DRG Attachments) ─────────────────────
+
+    async def _scan_virtual_circuits(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+            try:
+                circuits = oci.pagination.list_call_get_all_results(
+                    net.list_virtual_circuits, compartment_id=compartment_id,
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"VirtualCircuit [{region}]: {str(exc)[:160]}")
+                return []
+
+            results = []
+            for vc in circuits:
+                if vc.lifecycle_state in ("TERMINATED", "TERMINATING"):
+                    continue
+                results.append(
+                    {
+                        "provider_resource_id": vc.id,
+                        "resource_type": "VirtualCircuit",
+                        "resource_name": vc.display_name,
+                        "region_or_zone": region,
+                        "status": vc.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "bandwidth_shape_name": vc.bandwidth_shape_name,
+                            "type": vc.type,
+                            "provider_name": vc.provider_name,
+                            "provider_state": vc.provider_state,
+                            "bgp_session_state": vc.bgp_session_state,
+                            "gateway_id": vc.gateway_id,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(vc.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": vc.freeform_tags or {},
+                        "raw_data": {"id": vc.id, "display_name": vc.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    async def _scan_drg_attachments(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            net = self._client_for_region(oci.core.VirtualNetworkClient, region)
+            try:
+                attachments = oci.pagination.list_call_get_all_results(
+                    net.list_drg_attachments, compartment_id=compartment_id,
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"DrgAttachment [{region}]: {str(exc)[:160]}")
+                return []
+
+            results = []
+            for da in attachments:
+                if da.lifecycle_state in ("DETACHED", "DETACHING"):
+                    continue
+                details = da.network_details
+                results.append(
+                    {
+                        "provider_resource_id": da.id,
+                        "resource_type": "DrgAttachment",
+                        "resource_name": da.display_name,
+                        "region_or_zone": region,
+                        "status": da.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "drg_id": da.drg_id,
+                            # network_details is the current field; vcn_id /
+                            # route_table_id on the model itself are deprecated
+                            # in favor of it.
+                            "attached_network_type": details.type if details else None,
+                            "attached_network_id": details.id if details else None,
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(da.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": da.freeform_tags or {},
+                        "raw_data": {"id": da.id, "display_name": da.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
     # ── Autonomous Databases ──────────────────────────────────────────────────
 
     async def _scan_databases(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
@@ -485,6 +854,189 @@ class OCIScanner:
                     )
             except Exception as exc:
                 logger.warning("OCI ADB scan failed [%s/%s]: %s", region, compartment_id[:20], exc)
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── DB Systems (classic VM / Bare Metal Oracle Database Cloud Service) ────
+    # A completely separate OCI resource + billing line from Autonomous
+    # Database — list_autonomous_databases never returns these, so an account
+    # using classic DB Systems had them fully invisible: absent from inventory,
+    # unmatched against real "DB System" billing rows, unscanned for security,
+    # and missing from the topology graph, despite often being the single
+    # largest cost line in the account.
+
+    async def _scan_db_systems(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            db = self._client_for_region(oci.database.DatabaseClient, region)
+            try:
+                systems = oci.pagination.list_call_get_all_results(
+                    db.list_db_systems, compartment_id
+                ).data
+            except Exception as exc:
+                # Record before bailing: a silent [] here would make the sweep
+                # look complete and let the caller prune live rows — the exact
+                # mistake that once mis-recorded 21 real DynamoDB tables as
+                # "none", except a DB System is usually far more expensive.
+                self.scan_failures.append(f"DbSystem [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for sys_ in systems:
+                if sys_.lifecycle_state in ("TERMINATED",):
+                    continue
+                results.append(
+                    {
+                        "provider_resource_id": sys_.id,
+                        "resource_type": "DbSystem",
+                        "resource_name": sys_.display_name,
+                        "region_or_zone": region,
+                        "status": sys_.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "shape": sys_.shape,
+                            "database_edition": sys_.database_edition,
+                            "cpu_core_count": sys_.cpu_core_count,
+                            "node_count": sys_.node_count,
+                            "data_storage_size_gb": getattr(sys_, "data_storage_size_in_gbs", None),
+                            "storage_performance_mode": getattr(sys_, "storage_volume_performance_mode", None),
+                            "disk_redundancy": getattr(sys_, "disk_redundancy", None),
+                            "license_model": sys_.license_model,
+                            "availability_domain": sys_.availability_domain,
+                            "subnet_id": sys_.subnet_id,
+                            "nsg_ids": list(getattr(sys_, "nsg_ids", None) or []),
+                            "hostname": sys_.hostname,
+                            "listener_port": getattr(sys_, "listener_port", None),
+                            "cluster_name": getattr(sys_, "cluster_name", None),
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(sys_.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": sys_.freeform_tags or {},
+                        "raw_data": {"id": sys_.id, "display_name": sys_.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── MySQL Database Service ────────────────────────────────────────────────
+    # A genuinely separate OCI product from oci.database's Oracle DB Systems —
+    # different client, different console page, different billing line — so it
+    # was just as invisible as the classic DB Systems fixed above.
+    async def _scan_mysql_db_systems(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            mysql = self._client_for_region(oci.mysql.DbSystemClient, region)
+            try:
+                systems = oci.pagination.list_call_get_all_results(
+                    mysql.list_db_systems, compartment_id
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"MySQLDbSystem [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for summary in systems:
+                if summary.lifecycle_state in ("DELETED",):
+                    continue
+                # list_db_systems returns DbSystemSummary, which has no
+                # subnet_id/nsg_ids/storage size — those only exist on the
+                # fuller DbSystem model from get_db_system. Without this second
+                # call, every MySQL system would be discovered but unlinkable
+                # to its network (no topology/exposure edges) and silently
+                # missing its storage size.
+                try:
+                    s = mysql.get_db_system(summary.id).data
+                except Exception:
+                    s = summary  # degrade to the thinner summary rather than drop the resource
+                endpoints = getattr(s, "endpoints", None) or []
+                ip = next((e.ip_address for e in endpoints if getattr(e, "ip_address", None)), None)
+                results.append(
+                    {
+                        "provider_resource_id": s.id,
+                        "resource_type": "MySQLDbSystem",
+                        "resource_name": s.display_name,
+                        "region_or_zone": region,
+                        "status": s.lifecycle_state,
+                        "ip_address": ip,
+                        "config": {
+                            "shape": s.shape_name,
+                            "mysql_version": getattr(s, "mysql_version", None),
+                            "data_storage_size_gb": getattr(s, "data_storage_size_in_gbs", None),
+                            "is_highly_available": getattr(s, "is_highly_available", None),
+                            "availability_domain": s.availability_domain,
+                            "subnet_id": getattr(s, "subnet_id", None),
+                            "nsg_ids": list(getattr(s, "nsg_ids", None) or []),
+                            "crash_recovery": getattr(s, "crash_recovery", None),
+                            "backup_enabled": (
+                                s.backup_policy.is_enabled if getattr(s, "backup_policy", None) else None
+                            ),
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(s.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": s.freeform_tags or {},
+                        "raw_data": {"id": s.id, "display_name": s.display_name},
+                    }
+                )
+            return results
+
+        return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── NoSQL Database Service ─────────────────────────────────────────────────
+    async def _scan_nosql_tables(self, compartment_id: str, region: str) -> List[Dict[str, Any]]:
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            nosql = self._client_for_region(oci.nosql.NosqlClient, region)
+            try:
+                # list_call_get_all_results already unwraps TableCollection.items
+                # internally and returns a plain list — NOT the TableCollection
+                # object list_tables() itself would return.
+                tables = oci.pagination.list_call_get_all_results(
+                    nosql.list_tables, compartment_id
+                ).data
+            except Exception as exc:
+                self.scan_failures.append(f"NoSQLTable [{region}]: {str(exc)[:160]}")
+                return []
+            results = []
+            for t in tables:
+                if t.lifecycle_state in ("DELETED",):
+                    continue
+                limits = getattr(t, "table_limits", None)
+                results.append(
+                    {
+                        "provider_resource_id": t.id,
+                        "resource_type": "NoSQLTable",
+                        "resource_name": t.name,
+                        "region_or_zone": region,
+                        "status": t.lifecycle_state,
+                        "ip_address": None,
+                        "config": {
+                            "max_read_units": getattr(limits, "max_read_units", None),
+                            "max_write_units": getattr(limits, "max_write_units", None),
+                            "max_storage_gb": getattr(limits, "max_storage_in_g_bs", None),
+                            "capacity_mode": getattr(limits, "capacity_mode", None),
+                            "is_auto_reclaimable": getattr(t, "is_auto_reclaimable", None),
+                        },
+                        "metadata": {
+                            "compartment_id": compartment_id,
+                            "time_created": str(t.time_created),
+                            "region": region,
+                        },
+                        "cost_monthly": None,
+                        "tags": t.freeform_tags or {},
+                        "raw_data": {"id": t.id, "name": t.name},
+                    }
+                )
             return results
 
         return await loop.run_in_executor(scan_pool(), _fetch)
@@ -1319,8 +1871,14 @@ class OCIScanner:
         PER_REGION_SCANNERS = [
             (self._scan_compute,        "Compute"),
             (self._scan_block_volumes,  "BlockVolume"),
+            (self._scan_boot_volumes,   "BootVolume"),
             (self._scan_object_storage, "ObjectStorage"),
+            (self._scan_file_systems,   "FileSystem"),
             (self._scan_databases,      "Database"),
+            (self._scan_db_systems,     "DbSystem"),
+            (self._scan_mysql_db_systems, "MySQLDbSystem"),
+            (self._scan_nosql_tables,   "NoSQLTable"),
+            (self._scan_analytics_instances, "AnalyticsInstance"),
             (self._scan_vcn,            "VCN"),
             (self._scan_subnets,        "Subnet"),
             (self._scan_security_lists, "SecurityList"),
@@ -1328,6 +1886,9 @@ class OCIScanner:
             (self._scan_dhcp_options,   "DhcpOptions"),
             (self._scan_nsg,            "NSG"),
             (self._scan_load_balancers, "LoadBalancer"),
+            (self._scan_waf,            "WebAppFirewall"),
+            (self._scan_virtual_circuits, "VirtualCircuit"),
+            (self._scan_drg_attachments, "DrgAttachment"),
             (self._scan_functions,      "Functions"),
             (self._scan_oke,            "OKE"),
             (self._scan_api_gateway,    "APIGateway"),
