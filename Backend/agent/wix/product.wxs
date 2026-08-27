@@ -135,40 +135,47 @@
            supplied via msiexec ACCESS_TOKEN=/ACTMON_URL= (the .bat/.ps1/
            one-liner deploy paths) or baked in at build time, these fields
            just start pre-filled and the user can skip straight past them. -->
-      <Dialog Id="PermissionsDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+      <Dialog Id="PermissionsDlg" Width="370" Height="294" Title="!(loc.InstallDirDlg_Title)">
         <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes"
                  Text="ActMon Agent Configuration" />
         <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes"
                  Text="Confirm where this agent reports to, then choose its permissions." />
         <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
 
-        <Control Id="ServerUrlLabel" Type="Text" X="25" Y="52" Width="320" Height="10" Transparent="yes" NoPrefix="yes"
+        <Control Id="FindValuesNote" Type="Text" X="25" Y="52" Width="320" Height="20" Transparent="yes" NoPrefix="yes"
+                 Text="Find both of these in ActMon under Agents -&gt; Add Agent - or cancel and use the pre-configured .bat installer instead, which needs neither typed in." />
+
+        <Control Id="ServerUrlLabel" Type="Text" X="25" Y="75" Width="320" Height="10" Transparent="yes" NoPrefix="yes"
                  Text="ActMon Server URL:" />
-        <Control Id="ServerUrlEdit" Type="Edit" X="25" Y="64" Width="320" Height="18" Property="ACTMON_URL" />
+        <Control Id="ServerUrlEdit" Type="Edit" X="25" Y="87" Width="320" Height="18" Property="ACTMON_URL" />
 
-        <Control Id="TokenLabel" Type="Text" X="25" Y="86" Width="320" Height="10" Transparent="yes" NoPrefix="yes"
+        <Control Id="TokenLabel" Type="Text" X="25" Y="109" Width="320" Height="10" Transparent="yes" NoPrefix="yes"
                  Text="Enrollment Token:" />
-        <Control Id="TokenEdit" Type="Edit" X="25" Y="98" Width="320" Height="18" Property="ACCESS_TOKEN" />
+        <!-- Password="yes" masks it on screen — the token is a bearer
+             credential (anyone who has it can enroll a host against this
+             server), so it's treated the same as any other secret field
+             rather than shown in plaintext while being typed. -->
+        <Control Id="TokenEdit" Type="Edit" X="25" Y="121" Width="320" Height="18" Property="ACCESS_TOKEN" Password="yes" />
 
-        <Control Id="MidLine" Type="Line" X="0" Y="122" Width="370" Height="0" />
+        <Control Id="MidLine" Type="Line" X="0" Y="146" Width="370" Height="0" />
 
-        <Control Id="StartServiceCheckBox" Type="CheckBox" X="25" Y="130" Width="320" Height="18"
+        <Control Id="StartServiceCheckBox" Type="CheckBox" X="25" Y="154" Width="320" Height="18"
                  Property="STARTSERVICE" CheckBoxValue="1"
                  Text="Start the ActMon Agent service automatically after installation" />
-        <Control Id="StartServiceNote" Type="Text" X="40" Y="147" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
+        <Control Id="StartServiceNote" Type="Text" X="40" Y="171" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
                  Text="Runs as LocalSystem, starts at boot, and restarts itself if it ever stops." />
 
-        <Control Id="HostMonitoringCheckBox" Type="CheckBox" X="25" Y="174" Width="320" Height="18"
+        <Control Id="HostMonitoringCheckBox" Type="CheckBox" X="25" Y="198" Width="320" Height="18"
                  Property="HOSTMONITORING" CheckBoxValue="1"
                  Text="Enable host-level monitoring (CPU, memory, disk metrics)" />
-        <Control Id="HostMonitoringNote" Type="Text" X="40" Y="191" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
+        <Control Id="HostMonitoringNote" Type="Text" X="40" Y="215" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
                  Text="Uncheck to report database metrics only, without this host's own resource usage." />
 
-        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+        <Control Id="BottomLine" Type="Line" X="0" Y="258" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="267" Width="56" Height="17" Text="!(loc.WixUIBack)">
           <Publish Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
         </Control>
-        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+        <Control Id="Next" Type="PushButton" X="236" Y="267" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
           <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
           <!-- Disabled until a Server URL is entered — the one field this
                agent genuinely cannot run without. Token is left optional
@@ -177,7 +184,7 @@
           <Condition Action="disable">ACTMON_URL = ""</Condition>
           <Condition Action="enable">ACTMON_URL &lt;&gt; ""</Condition>
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+        <Control Id="Cancel" Type="PushButton" X="304" Y="267" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
           <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
         </Control>
       </Dialog>
@@ -192,10 +199,18 @@
            and takes the STARTSERVICE/HOSTMONITORING property defaults (both
            "1") exactly as a silent /qn install already does. Order="1" is
            checked first; Order="2" is WixUI_InstallDir's own fallback jump. -->
+      <!-- MSI fires EVERY Publish row whose condition is true for a given
+           Control+Event, in ascending Order — not just the first match — and
+           for NewDialog specifically, whichever fires LAST wins the actual
+           navigation. Order="2"'s condition must therefore explicitly exclude
+           the "already configured" case, or it always re-fires after Order="1"
+           and silently overwrites its jump — confirmed live: this is exactly
+           why PermissionsDlg kept showing even with a fully baked-in
+           token/URL, pre-filled fields and all. -->
       <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="1">LicenseAccepted = "1" AND ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; ""</Publish>
-      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="PermissionsDlg" Order="2">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="PermissionsDlg" Order="2">LicenseAccepted = "1" AND NOT (ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; "")</Publish>
       <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Order="1">ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; ""</Publish>
-      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="PermissionsDlg" Order="2">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="PermissionsDlg" Order="2">NOT (ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; "")</Publish>
     </UI>
   </Product>
 </Wix>

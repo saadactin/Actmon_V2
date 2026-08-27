@@ -31,7 +31,7 @@ import ObjectTable from '@/pages/_shared/ObjectTable';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptMysqlTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 import { DATABASE_COLUMNS, TABLE_COLUMNS, TABLE_SORT_PRESETS } from '@/config/dbCatalog';
-import { PageLoading } from '@/components/ui/Loading';
+import { PageLoading, Spinner } from '@/components/ui/Loading';
 import { computeHealthScore } from '@/utils/mysqlHealth';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
@@ -516,7 +516,11 @@ export default function MySQLDashboard() {
   }, [data]);
 
   if (isLoading) return (
-    <PageLoading title="Connecting to MySQL…" subtitle="Fetching live metrics" />
+    <PageLoading title="Connecting to MySQL…" steps={[
+      'Reading server status and variables…',
+      'Checking replication and binlog state…',
+      'Reading process list…',
+    ]} />
   );
 
   if (error || data?.status === 'error') return (
@@ -824,7 +828,7 @@ export default function MySQLDashboard() {
         {/* ══ PERFORMANCE — ADVANCED ════════════════════════════════ */}
         {activeTab === 'performance' && (
           <div className="space-y-5">
-            {perfLoading && !perfData ? <TabLoader /> : (() => {
+            {perfLoading && !perfData ? <TabLoader label="Reading InnoDB and performance_schema metrics…" /> : (() => {
               const p   = perfData || {};
               const bp  = p.buffer_pool      || {};
               const ro  = p.row_ops          || {};
@@ -1698,7 +1702,7 @@ export default function MySQLDashboard() {
         {/* ══ LOCKS ═════════════════════════════════════════════════ */}
         {activeTab === 'locks' && (
           <div className="space-y-5">
-            {innodbLoading ? <TabLoader /> : (() => {
+            {innodbLoading ? <TabLoader label="Reading InnoDB transactions and locks…" /> : (() => {
               const m   = innodbData?.metrics || {};
               const txns = innodbData?.active_transactions || [];
               return (
@@ -2095,7 +2099,7 @@ export default function MySQLDashboard() {
 
         {/* ══ USERS ═════════════════════════════════════════════════ */}
         {activeTab === 'users' && (
-          userLoading ? <TabLoader /> : (() => {
+          userLoading ? <TabLoader label="Reading process list and grants…" /> : (() => {
             const users  = userData?.users  || [];
             const grants = userData?.grants || [];
             return (
@@ -2199,7 +2203,7 @@ export default function MySQLDashboard() {
 
         {/* ══ STORAGE ═══════════════════════════════════════════════ */}
         {activeTab === 'storage' && (
-          tableLoading ? <TabLoader /> : (() => {
+          tableLoading ? <TabLoader label="Reading table sizes from information_schema…" /> : (() => {
             const tables   = tableData?.tables || [];
             const totalMB  = tables.reduce((a, t) => a + t.total_mb, 0).toFixed(2);
             const totalIdx = tables.reduce((a, t) => a + t.index_mb, 0).toFixed(2);
@@ -2601,10 +2605,11 @@ function SparkCard({ label, data, color }) {
     </div>
   );
 }
-function TabLoader() {
+function TabLoader({ label }) {
   return (
-    <div className="flex items-center justify-center py-20">
-      <div className="w-8 h-8 border-4 border-cyan-200 border-t-cyan-600 rounded-full animate-spin" />
+    <div className="flex flex-col items-center justify-center gap-3 py-20">
+      <Spinner size="lg" />
+      {label && <p className="text-[13px] text-muted">{label}</p>}
     </div>
   );
 }

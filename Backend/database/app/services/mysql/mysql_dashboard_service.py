@@ -44,6 +44,21 @@ def _engine(conn: ConnectionMaster):
     ))
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    """Write back a freshly-built live result as this connection's snapshot,
+    same as get_dashboard() already did — without it, a connection with no
+    background agent collector polling it (a direct, non-agent-routed
+    connection) never gets a snapshot written at all, so every single page
+    load falls all the way through to a live query instead of the instant
+    cached read the dashboard is designed around."""
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Connection CRUD
 # ═════════════════════════════════════════════════════════════════════════════
@@ -451,7 +466,7 @@ def get_backup_info(conn_id: int, db: Session, live: bool = False) -> dict:
             except Exception:
                 pass
 
-            return {
+            _res = {
                 "status": "success",
                 "backup_info": {
                     "binlog_enabled":               binlog_enabled,
@@ -476,6 +491,7 @@ def get_backup_info(conn_id: int, db: Session, live: bool = False) -> dict:
                     ),
                 },
             }
+            return _self_cache(conn_id, "mysql_backup_info", _res, db)
     except Exception as e:
         raise HTTPException(500, f"Failed to fetch backup info: {e}")
 
@@ -523,7 +539,7 @@ def get_table_stats(conn_id: int, db: Session, live: bool = False) -> dict:
             "create_time": str(r[9]) if r[9] else "", "update_time": str(r[10]) if r[10] else "",
             "comment": r[11] or "",
         } for r in rows]
-        return {"status": "success", "tables": tables}
+        return _self_cache(conn_id, "mysql_table_stats", {"status": "success", "tables": tables}, db)
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -569,12 +585,12 @@ def get_user_stats(conn_id: int, db: Session, live: bool = False) -> dict:
             except Exception:
                 pass
 
-        return {
+        return _self_cache(conn_id, "mysql_user_stats", {
             "status": "success",
             "users": list(user_map.values()),
             "grants": grants[:100],
             "total_processes": len(proc_rows),
-        }
+        }, db)
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -641,7 +657,8 @@ def get_innodb_metrics(conn_id: int, db: Session, live: bool = False) -> dict:
                 "buffer_pool_write_requests": _to_int(status.get("Innodb_buffer_pool_write_requests")),
                 "active_transactions": len(locks),
             }
-        return {"status": "success", "metrics": metrics, "active_transactions": locks}
+        return _self_cache(conn_id, "mysql_innodb",
+                           {"status": "success", "metrics": metrics, "active_transactions": locks}, db)
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -987,7 +1004,7 @@ def get_performance_detail(conn_id: int, db: Session, live: bool = False) -> dic
                 except Exception:
                     pass
 
-            return {
+            _res = {
                 "status": "success", "uptime": uptime, "ps_enabled": ps_enabled,
                 "buffer_pool": buffer_pool, "row_ops": row_ops, "innodb_io": innodb_io,
                 "locking": locking, "sort_ops": sort_ops, "tmp_tables": tmp_ops,
@@ -998,5 +1015,6 @@ def get_performance_detail(conn_id: int, db: Session, live: bool = False) -> dic
                 "top_statements": top_statements, "wait_events": wait_events,
                 "memory_consumers": memory_consumers, "table_io_stats": table_io_stats,
             }
+            return _self_cache(conn_id, "mysql_performance_detail", _res, db)
     except Exception as e:
         raise HTTPException(500, str(e))

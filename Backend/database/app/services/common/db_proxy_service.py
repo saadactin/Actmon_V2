@@ -319,7 +319,7 @@ class _AgentConnection:
             self._fallback = self._direct_factory().connect()
         stmt = clause if not isinstance(clause, str) else text(clause)
         return self._fallback.execute(stmt, params or {})
-    def execute(self, clause, params=None):
+    def execute(self, clause, params=None, timeout=None):
         # Skip the agent entirely if it recently proved incapable (fast path → direct).
         # Only meaningful for engines the server can actually query itself.
         cap = _AGENT_CAP.get(self._token)
@@ -327,7 +327,11 @@ class _AgentConnection:
             return self._direct_execute(clause, params)
         sql = _render_sql(clause, params)
         try:
-            rows, cols = _agent_query_meta(self._token, self._conn, sql)
+            # `timeout` (seconds) lets a caller running long DDL — e.g. the Oracle
+            # Storage Health maintenance runner's SHRINK/MOVE/REBUILD — wait past the
+            # normal 25s interactive-query cap instead of getting a false "agent
+            # didn't answer" when the agent is still genuinely running the statement.
+            rows, cols = _agent_query_meta(self._token, self._conn, sql, timeout=timeout or _AGENT_QUERY_TIMEOUT)
         except RuntimeError as e:
             msg = str(e).lower()
             # ONLY a missing engine driver on the agent warrants a direct fallback —

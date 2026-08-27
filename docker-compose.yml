@@ -1,0 +1,110 @@
+# Repo-root compose file — it spans Backend/database, Backend/cloud, and
+# frontend, so it can't live inside any single one of them.
+#
+# Before first run: copy .env.docker.example to .env (repo root, next to this
+# file) and set POSTGRES_PASSWORD at minimum. Backend/database/.env (the
+# app's own real secrets — JWT_SECRET, ACTMON_ENCRYPTION_KEY, ORG_NAME,
+# ADMIN_EMAIL, GROQ_API_KEY) is read as-is via env_file: below; only its
+# DB_HOST/PORT/USER/PASS/NAME get overridden here to point at the postgres
+# container instead of localhost.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-actmon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-actmon}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-actmon}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
+  # Main API — see Backend/database/Dockerfile's own comments for why the
+  # build context is the repo root and why --workers is fixed at 1.
+  backend:
+    build:
+      context: .
+      dockerfile: Backend/database/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - Backend/database/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-actmon}
+      DB_PASS: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}
+      DB_NAME: ${POSTGRES_DB:-actmon}
+      REDIS_URL: redis://redis:6379/0
+      ACTMON_LOGS_ENABLED: "true"
+      ACTMON_LOGS_CH_HOST: clickhouse
+      ACTMON_LOGS_CH_PORT: "8123"
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  # Cloud Discovery microservice — reuses the EXISTING Backend/cloud/Dockerfile
+  # as-is (no changes to it), on the port nginx's proxy config already expects
+  # (8001 — the Dockerfile's own default; its sibling docker-compose.yml
+  # overrides to 8002, which nginx-actmon.conf does NOT use, so 8001 is the
+  # one actually consistent with production).
+  cloud:
+    build:
+      context: ./Backend/cloud
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - Backend/cloud/.env
+    environment:
+      # Backend/cloud/.env's own DATABASE_URL hardcodes "localhost" (meant for
+      # running outside Docker) — this override is what actually matters here,
+      # env_file's copy is otherwise dead weight inside the container. DB_HOST
+      # etc. are also set in case anything else reads them individually.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-actmon}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}@postgres:5432/${POSTGRES_DB:-actmon}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-actmon}
+      DB_PASS: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}
+      DB_NAME: ${POSTGRES_DB:-actmon}
+    expose:
+      - "8001"
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - backend
+      - cloud
+    ports:
+      - "9182:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:

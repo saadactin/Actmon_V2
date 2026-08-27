@@ -1126,9 +1126,11 @@ DOCS['agt-navigation'] = {
       <tr><td><code>/agents/:name</code></td><td><code>pages/agents/AgentDetailPage.jsx</code></td><td>One agent's own monitoring view — Host or Database, decided automatically (see <button onclick="go('agt-status')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Agent Status &amp; Health</button>)</td></tr>
       <tr><td><code>/agents/deploy</code></td><td><code>DeployAgentWizard</code></td><td>Full install wizard for a brand-new host</td></tr>
       <tr><td><code>/agents/setup</code></td><td><code>AgentSetupPage</code></td><td>"Add data" catalogue (also mounted at <code>/databases/add-data</code>)</td></tr>
-      <tr><td><code>/agents/setup/:tech</code></td><td><code>SetupWizard</code></td><td>Attach one of 6 database engines to a new or existing agent</td></tr>
-      <tr><td><code>/agents/setup/website</code></td><td><code>AddWebsiteWizard</code></td><td>Synthetic website-monitoring check</td></tr>
-      <tr><td><code>/agents/setup/network-check</code></td><td><code>AddNetworkCheckWizard</code></td><td>Ping / DNS / TCP-port / UDP-port check</td></tr>
+      <tr><td><code>/agents/setup/&lt;tab&gt;</code></td><td><code>AgentSetupPage</code></td><td>Each catalogue tab (Intro, Digital Experience, APM, Databases, Infrastructure, Network, Logs, Integrations) is its own governed route</td></tr>
+      <tr><td><code>/agents/setup/databases/:tech</code></td><td><code>SetupWizard</code></td><td>Attach one of 6 database engines to a new or existing agent</td></tr>
+      <tr><td><code>/agents/setup/digital-experience/website-availability</code></td><td><code>AddWebsiteWizard</code></td><td>Synthetic website-monitoring check</td></tr>
+      <tr><td><code>/agents/setup/digital-experience/{tcp-port,ping,dns,udp-port}</code></td><td><code>AddNetworkCheckWizard</code></td><td>Ping / DNS / TCP-port / UDP-port check — one literal route per type</td></tr>
+      <tr><td><code>/agents/setup/&lt;tab&gt;/&lt;item&gt;</code></td><td><code>ComingSoonSetup</code></td><td>Every catalogue card without a built setup flow yet, individually governed</td></tr>
     </table></div>
     <p>The Agents list opts out of the application's breadcrumb trail — it is one of a small number of pages
     specced pixel-for-pixel against a fixed reference design that has none.</p>
@@ -1451,7 +1453,8 @@ DOCS['agt-registration-deploy'] = {
     grant statement — e.g. PostgreSQL's built-in <code>pg_monitor</code> role, or MySQL's
     PROCESS/SELECT/SHOW VIEW/REPLICATION CLIENT grants), and a read-only Summary before finishing.</p>
     <h2>Website / network-check wizards</h2>
-    <p><code>/agents/setup/website</code> and <code>/agents/setup/network-check</code> create synthetic
+    <p><code>/agents/setup/digital-experience/website-availability</code> and its four
+    <code>/agents/setup/digital-experience/{tcp-port,ping,dns,udp-port}</code> siblings create synthetic
     monitoring checks (a URL to poll, or a ping/DNS/TCP-port/UDP-port target) rather than installing anything on
     a host.</p>
     <h2>The "Add Data" catalogue (<code>/agents/setup</code>)</h2>
@@ -1701,10 +1704,11 @@ DOCS['agt-reference'] = {
       <tr><td><code>/agents</code></td><td><code>pages/agents/AgentsPage.jsx</code></td></tr>
       <tr><td><code>/agents/:name</code></td><td><code>pages/agents/AgentDetailPage.jsx</code> → Host or Database view</td></tr>
       <tr><td><code>/agents/deploy</code></td><td><code>DeployAgentWizard</code></td></tr>
-      <tr><td><code>/agents/setup</code></td><td><code>AgentSetupPage</code></td></tr>
-      <tr><td><code>/agents/setup/:tech</code></td><td><code>SetupWizard</code></td></tr>
-      <tr><td><code>/agents/setup/website</code></td><td><code>AddWebsiteWizard</code></td></tr>
-      <tr><td><code>/agents/setup/network-check</code></td><td><code>AddNetworkCheckWizard</code></td></tr>
+      <tr><td><code>/agents/setup</code>, <code>/agents/setup/&lt;tab&gt;</code></td><td><code>AgentSetupPage</code></td></tr>
+      <tr><td><code>/agents/setup/databases/:tech</code></td><td><code>SetupWizard</code></td></tr>
+      <tr><td><code>/agents/setup/digital-experience/website-availability</code></td><td><code>AddWebsiteWizard</code></td></tr>
+      <tr><td><code>/agents/setup/digital-experience/{tcp-port,ping,dns,udp-port}</code></td><td><code>AddNetworkCheckWizard</code></td></tr>
+      <tr><td><code>/agents/setup/&lt;tab&gt;/&lt;item&gt;</code></td><td><code>ComingSoonSetup</code></td></tr>
     </table></div>
     <h2>Status states</h2>
     <p><span class="pill good">Online</span> <span class="pill crit">DB Error</span>

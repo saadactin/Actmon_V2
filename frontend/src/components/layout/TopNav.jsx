@@ -58,6 +58,13 @@ export default function TopNav({ user, onSignOut }) {
 /**
  * The product mark. See LogoMark for the drawing itself (and its
  * VITE_APP_LOGO override) — this just places it as the home link.
+ *
+ * Width is auto rather than the fixed `--topnav-brand` square: a real asset
+ * (LogoMark's img path) is a wide lockup, not a square glyph, so forcing a
+ * square box would letterbox it down to a sliver instead of filling the bar
+ * height edge-to-edge. Height is sized directly off `--topnav-h` (the bar's
+ * own height token) minus a little breathing room, so it scales with the bar
+ * instead of drifting out of sync with a second, separately-tuned constant.
  */
 function BrandMark() {
   return (
@@ -65,9 +72,9 @@ function BrandMark() {
       to="/dashboard"
       aria-label={`${APP.name} home`}
       className="grid shrink-0 place-items-center rounded-md transition-opacity hover:opacity-85"
-      style={{ width: 'var(--topnav-brand)', height: 'var(--topnav-brand)' }}
+      style={{ height: 'var(--topnav-h)', width: 'auto', padding: '10px 0' }}
     >
-      <LogoMark size={48} />
+      <LogoMark size={80} />
     </NavLink>
   );
 }

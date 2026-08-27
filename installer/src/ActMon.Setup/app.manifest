@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.1.0.0" name="ActMon.Setup"/>
+
+  <!-- Section 2: UAC elevation — the whole wizard needs to create services,
+       firewall rules and install dependencies, so it asks for admin up front
+       rather than failing partway through Install. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 (this single GUID also covers Server 2016+, which
+           reports itself through the same version-compatibility mechanism as
+           its client-equivalent build) — the actual supported-version matrix
+           is enforced at runtime by OsDetector/SystemRequirementsChecker, not
+           here. Legacy Vista/7/8/8.1 GUIDs are deliberately not declared:
+           ActMon does not support those releases. -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

@@ -85,6 +85,7 @@ from app.routes.mysql.mysql_binlog_routes import router as mysql_binlog_router
 from app.routes.mysql.mysql_report_routes import router as mysql_report_router
 
 from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
+from app.routes.oracle.oracle_maintenance_routes import router as oracle_maintenance_router
 from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
 from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
@@ -183,6 +184,10 @@ async def lifespan(app_instance):
     # was only ever checked once, whenever someone last clicked Refresh.
     from app.services.os_server.os_server_refresh_scheduler import start_os_server_refresh_scheduler
     start_os_server_refresh_scheduler()
+    # Oracle Storage Health: executes admin-approved maintenance jobs (SHRINK/
+    # MOVE/REBUILD) — never runs anything that wasn't explicitly approved.
+    from app.services.oracle.oracle_maintenance_job_runner import start_oracle_maintenance_job_runner
+    start_oracle_maintenance_job_runner()
     yield
     # Graceful shutdown
     from app.services.agent.agent_collector_service import stop_agent_collector
@@ -195,6 +200,8 @@ async def lifespan(app_instance):
     stop_notification_dispatcher()
     from app.services.os_server.os_server_refresh_scheduler import stop_os_server_refresh_scheduler
     stop_os_server_refresh_scheduler()
+    from app.services.oracle.oracle_maintenance_job_runner import stop_oracle_maintenance_job_runner
+    stop_oracle_maintenance_job_runner()
 
 app = FastAPI(
     title="ACTMON API",
@@ -247,6 +254,7 @@ app.include_router(db_diagnose_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
+app.include_router(oracle_maintenance_router)
 app.include_router(oracle_report_email_router)
 app.include_router(mysql_report_email_router)
 app.include_router(postgres_report_email_router)

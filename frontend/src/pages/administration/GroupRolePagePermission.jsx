@@ -298,6 +298,9 @@ export default function GroupRolePagePermission() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [clone, setClone] = useState(null); // { targetRoleId, mode }
   const [toast, setToast] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(() => new Set()); // page_ids checked in the current view
+  const [bulkForm, setBulkForm] = useState(null); // { selectedPerms }
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
 
   const flash = (text, tone = 'success') => { setToast({ text, tone }); setTimeout(() => setToast(null), 2500); };
 
@@ -359,13 +362,19 @@ export default function GroupRolePagePermission() {
   // hierarchy without a second round-trip per page.
   const pageById = useMemo(() => Object.fromEntries(pages.map((p) => [p.page_id, p])), [pages]);
   const grantedIds = useMemo(() => new Set(moduleRecords.map((r) => r.page_id)), [moduleRecords]);
-  const withParent = useMemo(() => moduleRecords.map((r) => {
-    const parentId = pageById[r.page_id]?.parent_id;
-    // "Effective parent" — only nest under a parent that is ALSO granted;
-    // otherwise this row floats to root so it's never hidden.
-    const effParent = parentId && grantedIds.has(parentId) ? parentId : 0;
-    return { ...r, effParent };
-  }), [moduleRecords, pageById, grantedIds]);
+  const withParent = useMemo(() => moduleRecords
+    // A superseded/retired page (is_active=false on page_master) can still have
+    // a leftover grant row from before it was retired — drop those here so
+    // they never show as a ghost card, instead of just hiding them behind
+    // "inactive" without actually filtering.
+    .filter((r) => pageById[r.page_id]?.is_active !== false)
+    .map((r) => {
+      const parentId = pageById[r.page_id]?.parent_id;
+      // "Effective parent" — only nest under a parent that is ALSO granted;
+      // otherwise this row floats to root so it's never hidden.
+      const effParent = parentId && grantedIds.has(parentId) ? parentId : 0;
+      return { ...r, effParent };
+    }), [moduleRecords, pageById, grantedIds]);
 
   const q = search.trim().toLowerCase();
   const currentParentId = treeStack.length ? treeStack[treeStack.length - 1].page_id : 0;
@@ -374,18 +383,94 @@ export default function GroupRolePagePermission() {
     : withParent.filter((r) => r.effParent === currentParentId);
   const childCountOf = (pageId) => withParent.filter((r) => r.effParent === pageId).length;
 
-  function openModule(m) { setSelectedModuleId(m.module_id); setTreeStack([]); setSearch(''); }
+  function openModule(m) { setSelectedModuleId(m.module_id); setTreeStack([]); setSearch(''); setSelectedIds(new Set()); }
   // Clears `search` on the way in — otherwise drilling into a search-matched
   // card leaves stale search state that goBack()'s search-branch doesn't know
   // to unwind, so one "back" click would silently skip past the search
   // results the user was actually looking at.
-  function drillInto(r) { setSearch(''); setTreeStack((s) => [...s, { page_id: r.page_id, page_name: r.page_name }]); }
+  function drillInto(r) { setSearch(''); setSelectedIds(new Set()); setTreeStack((s) => [...s, { page_id: r.page_id, page_name: r.page_name }]); }
   function goBack() {
+    setSelectedIds(new Set());
     if (search) { setSearch(''); return; }
     if (treeStack.length) { setTreeStack((s) => s.slice(0, -1)); return; }
     if (selectedModuleId) { setSelectedModuleId(null); return; }
     if (roleId) { navigate(`/role-permissions/${orgId}`); return; }
     if (orgId) { navigate('/role-permissions'); return; }
+  }
+
+  // ── multi-select bulk actions ────────────────────────────────────────
+  function toggleSelect(pageId) {
+    setSelectedIds((s) => {
+      const next = new Set(s);
+      if (next.has(pageId)) next.delete(pageId); else next.add(pageId);
+      return next;
+    });
+  }
+  function selectAllVisible(ids) { setSelectedIds(new Set(ids)); }
+  function clearSelection() { setSelectedIds(new Set()); }
+
+  /** Every page_permission row for the given page_ids PLUS every descendant of
+   * each — the same cascade rule submitGrant already applies on save, reused
+   * here for both single and bulk revoke so "delete a parent" always takes
+   * its children with it instead of leaving them stranded. */
+  function permissionsFor(pageIds) {
+    const all = new Set(pageIds);
+    pageIds.forEach((id) => descendantsOf(id, pages).forEach((d) => all.add(d.page_id)));
+    return [...all].map((pid) => roleRecords.find((r) => r.page_id === pid)).filter(Boolean);
+  }
+
+  async function revokePages(pageIds) {
+    const targets = permissionsFor(pageIds);
+    await Promise.allSettled(targets.map((r) => rolePermissionsApi.remove(r.page_permission_id)));
+    return targets.length;
+  }
+
+  async function applyPermissionToPages(pageIds, bitmask, description) {
+    const all = new Set(pageIds);
+    pageIds.forEach((id) => descendantsOf(id, pages).forEach((d) => all.add(d.page_id)));
+    const payloadBase = { org_id: orgId, role_id: roleId, permission: bitmask, permission_description: description };
+    await Promise.allSettled([...all].map((pid) => {
+      const existing = roleRecords.find((r) => r.page_id === pid);
+      const payload = { ...payloadBase, page_id: pid };
+      return existing ? rolePermissionsApi.update(existing.page_permission_id, payload) : rolePermissionsApi.create(payload);
+    }));
+    return all.size;
+  }
+
+  async function bulkRevoke() {
+    try {
+      const n = await revokePages([...selectedIds]);
+      flash(`Revoked ${n} page permission${n !== 1 ? 's' : ''}.`);
+      clearSelection();
+      refreshRecords();
+    } catch (err) {
+      flash(err?.message || 'Bulk revoke failed.', 'danger');
+    } finally {
+      setBulkDeleteConfirm(false);
+    }
+  }
+
+  const bulkBitmaskValue = bulkForm ? bulkForm.selectedPerms.reduce((sum, p) => sum + p.permission_value, 0) : 0;
+  function toggleBulkPerm(p) {
+    setBulkForm((f) => {
+      const isSelected = f.selectedPerms.some((s) => s.permission_id === p.permission_id);
+      return { ...f, selectedPerms: isSelected ? f.selectedPerms.filter((s) => s.permission_id !== p.permission_id) : [...f.selectedPerms, p] };
+    });
+  }
+  function toggleAllBulkPerms(selectAll) {
+    setBulkForm((f) => ({ ...f, selectedPerms: selectAll ? permCatalog.filter(isRealPermission) : [] }));
+  }
+  async function submitBulkForm() {
+    const description = decode(bulkBitmaskValue, permCatalog).join(' + ') || 'No access';
+    try {
+      const n = await applyPermissionToPages([...selectedIds], bulkBitmaskValue, description);
+      flash(`Applied to ${n} page permission${n !== 1 ? 's' : ''}.`);
+      clearSelection();
+      setBulkForm(null);
+      refreshRecords();
+    } catch (err) {
+      flash(err?.message || 'Bulk update failed.', 'danger');
+    }
   }
 
   // ── add/edit dialog ──────────────────────────────────────────────────
@@ -483,8 +568,8 @@ export default function GroupRolePagePermission() {
 
   async function confirmDelete() {
     try {
-      await rolePermissionsApi.remove(deleteTarget.page_permission_id);
-      flash('Permission removed.');
+      const n = await revokePages([deleteTarget.page_id]);
+      flash(n > 1 ? `Permission removed — cascaded to ${n - 1} sub-page${n - 1 !== 1 ? 's' : ''}.` : 'Permission removed.');
       refreshRecords();
     } catch (err) {
       flash(err?.message || 'Delete failed.', 'danger');
@@ -747,10 +832,38 @@ export default function GroupRolePagePermission() {
         )}
       />
 
-      <div className="card mt-6 flex items-center gap-2 px-card py-3">
+      <div className="card mt-6 flex items-center gap-3 px-card py-3">
+        {!readOnly && visibleRecords.length > 0 && (
+          <button
+            type="button"
+            onClick={() => (selectedIds.size === visibleRecords.length ? clearSelection() : selectAllVisible(visibleRecords.map((r) => r.page_id)))}
+            className="flex shrink-0 items-center gap-2 text-[12px] font-semibold text-muted hover:text-fg"
+            title="Select all visible"
+          >
+            <span className={`grid h-4 w-4 place-items-center rounded border ${
+              selectedIds.size > 0 && selectedIds.size === visibleRecords.length ? 'border-accent bg-accent text-on-accent'
+                : selectedIds.size > 0 ? 'border-accent bg-accent-soft' : 'border-strong'}`}
+            >
+              {selectedIds.size > 0 && selectedIds.size === visibleRecords.length && <Icon name="check" size={10} />}
+              {selectedIds.size > 0 && selectedIds.size < visibleRecords.length && <span className="h-[2px] w-2 bg-accent" />}
+            </span>
+            Select all
+          </button>
+        )}
         <Input icon="search" placeholder="Search pages in this module…" value={search} onChange={(e) => setSearch(e.target.value)} onClear={() => setSearch('')} wrapperClassName="w-full max-w-72" />
         <span className="ml-auto text-[12px] text-subtle">{visibleRecords.length} page{visibleRecords.length !== 1 ? 's' : ''}</span>
       </div>
+
+      {!readOnly && selectedIds.size > 0 && (
+        <div className="card mt-3 flex flex-wrap items-center gap-3 border-accent bg-accent-soft px-card py-3">
+          <span className="text-[13px] font-bold text-accent-text">{selectedIds.size} selected</span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setBulkForm({ selectedPerms: [] })}>Set Permissions…</Button>
+            <Button variant="danger" size="sm" icon="trash" onClick={() => setBulkDeleteConfirm(true)}>Revoke Selected</Button>
+            <Button variant="ghost" size="sm" onClick={clearSelection}>Clear</Button>
+          </div>
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {recordsLoading ? (
@@ -759,12 +872,25 @@ export default function GroupRolePagePermission() {
           <div className="col-span-full"><EmptyState icon="route" title="No pages granted here yet." body={!readOnly ? 'Click "Grant Page" to add one.' : undefined} /></div>
         ) : visibleRecords.map((r) => {
           const kids = childCountOf(r.page_id);
+          const isSelected = selectedIds.has(r.page_id);
           return (
-            <div key={r.page_permission_id} className="card flex flex-col gap-3 p-5">
+            <div key={r.page_permission_id} className={`card flex flex-col gap-3 p-5 ${isSelected ? 'border-accent' : ''}`}>
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate-safe font-bold text-fg">{r.page_name}</p>
-                  <p className="truncate-safe text-[12px] text-subtle">{r.page_url || '—'}</p>
+                <div className="flex min-w-0 items-start gap-2.5">
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      onClick={() => toggleSelect(r.page_id)}
+                      className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border ${isSelected ? 'border-accent bg-accent text-on-accent' : 'border-strong'}`}
+                      aria-label={isSelected ? 'Deselect' : 'Select'}
+                    >
+                      {isSelected && <Icon name="check" size={10} />}
+                    </button>
+                  )}
+                  <div className="min-w-0">
+                    <p className="truncate-safe font-bold text-fg">{r.page_name}</p>
+                    <p className="truncate-safe text-[12px] text-subtle">{r.page_url || '—'}</p>
+                  </div>
                 </div>
                 {!readOnly && (
                   <div className="flex shrink-0 items-center gap-1">
@@ -803,13 +929,65 @@ export default function GroupRolePagePermission() {
       <ConfirmDialog
         open={!!deleteTarget}
         title="Remove this permission?"
-        message={deleteTarget ? `"${deleteTarget.page_name}" will no longer be accessible to this role.` : ''}
+        message={deleteTarget ? (() => {
+          const kids = permissionsFor([deleteTarget.page_id]).length - 1;
+          return `"${deleteTarget.page_name}" will no longer be accessible to this role.${
+            kids > 0 ? ` This will also revoke ${kids} sub-page${kids !== 1 ? 's' : ''} underneath it.` : ''}`;
+        })() : ''}
         confirmLabel="Remove"
         tone="danger"
         icon="trash"
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      <ConfirmDialog
+        open={bulkDeleteConfirm}
+        title={`Revoke ${selectedIds.size} page${selectedIds.size !== 1 ? 's' : ''}?`}
+        message={`These pages — and any of their sub-pages — will no longer be accessible to ${role?.role_name || 'this role'}.`}
+        confirmLabel="Revoke"
+        tone="danger"
+        icon="trash"
+        onConfirm={bulkRevoke}
+        onCancel={() => setBulkDeleteConfirm(false)}
+      />
+
+      {bulkForm && (
+        <Dialog
+          open
+          onClose={() => setBulkForm(null)}
+          icon="shield-check"
+          title={`Set Permissions — ${selectedIds.size} page${selectedIds.size !== 1 ? 's' : ''}`}
+          footer={(
+            <div className="flex items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setBulkForm(null)}>Cancel</Button>
+              <Button variant="primary" onClick={submitBulkForm}>Apply to {selectedIds.size} page{selectedIds.size !== 1 ? 's' : ''}</Button>
+            </div>
+          )}
+        >
+          <div className="max-w-xl">
+            <p className="mb-3 text-[12px] text-muted">
+              Applies the same permissions to every selected page (and each one's own sub-pages), replacing whatever
+              that page currently grants.
+            </p>
+            <label className="mb-1 block text-[12px] font-semibold text-muted">Permissions</label>
+            <PermissionPicker
+              options={permCatalog.filter(isRealPermission)}
+              selected={bulkForm.selectedPerms}
+              onToggle={toggleBulkPerm}
+              onToggleAll={toggleAllBulkPerms}
+            />
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {bulkForm.selectedPerms.map((p) => (
+                <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text">
+                  {p.permission_name}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-subtle">Computed bitmask value: <b className="text-fg">{bulkBitmaskValue}</b></p>
+          </div>
+        </Dialog>
+      )}
 
       <Toast toast={toast} />
     </>

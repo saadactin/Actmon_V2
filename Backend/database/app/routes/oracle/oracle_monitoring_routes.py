@@ -51,6 +51,22 @@ from app.services.oracle.oracle_monitoring_service import (
     oracle_cdb_pdb,
     oracle_listener_status,
 )
+from app.services.oracle.oracle_storage_service import (
+    oracle_storage_segments,
+    oracle_storage_partitions,
+    oracle_storage_overview,
+    oracle_storage_block_detail,
+    oracle_table_dictionary,
+)
+from app.services.oracle.oracle_storage_decision_service import (
+    oracle_storage_findings,
+    oracle_storage_precise_check,
+)
+from app.services.oracle.oracle_sql_tuning_service import (
+    oracle_sql_monitor_active,
+    oracle_sql_monitor_detail,
+    oracle_plan_instability,
+)
 
 router = APIRouter(prefix="/api/v1/connections/oracle", tags=["Oracle Monitoring"])
 
@@ -329,3 +345,96 @@ def route_oracle_cdb_pdb(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-listener-status")
 def route_oracle_listener_status(conn_id: int, db: Session = Depends(get_db)):
     return oracle_listener_status(conn_id, db)
+
+
+# 38 — Storage Health: largest segments (tables/indexes/LOBs/clusters)
+@router.get("/{conn_id}/oracle-storage-segments")
+def route_oracle_storage_segments(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_storage_segments(conn_id, db)
+
+
+# 39 — Storage Health: partition inventory + size
+@router.get("/{conn_id}/oracle-storage-partitions")
+def route_oracle_storage_partitions(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_storage_partitions(conn_id, db)
+
+
+# 40 — Storage Health: tablespaces + datafiles + top segments, bundled
+@router.get("/{conn_id}/oracle-storage-overview")
+def route_oracle_storage_overview(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_storage_overview(conn_id, db)
+
+
+# 41 — Storage Health: evidence-based findings (decision engine, read-only)
+@router.get("/{conn_id}/oracle-storage-findings")
+def route_oracle_storage_findings(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_storage_findings(conn_id, db)
+
+
+# 42 — Storage Health: on-demand precise reclaimable-space check (direct connections only)
+@router.get("/{conn_id}/oracle-storage-precise-check")
+def route_oracle_storage_precise_check(
+    conn_id: int, owner: str, segment_name: str, segment_type: str = "TABLE",
+    db: Session = Depends(get_db),
+):
+    return oracle_storage_precise_check(conn_id, db, owner, segment_name, segment_type)
+
+
+# 43 — Real-Time SQL Monitoring: currently/recently executing SQL (Tuning Pack gated)
+@router.get("/{conn_id}/oracle-sql-monitor")
+def route_oracle_sql_monitor(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_sql_monitor_active(conn_id, db)
+
+
+# 44 — Real-Time SQL Monitoring: per-plan-step live progress for one execution
+@router.get("/{conn_id}/oracle-sql-monitor-detail")
+def route_oracle_sql_monitor_detail(
+    conn_id: int, sql_id: str, sql_exec_id: str, db: Session = Depends(get_db),
+):
+    return oracle_sql_monitor_detail(conn_id, db, sql_id, sql_exec_id)
+
+
+# 45 — SQL statements currently holding more than one distinct plan (v$sql, license-free)
+@router.get("/{conn_id}/oracle-plan-instability")
+def route_oracle_plan_instability(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_plan_instability(conn_id, db)
+
+
+# 46 — RAC node eviction/rejoin event history (ClickHouse) — real transitions only
+@router.get("/{conn_id}/oracle-rac-eviction-events")
+def route_oracle_rac_eviction_events(conn_id: int, minutes: int = 1440, db: Session = Depends(get_db)):
+    from app.services.clickhouse.metrics_history_service import query_oracle_rac_eviction_events
+    return {"status": "success", "events": query_oracle_rac_eviction_events(conn_id, minutes=minutes)}
+
+
+# 47 — Storage Health: real block-level detail for one datafile/tablespace/segment (drill-down)
+@router.get("/{conn_id}/oracle-storage-block-detail")
+def route_oracle_storage_block_detail(
+    conn_id: int,
+    object_type: str,
+    file_id: int = None,
+    file_name: str = None,
+    tablespace_name: str = None,
+    owner: str = None,
+    segment_name: str = None,
+    db: Session = Depends(get_db),
+):
+    return oracle_storage_block_detail(
+        conn_id, db, object_type,
+        file_id=file_id, file_name=file_name, tablespace_name=tablespace_name,
+        owner=owner, name=segment_name,
+    )
+
+
+# 48 — Storage Health: plain-English explanation / free-text Q&A for one object,
+# grounded only in the real facts the page already computed (never invents numbers)
+@router.post("/{conn_id}/oracle-storage-ai-explain")
+def route_oracle_storage_ai_explain(conn_id: int, payload: oracle_ai_analysis.OracleStorageAiExplainRequest):
+    return oracle_ai_analysis.oracle_storage_ai_explain(payload)
+
+
+# 49 — Storage Health: the real DBA_TABLES dictionary row for one table, grouped
+# into steps (identity / storage params / statistics / behavior) for the stepper UI
+@router.get("/{conn_id}/oracle-table-dictionary")
+def route_oracle_table_dictionary(conn_id: int, owner: str, table_name: str, db: Session = Depends(get_db)):
+    return oracle_table_dictionary(conn_id, db, owner, table_name)

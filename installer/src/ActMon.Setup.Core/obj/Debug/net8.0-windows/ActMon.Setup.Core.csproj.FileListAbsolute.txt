@@ -1,0 +1,13 @@
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.csproj.AssemblyReference.cache
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.GeneratedMSBuildEditorConfig.editorconfig
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.AssemblyInfoInputs.cache
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.AssemblyInfo.cs
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.csproj.CoreCompileInputs.cache
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.sourcelink.json
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\bin\Debug\net8.0-windows\ActMon.Setup.Core.deps.json
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\bin\Debug\net8.0-windows\ActMon.Setup.Core.dll
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\bin\Debug\net8.0-windows\ActMon.Setup.Core.pdb
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.dll
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\refint\ActMon.Setup.Core.dll
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ActMon.Setup.Core.pdb
+E:\ACTMON V1\installer\src\ActMon.Setup.Core\obj\Debug\net8.0-windows\ref\ActMon.Setup.Core.dll

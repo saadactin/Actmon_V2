@@ -162,14 +162,23 @@ def create_session(db: Session, user: dict, ip: str = None, ua: str = None) -> t
     equality lookup — a one-way hash is strictly correct here, not reversible
     encryption, and this is nothing this app can decrypt back to."""
     token = secrets.token_urlsafe(32)
-    expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=TOKEN_EXPIRE_HOURS)
     info = parse_user_agent(ua)
+    # expiry_time computed via the SAME SQL now() as login_time, not a
+    # separately-computed Python datetime.utcnow() — this column is naive
+    # (timestamp without time zone) and the DB's session TimeZone is
+    # Asia/Kolkata (IST, UTC+5:30), so now() already returns IST wall-clock
+    # time here. Mixing in a UTC-based Python value made every session's
+    # displayed lifetime 5.5h short (18.5h instead of the intended 24h) and
+    # could mark a still-valid session as "Ended" this many hours early on
+    # the User Sessions page — the actual JWT's own `exp` claim (still
+    # UTC-based in create_access_token, correctly so per the JWT spec) was
+    # never affected; this only fixes what this audit table displays.
     sid = db.execute(text("""
         INSERT INTO user_session (user_id, session_token, login_time, expiry_time, ip_address, device_name, is_active)
-        VALUES (:uid, :tok, now(), :exp, :ip, :dev, true)
+        VALUES (:uid, :tok, now(), now() + (:hours || ' hours')::interval, :ip, :dev, true)
         RETURNING session_id
     """), {"uid": user["user_id"], "tok": credential_encryption.hash_token(token),
-           "exp": expiry, "ip": ip, "dev": info["device"]}).scalar()
+           "hours": TOKEN_EXPIRE_HOURS, "ip": ip, "dev": info["device"]}).scalar()
     return sid, token
 
 
@@ -213,6 +222,13 @@ def change_password(db: Session, user_id: int, old_password: str, new_password: 
 
 
 # ───────────────────── permissions + menu ─────────────────────
+def _page_parent_map(db: Session) -> dict[int, int]:
+    rows = db.execute(text(
+        "SELECT page_id, COALESCE(parent_id,0) AS parent_id FROM page_master WHERE is_active = true"
+    )).mappings().all()
+    return {r["page_id"]: r["parent_id"] for r in rows}
+
+
 def get_role_permissions(db: Session, org_id: int, role_id: int) -> list[dict]:
     rows = db.execute(text("""
         SELECT pm.page_id, pm.page_code, pm.page_name, pm.page_url,
@@ -224,10 +240,41 @@ def get_role_permissions(db: Session, org_id: int, role_id: int) -> list[dict]:
         ORDER BY pm.module_id, COALESCE(pm.parent_id,0), pm.display_order
     """), {"org": org_id, "role": role_id}).mappings().all()
     out = []
+    granted_view = {}
+    view_bit = _view_bit(db)
     for r in rows:
         d = dict(r)
         d["permissions"] = [p.strip() for p in (d.get("permissions") or "").split(",") if p.strip()]
         out.append(d)
+        granted_view[d["page_id"]] = (int(d["permission"]) & view_bit) == view_bit
+
+    # Cascade: a page is only truly reachable if EVERY ancestor in its
+    # parent_id chain also grants View — not just the page's own row. Without
+    # this, revoking a parent (e.g. a catalog tab) only hid its children from
+    # the nav menu (build_menu already walks parent_id) but left them directly
+    # reachable by URL, since the frontend route guard (isDeniedHere) just
+    # trusts each page's own permission bit independently. Zeroing the
+    # descendant's permission here — before it ever reaches the frontend —
+    # makes "revoke the parent" actually revoke everything under it,
+    # regardless of how the page is reached.
+    parent_of = _page_parent_map(db)
+    ok_cache: dict[int, bool] = {}
+
+    def ancestors_ok(pid: int) -> bool:
+        if pid == 0:
+            return True
+        if pid in ok_cache:
+            return ok_cache[pid]
+        ok_cache[pid] = False  # guard against a cyclic parent_id
+        result = granted_view.get(pid, False) and ancestors_ok(parent_of.get(pid, 0))
+        ok_cache[pid] = result
+        return result
+
+    for d in out:
+        if not ancestors_ok(d["parent_id"]):
+            d["permission"] = 0
+            d["permissions"] = []
+
     return out
 
 

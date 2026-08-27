@@ -167,6 +167,10 @@ export const SLOW_QUERY_ENGINES = {
       avg_disk_reads: num(raw?.avg_disk_reads),
       avg_buffer_gets: num(raw?.avg_buffer_gets),
       rows_processed: num(row.rows_returned),
+      // Lets the backend enrich the AI prompt with the real execution plan +
+      // current wait state (v$sql_plan/v$session) instead of just these
+      // aggregate numbers — see oracle_ai_analysis.py.
+      sql_id: row.query_id || '',
     }),
   },
 

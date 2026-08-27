@@ -1,0 +1,44 @@
+<UserControl x:Class="ActMon.Setup.Pages.Complete.InstallationCompletePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="640">
+    <StackPanel Margin="8" VerticalAlignment="Center">
+        <Image Source="/Assets/actmon-logo.png" Height="64" Stretch="Uniform"
+               HorizontalAlignment="Center" Margin="0,0,0,20"/>
+        <TextBlock Text="ActMon Installation Completed Successfully" FontSize="20" FontWeight="Bold" Foreground="#16A34A" TextWrapping="Wrap"/>
+
+        <Border Background="#F1F5F9" CornerRadius="6" Padding="16" Margin="0,20,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="160"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="ActMon URL:" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding ActMonUrl}" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Database Backend:" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DatabaseBackendPort}" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Cloud Backend:" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding CloudBackendPort}" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Organization:" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding OrganizationName}" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Super Admin:" FontWeight="SemiBold"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SuperAdminUsername}"/>
+            </Grid>
+        </Border>
+
+        <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+            <Button Content="Open ActMon" Command="{Binding OpenActMonCommand}" Padding="14,7" Margin="0,0,10,0" Background="#2563EB" Foreground="White" FontWeight="SemiBold"/>
+            <Button Content="View Logs" Command="{Binding ViewLogsCommand}" Padding="14,7"/>
+        </StackPanel>
+    </StackPanel>
+</UserControl>

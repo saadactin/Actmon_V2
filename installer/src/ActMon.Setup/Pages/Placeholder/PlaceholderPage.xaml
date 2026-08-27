@@ -1,0 +1,8 @@
+<UserControl x:Class="ActMon.Setup.Pages.Placeholder.PlaceholderPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+        <TextBlock Text="{Binding StepTitle}" FontSize="18" FontWeight="Bold" HorizontalAlignment="Center"/>
+        <TextBlock Text="Not built in this milestone yet." Foreground="#64748B" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+    </StackPanel>
+</UserControl>

@@ -13,6 +13,10 @@ import StepInstallation from './steps/StepInstallation';
 import StepLogs from './steps/StepLogs';
 import StepAlerts, { ALERT_TEMPLATES } from './steps/StepAlerts';
 import StepSummary from './steps/StepSummary';
+import StepInstructionAnsible from './steps/StepInstructionAnsible';
+import StepInstructionChef from './steps/StepInstructionChef';
+import StepInstructionPuppet from './steps/StepInstructionPuppet';
+import StepInstructionDocker from './steps/StepInstructionDocker';
 import Placeholder from './steps/Placeholder';
 import { createRule } from '@/api/alerts';
 
@@ -163,7 +167,12 @@ export default function DeployAgentWizard() {
             {name === 'Logs' && <StepLogs data={data} setData={patch} />}
             {name === 'Suggested Alerts' && <StepAlerts data={data} setData={patch} />}
             {name === 'Summary' && <StepSummary data={data} goToStep={(s) => { const i = steps.indexOf(s); if (i >= 0) setStep(i); }} />}
-            {!['Deployment', 'Ingestion Token', 'Configuration', 'Distribution', 'Installation', 'Logs', 'Suggested Alerts', 'Summary'].includes(name) && <Placeholder title={name} />}
+            {name === 'Instruction' && data.method === 'ansible' && <StepInstructionAnsible data={data} setData={patch} />}
+            {name === 'Instruction' && data.method === 'chef' && <StepInstructionChef data={data} setData={patch} />}
+            {name === 'Instruction' && data.method === 'puppet' && <StepInstructionPuppet data={data} setData={patch} />}
+            {name === 'Instruction' && data.method === 'docker' && <StepInstructionDocker data={data} />}
+            {!['Deployment', 'Ingestion Token', 'Configuration', 'Distribution', 'Installation', 'Logs', 'Suggested Alerts', 'Summary'].includes(name)
+              && !(name === 'Instruction' && ['ansible', 'chef', 'puppet', 'docker'].includes(data.method)) && <Placeholder title={name} />}
           </div>
           <div className="flex items-center justify-between pl-8 pr-28 py-4 border-t border-slate-200 flex-shrink-0">
             <a href="#" onClick={(e) => e.preventDefault()} className="text-sm font-bold text-blue-600 hover:text-blue-800">Help &amp; User Guide</a>

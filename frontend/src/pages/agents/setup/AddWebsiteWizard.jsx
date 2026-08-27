@@ -96,7 +96,7 @@ export default function AddWebsiteWizard() {
   const [step, setStep] = useWizardStep({ initial: 1, min: 1, max: STEPS.length });
   /* Browser Back would discard the check being defined; ask first. */
   const exit = useConfirmExit(true);
-  const close = () => { exit.release(); navigate('/agents/setup'); };
+  const close = () => { exit.release(); navigate('/agents/setup/digital-experience'); };
   // Basics
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
@@ -359,7 +359,7 @@ export default function AddWebsiteWizard() {
         },
       });
       exit.release();
-      navigate('/agents/setup');
+      navigate('/agents/setup/digital-experience');
     } catch (e) {
       setSaveError(e?.response?.data?.detail || e.message || 'Failed to create website monitor.');
     } finally {
@@ -377,7 +377,7 @@ export default function AddWebsiteWizard() {
         message={`You are on step ${step} of ${STEPS.length}. Leaving now discards this check — nothing will be monitored.`}
         confirmLabel="Yes, leave"
         cancelLabel="No, stay here"
-        onConfirm={() => { exit.confirm(); navigate('/agents/setup'); }}
+        onConfirm={() => { exit.confirm(); navigate('/agents/setup/digital-experience'); }}
         onCancel={exit.cancel}
       />
       {/* Header */}

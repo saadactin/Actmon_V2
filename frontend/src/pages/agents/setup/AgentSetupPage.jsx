@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Globe, Server, Database, Cloud, Network, Activity, ScrollText, Boxes, Repeat, Gauge, Eye, Plug, Radio, Settings2, FileText } from 'lucide-react';
 import { TECHS } from './techConfig';
@@ -8,6 +8,8 @@ import { LangLogo } from './langIcons';
 import { InfraLogo } from './infraIcons';
 import { NetLogo } from './networkIcons';
 import { IntegLogo } from './integIcons';
+import { TAB_SLUGS, SLUG_TO_TAB } from './tabSlugs';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const TABS = ['Intro', 'Digital Experience', 'APM', 'Databases', 'Infrastructure', 'Network', 'Logs', 'Integrations'];
 
@@ -147,72 +149,76 @@ function NetArt() {
 // "Add Data → Network" catalog.
 const SDWAN = 'Monitor the health, performance, and statistics of SD-WAN orchestrators, wireless controllers, and edge devices.';
 const WLC = 'Monitor the health, performance, and statistics of wireless controllers.';
+// netdevice/discover route to the real Infrastructure/Network add-host flow;
+// every other device type has no setup wizard yet, so it routes to
+// ComingSoonSetup instead of sitting dead.
 const NET_SERVICES = [
   { id: 'netdevice', name: 'Network Device', to: '/infra', desc: 'Add a single network device. Provide a hostname/IP address, select the polling method, and specify what to monitor.' },
   { id: 'discover', name: 'Discover Network Devices', to: '/infra', desc: 'Scan your network, discover devices on the network, and select the devices for monitoring.' },
-  { id: 'netpath', name: 'NetPath Endpoints', desc: 'Visualize and monitor the end-to-end service delivery path across private and public networks.' },
-  { id: 'aruba', name: 'Aruba Orchestrators and Edges', desc: SDWAN },
-  { id: 'meraki', name: 'Meraki Orchestrators and Edges', desc: SDWAN },
-  { id: 'prisma', name: 'Prisma Orchestrators and Edges', desc: SDWAN },
-  { id: 'fortinet', name: 'Fortinet Orchestrators and Edges', desc: SDWAN },
-  { id: 'extreme', name: 'ExtremeCloud IQ Wireless Controllers', desc: WLC },
-  { id: 'arista', name: 'Arista Wireless Manager Wireless Controllers', desc: WLC },
-  { id: 'juniper', name: 'Juniper Mist Wireless Controllers', desc: WLC },
-  { id: 'ruckus', name: 'Ruckus Wireless Controllers', desc: WLC },
-  { id: 'velocloud', name: 'VeloCloud Orchestrators and Edges', desc: SDWAN },
-  { id: 'viptela', name: 'Viptela Orchestrators and Edges', desc: SDWAN },
-  { id: 'ups', name: 'UPS Device', desc: 'Monitor the health, performance and statistics of your Uninterruptible Power Supply (UPS) devices.' },
-  { id: 'dhcp', name: 'DHCP Server Monitoring', desc: 'Monitor the health, performance, and usage statistics of your DHCP servers.' },
-  { id: 'paloalto', name: 'Palo Alto Firewalls', desc: 'Monitor the health, performance, and statistics of your Palo Alto firewalls.' },
-  { id: 'f5', name: 'F5 Load Balancers', desc: 'Monitor the health, performance, and statistics of your F5 load balancers.' },
-  { id: 'ciscoasa', name: 'Cisco ASA Devices', desc: 'Monitor the health, performance, and statistics of your Cisco ASA devices.' },
-  { id: 'ciscoucs', name: 'Cisco UCS Devices', desc: 'Monitor the health, performance, and statistics of your Cisco UCS devices.' },
-  { id: 'ciscoaci', name: 'Cisco ACI Devices', desc: 'Monitor the health, performance, and statistics of your Cisco ACI fabric.' },
+  { id: 'netpath', name: 'NetPath Endpoints', to: '/agents/setup/network/netpath', desc: 'Visualize and monitor the end-to-end service delivery path across private and public networks.' },
+  { id: 'aruba', name: 'Aruba Orchestrators and Edges', to: '/agents/setup/network/aruba', desc: SDWAN },
+  { id: 'meraki', name: 'Meraki Orchestrators and Edges', to: '/agents/setup/network/meraki', desc: SDWAN },
+  { id: 'prisma', name: 'Prisma Orchestrators and Edges', to: '/agents/setup/network/prisma', desc: SDWAN },
+  { id: 'fortinet', name: 'Fortinet Orchestrators and Edges', to: '/agents/setup/network/fortinet', desc: SDWAN },
+  { id: 'extreme', name: 'ExtremeCloud IQ Wireless Controllers', to: '/agents/setup/network/extreme', desc: WLC },
+  { id: 'arista', name: 'Arista Wireless Manager Wireless Controllers', to: '/agents/setup/network/arista', desc: WLC },
+  { id: 'juniper', name: 'Juniper Mist Wireless Controllers', to: '/agents/setup/network/juniper', desc: WLC },
+  { id: 'ruckus', name: 'Ruckus Wireless Controllers', to: '/agents/setup/network/ruckus', desc: WLC },
+  { id: 'velocloud', name: 'VeloCloud Orchestrators and Edges', to: '/agents/setup/network/velocloud', desc: SDWAN },
+  { id: 'viptela', name: 'Viptela Orchestrators and Edges', to: '/agents/setup/network/viptela', desc: SDWAN },
+  { id: 'ups', name: 'UPS Device', to: '/agents/setup/network/ups', desc: 'Monitor the health, performance and statistics of your Uninterruptible Power Supply (UPS) devices.' },
+  { id: 'dhcp', name: 'DHCP Server Monitoring', to: '/agents/setup/network/dhcp', desc: 'Monitor the health, performance, and usage statistics of your DHCP servers.' },
+  { id: 'paloalto', name: 'Palo Alto Firewalls', to: '/agents/setup/network/paloalto', desc: 'Monitor the health, performance, and statistics of your Palo Alto firewalls.' },
+  { id: 'f5', name: 'F5 Load Balancers', to: '/agents/setup/network/f5', desc: 'Monitor the health, performance, and statistics of your F5 load balancers.' },
+  { id: 'ciscoasa', name: 'Cisco ASA Devices', to: '/agents/setup/network/ciscoasa', desc: 'Monitor the health, performance, and statistics of your Cisco ASA devices.' },
+  { id: 'ciscoucs', name: 'Cisco UCS Devices', to: '/agents/setup/network/ciscoucs', desc: 'Monitor the health, performance, and statistics of your Cisco UCS devices.' },
+  { id: 'ciscoaci', name: 'Cisco ACI Devices', to: '/agents/setup/network/ciscoaci', desc: 'Monitor the health, performance, and statistics of your Cisco ACI fabric.' },
 ];
 
 // "Add Data → Infrastructure" catalog.
 const INFRA_SERVICES = [
-  { id: 'k8s', name: 'Kubernetes Cluster', desc: 'Monitor the health and performance of clusters, namespaces, and nodes. Auto-discover workloads, services, and topology.' },
+  { id: 'k8s', name: 'Kubernetes Cluster', to: '/agents/setup/infrastructure/k8s', desc: 'Monitor the health and performance of clusters, namespaces, and nodes. Auto-discover workloads, services, and topology.' },
   { id: 'hosts', name: 'Hosts', to: '/agents/deploy', desc: 'Observe the performance, stability, and health of hosts through multiple monitoring channels.' },
   { id: 'aws', name: 'AWS Services', to: '/cloud', desc: 'Insights into the health and performance of key services such as EC2, EBS, Lambda, S3, and RDS, among others.' },
   { id: 'azure', name: 'Azure Resources', to: '/cloud', desc: 'Monitor the health and performance of key resources such as Azure VM, CDN, Blob Storage, and VPN, among others.' },
   { id: 'gcp', name: 'Google Cloud Platform', to: '/cloud', desc: 'Monitor the health and performance of key resources such as Compute Engine, Cloud Storage among others.' },
   { id: 'discover', name: 'Discover On-Prem Hosts', to: '/infra', desc: 'Scan your network for on-prem hosts you want to monitor.' },
-  { id: 'hyperv', name: 'Hyper-V Host', desc: 'Add a Hyper-V individually to monitor the host and the associated VMs, Storages, Clusters, and cluster-shared volumes.' },
-  { id: 'vmware', name: 'VMware Resources', desc: 'Add a VMware vCenter or VMware ESXi host individually to monitor the host and associated VMs and datastores.' },
-  { id: 'nutanix', name: 'Nutanix Resources', desc: 'Add a Nutanix cluster to monitor hosts, VMs, and storage via Prism Element, or use Prism Central to add multiple clusters.' },
-  { id: 'storage', name: 'Storage Array', desc: "Observe the health and performance of Storage arrays using the Network Collector's capabilities." },
-  { id: 'otel', name: 'ActMon OTel Collector', desc: 'Install the ActMon OTel Collector to get the full-blown custom OTel experience tailored to the ActMon platform.' },
+  { id: 'hyperv', name: 'Hyper-V Host', to: '/agents/setup/infrastructure/hyperv', desc: 'Add a Hyper-V individually to monitor the host and the associated VMs, Storages, Clusters, and cluster-shared volumes.' },
+  { id: 'vmware', name: 'VMware Resources', to: '/agents/setup/infrastructure/vmware', desc: 'Add a VMware vCenter or VMware ESXi host individually to monitor the host and associated VMs and datastores.' },
+  { id: 'nutanix', name: 'Nutanix Resources', to: '/agents/setup/infrastructure/nutanix', desc: 'Add a Nutanix cluster to monitor hosts, VMs, and storage via Prism Element, or use Prism Central to add multiple clusters.' },
+  { id: 'storage', name: 'Storage Array', to: '/agents/setup/infrastructure/storage', desc: "Observe the health and performance of Storage arrays using the Network Collector's capabilities." },
+  { id: 'otel', name: 'ActMon OTel Collector', to: '/agents/setup/infrastructure/otel', desc: 'Install the ActMon OTel Collector to get the full-blown custom OTel experience tailored to the ActMon platform.' },
 ];
 
-// "Add Data → APM" language catalog.
+// "Add Data → APM" language catalog. None of these have a real setup wizard
+// yet — every card routes to ComingSoonSetup rather than sitting dead.
 const APM_SERVICES = [
-  { id: 'java', name: 'Java', desc: 'Available for Linux, Windows, AWS Lambda, and Kubernetes.' },
-  { id: 'python', name: 'Python', desc: 'Available for Linux, Windows, AWS Lambda, and Kubernetes.' },
-  { id: 'nodejs', name: 'NodeJS', desc: 'Available for Linux, Windows, and AWS Lambda.' },
-  { id: 'php', name: 'PHP', desc: 'Available for Linux and Windows.' },
-  { id: 'dotnet', name: '.Net', desc: 'Available for Linux and Windows.' },
-  { id: 'ruby', name: 'Ruby', desc: 'Available for Linux, Windows, and AWS Lambda.' },
-  { id: 'go', name: 'Go', desc: 'Available for Linux, Windows, and AWS Lambda.' },
+  { id: 'java', name: 'Java', to: '/agents/setup/apm/java', desc: 'Available for Linux, Windows, AWS Lambda, and Kubernetes.' },
+  { id: 'python', name: 'Python', to: '/agents/setup/apm/python', desc: 'Available for Linux, Windows, AWS Lambda, and Kubernetes.' },
+  { id: 'nodejs', name: 'NodeJS', to: '/agents/setup/apm/nodejs', desc: 'Available for Linux, Windows, and AWS Lambda.' },
+  { id: 'php', name: 'PHP', to: '/agents/setup/apm/php', desc: 'Available for Linux and Windows.' },
+  { id: 'dotnet', name: '.Net', to: '/agents/setup/apm/dotnet', desc: 'Available for Linux and Windows.' },
+  { id: 'ruby', name: 'Ruby', to: '/agents/setup/apm/ruby', desc: 'Available for Linux, Windows, and AWS Lambda.' },
+  { id: 'go', name: 'Go', to: '/agents/setup/apm/go', desc: 'Available for Linux, Windows, and AWS Lambda.' },
 ];
 
 // "Add Data → Digital Experience" catalog (website / synthetic monitoring).
 const DX_SERVICES = [
-  { title: 'Website Availability', icon: Globe, color: 'bg-indigo-100 text-indigo-600', to: '/agents/setup/website',
+  { title: 'Website Availability', icon: Globe, color: 'bg-indigo-100 text-indigo-600', to: '/agents/setup/digital-experience/website-availability',
     desc: 'Test website and URL availability from multiple locations using HTTP and HTTPs protocols.' },
-  { title: 'Synthetic Transaction', icon: Repeat, color: 'bg-purple-100 text-purple-600', soon: true,
+  { title: 'Synthetic Transaction', icon: Repeat, color: 'bg-purple-100 text-purple-600', to: '/agents/setup/digital-experience/synthetic-transaction',
     desc: 'Test website flows to identify broken links, latency, and availability issues before your users do.' },
-  { title: 'Page Speed', icon: Gauge, color: 'bg-sky-100 text-sky-600', soon: true,
+  { title: 'Page Speed', icon: Gauge, color: 'bg-sky-100 text-sky-600', to: '/agents/setup/digital-experience/page-speed',
     desc: 'Get insights into your websites performance.' },
-  { title: 'RUM', icon: Eye, color: 'bg-cyan-100 text-cyan-600', soon: true,
+  { title: 'RUM', icon: Eye, color: 'bg-cyan-100 text-cyan-600', to: '/agents/setup/digital-experience/rum',
     desc: 'Understand how users experience your site based on browser, device, and geographic location.' },
-  { title: 'TCP Port', icon: Plug, color: 'bg-amber-100 text-amber-600', to: '/agents/setup/network-check?type=tcp_port',
+  { title: 'TCP Port', icon: Plug, color: 'bg-amber-100 text-amber-600', to: '/agents/setup/digital-experience/tcp-port',
     desc: 'Check the availability of your hostname and a specified port.' },
-  { title: 'Ping', icon: Radio, color: 'bg-blue-100 text-blue-600', to: '/agents/setup/network-check?type=ping',
+  { title: 'Ping', icon: Radio, color: 'bg-blue-100 text-blue-600', to: '/agents/setup/digital-experience/ping',
     desc: 'Check the availability of a specified IP and domain address.' },
-  { title: 'DNS', icon: Network, color: 'bg-blue-100 text-blue-600', to: '/agents/setup/network-check?type=dns',
+  { title: 'DNS', icon: Network, color: 'bg-blue-100 text-blue-600', to: '/agents/setup/digital-experience/dns',
     desc: 'Check the functionality of your DNS server.' },
-  { title: 'UDP Port', icon: Plug, color: 'bg-teal-100 text-teal-600', to: '/agents/setup/network-check?type=udp_port',
+  { title: 'UDP Port', icon: Plug, color: 'bg-teal-100 text-teal-600', to: '/agents/setup/digital-experience/udp-port',
     desc: 'Check the availability of your hostname and a specified port.' },
 ];
 
@@ -265,6 +271,8 @@ function GearsArt() {
 
 // "Add Data → Integrations" catalog (OpenTelemetry / third-party receivers).
 const DB_STATS = 'metrics, including connections, operations, memory usage and network statistics.';
+// None of these have a real receiver built yet — every card routes to
+// ComingSoonSetup rather than rendering as an inert, unclickable <div>.
 const INTEG_SERVICES = [
   { id: 'apache', name: 'Apache', desc: 'Fetch stats from an Apache Web Server instance.' },
   { id: 'confluent', name: 'Confluent Cloud', desc: 'Monitor Confluent Cloud metrics from a Kafka cluster/connector, ksqlDB, schema registry, compute pool, or connector.' },
@@ -294,19 +302,50 @@ const INTEG_SERVICES = [
   { id: 'statsd', name: 'StatsD', desc: 'Collect and aggregate custom application metrics with the StatsD lightweight network daemon.' },
   { id: 'varnish', name: 'Varnish', desc: 'Collect stats from a Varnish HTTP Cache.' },
   { id: 'zookeeper', name: 'ZooKeeper', desc: 'Collect metrics to gain visibility into ZooKeeper request processing, traffic patterns, latency, and active connections.' },
-];
+].map((s) => ({ ...s, to: `/agents/setup/integrations/${s.id}` }));
 
 export default function AgentSetupPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
+  const { can } = usePermissions();
+  // A tab or catalog card is shown only if its own governed URL grants View —
+  // denying "Digital Experience" (or one specific card inside it) removes it
+  // from here entirely, instead of leaving it clickable into an Access
+  // Denied page. Items that jump to another tab (`tab:`) check that tab's
+  // own URL; items with no `to` at all (not yet wired to anything) always
+  // show, same as before.
+  const canReach = (item) => {
+    if (item.tab) return can(`/agents/setup/${TAB_SLUGS[item.tab]}`, 'view');
+    if (item.to) return can(item.to.split('?')[0], 'view');
+    return true;
+  };
   // In "databases" context (reached from the Databases menu) the sidebar stays on
-  // Databases and this catalog opens straight on the DATABASES tab.
+  // Databases and this catalog opens straight on the DATABASES tab — that entry
+  // point keeps its original state-driven tab switching (no per-tab URL/RBAC),
+  // unrelated to the governed /agents/setup/<tab> routes below.
   const inDb = location.pathname.startsWith('/databases');
-  const reqTab = params.get('tab');
-  const [tab, setTab] = useState(TABS.includes(reqTab) ? reqTab : (inDb ? 'Databases' : 'Intro'));
+  const [dbTab, setDbTab] = useState('Databases');
+
+  // /agents/setup/<tab> context: the tab IS the route, not local state, so each
+  // tab is its own governed page_master row and browser back/forward, refresh,
+  // and direct links all land on the right tab for free.
+  const pathSegs = location.pathname.split('/').filter(Boolean);
+  const lastSeg = pathSegs[pathSegs.length - 1];
+  const routedTab = !inDb ? SLUG_TO_TAB[lastSeg] : null;
+  const tab = inDb ? dbTab : (routedTab || 'Intro');
+
+  // Bare /agents/setup (no tab segment) always redirects to the Intro tab's
+  // own real URL, so the address bar — and page_master — never has a
+  // catch-all "current tab lives in state" page to govern.
+  useEffect(() => {
+    if (!inDb && !routedTab) navigate('/agents/setup/intro', { replace: true });
+  }, [inDb, routedTab, navigate]);
+
+  const gotoTab = (label) => { if (inDb) setDbTab(label); else navigate(`/agents/setup/${TAB_SLUGS[label]}`); };
+
   const closeTo = inDb ? '/databases' : '/agents';
-  const setupBase = inDb ? '/databases/setup' : '/agents/setup';
+  const setupBase = inDb ? '/databases/setup' : '/agents/setup/databases';
   // Deep link from the deploy-wizard Summary ("Monitor database performance"):
   // carry the just-deployed agent into the tech wizard so it's pre-selected.
   // Prefers router state (never touches the URL/history) over the legacy
@@ -326,9 +365,9 @@ export default function AgentSetupPage() {
 
   const renderGrid = (list) => (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 max-w-[1100px]">
-      {list.map((s) => {
+      {list.filter(canReach).map((s) => {
         const Icon = s.icon;
-        const go = () => { if (s.tab) setTab(s.tab); else if (s.to) navigate(s.to); };
+        const go = () => { if (s.tab) gotoTab(s.tab); else if (s.to) navigate(s.to, { state: { itemName: s.title } }); };
         return (
           <button key={s.title} onClick={go}
             className="text-left rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] flex items-start gap-5 hover:border-blue-400 hover:shadow-[0_4px_22px_-6px_rgba(37,99,235,0.28)] transition-all">
@@ -415,10 +454,10 @@ export default function AgentSetupPage() {
     )}>
           {/* Tabs */}
           <div className="flex items-center gap-6 px-8 pt-5 border-b border-slate-200 overflow-x-auto flex-shrink-0">
-            {TABS.map((t) => {
+            {TABS.filter((t) => can(`/agents/setup/${TAB_SLUGS[t]}`, 'view')).map((t) => {
               const active = t === tab;
               return (
-                <button key={t} onClick={() => setTab(t)}
+                <button key={t} onClick={() => gotoTab(t)}
                   className={`text-[13px] font-bold uppercase tracking-wide pb-3 whitespace-nowrap border-b-2 transition-colors ${
                     active ? 'text-rose-800 border-rose-800' : 'text-slate-400 border-transparent hover:text-slate-600'}`}>
                   {t}
@@ -443,21 +482,26 @@ export default function AgentSetupPage() {
 
             {isAPM && (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 max-w-[1100px]">
-                {APM_SERVICES.map((a) => (
-                  <div key={a.id} className="rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] flex items-start gap-5">
-                    <LangLogo id={a.id} size={54} />
-                    <div className="flex-1 min-w-0">
-                      <p className="font-black text-slate-800 text-[17px] leading-snug">{a.name}</p>
-                      <p className="text-[15px] text-slate-500 mt-2 leading-relaxed">{a.desc}</p>
-                    </div>
-                  </div>
-                ))}
+                {APM_SERVICES.filter(canReach).map((a) => {
+                  const go = () => { if (a.to) navigate(a.to, { state: { itemName: a.name } }); };
+                  return (
+                    <button key={a.id} onClick={go} disabled={!a.to}
+                      className={`text-left rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] flex items-start gap-5 transition-all ${
+                        a.to ? 'hover:border-blue-400 hover:shadow-[0_4px_22px_-6px_rgba(37,99,235,0.28)]' : 'cursor-default'}`}>
+                      <LangLogo id={a.id} size={54} />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-black text-slate-800 text-[17px] leading-snug">{a.name}</p>
+                        <p className="text-[15px] text-slate-500 mt-2 leading-relaxed">{a.desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
 
             {isInfra && (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 max-w-[1100px]">
-                {INFRA_SERVICES.map((a) => {
+                {INFRA_SERVICES.filter(canReach).map((a) => {
                   const go = () => { if (a.to) navigate(a.to); };
                   return (
                     <button key={a.id} onClick={go} disabled={!a.to}
@@ -476,8 +520,8 @@ export default function AgentSetupPage() {
 
             {isNetwork && (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 max-w-[1100px]">
-                {NET_SERVICES.map((a) => {
-                  const go = () => { if (a.to) navigate(a.to); };
+                {NET_SERVICES.filter(canReach).map((a) => {
+                  const go = () => { if (a.to) navigate(a.to, { state: { itemName: a.name } }); };
                   return (
                     <button key={a.id} onClick={go} disabled={!a.to}
                       className={`text-left rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] flex items-start gap-5 transition-all ${
@@ -495,7 +539,7 @@ export default function AgentSetupPage() {
 
             {tab === 'Databases' && (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 max-w-[1100px]">
-                {TECHS.map((t) => (
+                {TECHS.filter((t) => can(`/agents/setup/databases/${t.id}`, 'view')).map((t) => (
                   <button key={t.id} onClick={() => navigate(`${setupBase}/${t.id}${agentQS}`)}
                     className="group text-left rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] hover:border-blue-400 hover:shadow-[0_4px_22px_-6px_rgba(37,99,235,0.28)] transition-all flex items-start gap-5">
                     <TechLogo id={t.id} size={56} />
@@ -510,14 +554,15 @@ export default function AgentSetupPage() {
 
             {isInteg && (
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 max-w-[1100px]">
-                {INTEG_SERVICES.map((a) => (
-                  <div key={a.id} className="rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] flex items-start gap-5 hover:border-blue-400 hover:shadow-[0_4px_22px_-6px_rgba(37,99,235,0.28)] transition-all">
+                {INTEG_SERVICES.filter(canReach).map((a) => (
+                  <button key={a.id} onClick={() => navigate(a.to, { state: { itemName: a.name } })}
+                    className="text-left rounded-xl border border-slate-200 bg-white p-6 min-h-[132px] flex items-start gap-5 hover:border-blue-400 hover:shadow-[0_4px_22px_-6px_rgba(37,99,235,0.28)] transition-all">
                     <IntegLogo id={a.id} size={54} />
                     <div className="flex-1 min-w-0">
                       <p className="font-black text-slate-800 text-[17px] leading-snug">{a.name}</p>
                       <p className="text-[15px] text-slate-500 mt-2 leading-relaxed">{a.desc}</p>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

@@ -25,6 +25,7 @@ const AgentSetupPage = lazy(() => import('@/pages/agents/setup/AgentSetupPage'))
 const SetupWizard = lazy(() => import('@/pages/agents/setup/SetupWizard'));
 const AddWebsiteWizard = lazy(() => import('@/pages/agents/setup/AddWebsiteWizard'));
 const AddNetworkCheckWizard = lazy(() => import('@/pages/agents/setup/AddNetworkCheckWizard'));
+const ComingSoonSetup = lazy(() => import('@/pages/agents/setup/ComingSoonSetup'));
 const DeployAgentWizard = lazy(() => import('@/pages/agents/setup/deploy/DeployAgentWizard'));
 const AgentDetailPage = lazy(() => import('@/pages/agents/AgentDetailPage'));
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage'));
@@ -86,8 +87,12 @@ const PgReportsPage = lazy(() => import('@/pages/postgresql/PostgreSQLReportsPag
 // fetching all sixteen on every load would load the instance for nothing.
 const OracleDashboard = lazy(() => import('@/pages/oracle/OracleDashboard'));
 const OracleLiveQueries = lazy(() => import('@/pages/oracle/LiveQueries'));
+const OracleSessionDetailPage = lazy(() => import('@/pages/oracle/SessionDetailPage'));
 const OracleErrorLogs = lazy(() => import('@/pages/oracle/ErrorLogs'));
 const OracleIndexAnalysis = lazy(() => import('@/pages/oracle/IndexAnalysis'));
+const OracleStorageHealth = lazy(() => import('@/pages/oracle/StorageHealth'));
+const StorageObjectDetailPage = lazy(() => import('@/pages/oracle/StorageObjectDetailPage'));
+const OracleJobDetailPage = lazy(() => import('@/pages/oracle/JobDetailPage'));
 const OracleReportsPage = lazy(() => import('@/pages/oracle/OracleReportsPage'));
 
 // SQL Server. Nine tabs, same shape as MySQL. Bound to what
@@ -221,10 +226,43 @@ export default function App() {
           <Route path="oci-accounts/:accountId/:tab" element={<CloudDashboard provider="oci" />} />
         </Route>
 
-        {/* Order matters: the two named wizards must be matched before :tech. */}
+        {/* Order matters: the named wizards + the 8 tab routes must be matched
+            before :tech (a single dynamic segment would otherwise collide
+            with them — static segments always win by specificity, but keep
+            them declared first for readability). */}
         <Route path="/agents/setup" element={<AgentSetupPage />} />
+        {/* Kept as fallbacks for any old link/bookmark; every card in the
+            catalog itself now points at the nested URLs below instead. */}
         <Route path="/agents/setup/website" element={<AddWebsiteWizard />} />
         <Route path="/agents/setup/network-check" element={<AddNetworkCheckWizard />} />
+        {/* The "Add Data" tab bar itself — each tab is its own real, governed
+            page (see tabSlugs.js), not just client-side state, so a role can
+            be denied one tab (e.g. Integrations) without losing the rest. */}
+        <Route path="/agents/setup/intro" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/digital-experience" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/apm" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/databases" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/infrastructure" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/network" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/logs" element={<AgentSetupPage />} />
+        <Route path="/agents/setup/integrations" element={<AgentSetupPage />} />
+        {/* Every catalog card that already has a real, working setup flow gets
+            its real feature page nested under its own tab, individually
+            governed, instead of living at a flat /agents/setup/<name> URL. */}
+        <Route path="/agents/setup/digital-experience/website-availability" element={<AddWebsiteWizard />} />
+        <Route path="/agents/setup/digital-experience/tcp-port" element={<AddNetworkCheckWizard checkType="tcp_port" />} />
+        <Route path="/agents/setup/digital-experience/ping" element={<AddNetworkCheckWizard checkType="ping" />} />
+        <Route path="/agents/setup/digital-experience/dns" element={<AddNetworkCheckWizard checkType="dns" />} />
+        <Route path="/agents/setup/digital-experience/udp-port" element={<AddNetworkCheckWizard checkType="udp_port" />} />
+        <Route path="/agents/setup/databases/:tech" element={<SetupWizard />} />
+        {/* Real, governed routes for every "Add Data" catalog card that doesn't
+            have a working setup wizard yet (most APM languages, most Network
+            devices, most Infrastructure resource types, the not-yet-built
+            Digital Experience checks, all Integrations) — see ComingSoonSetup's
+            own comment. One generic pattern for every tab; per-item RBAC comes
+            from each item getting its own literal page_master row server-side,
+            not from this route itself. */}
+        <Route path="/agents/setup/:tabSlug/:itemId" element={<ComingSoonSetup />} />
         <Route path="/agents/setup/:tech" element={<SetupWizard />} />
         <Route path="/agents/deploy" element={<DeployAgentWizard />} />
 
@@ -282,11 +320,15 @@ export default function App() {
             Queries is both a dashboard tab and its own route — the same component,
             with `embedded` deciding whether it draws a page header. */}
         <Route path="/oracle-dashboard/:id" element={<OracleDashboard />} />
+        <Route path="/oracle-dashboard/:id/live-queries/session" element={<OracleSessionDetailPage />} />
         <Route path="/oracle-dashboard/:id/live-queries" element={<OracleLiveQueries />} />
         <Route path="/oracle-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="oracle" />} />
         <Route path="/oracle-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="oracle" />} />
         <Route path="/oracle-dashboard/:id/error-logs" element={<OracleErrorLogs />} />
         <Route path="/oracle-dashboard/:id/index-analysis" element={<OracleIndexAnalysis />} />
+        <Route path="/oracle-dashboard/:id/storage-health/object" element={<StorageObjectDetailPage />} />
+        <Route path="/oracle-dashboard/:id/storage-health/job" element={<OracleJobDetailPage />} />
+        <Route path="/oracle-dashboard/:id/storage-health" element={<OracleStorageHealth />} />
         <Route path="/oracle-dashboard/:id/reports" element={<OracleReportsPage />} />
         <Route path="/oracle-dashboard/:id/:tab" element={<OracleDashboard />} />
 

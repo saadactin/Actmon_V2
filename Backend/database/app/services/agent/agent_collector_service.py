@@ -1059,6 +1059,7 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
         oracle_rac_nodes, oracle_services, oracle_asm, oracle_cdb_pdb,
         oracle_topology_detect,
     )
+    from app.services.oracle.oracle_storage_service import oracle_storage_overview
     from app.services.oracle import oracle_history_flush_service as _hist
 
     # Each of these also feeds the historical ClickHouse tables (RAC nodes,
@@ -1087,6 +1088,11 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
         _hist.flush_asm(agent_name, conn_id, result, db)
         return result
 
+    def _storage_and_flush():
+        result = oracle_storage_overview(conn_id, db)
+        _hist.flush_storage(agent_name, conn_id, result, db)
+        return result
+
     _run_snaps(agent_name, conn_id, db, [
         ("oracle_dashboard",     lambda: oracle_dashboard(conn_id, db)),
         ("oracle_sga_detail",    lambda: oracle_sga_detail(conn_id, db)),
@@ -1101,6 +1107,7 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
         ("oracle_asm",           _asm_and_flush),
         ("oracle_cdb_pdb",       lambda: oracle_cdb_pdb(conn_id, db)),
         ("oracle_topology",      lambda: oracle_topology_detect(conn_id, db)),
+        ("oracle_storage",       _storage_and_flush),
     ])
 
 

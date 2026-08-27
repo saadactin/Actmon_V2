@@ -17,13 +17,17 @@ const INTERVALS = [
   { label: '15 minutes', sec: 900 }, { label: '30 minutes', sec: 1800 }, { label: '1 hour', sec: 3600 },
 ];
 
-export default function AddNetworkCheckWizard() {
+export default function AddNetworkCheckWizard({ checkType } = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const type = TYPE_INFO[params.get('type')] ? params.get('type') : 'ping';
+  // checkType comes from a real, literal, individually-governed route
+  // (e.g. /agents/setup/digital-experience/tcp-port) — the old ?type=
+  // query string is kept only as a fallback for any link still using it.
+  const requested = checkType || params.get('type');
+  const type = TYPE_INFO[requested] ? requested : 'ping';
   const info = TYPE_INFO[type];
   const Icon = info.icon;
-  const close = () => navigate('/agents/setup');
+  const close = () => navigate('/agents/setup/digital-experience');
 
   const [name, setName] = useState('');
   const [target, setTarget] = useState('');
@@ -42,7 +46,7 @@ export default function AddNetworkCheckWizard() {
         port: info.needsPort ? Number(port) : null,
         interval_seconds: intervalSec, enabled: true, config: {},
       });
-      navigate('/agents/setup');
+      navigate('/agents/setup/digital-experience');
     } catch (e) {
       setError(e?.response?.data?.detail || e.message || `Failed to create ${info.title} monitor.`);
     } finally {

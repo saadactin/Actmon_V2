@@ -1,0 +1,30 @@
+# Applies to any build whose context is the repo root (the backend service —
+# see docker-compose.yml). Frontend/cloud builds have their own smaller
+# context and don't need this, but excluding these here is harmless either way.
+
+.git
+.gitignore
+
+# Python
+**/__pycache__/
+**/*.pyc
+Backend/database/venv/
+Backend/cloud/venv/
+Backend/database/.env
+Backend/database/data/
+Backend/database/*.log
+
+# Node / frontend build output — never needed inside the backend image
+frontend/node_modules/
+frontend/dist/
+
+# Windows installer project and packaged release artifacts — unrelated to
+# the containerized app, and installer/packaging/dist alone is multiple GB
+installer/
+*.tgz
+*.zip
+
+# Editors / OS cruft
+.vscode/
+.DS_Store
+Thumbs.db

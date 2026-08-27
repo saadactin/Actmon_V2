@@ -1,0 +1,88 @@
+# Distribution compose file — references the pre-built images directly (no
+# `build:` step). Pair with `actmon-images.tar.gz` (docker load) — see
+# STAKEHOLDER_README.md in the same package for the full setup steps.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-actmon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-actmon}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-actmon}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
+  backend:
+    image: actmonv1-backend:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - Backend/database/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-actmon}
+      DB_PASS: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}
+      DB_NAME: ${POSTGRES_DB:-actmon}
+      REDIS_URL: redis://redis:6379/0
+      ACTMON_LOGS_ENABLED: "true"
+      ACTMON_LOGS_CH_HOST: clickhouse
+      ACTMON_LOGS_CH_PORT: "8123"
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  cloud:
+    image: actmonv1-cloud:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - Backend/cloud/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-actmon}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}@postgres:5432/${POSTGRES_DB:-actmon}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-actmon}
+      DB_PASS: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.docker.example)}
+      DB_NAME: ${POSTGRES_DB:-actmon}
+    expose:
+      - "8001"
+    restart: unless-stopped
+
+  nginx:
+    image: actmonv1-nginx:latest
+    depends_on:
+      - backend
+      - cloud
+    ports:
+      - "9182:80"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  clickhouse_data:

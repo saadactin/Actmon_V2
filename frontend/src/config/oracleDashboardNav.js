@@ -2,16 +2,16 @@
  * Oracle dashboard tab list — extracted from the inline `TABS` const in
  * OracleDashboard.jsx (mirrors mysqlDashboardNav.js's exported-array pattern).
  *
- * `BASE_TABS` is exactly the existing 16 tabs, unchanged — a plain standalone
- * Oracle instance sees precisely what it always has, no regression.
+ * `BASE_TABS` is every tab a plain standalone Oracle instance sees, no
+ * topology required.
  * `tabsForTopology(topology)` appends topology-specific tabs ONLY when that
  * topology is actually detected, per the "only show relevant sections"
  * requirement — a standalone instance never sees RAC/Services/ASM/Multitenant
  * clutter it can't use.
  */
 import {
-  Activity, BarChart2, Boxes, Clock, Cpu, HardDrive, Key, Layers, Lock,
-  Network, RotateCcw, Server, Settings, ShieldCheck, Table, TrendingUp, Users, Zap,
+  Activity, BarChart2, Boxes, Clock, Cpu, Gauge, HardDrive, Key, Layers, Lock,
+  Network, RotateCcw, Server, Settings, ShieldCheck, Table, TrendingUp, Users, Wrench, Zap,
 } from 'lucide-react';
 
 export const BASE_TABS = [
@@ -20,6 +20,7 @@ export const BASE_TABS = [
   { id: 'sessions', label: 'Sessions', icon: Users },
   { id: 'sql', label: 'Top SQL', icon: Zap },
   { id: 'tablespaces', label: 'Tablespaces', icon: HardDrive },
+  { id: 'maintenance', label: 'Maintenance', icon: Wrench },
   { id: 'objects', label: 'Objects', icon: Boxes },
   { id: 'tables', label: 'Tables', icon: Table },
   { id: 'dataguard', label: 'Data Guard', icon: ShieldCheck },
@@ -30,6 +31,7 @@ export const BASE_TABS = [
   { id: 'slowqueries', label: 'Slow SQL', icon: Clock },
   { id: 'live', label: 'Live Queries', icon: Activity },
   { id: 'locks', label: 'Locks', icon: Lock },
+  { id: 'sqlmonitor', label: 'SQL Monitor', icon: Gauge },
   { id: 'parameters', label: 'Parameters', icon: Settings },
 ];
 

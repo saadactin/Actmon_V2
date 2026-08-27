@@ -24,6 +24,7 @@ import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptOracleTableDetails } from '@/pages/_shared/tableDetailsAdapters';
+import MaintenanceWindow from '@/pages/alerts/MaintenanceWindow';
 import {
   DefRow, MetricTile, Panel, SqlCell, StatCell, StateChip, StatusPill, TablePanel, UsageBar,
 } from '@/pages/_shared/enginePanels';
@@ -360,6 +361,7 @@ export default function OracleDashboard() {
   const [paramSearch, setParamSearch] = useState('');
   const [paramScope, setParamScope] = useState('key');
   const [selectedTable, setSelectedTable] = useState(null); // { owner, name }
+  const [openMonitor, setOpenMonitor] = useState(null); // { sql_id, sql_exec_id }
   const countRef = useRef(null);
 
   const on = (t) => activeTab === t;
@@ -381,6 +383,7 @@ export default function OracleDashboard() {
   const waits = q('oracleWaits', 'oracle-wait-events', { refetchInterval: 15000, enabled: on('performance') || on('overview') });
   const sessions = q('oracleSessions', 'oracle-sessions', { refetchInterval: 10000, enabled: on('sessions') });
   const topSql = q('oracleTopSql', 'oracle-top-sql', { refetchInterval: 30000, enabled: on('sql') });
+  const planInstability = q('oraclePlanInstability', 'oracle-plan-instability', { refetchInterval: 30000, enabled: on('sql') });
   const tablespaces = q('oracleTablespaces', 'oracle-tablespaces', { refetchInterval: 30000, enabled: on('tablespaces') || on('overview') });
   const objects = q('oracleObjects', 'oracle-objects', { refetchInterval: 60000, enabled: on('objects') });
   const users = q('oracleUsers', 'oracle-users', { refetchInterval: 60000, enabled: on('users') });
@@ -390,7 +393,22 @@ export default function OracleDashboard() {
   const sysStats = q('oracleSysStats', 'oracle-system-stats', { refetchInterval: 30000, enabled: on('systemstats') });
   const slowSql = q('oracleSlowSql', 'oracle-slow-queries', { refetchInterval: 30000, enabled: on('slowqueries') });
   const locks = q('oracleLocks', 'oracle-locks', { refetchInterval: 10000, enabled: on('locks') });
+  const sqlMonitor = q('oracleSqlMonitor', 'oracle-sql-monitor', { refetchInterval: 5000, enabled: on('sqlmonitor') });
   const params = q('oracleParams', 'oracle-parameters', { staleTime: 120000, enabled: on('parameters') });
+
+  // Per-step live progress for one monitored execution — only fetched once a
+  // row is actually opened, not for the whole list every tick.
+  const monitorDetail = useQuery({
+    queryKey: ['oracleSqlMonitorDetail', id, openMonitor?.sql_id, openMonitor?.sql_exec_id],
+    queryFn: () => client
+      .get(`/connections/oracle/${id}/oracle-sql-monitor-detail`, {
+        params: { sql_id: openMonitor.sql_id, sql_exec_id: openMonitor.sql_exec_id },
+      })
+      .then((r) => r.data),
+    enabled: on('sqlmonitor') && !!openMonitor,
+    refetchInterval: 3000,
+    retry: false,
+  });
 
   // Topology detection (§1) — always enabled (not tab-gated): the tab list
   // itself depends on this, and it's a single cheap query (GV$INSTANCE count +
@@ -404,6 +422,7 @@ export default function OracleDashboard() {
   const topology = topologyQ.data || {};
 
   const racNodes = q('oracleRacNodes', 'oracle-rac-nodes', { refetchInterval: 15000, enabled: on('rac') });
+  const racEvents = q('oracleRacEvents', 'oracle-rac-eviction-events', { refetchInterval: 30000, enabled: on('rac') });
   const services = q('oracleServices', 'oracle-services', { refetchInterval: 30000, enabled: on('services') });
   const asm = q('oracleAsm', 'oracle-asm', { refetchInterval: 60000, enabled: on('asm') });
   const cdbPdb = q('oracleCdbPdb', 'oracle-cdb-pdb', { refetchInterval: 60000, enabled: on('multitenant') });
@@ -465,7 +484,6 @@ export default function OracleDashboard() {
       hs,
       tsList,
       waitList,
-      topSqlList: Array.isArray(p.top_sql) ? p.top_sql : [],
       redoList: Array.isArray(p.redo_logs) ? p.redo_logs : [],
       collectorErrors: Array.isArray(p.errors) ? p.errors.filter(Boolean) : [],
       sessionPct,
@@ -498,7 +516,7 @@ export default function OracleDashboard() {
   }
 
   const {
-    connection, hs, tsList, waitList, topSqlList, collectorErrors, sessionPct, bufHitPct,
+    connection, hs, tsList, waitList, collectorErrors, sessionPct, bufHitPct,
     libHitPct, hostCpuPct, dbCpuPct, sgaUsedPct, pgaUsedPct, maxTsPct, fullestTs,
     criticalTs, healthScore,
   } = d;
@@ -736,12 +754,6 @@ export default function OracleDashboard() {
                   hint="Database CPU time as a proportion of total DB time — not host CPU." />
               </Panel>
             </div>
-
-            {topSqlList.length > 0 && (
-              <TopSqlPanel rows={topSqlList} title="Top SQL by elapsed time"
-                actions={<Button size="sm" variant="secondary" iconRight="chevron-right"
-                  onClick={() => setActiveTab('sql')}>All SQL</Button>} />
-            )}
           </div>
         )}
 
@@ -930,6 +942,33 @@ export default function OracleDashboard() {
                 )}
                 <TopSqlPanel rows={topSql.data?.sql || []} full
                   title={`Top SQL by elapsed time (${topSql.data?.total ?? 0})`} />
+
+                {(planInstability.data?.unstable || []).length > 0 && (
+                  <TablePanel
+                    title="Plan instability"
+                    icon="alert"
+                    subtitle="Statements currently holding more than one distinct execution plan in the shared pool — Oracle is flip-flopping plans for the same SQL right now"
+                  >
+                    <Table2
+                      columns={[
+                        { key: 'sql', label: 'SQL' },
+                        { key: 'plans', label: 'Distinct plans', align: 'right' },
+                        { key: 'cursors', label: 'Child cursors', align: 'right' },
+                        { key: 'exec', label: 'Total executions', align: 'right' },
+                      ]}
+                      rows={(planInstability.data?.unstable || []).map((u, i) => ({
+                        key: `${u.sql_id}-${i}`,
+                        cells: {
+                          sql: <SqlCell sql={u.sql_text} max={90} />,
+                          plans: <span className="font-mono font-bold text-warning-fg">{u.plan_count}</span>,
+                          cursors: <span className="font-mono">{fmtNumber(u.child_cursors)}</span>,
+                          exec: <span className="font-mono text-muted">{fmtNumber(u.total_executions)}</span>,
+                        },
+                      }))}
+                      empty={<EmptyState icon="check" title="No plan instability" />}
+                    />
+                  </TablePanel>
+                )}
               </>
             )}
           </div>
@@ -1270,6 +1309,35 @@ export default function OracleDashboard() {
                       },
                     }))}
                     empty={<EmptyState icon="server" title="No RAC nodes found" />}
+                  />
+                </TablePanel>
+
+                <TablePanel title="Recent cluster events" icon="alert"
+                  subtitle="Real eviction/rejoin transitions only — not a re-alert on every cycle a node stays down">
+                  <Table2
+                    columns={[
+                      { key: 'when', label: 'When' },
+                      { key: 'inst', label: 'Instance', align: 'right' },
+                      { key: 'host', label: 'Host' },
+                      { key: 'event', label: 'Event' },
+                      { key: 'change', label: 'Status change' },
+                    ]}
+                    rows={(racEvents.data?.events || []).map((e, i) => ({
+                      key: `${e.ts}-${e.instance_number}-${i}`,
+                      cells: {
+                        when: <span className="font-mono text-[11px] text-muted">{e.ts}</span>,
+                        inst: <span className="font-mono">{e.instance_number}</span>,
+                        host: e.host_name,
+                        event: (
+                          <Badge tone={e.event_type === 'evicted' ? 'danger' : 'success'} size="xs">
+                            {e.event_type}
+                          </Badge>
+                        ),
+                        change: <span className="font-mono text-[11px]">{e.previous_status} → {e.new_status}</span>,
+                      },
+                    }))}
+                    empty={<EmptyState icon="check" title="No eviction or rejoin events recorded"
+                      body="A node has stayed in the same state for as long as history has been collected." />}
                   />
                 </TablePanel>
               </>
@@ -1664,11 +1732,20 @@ export default function OracleDashboard() {
                 <SlowSqlPanel
                   rows={slowSql.data?.queries || []}
                   onOpen={() => navigate(`/oracle-dashboard/${id}/slow-queries`)}
+                  onRowOpen={(sqlId, raw) => navigate(`/oracle-dashboard/${id}/slow-queries/detail`, {
+                    state: {
+                      row: (slowSql.data?.normalized || []).find((n) => n.query_id === sqlId),
+                      raw,
+                    },
+                  })}
                 />
               </>
             )}
           </div>
         )}
+
+        {/* ══ MAINTENANCE ═══════════════════════════════════════════════════ */}
+        {on('maintenance') && <MaintenanceWindow connId={id} />}
 
         {/* ══ LIVE QUERIES ══════════════════════════════════════════════════ */}
         {on('live') && <OracleLiveQueries connId={id} embedded />}
@@ -1775,6 +1852,123 @@ export default function OracleDashboard() {
                     )}
                   </Paged>
                 </TablePanel>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ══ SQL MONITOR ═══════════════════════════════════════════════════ */}
+        {on('sqlmonitor') && (
+          <div className="space-y-gutter">
+            {sqlMonitor.isLoading ? <InlineLoading label="Reading v$sql_monitor…" /> : (
+              <>
+                {sqlMonitor.data?.licensed === false && (
+                  <Notice tone="warning" title="Real-Time SQL Monitoring is not available on this instance.">
+                    {sqlMonitor.data?.note}
+                  </Notice>
+                )}
+
+                {sqlMonitor.data?.licensed !== false && (
+                  <>
+                    <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3">
+                      <MetricTile
+                        label="Executing now"
+                        value={(sqlMonitor.data?.executions || []).filter((e) => e.status === 'EXECUTING').length}
+                        icon="activity"
+                        tone={(sqlMonitor.data?.executions || []).some((e) => e.status === 'EXECUTING') ? 'accent' : 'neutral'}
+                      />
+                      <MetricTile
+                        label="Parallel executions"
+                        value={(sqlMonitor.data?.executions || []).filter((e) => num(e.px_allocated) > 0).length}
+                        icon="layers"
+                      />
+                      <MetricTile
+                        label="Recently finished (10 min)"
+                        value={(sqlMonitor.data?.executions || []).filter((e) => e.status !== 'EXECUTING').length}
+                        icon="clock"
+                      />
+                    </div>
+
+                    <TablePanel
+                      title="Monitored executions"
+                      icon="activity"
+                      subtitle="v$sql_monitor — currently executing or finished in the last 10 minutes. Select a row for per-step progress."
+                    >
+                      <Paged rows={sqlMonitor.data?.executions || []} unit="executions">
+                        {(page, pager) => (
+                          <>
+                            <Table2
+                              columns={[
+                                { key: 'sql', label: 'SQL' },
+                                { key: 'status', label: 'Status' },
+                                { key: 'elapsed', label: 'Elapsed', align: 'right' },
+                                { key: 'cpu', label: 'CPU', align: 'right' },
+                                { key: 'px', label: 'Parallel' },
+                                { key: 'user', label: 'User' },
+                              ]}
+                              rows={page.map((e, i) => {
+                                const key = `${e.sql_id}-${e.sql_exec_id}-${i}`;
+                                return {
+                                  key,
+                                  onClick: () => setOpenMonitor(
+                                    openMonitor?.sql_id === e.sql_id && openMonitor?.sql_exec_id === e.sql_exec_id
+                                      ? null : { sql_id: e.sql_id, sql_exec_id: e.sql_exec_id },
+                                  ),
+                                  cells: {
+                                    sql: <SqlCell sql={e.sql_text} max={90} />,
+                                    status: (
+                                      <Badge tone={e.status === 'EXECUTING' ? 'accent' : e.status?.includes('ERROR') ? 'danger' : 'success'} size="xs">
+                                        {e.status}
+                                      </Badge>
+                                    ),
+                                    elapsed: <span className="font-mono">{fmtNumber(e.elapsed_ms)}ms</span>,
+                                    cpu: <span className="font-mono text-muted">{fmtNumber(e.cpu_ms)}ms</span>,
+                                    px: num(e.px_allocated) > 0
+                                      ? <Badge tone="info" size="xs">{e.px_allocated}/{e.px_requested} PX</Badge>
+                                      : <span className="text-subtle">—</span>,
+                                    user: <span className="font-mono text-[11px]">{e.username}</span>,
+                                  },
+                                };
+                              })}
+                              empty={<EmptyState icon="check" title="Nothing executing"
+                                body="No SQL is currently monitored, and nothing finished in the last 10 minutes." />}
+                            />
+                            {openMonitor && (
+                              <div className="border-t border-border bg-sunken px-card py-3">
+                                {monitorDetail.isLoading ? <InlineLoading label="Reading v$sql_plan_monitor…" /> : (
+                                  <Table2
+                                    columns={[
+                                      { key: 'op', label: 'Operation' },
+                                      { key: 'status', label: 'Status' },
+                                      { key: 'rows', label: 'Rows out / est.', align: 'right' },
+                                      { key: 'time', label: 'Active time', align: 'right' },
+                                    ]}
+                                    rows={(monitorDetail.data?.steps || []).map((s, i) => ({
+                                      key: `${s.plan_line_id}-${i}`,
+                                      cells: {
+                                        op: (
+                                          <span className="font-mono text-[11px]">
+                                            {s.operation} {s.options || ''}
+                                            {s.object_name && <span className="ml-1 text-subtle">{s.object_name}</span>}
+                                          </span>
+                                        ),
+                                        status: <Badge tone={s.status === 'EXECUTING' ? 'accent' : s.status === 'DONE' ? 'success' : 'neutral'} size="xs">{s.status}</Badge>,
+                                        rows: <span className="font-mono">{fmtNumber(s.output_rows)} / {fmtNumber(s.estimated_rows)}</span>,
+                                        time: <span className="font-mono">{fmtNumber(s.time_active_sec)}s</span>,
+                                      },
+                                    }))}
+                                    empty={<EmptyState icon="terminal" title="No step data yet" />}
+                                  />
+                                )}
+                              </div>
+                            )}
+                            {pager}
+                          </>
+                        )}
+                      </Paged>
+                    </TablePanel>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -1985,7 +2179,7 @@ function TopSqlPanel({ rows, title, actions, full = false }) {
   );
 }
 
-function SlowSqlPanel({ rows, onOpen }) {
+function SlowSqlPanel({ rows, onOpen, onRowOpen }) {
   return (
     <TablePanel title="Slowest SQL by average elapsed time" icon="clock"
       subtitle="v$sqlarea — average per execution, so a statement run once is ranked on that one run"
@@ -2010,6 +2204,7 @@ function SlowSqlPanel({ rows, onOpen }) {
                 const avg = num(s.avg_elapsed_sec);
                 return {
                   key: `${s.sql_id}-${i}`,
+                  onClick: onRowOpen ? () => onRowOpen(s.sql_id, s) : undefined,
                   cells: {
                     sql: (
                       <span className="block">

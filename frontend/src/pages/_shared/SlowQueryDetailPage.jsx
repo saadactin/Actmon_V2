@@ -105,24 +105,31 @@ function PlanResult({ data }) {
   // Oracle shape: v$sql_plan rows
   if (Array.isArray(data.plan) && data.plan.length && typeof data.plan[0] === 'object') {
     return (
-      <Table
-        columns={[
-          { key: 'op', label: 'Operation' },
-          { key: 'obj', label: 'Object' },
-          { key: 'cost', label: 'Cost', align: 'right' },
-          { key: 'card', label: 'Cardinality', align: 'right' },
-        ]}
-        rows={data.plan.map((p, i) => ({
-          key: p.id ?? i,
-          cells: {
-            op: <span className="font-mono text-[11px]">{'  '.repeat(p.depth || 0)}{p.operation} {p.options || ''}</span>,
-            obj: p.object_name ? <span className="font-mono text-[11px] text-muted">{p.object_owner}.{p.object_name}</span> : null,
-            cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
-            card: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
-          },
-        }))}
-        empty={<EmptyState icon="terminal" title="No plan rows" body="v$sql_plan has nothing for this sql_id — it may have aged out of the shared pool." />}
-      />
+      <>
+        <Table
+          columns={[
+            { key: 'op', label: 'Operation' },
+            { key: 'obj', label: 'Object' },
+            { key: 'cost', label: 'Cost', align: 'right' },
+            { key: 'card', label: 'Cardinality', align: 'right' },
+          ]}
+          rows={data.plan.map((p, i) => ({
+            key: p.id ?? i,
+            cells: {
+              op: <span className="font-mono text-[11px]">{'  '.repeat(p.depth || 0)}{p.operation} {p.options || ''}</span>,
+              obj: p.object_name ? <span className="font-mono text-[11px] text-muted">{p.object_owner}.{p.object_name}</span> : null,
+              cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
+              card: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
+            },
+          }))}
+          empty={<EmptyState icon="terminal" title="No plan rows" body="v$sql_plan has nothing for this sql_id — it may have aged out of the shared pool." />}
+        />
+        {(data.hints || []).map((h, i) => (
+          <Notice key={i} tone={h.level === 'critical' ? 'danger' : 'warning'} title={h.title} className="mt-gutter-sm">
+            {h.text}{h.fix && <span className="mt-0.5 block italic text-subtle">{h.fix}</span>}
+          </Notice>
+        ))}
+      </>
     );
   }
 

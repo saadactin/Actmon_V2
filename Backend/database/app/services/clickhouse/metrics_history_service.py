@@ -639,6 +639,10 @@ ORACLE_DATAGUARD_COLUMNS = ["ts", "agent", "conn_id", "role", "protection_mode",
 ORACLE_ASM_COLUMNS = ["ts", "agent", "conn_id", "diskgroup_name", "state", "total_mb", "used_mb",
                       "free_mb", "offline_disks", "rebalance_active"]
 ORACLE_ROLE_TRANSITION_COLUMNS = ["ts", "agent", "conn_id", "previous_role", "new_role", "reason"]
+ORACLE_STORAGE_COLUMNS = ["ts", "agent", "conn_id", "metric_type", "object_name",
+                          "tablespace_name", "segment_type", "size_mb", "total_mb", "used_pct"]
+ORACLE_RAC_EVICTION_COLUMNS = ["ts", "agent", "conn_id", "instance_number", "host_name",
+                               "previous_status", "new_status", "event_type"]
 
 _ORACLE_EXTRA_DDL = {
     "actmon_oracle_rac_nodes": """
@@ -681,6 +685,22 @@ _ORACLE_EXTRA_DDL = {
             previous_role LowCardinality(String), new_role LowCardinality(String), reason String
         ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
           ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_storage_history": """
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_storage_history (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            metric_type LowCardinality(String), object_name String,
+            tablespace_name LowCardinality(String), segment_type LowCardinality(String),
+            size_mb Float64, total_mb Float64, used_pct Float64
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, metric_type, object_name, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_rac_eviction_events": """
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_rac_eviction_events (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            instance_number UInt16, host_name LowCardinality(String),
+            previous_status LowCardinality(String), new_status LowCardinality(String),
+            event_type LowCardinality(String)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, instance_number, ts) TTL ts + INTERVAL %(days)s DAY""",
 }
 
 
@@ -775,6 +795,83 @@ def flush_oracle_asm(rows):
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_asm: %s", e)
         mark_down()
+
+
+def flush_oracle_storage(rows):
+    """rows: list of dicts matching ORACLE_STORAGE_COLUMNS (minus 'ts') — one
+    row per tablespace plus one per top segment, per cycle (see
+    oracle_history_flush_service.flush_storage). Never raises."""
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_storage_history"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_STORAGE_COLUMNS[1:]] for r in rows]
+        cli.insert(f"{CH_DB}.actmon_oracle_storage_history", data, column_names=ORACLE_STORAGE_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_storage: %s", e)
+        mark_down()
+
+
+def query_oracle_storage(conn_id, metric_type=None, minutes=None, since=None, until=None, limit=5000):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        if metric_type:
+            where.append("metric_type = %(metric_type)s")
+            params["metric_type"] = metric_type
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, metric_type, object_name, tablespace_name, "
+            "segment_type, size_mb, total_mb, used_pct "
+            f"FROM {CH_DB}.actmon_oracle_storage_history WHERE " + " AND ".join(where) +
+            " ORDER BY object_name, ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "metric_type", "object_name", "tablespace_name",
+                "segment_type", "size_mb", "total_mb", "used_pct"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_storage: %s", e)
+        mark_down()
+        return []
+
+
+def flush_oracle_rac_eviction_event(row):
+    """Written only when oracle_history_flush_service.flush_rac_nodes() detects
+    an ACTUAL status transition (OPEN->non-OPEN or the reverse) against
+    ConnectionMaster.oracle_rac_node_status — never one row per collector
+    cycle for a node that's simply been down a while."""
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_rac_eviction_events"):
+        return
+    try:
+        import datetime
+        data = [[row.get("ts") or datetime.datetime.now()] + [row.get(c) for c in ORACLE_RAC_EVICTION_COLUMNS[1:]]]
+        cli.insert(f"{CH_DB}.actmon_oracle_rac_eviction_events", data, column_names=ORACLE_RAC_EVICTION_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_rac_eviction_event: %s", e)
+        mark_down()
+
+
+def query_oracle_rac_eviction_events(conn_id, minutes=None, since=None, until=None, limit=200):
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, instance_number, host_name, "
+            "previous_status, new_status, event_type "
+            f"FROM {CH_DB}.actmon_oracle_rac_eviction_events WHERE " + " AND ".join(where) +
+            " ORDER BY ts DESC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        cols = ["ts", "instance_number", "host_name", "previous_status", "new_status", "event_type"]
+        return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_rac_eviction_events: %s", e)
+        mark_down()
+        return []
 
 
 def flush_oracle_role_transition(row):

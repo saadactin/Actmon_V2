@@ -14,10 +14,12 @@ export const APP = {
   tagline: env.VITE_APP_TAGLINE || 'Unified Observability',
   company: env.VITE_APP_COMPANY || 'Actin Technologies',
   version: env.VITE_APP_VERSION || '1.1.0',
-  /** Logo: the real ActMon mark by default (public/actmon-logo.png) — override
-      via VITE_APP_LOGO for a white-label build, or set both to '' to fall
-      back to the drawn inline mark in LogoMark.jsx. */
-  logoUrl: env.VITE_APP_LOGO || '/actmon-logo.png',
+  /** Logo: the real ActMon mark by default (public/actmon-logo-transparent.png,
+      background chroma-keyed out so it blends with the nav bar's own
+      background instead of showing a mismatched box) — override via
+      VITE_APP_LOGO for a white-label build, or set both to '' to fall back
+      to the drawn inline mark in LogoMark.jsx. */
+  logoUrl: env.VITE_APP_LOGO || '/actmon-logo-transparent.png',
   /** ActMon AI's mark. Point this at the Figma export (e.g. /actmon-ai.svg
       dropped in public/) and it replaces the drawn fallback everywhere. */
   aiLogoUrl: env.VITE_APP_AI_LOGO || '',

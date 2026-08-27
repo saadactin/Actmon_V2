@@ -1,0 +1,56 @@
+<UserControl x:Class="ActMon.Setup.Pages.Welcome.WelcomePage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="640">
+    <StackPanel Margin="8">
+        <Image Source="/Assets/actmon-logo.png" Height="72" Stretch="Uniform"
+               HorizontalAlignment="Center" Margin="0,0,0,16"/>
+        <TextBlock Text="{Binding Tagline}" FontSize="15" Foreground="#64748B" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+
+        <TextBlock Text="{Binding ProductName, StringFormat='Welcome to the {0} Setup Wizard'}"
+                   FontSize="17" FontWeight="SemiBold" Margin="0,28,0,8"/>
+        <TextBlock TextWrapping="Wrap" Foreground="#334155" LineHeight="20"
+                   Text="This wizard installs ActMon's frontend, database backend and cloud backend as Windows Services, and configures PostgreSQL, Redis and ClickHouse for you. Click Next to continue, or Cancel to exit Setup."/>
+
+        <Border Background="#F1F5F9" CornerRadius="6" Padding="16" Margin="0,20,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Version:" FontWeight="SemiBold" Margin="0,0,12,6"/>
+                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Version}" Margin="0,0,0,6"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Publisher:" FontWeight="SemiBold" Margin="0,0,12,6"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Publisher}" Margin="0,0,0,6"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Installation type:" FontWeight="SemiBold" Margin="0,0,12,0"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding InstallationType}" TextWrapping="Wrap" Margin="0,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <TextBlock Text="Installation directory" FontWeight="SemiBold" Margin="0,24,0,6"/>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox Grid.Column="0" Text="{Binding InstallDirectory, UpdateSourceTrigger=PropertyChanged}"
+                     Padding="8,6" VerticalContentAlignment="Center"/>
+            <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseCommand}"
+                    Padding="14,6" Margin="8,0,0,0"/>
+        </Grid>
+        <TextBlock Text="{Binding DirectoryMessage}" TextWrapping="Wrap" Margin="0,6,0,0" FontSize="12.5"
+                   Foreground="{Binding DirectoryMessageBrushKey, Converter={StaticResource BrushKeyConverter}}"/>
+        <TextBlock Margin="0,4,0,0" FontSize="11.5" Foreground="#94A3B8"
+                   Text="{Binding DefaultInstallDirectory, StringFormat='Default: {0}. The directory is created automatically if it does not already exist.'}"/>
+    </StackPanel>
+</UserControl>

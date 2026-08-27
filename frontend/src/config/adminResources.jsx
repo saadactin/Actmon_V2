@@ -33,6 +33,13 @@ import { useLogsTimezoneStore } from '@/store/logsTimezoneStore';
  *                in the page header (see store/logsTimezoneStore.js); only
  *                meaningful for the 4 log/history pages, whose columns use
  *                `dt()` below
+ *   defaultSort  {key, dir} → initial sort order (defaults to the first
+ *                column, ascending, if unset) — e.g. User Sessions defaults
+ *                to is_live desc so active sessions sort to the top
+ *   statusFilter {allLabel?, options:[{id, label, test(row):bool}]} →
+ *                renders a dropdown in the page header that filters rows to
+ *                whichever option's `test` returns true (or shows everything
+ *                for the built-in "All" entry, always prepended)
  *   autoCreateLogin true → Employees only; offers to create a linked User
  *                after a successful create (handled in EmployeesPage, not
  *                the generic engine, to keep the engine itself config-only)
@@ -471,6 +478,13 @@ export const ADMIN_RESOURCES = {
     readOnly: true,
     hub: { to: '/logs', label: 'Logs' },
     showTimezoneSelector: true,
+    defaultSort: { key: 'is_live', dir: 'desc' },
+    statusFilter: {
+      options: [
+        { id: 'live', label: 'Live', test: (row) => !!row.is_live },
+        { id: 'ended', label: 'Ended', test: (row) => !row.is_live },
+      ],
+    },
     searchKeys: ['user_name', 'employee_name', 'ip_address'],
     columns: [
       { key: 'session_id', label: 'ID', width: 80 },

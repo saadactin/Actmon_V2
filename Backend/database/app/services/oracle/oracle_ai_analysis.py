@@ -120,6 +120,10 @@ class OracleSlowQueryGroqRequest(BaseModel):
     avg_disk_reads:      float = 0.0
     avg_buffer_gets:     float = 0.0
     rows_processed:      int   = 0
+    # Optional — when present, the prompt is enriched with the real execution
+    # plan and current wait state instead of just these four aggregate
+    # numbers. Backward compatible: omitted, this behaves exactly as before.
+    sql_id:              Optional[str] = None
 
 
 def analyze_slow_query_groq(conn_id: int, payload: OracleSlowQueryGroqRequest, db: Session) -> dict:
@@ -131,6 +135,44 @@ def analyze_slow_query_groq(conn_id: int, payload: OracleSlowQueryGroqRequest, d
         return {"status": "error", "error": "Oracle connection not found"}
     if not (payload.sql_text or "").strip():
         return {"status": "error", "error": "No SQL text provided"}
+
+    plan_section = ""
+    wait_section = ""
+    if payload.sql_id:
+        try:
+            from app.services.oracle.oracle_monitoring_service import oracle_sql_plan
+            plan_resp = oracle_sql_plan(conn_id, db, payload.sql_id)
+            plan_rows = plan_resp.get("plan") or []
+            issues = plan_resp.get("issues") or []
+            wait_info = plan_resp.get("wait_info") or {}
+
+            if plan_rows:
+                plan_lines = "\n".join(
+                    f"{'  ' * (p.get('depth') or 0)}{p.get('operation')} {p.get('options') or ''} "
+                    f"(cost={p.get('cost')}, rows={p.get('cardinality')}"
+                    + (f", object={p.get('object_owner')}.{p.get('object_name')}" if p.get("object_name") else "")
+                    + ")"
+                    for p in plan_rows
+                )
+                issues_lines = "\n".join(
+                    f"- [{i['severity'].upper()}] {i['type']}: {i['description']} ({i['evidence']})"
+                    for i in issues
+                ) or "(none flagged by deterministic analysis)"
+                plan_section = f"""
+
+=== EXECUTION PLAN (v$sql_plan, real) ===
+{plan_lines}
+
+Deterministic plan analysis already found:
+{issues_lines}"""
+
+            if wait_info:
+                wait_section = f"""
+
+=== CURRENT WAIT STATE (v$session, real, if still running) ===
+Status: {wait_info.get('status')}, wait_event: {wait_info.get('wait_event')}, wait_class: {wait_info.get('wait_class')}, seconds_in_wait: {wait_info.get('seconds_in_wait')}"""
+        except Exception:
+            pass  # AI analysis must still work even if plan enrichment fails
 
     try:
         from groq import Groq
@@ -150,7 +192,7 @@ Average elapsed time: {payload.avg_elapsed_sec:.4f} sec
 Average CPU time: {payload.avg_cpu_sec:.4f} sec
 Average disk reads: {payload.avg_disk_reads:,.0f}
 Average buffer gets (logical reads): {payload.avg_buffer_gets:,.0f}
-Rows processed: {payload.rows_processed:,}
+Rows processed: {payload.rows_processed:,}{plan_section}{wait_section}
 
 Return this exact JSON structure:
 {{
@@ -206,5 +248,67 @@ Return this exact JSON structure:
                 raw = raw[4:]
         analysis = json.loads(raw.strip())
         return {"status": "success", "analysis": analysis}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# ── Groq-powered plain-English storage object explanation ─────────────────────
+class OracleStorageAiExplainRequest(BaseModel):
+    """Everything is real data already computed by the deterministic
+    findings/block-detail services — the model is only asked to put it into
+    plain English (and answer a free-text follow-up), never to invent its
+    own numbers. `history` lets the small on-page Q&A box carry context
+    across a couple of follow-up questions without a server-side session."""
+    object_type:      str
+    object_label:     str
+    problem:          Optional[str] = None
+    evidence:         Optional[str] = None
+    expected_benefit: Optional[str] = None
+    risk:             Optional[str] = None
+    facts:            dict = {}     # size/blocks/load/impact-estimate — whatever the page already shows
+    question:         Optional[str] = None   # None -> produce the initial plain-English summary
+    history:          list = []     # [{question, answer}, ...] prior turns on this page
+
+
+def oracle_storage_ai_explain(payload: OracleStorageAiExplainRequest) -> dict:
+    try:
+        from groq import Groq
+        client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        facts_lines = "\n".join(f"- {k}: {v}" for k, v in payload.facts.items() if v is not None)
+        history_lines = "\n".join(
+            f"Q: {h.get('question')}\nA: {h.get('answer')}" for h in (payload.history or []) if h.get("question")
+        )
+
+        prompt = f"""You are ActMon's database assistant, explaining Oracle storage data to someone who is NOT a DBA — plain, short, everyday English. No jargon without explaining it in the same sentence. Never invent a number — use ONLY the facts given below; if something isn't in the facts, say it isn't known rather than guessing.
+
+=== OBJECT ===
+Type: {payload.object_type}
+Name: {payload.object_label}
+Finding: {payload.problem or '(no active finding — just showing current status)'}
+Evidence: {payload.evidence or '(none)'}
+Expected benefit if action is taken: {payload.expected_benefit or '(none)'}
+Risk of taking action: {payload.risk or '(none)'}
+
+=== REAL MEASURED FACTS ===
+{facts_lines or '(none provided)'}
+
+{"=== PRIOR Q&A ON THIS PAGE ===" if history_lines else ""}
+{history_lines}
+
+=== TASK ===
+{"Answer this follow-up question in 2-4 sentences, grounded only in the facts above: " + payload.question if payload.question else "Write a 3-5 sentence plain-English summary: what this object is, how full/empty it really is, whether it needs attention right now, and — only if a finding/benefit is present above — roughly what running the recommended action would do. Do not restate every fact as a list; write it as something a non-technical manager could read in ten seconds."}
+
+Return plain text only — no markdown headers, no JSON, no code fences."""
+
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=600,
+            reasoning_effort="low",
+        )
+        answer = response.choices[0].message.content.strip()
+        return {"status": "success", "answer": answer}
     except Exception as e:
         return {"status": "error", "error": str(e)}

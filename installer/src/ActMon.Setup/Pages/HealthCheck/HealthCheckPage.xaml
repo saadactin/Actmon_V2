@@ -1,0 +1,50 @@
+<UserControl x:Class="ActMon.Setup.Pages.HealthCheck.HealthCheckPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="640">
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="Health Check" FontSize="20" FontWeight="Bold" Foreground="#0F172A"/>
+            <TextBlock Foreground="#64748B" Margin="0,4,0,0" TextWrapping="Wrap"
+                       Text="Real connection and HTTP checks against everything just installed — not just confirmation that files or services were created."/>
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <TextBlock Text="Running health checks…" Visibility="{Binding IsChecking, Converter={StaticResource BoolToVis}}"
+                       Foreground="#64748B" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+            <StackPanel Visibility="{Binding IsChecking, Converter={StaticResource InverseBoolToVis}}">
+                <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,0,0,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Details}" Foreground="#64748B" FontSize="12" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="1" Text="✓" Foreground="#16A34A" FontSize="18" FontWeight="Bold"
+                                               VerticalAlignment="Top" Visibility="{Binding Passed, Converter={StaticResource BoolToVis}}"/>
+                                    <TextBlock Grid.Column="1" Text="✕" Foreground="#DC2626" FontSize="18" FontWeight="Bold"
+                                               VerticalAlignment="Top" Visibility="{Binding Passed, Converter={StaticResource InverseBoolToVis}}"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Content="Re-check" Command="{Binding RecheckCommand}" HorizontalAlignment="Left" Padding="14,6" Margin="0,4,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -157,6 +157,13 @@ _SCHEMA_PATCHES = [
          ON agent_stable_changes (agent_name, ts DESC)""",
     # Per-agent last failure reason — surfaced in the UI when a collection errors.
     """ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_error TEXT""",
+    # Oracle Storage Health: approval no longer auto-queues execution — a human
+    # must explicitly click Start, recorded here.
+    """ALTER TABLE oracle_maintenance_jobs ADD COLUMN IF NOT EXISTS start_requested_at TIMESTAMP""",
+    # Oracle Storage Health: schedule-for-later + email notification recipients.
+    """ALTER TABLE oracle_maintenance_jobs
+         ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP,
+         ADD COLUMN IF NOT EXISTS notification_recipients JSONB""",
     # Employee-code generator collision fix: uk_employee_org_code spans soft-deleted
     # rows, but the old generator computed MAX() over live rows only — so a deleted
     # ACTnnn code got regenerated and violated the constraint on insert. Recompute

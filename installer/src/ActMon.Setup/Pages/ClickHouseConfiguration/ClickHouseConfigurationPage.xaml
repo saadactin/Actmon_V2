@@ -1,0 +1,112 @@
+<UserControl x:Class="ActMon.Setup.Pages.ClickHouseConfiguration.ClickHouseConfigurationPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mvvm="clr-namespace:ActMon.Setup.Mvvm"
+             mc:Ignorable="d" d:DesignWidth="640">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="8">
+        <TextBlock Text="ClickHouse Configuration" FontSize="20" FontWeight="Bold" Foreground="#0F172A"/>
+
+        <TextBlock Text="Checking for ClickHouse…" Visibility="{Binding IsDetecting, Converter={StaticResource BoolToVis}}" Foreground="#64748B" Margin="0,16,0,0"/>
+
+        <StackPanel Visibility="{Binding IsInstalled, Converter={StaticResource InverseBoolToVis}}" Margin="0,16,0,0">
+            <StackPanel Visibility="{Binding IsDetecting, Converter={StaticResource InverseBoolToVis}}">
+                <TextBlock Text="ClickHouse was not detected." Foreground="#D97706" FontWeight="SemiBold"/>
+                <Button Content="Install ClickHouse" Command="{Binding InstallCommand}" HorizontalAlignment="Left" Margin="0,10,0,0" Padding="14,6"/>
+                <TextBlock Text="{Binding InstallMessage}" TextWrapping="Wrap" Margin="0,10,0,0"
+                           Visibility="{Binding InstallMessage, Converter={StaticResource NullToVis}}"/>
+            </StackPanel>
+        </StackPanel>
+
+        <StackPanel Visibility="{Binding IsInstalled, Converter={StaticResource BoolToVis}}">
+            <TextBlock Text="✓ ClickHouse detected" Foreground="#16A34A" FontWeight="SemiBold" Margin="0,16,0,12"/>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="110"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Host:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Port:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8" HorizontalAlignment="Left" Width="100"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Username:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Password:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <PasswordBox Grid.Row="3" Grid.Column="1" Padding="4" Margin="0,0,0,8" mvvm:PasswordBoxBehavior.BindPassword="True"
+                             mvvm:PasswordBoxBehavior.BoundPassword="{Binding Password, UpdateSourceTrigger=PropertyChanged}"/>
+            </Grid>
+
+            <Button Content="Test Connection" Command="{Binding TestConnectionCommand}" HorizontalAlignment="Left" Padding="14,6" Margin="0,6,0,0"/>
+
+            <TextBlock Text="{Binding ConnectionMessage}" Margin="0,10,0,0" TextWrapping="Wrap"
+                       Visibility="{Binding ConnectionMessage, Converter={StaticResource NullToVis}}"
+                       Foreground="{Binding ConnectionOk, Converter={StaticResource NullableBoolToBrush}}" FontWeight="SemiBold"/>
+
+            <StackPanel Visibility="{Binding ConnectionOk, Converter={StaticResource BoolToVis}}" Margin="0,20,0,0">
+                <Border BorderBrush="#E2E8F0" BorderThickness="0,1,0,0" Margin="0,0,0,16"/>
+                <TextBlock Text="Database Configuration" FontSize="15" FontWeight="Bold" Margin="0,0,0,10"/>
+
+                <RadioButton Content="Use Existing Database" IsChecked="{Binding UseExisting}" Margin="0,0,0,8" GroupName="chdbmode"/>
+                <RadioButton Content="Create New Database" IsChecked="{Binding UseCreateNew}" Margin="0,0,0,12" GroupName="chdbmode"/>
+
+                <StackPanel Visibility="{Binding UseExisting, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="Loading databases…" Visibility="{Binding IsLoadingDatabases, Converter={StaticResource BoolToVis}}" Foreground="#64748B"/>
+                    <ListBox ItemsSource="{Binding Databases}" SelectedItem="{Binding SelectedDatabase}"
+                             MaxHeight="150" Visibility="{Binding IsLoadingDatabases, Converter={StaticResource InverseBoolToVis}}"/>
+
+                    <StackPanel Visibility="{Binding SelectedDatabase, Converter={StaticResource NullToVis}}" Margin="0,10,0,0">
+                        <TextBlock Margin="0,0,0,8">
+                            <Run Text="Use "/><Run Text="{Binding SelectedDatabase, Mode=OneWay}" FontWeight="Bold"/><Run Text=" for ActMon?"/>
+                        </TextBlock>
+                        <Button Content="Yes, use this database" Command="{Binding ConfirmExistingCommand}" HorizontalAlignment="Left" Padding="14,6"/>
+                    </StackPanel>
+
+                    <TextBlock Text="✓ Configured" Foreground="#16A34A" FontWeight="SemiBold" Margin="0,10,0,0"
+                               Visibility="{Binding ExistingConfirmed, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+
+                <StackPanel Visibility="{Binding UseCreateNew, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="150"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Database Name:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                        <TextBox Grid.Column="1" Text="{Binding NewDbName, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8"/>
+                    </Grid>
+
+                    <Button Content="Create" Command="{Binding CreateDatabaseCommand}" HorizontalAlignment="Left" Padding="14,6" Margin="0,4,0,0"
+                            Visibility="{Binding DbAlreadyExistsConflict, Converter={StaticResource InverseBoolToVis}}"/>
+
+                    <TextBlock Text="{Binding CreateError}" Foreground="#DC2626" TextWrapping="Wrap" Margin="0,10,0,0"
+                               Visibility="{Binding CreateError, Converter={StaticResource NullToVis}}"/>
+
+                    <StackPanel Visibility="{Binding DbAlreadyExistsConflict, Converter={StaticResource BoolToVis}}" Margin="0,10,0,0">
+                        <TextBlock Text="Database already exists." Foreground="#D97706" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Use Existing Database" Command="{Binding ConfirmExistingCommand}" Padding="10,6" Margin="0,0,8,0"/>
+                            <Button Content="Choose Another Name" Command="{Binding ChooseAnotherNameCommand}" Padding="10,6"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Text="✓ Database created" Foreground="#16A34A" FontWeight="SemiBold" Margin="0,10,0,0"
+                               Visibility="{Binding Created, Converter={StaticResource BoolToVis}}"/>
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </StackPanel>
+    </ScrollViewer>
+</UserControl>

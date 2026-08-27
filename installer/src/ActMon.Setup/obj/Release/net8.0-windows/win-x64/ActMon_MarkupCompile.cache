@@ -1,0 +1,20 @@
+﻿ActMon
+
+
+winexe
+C#
+.cs
+E:\ACTMON V1\installer\src\ActMon.Setup\obj\Release\net8.0-windows\win-x64\
+ActMon.Setup
+none
+false
+TRACE;RELEASE;NET;NET8_0;NETCOREAPP
+E:\ACTMON V1\installer\src\ActMon.Setup\App.xaml
+191330323856
+
+531309643207
+207-295181071
+MainWindow.xaml;Pages\ClickHouseConfiguration\ClickHouseConfigurationPage.xaml;Pages\Complete\InstallationCompletePage.xaml;Pages\DependencyPreCheck\DependencyPreCheckPage.xaml;Pages\ExistingInstallation\ExistingInstallationPage.xaml;Pages\Firewall\FirewallPage.xaml;Pages\HealthCheck\HealthCheckPage.xaml;Pages\Install\InstallPage.xaml;Pages\OrganizationSetup\OrganizationSetupPage.xaml;Pages\Placeholder\PlaceholderPage.xaml;Pages\PortConfiguration\PortConfigurationPage.xaml;Pages\PostgresConfiguration\PostgresConfigurationPage.xaml;Pages\RedisConfiguration\RedisConfigurationPage.xaml;Pages\SmtpConfiguration\SmtpConfigurationPage.xaml;Pages\Summary\SummaryPage.xaml;Pages\SuperAdminSetup\SuperAdminSetupPage.xaml;Pages\SystemRequirements\SystemRequirementsPage.xaml;Pages\Welcome\WelcomePage.xaml;Pages\WindowsServices\WindowsServicesPage.xaml;
+
+False
+

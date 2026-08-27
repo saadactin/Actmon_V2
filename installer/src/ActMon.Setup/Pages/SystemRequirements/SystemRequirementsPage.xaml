@@ -1,0 +1,62 @@
+<UserControl x:Class="ActMon.Setup.Pages.SystemRequirements.SystemRequirementsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d" d:DesignWidth="640">
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="0,0,0,16">
+            <TextBlock Text="System Requirements" FontSize="20" FontWeight="Bold" Foreground="#0F172A"/>
+            <TextBlock Text="Checking this machine against what ActMon needs before installing anything."
+                       Foreground="#64748B" Margin="0,4,0,0" TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <TextBlock Text="Checking system requirements…" Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#64748B" FontSize="14"/>
+
+            <ListView ItemsSource="{Binding Rows}" Visibility="{Binding IsBusy, Converter={StaticResource InverseBoolToVis}}"
+                      BorderThickness="1" BorderBrush="#E2E8F0">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Requirement" Width="220">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Requirement}" VerticalAlignment="Center" Padding="4"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Status" Width="70">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding StatusGlyph}" FontWeight="Bold" FontSize="15"
+                                               Foreground="{Binding StatusBrushKey, Converter={StaticResource BrushKeyConverter}}"
+                                               HorizontalAlignment="Center" Padding="4"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Details" Width="330">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Details}" TextWrapping="Wrap" Padding="4"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Grid>
+
+        <Border Grid.Row="2" Background="#FEF2F2" BorderBrush="#FCA5A5" BorderThickness="1" CornerRadius="6"
+                Padding="12" Margin="0,12,0,0"
+                Visibility="{Binding BlockingSummary, Converter={StaticResource NullToVis}}">
+            <TextBlock Text="{Binding BlockingSummary}" Foreground="#991B1B" TextWrapping="Wrap"/>
+        </Border>
+    </Grid>
+</UserControl>

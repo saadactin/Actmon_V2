@@ -1,0 +1,96 @@
+﻿<Application x:Class="ActMon.Setup.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ActMon.Setup"
+             xmlns:conv="clr-namespace:ActMon.Setup.Converters"
+             xmlns:pWelcome="clr-namespace:ActMon.Setup.Pages.Welcome"
+             xmlns:pSysReq="clr-namespace:ActMon.Setup.Pages.SystemRequirements"
+             xmlns:pDepCheck="clr-namespace:ActMon.Setup.Pages.DependencyPreCheck"
+             xmlns:pPort="clr-namespace:ActMon.Setup.Pages.PortConfiguration"
+             xmlns:pPostgres="clr-namespace:ActMon.Setup.Pages.PostgresConfiguration"
+             xmlns:pRedis="clr-namespace:ActMon.Setup.Pages.RedisConfiguration"
+             xmlns:pClickHouse="clr-namespace:ActMon.Setup.Pages.ClickHouseConfiguration"
+             xmlns:pOrg="clr-namespace:ActMon.Setup.Pages.OrganizationSetup"
+             xmlns:pAdmin="clr-namespace:ActMon.Setup.Pages.SuperAdminSetup"
+             xmlns:pSmtp="clr-namespace:ActMon.Setup.Pages.SmtpConfiguration"
+             xmlns:pSummary="clr-namespace:ActMon.Setup.Pages.Summary"
+             xmlns:pInstall="clr-namespace:ActMon.Setup.Pages.Install"
+             xmlns:pServices="clr-namespace:ActMon.Setup.Pages.WindowsServices"
+             xmlns:pFirewall="clr-namespace:ActMon.Setup.Pages.Firewall"
+             xmlns:pHealth="clr-namespace:ActMon.Setup.Pages.HealthCheck"
+             xmlns:pComplete="clr-namespace:ActMon.Setup.Pages.Complete"
+             xmlns:pPlaceholder="clr-namespace:ActMon.Setup.Pages.Placeholder"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- Palette -->
+            <SolidColorBrush x:Key="SuccessBrush" Color="#16A34A"/>
+            <SolidColorBrush x:Key="WarningBrush" Color="#D97706"/>
+            <SolidColorBrush x:Key="DangerBrush" Color="#DC2626"/>
+            <SolidColorBrush x:Key="MutedBrush" Color="#94A3B8"/>
+            <SolidColorBrush x:Key="BrandBrush" Color="#0F172A"/>
+            <SolidColorBrush x:Key="AccentBrush" Color="#2563EB"/>
+
+            <!-- Converters -->
+            <conv:BoolToVisConverter x:Key="BoolToVis"/>
+            <conv:InverseBoolToVisConverter x:Key="InverseBoolToVis"/>
+            <conv:InverseBoolConverter x:Key="InverseBoolToBool"/>
+            <conv:NullToVisConverter x:Key="NullToVis"/>
+            <conv:BrushKeyConverter x:Key="BrushKeyConverter"/>
+            <conv:NullableBoolToBrushConverter x:Key="NullableBoolToBrush"/>
+
+            <!-- View model -> view (view-model-first navigation) -->
+            <DataTemplate DataType="{x:Type pWelcome:WelcomeViewModel}">
+                <pWelcome:WelcomePage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pSysReq:SystemRequirementsViewModel}">
+                <pSysReq:SystemRequirementsPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pDepCheck:DependencyPreCheckViewModel}">
+                <pDepCheck:DependencyPreCheckPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pPort:PortConfigurationViewModel}">
+                <pPort:PortConfigurationPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pPostgres:PostgresConfigurationViewModel}">
+                <pPostgres:PostgresConfigurationPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pRedis:RedisConfigurationViewModel}">
+                <pRedis:RedisConfigurationPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pClickHouse:ClickHouseConfigurationViewModel}">
+                <pClickHouse:ClickHouseConfigurationPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pOrg:OrganizationSetupViewModel}">
+                <pOrg:OrganizationSetupPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pAdmin:SuperAdminSetupViewModel}">
+                <pAdmin:SuperAdminSetupPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pSmtp:SmtpConfigurationViewModel}">
+                <pSmtp:SmtpConfigurationPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pSummary:SummaryPageViewModelBase}">
+                <pSummary:SummaryPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pInstall:InstallViewModel}">
+                <pInstall:InstallPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pServices:WindowsServicesViewModel}">
+                <pServices:WindowsServicesPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pFirewall:FirewallViewModel}">
+                <pFirewall:FirewallPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pHealth:HealthCheckViewModel}">
+                <pHealth:HealthCheckPage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pComplete:InstallationCompleteViewModel}">
+                <pComplete:InstallationCompletePage/>
+            </DataTemplate>
+            <DataTemplate DataType="{x:Type pPlaceholder:PlaceholderViewModel}">
+                <pPlaceholder:PlaceholderPage/>
+            </DataTemplate>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

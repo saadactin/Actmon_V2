@@ -192,8 +192,10 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     create, update, remove, isCreating, isUpdating, isRemoving,
   } = useAdminResource(config.key, config.api, config.orgScoped ? orgId : undefined);
 
-  const [sort, setSort] = useState({ key: config.columns[0].key, dir: 'asc' });
+  const [sort, setSort] = useState(config.defaultSort || { key: config.columns[0].key, dir: 'asc' });
   const [page, setPage] = useState(1);
+  const [statusFilterId, setStatusFilterIdRaw] = useState('all');
+  const setStatusFilterId = (id) => { setStatusFilterIdRaw(id); setPage(1); };
   // Same pattern as AgentsPage.jsx/ObjectTable.jsx: the app-wide rowsPerPage
   // appearance setting is the default, overridable per-session by the
   // pager's own page-size control — so this table's pager behaves exactly
@@ -228,7 +230,16 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     ...(!config.readOnly || allowEdit || allowDelete ? [{ key: '__actions', label: 'Action', align: 'right', width: 120 }] : []),
   ], [config.columns, config.readOnly, allowEdit, allowDelete]);
 
-  const allTableRows = useMemo(() => rows.map((row) => ({
+  // Generic status filter (config.statusFilter) — e.g. User Sessions'
+  // Live/Ended toggle. Applied before sort/pagination so "N of M" and the
+  // page count both reflect the filtered set, not the full table.
+  const filteredRows = useMemo(() => {
+    if (!config.statusFilter || statusFilterId === 'all') return rows;
+    const opt = config.statusFilter.options.find((o) => o.id === statusFilterId);
+    return opt?.test ? rows.filter(opt.test) : rows;
+  }, [rows, config.statusFilter, statusFilterId]);
+
+  const allTableRows = useMemo(() => filteredRows.map((row) => ({
     key: row[config.idKey],
     cells: {
       ...Object.fromEntries(config.columns.map((c, i) => [c.key, <Cell key={c.key} col={c} row={row} identity={i === 1} />])),
@@ -242,7 +253,7 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     },
     sort: Object.fromEntries(config.columns.map((c) => [c.key, row[c.key]])),
     // eslint-disable-next-line no-use-before-define
-  })), [rows, config.columns, config.idKey, allowEdit, allowDelete]);
+  })), [filteredRows, config.columns, config.idKey, allowEdit, allowDelete]);
 
   const sortedRows = sortRows(allTableRows, sort);
   const pageCount = pageCountOf(sortedRows.length, pageSize);
@@ -411,6 +422,15 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
         backLabel={config.orgScoped ? 'Administration' : (config.hub?.label || 'Administration')}
         actions={(
           <div className="flex items-center gap-2">
+            {config.statusFilter && (
+              <div className="w-36">
+                <Select
+                  value={statusFilterId}
+                  onChange={setStatusFilterId}
+                  options={[{ id: 'all', label: config.statusFilter.allLabel || 'All' }, ...config.statusFilter.options]}
+                />
+              </div>
+            )}
             {config.showTimezoneSelector && (
               <div className="w-44">
                 <Select

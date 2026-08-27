@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Copy, Check, Info, Loader2, CheckCircle2, Globe, Download } from 'lucide-react';
 import { createInstallToken, listAgents, getHostIps } from '@/api/agents';
 import { toPowerShellEncodedCommand } from '@/utils/powershell';
+import { copyText } from '@/lib/clipboard';
 
 const ORIGIN = typeof window !== 'undefined' ? window.location.origin : '';
 const IS_LOCAL = /^(localhost|127\.)/i.test(typeof window !== 'undefined' ? window.location.hostname : '');
@@ -120,7 +121,7 @@ export default function StepInstallation({ data, onInstalled }) {
   const apiBase = `${serverBase.replace(/\/+$/, '')}/api/v1`;
   const script = buildScript(data, apiBase);
 
-  const copy = () => { navigator.clipboard?.writeText(script); setCopied(true); setTimeout(() => setCopied(false), 1600); };
+  const copy = async () => { if (await copyText(script)) { setCopied(true); setTimeout(() => setCopied(false), 1600); } };
 
   // Persist the token so the running agent can enroll against it.
   useEffect(() => {
@@ -178,56 +179,27 @@ export default function StepInstallation({ data, onInstalled }) {
         </a>
       )}
 
-      {/* Windows downloads. The database backend runs on Linux here, which has
-          no way to run candle.exe/light.exe (Windows-only WiX tools) without
-          Wine — so nothing is baked into a per-request MSI server-side any
-          more. Instead:
-            .bat  → server-generated text (no WiX involved) that downloads the
-                    STATIC pre-built MSI and passes ACCESS_TOKEN/ACTMON_URL as
-                    msiexec command-line properties — real double-click,
-                    nothing to type, same as before.
-            .msi  → the same static file, undecorated. Its installer wizard
-                    now has its own Server URL/Token fields, pre-filled if
-                    supplied via msiexec properties and editable either way —
-                    so a bare double-click still works, it just asks.
-            .exe  → no installer wrapper to carry any default into at all, so
-                    it always needs the token/URL supplied manually (env vars,
-                    called out below). */}
+      {/* Windows download. Only the pre-configured .bat is offered — it bakes
+          this token + the server URL into a msiexec command-line property
+          install (ACCESS_TOKEN/ACTMON_URL are WiX `Secure` properties, set
+          this way by design), so the installer wizard's own Server URL/Token
+          page auto-skips and nothing is ever typed in. The raw .msi and .exe
+          downloads are deliberately NOT offered here anymore — both require
+          the token/URL to be entered (or set as env vars) by hand, and an
+          agent installed that way never has a valid token, so it never
+          checks in and the Status section below never flips to "installed"
+          — confirmed the actual cause of exactly that symptom. */}
       {isWin && (
         <div className="mt-4">
-          <div className="flex flex-wrap items-stretch gap-3">
-            <div>
-              <a href={`${apiBase}/agents/install/actmon-install.bat?token=${data.token}&url=${encodeURIComponent(apiBase)}`} download
-                className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
-                <Download size={16} /> Download ActMon Agent Installer (.bat)
-              </a>
-              <p className="text-[12px] text-emerald-700 font-semibold mt-1.5">Recommended — nothing to type, double-click and click Yes.</p>
-            </div>
-            <div>
-              <a href={`${apiBase}/agents/download/windows`} download
-                className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
-                <Download size={16} /> Download Agent .msi
-              </a>
-              <p className="text-[12px] text-slate-500 mt-1.5">The installer wizard asks for the Server URL/Token — see below.</p>
-            </div>
-            <div>
-              <a href={`${apiBase}/agents/download/windows?fmt=exe`} download
-                className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
-                <Download size={16} /> Download Agent .exe
-              </a>
-              <p className="text-[12px] text-slate-500 mt-1.5">Needs the token/URL typed in — see below.</p>
-            </div>
-          </div>
+          <a href={`${apiBase}/agents/install/actmon-install.bat?token=${data.token}&url=${encodeURIComponent(apiBase)}`} download
+            className="inline-flex items-center gap-2 h-11 px-5 rounded-lg bg-emerald-600 text-white text-[15px] font-black hover:bg-emerald-700 shadow-sm">
+            <Download size={16} /> Download ActMon Agent Installer (.bat)
+          </a>
+          <p className="text-[12px] text-emerald-700 font-semibold mt-1.5">Nothing to type — double-click and click Yes.</p>
 
           <p className="text-[13px] text-slate-500 mt-3">
-            <b>.bat / .msi:</b> download, then on the target machine double-click it and click Yes on the admin prompt (if SmartScreen appears: <b>More info → Run anyway</b>) —
+            Download, then on the target machine double-click it and click Yes on the admin prompt (if SmartScreen appears: <b>More info → Run anyway</b>) —
             it installs and configures itself automatically, and the host appears in <b>Agents</b> under its own name. (Not code-signed, so "unknown publisher" is expected.)
-          </p>
-          <p className="text-[13px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2.5">
-            <b>.exe is NOT pre-configured with this token</b> — a raw executable has no installer wrapper to carry a default into. Double-clicking it on its own
-            installs with a blank server URL/token, and the host won't appear in Agents until that's fixed. Set{' '}
-            <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">ACTMON_ACCESS_TOKEN</code> / <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">ACTMON_URL</code>{' '}
-            as environment variables before running it.
           </p>
         </div>
       )}

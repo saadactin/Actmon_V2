@@ -294,39 +294,6 @@ def oracle_dashboard(conn_id: int, db: Session):
     except Exception as exc:
         errors.append(f"top_waits: {exc}")
 
-    top_sql = []
-    try:
-        raw = _rows(
-            engine,
-            f"""SELECT sql_id, executions,
-                      ROUND(elapsed_time / 1000, 2) AS elapsed_ms,
-                      ROUND(cpu_time / 1000, 2)     AS cpu_ms,
-                      buffer_gets, disk_reads, rows_processed,
-                      ROUND(elapsed_time / NULLIF(executions, 0) / 1000, 2) AS avg_elapsed_ms,
-                      SUBSTR(sql_text, 1, 300) AS sql_text
-               FROM v$sql
-               WHERE executions > 0
-                 AND {oracle_exclude_internal_tables_sql('sql_text')}
-               ORDER BY elapsed_time DESC
-               FETCH FIRST 20 ROWS ONLY"""
-        )
-        top_sql = [
-            {
-                "sql_id":         _safe_str(r.get("SQL_ID")),
-                "executions":     _safe_int(r.get("EXECUTIONS")),
-                "elapsed_ms":     round(_safe_float(r.get("ELAPSED_MS")), 2),
-                "cpu_ms":         round(_safe_float(r.get("CPU_MS")), 2),
-                "buffer_gets":    _safe_int(r.get("BUFFER_GETS")),
-                "disk_reads":     _safe_int(r.get("DISK_READS")),
-                "rows_processed": _safe_int(r.get("ROWS_PROCESSED")),
-                "avg_elapsed_ms": round(_safe_float(r.get("AVG_ELAPSED_MS")), 2),
-                "sql_text":       _safe_str(r.get("SQL_TEXT")),
-            }
-            for r in raw
-        ]
-    except Exception as exc:
-        errors.append(f"top_sql: {exc}")
-
     tablespaces = []
     try:
         raw = _rows(
@@ -424,7 +391,12 @@ def oracle_dashboard(conn_id: int, db: Session):
             "session_pct":           session_pct,
         },
         "tablespaces": tablespaces,
-        "top_sql":     top_sql,
+        # Nothing on Overview renders this — the Top SQL tab has its own
+        # dedicated, lazily-fetched endpoint (oracle_top_sql() below). This
+        # used to run a full v$sql scan on every overview load/refresh for
+        # data nobody saw, and its own agent-timeout errors showed up as a
+        # confusing "top_sql" warning banner on every tab, not just Top SQL.
+        "top_sql":     [],
         "wait_events": top_waits,
         "redo_logs":   redo_logs,
         "errors":      errors,
@@ -1647,7 +1619,7 @@ def oracle_processes(conn_id: int, db: Session):
     try:
         raw = _rows(
             engine,
-            """SELECT b.pname, b.description, p.pid, p.spid,
+            """SELECT b.name AS pname, b.description, p.pid, p.spid,
                       ROUND(p.pga_used_mem / 1024 / 1024, 2)  AS pga_used_mb,
                       ROUND(p.pga_alloc_mem / 1024 / 1024, 2) AS pga_alloc_mb,
                       ROUND(p.pga_max_mem / 1024 / 1024, 2)   AS pga_max_mb,
@@ -2617,6 +2589,55 @@ def oracle_sql_plan(conn_id: int, db: Session, sql_id: str = ""):
     except Exception:
         pass
 
+    # Best-effort actual-vs-estimated rows, ONLY when the original execution
+    # was run with STATISTICS_LEVEL=ALL or a gather_plan_statistics hint — this
+    # view is empty otherwise, which is the normal case, not an error.
+    actual_rows_by_step = {}
+    try:
+        raw4 = _rows(engine, """
+            SELECT plan_line_id, last_output_rows
+            FROM   v$sql_plan_statistics_all
+            WHERE  sql_id = :sid
+        """, {"sid": sql_id})
+        actual_rows_by_step = {
+            _safe_int(r.get("PLAN_LINE_ID")): _safe_int(r.get("LAST_OUTPUT_ROWS"))
+            for r in raw4
+        }
+    except Exception:
+        pass
+
+    # Targeted, cheap check: does a table this plan full-scans have ANY index
+    # at all? Only queried for tables actually appearing as TABLE ACCESS FULL —
+    # never a whole-schema scan.
+    zero_index_tables = set()
+    full_scan_tables = {
+        (p["object_owner"], p["object_name"])
+        for p in plan
+        if p.get("object_name") and p.get("operation") == "TABLE ACCESS" and "FULL" in (p.get("options") or "")
+    }
+    if full_scan_tables:
+        try:
+            # Table/owner names here come from Oracle's own v$sql_plan output,
+            # not user input — but quotes are still escaped defensively before
+            # inlining, since _rows()/text() has no IN-list bind expansion.
+            def _q(v):
+                return "'" + str(v).replace("'", "''") + "'"
+            owners_sql = ",".join(_q(o) for o in {t[0] for t in full_scan_tables})
+            names_sql = ",".join(_q(n) for n in {t[1] for t in full_scan_tables})
+            raw5 = _rows(
+                engine,
+                f"SELECT table_owner, table_name, COUNT(*) AS cnt FROM dba_indexes "
+                f"WHERE table_owner IN ({owners_sql}) AND table_name IN ({names_sql}) "
+                f"GROUP BY table_owner, table_name",
+            )
+            has_index = {(r.get("TABLE_OWNER"), r.get("TABLE_NAME")) for r in raw5 if _safe_int(r.get("CNT")) > 0}
+            zero_index_tables = full_scan_tables - has_index
+        except Exception:
+            pass
+
+    from app.services.oracle.oracle_sql_tuning_service import oracle_plan_diagnose
+    diagnosis = oracle_plan_diagnose(plan, sql_stats, actual_rows_by_step, zero_index_tables)
+
     return {
         "status":       "success",
         "sql_id":       sql_id,
@@ -2625,6 +2646,8 @@ def oracle_sql_plan(conn_id: int, db: Session, sql_id: str = ""):
         "indexes_used": indexes_used,
         "wait_info":    wait_info,
         "plan_steps":   len(plan),
+        "issues":       diagnosis["issues"],
+        "hints":        diagnosis["hints"],
     }
 
 

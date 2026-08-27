@@ -1,0 +1,164 @@
+{
+  "format": 1,
+  "restore": {
+    "E:\\ACTMON V1\\installer\\src\\ActMon.ServiceHost\\ActMon.ServiceHost.csproj": {}
+  },
+  "projects": {
+    "E:\\ACTMON V1\\installer\\src\\ActMon.ServiceHost\\ActMon.ServiceHost.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "E:\\ACTMON V1\\installer\\src\\ActMon.ServiceHost\\ActMon.ServiceHost.csproj",
+        "projectName": "ActMon.ServiceHost",
+        "projectPath": "E:\\ACTMON V1\\installer\\src\\ActMon.ServiceHost\\ActMon.ServiceHost.csproj",
+        "packagesPath": "C:\\Users\\SuyashGaikwad\\.nuget\\packages\\",
+        "outputPath": "E:\\ACTMON V1\\installer\\src\\ActMon.ServiceHost\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\SuyashGaikwad\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {
+              "E:\\ACTMON V1\\installer\\src\\ActMon.Setup.Core\\ActMon.Setup.Core.csproj": {
+                "projectPath": "E:\\ACTMON V1\\installer\\src\\ActMon.Setup.Core\\ActMon.Setup.Core.csproj"
+              }
+            }
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Microsoft.Extensions.Hosting": {
+              "target": "Package",
+              "version": "[8.0.1, )"
+            },
+            "Microsoft.Extensions.Hosting.WindowsServices": {
+              "target": "Package",
+              "version": "[8.0.1, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Users\\SuyashGaikwad\\AppData\\Local\\Microsoft\\dotnet\\sdk\\8.0.424/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    },
+    "E:\\ACTMON V1\\installer\\src\\ActMon.Setup.Core\\ActMon.Setup.Core.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "E:\\ACTMON V1\\installer\\src\\ActMon.Setup.Core\\ActMon.Setup.Core.csproj",
+        "projectName": "ActMon.Setup.Core",
+        "projectPath": "E:\\ACTMON V1\\installer\\src\\ActMon.Setup.Core\\ActMon.Setup.Core.csproj",
+        "packagesPath": "C:\\Users\\SuyashGaikwad\\.nuget\\packages\\",
+        "outputPath": "E:\\ACTMON V1\\installer\\src\\ActMon.Setup.Core\\obj\\",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "C:\\Users\\SuyashGaikwad\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net8.0-windows"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net8.0-windows7.0": {
+            "targetAlias": "net8.0-windows",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        }
+      },
+      "frameworks": {
+        "net8.0-windows7.0": {
+          "targetAlias": "net8.0-windows",
+          "dependencies": {
+            "Microsoft.CSharp": {
+              "target": "Package",
+              "version": "[4.7.0, )"
+            },
+            "Npgsql": {
+              "target": "Package",
+              "version": "[8.0.5, )"
+            },
+            "StackExchange.Redis": {
+              "target": "Package",
+              "version": "[2.8.16, )"
+            },
+            "System.Management": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            },
+            "System.Net.Http.Json": {
+              "target": "Package",
+              "version": "[8.0.1, )"
+            },
+            "System.ServiceProcess.ServiceController": {
+              "target": "Package",
+              "version": "[8.0.0, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Users\\SuyashGaikwad\\AppData\\Local\\Microsoft\\dotnet\\sdk\\8.0.424/PortableRuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

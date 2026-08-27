@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getResourceDetail, getResourceMetrics } from '../api/resources.api';
+import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import {
   AlertTriangle, Activity, BarChart3, Braces,
@@ -452,6 +453,18 @@ export const ResourceDetailPage = () => {
     staleTime: 60_000,
   });
 
+  // "Back" needs the resource's own provider/account to build a route that
+  // actually exists (there is no bare /cloud/resources list — resources only
+  // live under a specific account's Resources tab). The detail response only
+  // has account_id, so the provider slug comes from the accounts list, same
+  // lookup CloudDashboard already does for the reverse direction. Falls back
+  // to the provider chooser (always a real route) until accounts have loaded.
+  const { data: accounts } = useCloudAccounts();
+  const owningAccount = (accounts || []).find((a) => a.id === resource?.account_id);
+  const backTo = owningAccount
+    ? `/cloud/${owningAccount.provider}-accounts/${owningAccount.id}/resources`
+    : '/cloud';
+
   if (isLoading) {
     return <PageLoading title="Loading resource…" minHeight={320} />;
   }
@@ -651,7 +664,7 @@ export const ResourceDetailPage = () => {
             <TypeIcon size={20} />
           </div>
         )}
-        backTo="/cloud/resources"
+        backTo={backTo}
         actions={(
           <div className="flex items-center gap-2">
             <StatusBadge status={resource.status} />

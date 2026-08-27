@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal
 from app.services.auth import access_control_service as svc
 from app.services.auth import otp_service
+from app.services.notifications.email_channel_service import get_default_smtp_config
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -92,8 +93,14 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=403,
                             detail="Access denied — your role has no modules assigned. Please contact your administrator.")
-    # OTP is mandatory for EVERY user (including Super Admin) — a 6-digit code is
-    # emailed and must be verified before any JWT is issued.
+    # OTP is required for every user whenever SMTP is configured — but with no
+    # SMTP configured (the state every fresh install starts in, before an admin
+    # has had a chance to set it up) there is no way to deliver a code at all,
+    # so this degrades to password-only login instead of locking every account
+    # out, including the Super Admin the installer just created. Once SMTP is
+    # configured, OTP resumes being enforced for everyone again.
+    if get_default_smtp_config(db) is None:
+        return {"otp_required": False, **_issue_session(db, user, request)}
     otp = otp_service.generate_and_send(db, user)
     return {"otp_required": True, **otp}   # otp_token, email_masked, expires_in (+ dev_otp if OTP_DEBUG)
 

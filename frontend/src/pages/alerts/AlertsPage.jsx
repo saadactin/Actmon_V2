@@ -10,6 +10,7 @@ import { APP } from '@/config/app.config';
 import ActiveAlerts from './ActiveAlerts';
 import AlertRules from './AlertRules';
 import NotificationHistoryPage from './NotificationHistoryPage';
+import MaintenanceWindow from './MaintenanceWindow';
 
 const TAB_PARAM = 'tab';
 const REFRESH_SECONDS = 15; // matches useActiveAlerts' own refetchInterval
@@ -28,7 +29,7 @@ const REFRESH_SECONDS = 15; // matches useActiveAlerts' own refetchInterval
 export default function AlertsPage() {
   const [params, setParams] = useSearchParams();
   const tabParam = params.get(TAB_PARAM);
-  const tab = tabParam === 'rules' ? 'rules' : tabParam === 'history' ? 'history' : 'active';
+  const tab = ['rules', 'history', 'maintenance'].includes(tabParam) ? tabParam : 'active';
   const setTab = (id) => {
     const next = new URLSearchParams(params);
     if (id === 'active') next.delete(TAB_PARAM);
@@ -93,6 +94,11 @@ export default function AlertsPage() {
             label: 'Notification History',
             icon: 'history',
           },
+          {
+            id: 'maintenance',
+            label: 'Maintenance Window',
+            icon: 'clipboard',
+          },
         ]}
       />
 
@@ -115,6 +121,7 @@ export default function AlertsPage() {
       {tab === 'active' && <ActiveAlerts feed={feed} onOpenRules={() => setTab('rules')} />}
       {tab === 'rules' && <AlertRules rules={rulesApi} />}
       {tab === 'history' && <NotificationHistoryPage />}
+      {tab === 'maintenance' && <MaintenanceWindow />}
     </>
   );
 }

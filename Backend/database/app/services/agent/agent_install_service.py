@@ -479,6 +479,263 @@ echo "ActMon Agent installed and started (systemd service: actmon-agent)."
 """
 
 
+# Container base image per target distro flavor — the agent script itself
+# (actmon-agent.sh) is plain, distro-agnostic bash, so the ONLY thing that
+# actually varies here is which base image + package manager installs the
+# same handful of tools (bash/curl/ca-certificates/ss+ip/free+ps+top/nsenter)
+# the script and the container's ENTRYPOINT need. Package NAMES differ
+# between the apt and dnf families (e.g. iproute2 vs iproute,
+# procps vs procps-ng) even though the underlying binaries are identical.
+DOCKER_OS_FLAVORS = {
+    "debian":  ("debian:bookworm-slim",
+                "apt-get update && apt-get install -y --no-install-recommends "
+                "bash curl ca-certificates iproute2 procps util-linux "
+                "&& rm -rf /var/lib/apt/lists/*"),
+    "ubuntu":  ("ubuntu:22.04",
+                "apt-get update && apt-get install -y --no-install-recommends "
+                "bash curl ca-certificates iproute2 procps util-linux "
+                "&& rm -rf /var/lib/apt/lists/*"),
+    "oracle":  ("oraclelinux:9-slim",
+                "dnf install -y bash curl ca-certificates iproute procps-ng util-linux "
+                "&& dnf clean all"),
+}
+DEFAULT_DOCKER_OS_FLAVOR = "debian"
+
+
+def build_docker_setup_sh(token: str, url: str, os_flavor: str = DEFAULT_DOCKER_OS_FLAVOR) -> str:
+    """One-shot Docker deployment: installs Docker if missing, builds an image
+    that runs the SAME canonical Linux agent script build_linux_setup_sh uses
+    (embedded directly below, no build-time network fetch needed), and starts
+    it as a container. Real host visibility (not just the container's own
+    isolated view) comes from nsenter re-executing that UNMODIFIED script
+    inside the host's own namespaces — zero agent-code changes, just a
+    different execution environment — which is why the container needs
+    --pid=host and --privileged at `docker run` time.
+
+    os_flavor picks the container's OWN base image/package manager (debian,
+    ubuntu, or oracle) — it has nothing to do with the HOST's distro, which
+    can be anything Docker itself runs on."""
+    safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
+    safe_url = (url or "").strip().replace("'", "")
+    if not safe_url.lower().startswith("http"):
+        safe_url = ""
+    base_image, install_cmd = DOCKER_OS_FLAVORS.get(
+        (os_flavor or "").lower(), DOCKER_OS_FLAVORS[DEFAULT_DOCKER_OS_FLAVOR]
+    )
+    agent = _read_linux_agent().replace("\r\n", "\n")
+    return f"""#!/usr/bin/env bash
+# ActMon Docker Agent installer — builds and runs the ActMon agent as a
+# container with real host visibility (nsenter + --pid=host --privileged).
+#
+# WARNING: this script embeds your ActMon registration token. Treat it as a
+# secret: do not commit it to version control, do not share it, and delete
+# it once the container is confirmed running.
+set -euo pipefail
+if [ "$(id -u)" -ne 0 ]; then echo "Run as root (sudo)."; exit 1; fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker not found -- installing via get.docker.com ..."
+  curl -fsSL https://get.docker.com | sh
+fi
+
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+
+cat > "$WORKDIR/actmon-agent.sh" <<'ACTMON_AGENT_EOF'
+{agent}
+ACTMON_AGENT_EOF
+chmod 755 "$WORKDIR/actmon-agent.sh"
+
+cat > "$WORKDIR/Dockerfile" <<'ACTMON_DOCKERFILE_EOF'
+FROM {base_image}
+
+# curl for the agent's own runtime infra-push; ss/ip + free/ps/top + nsenter
+# for the container's ENTRYPOINT and the commands the agent shells out to.
+RUN {install_cmd}
+
+WORKDIR /usr/lib/actmon
+COPY actmon-agent.sh .
+RUN chmod 755 actmon-agent.sh
+
+# nsenter re-executes the UNMODIFIED agent script inside the HOST's own
+# mount/uts/ipc/net/pid namespaces (targeting PID 1, which is only the real
+# host's init when the container is run with --pid=host), so every
+# ss/free/df/ps/ip call it shells out to sees the real host, not this
+# container's own isolated view.
+ENTRYPOINT ["nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--", \\
+            "bash", "/usr/lib/actmon/actmon-agent.sh"]
+ACTMON_DOCKERFILE_EOF
+
+echo "Building the actmon-agent image..."
+docker build -t actmon-agent:latest "$WORKDIR"
+
+docker rm -f actmon-agent >/dev/null 2>&1 || true
+
+echo "Starting the ActMon agent container..."
+docker run -d --name actmon-agent --restart=always \\
+  --pid=host --privileged \\
+  -e ACTMON_ACCESS_TOKEN='{safe_token}' \\
+  -e ACTMON_URL='{safe_url}' \\
+  actmon-agent:latest
+
+echo "Done -- check 'docker logs -f actmon-agent' and the Agents page in ActMon."
+"""
+
+
+def build_docker_setup_ps1(token: str, url: str) -> str:
+    """One-shot Windows Docker deployment. Genuinely different (and lesser)
+    value proposition than build_docker_setup_sh's Linux path: there is no
+    Windows equivalent of nsenter/--pid=host, so a Windows container only ever
+    sees its OWN isolated process/network view, never the true host's — this
+    is disclosed prominently in the frontend, not hidden here.
+
+    Runs the real agent EXE directly as the container's foreground process —
+    actmon_agent.py's own _entry() already falls back to standalone/foreground
+    mode when it detects it was not launched under Windows Service Control
+    Manager (StartServiceCtrlDispatcher fails with error 1063), so this needs
+    no agent-code change, just a different launch context, same principle as
+    the Linux container. The EXE itself is fetched at image BUILD time from
+    the existing, credential-free GET /agents/download/windows?fmt=exe route
+    (no token involved) — only the token is supplied at `docker run` time.
+
+    Requires a Windows Server host running Docker configured for WINDOWS
+    containers (not Linux/WSL2 containers), and --isolation=process, which
+    additionally requires the container base image's Windows build to match
+    the host's — a real, well-known Windows-container constraint, also
+    disclosed in the frontend rather than glossed over."""
+    safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
+    safe_url = (url or "").strip().replace("'", "")
+    if not safe_url.lower().startswith("http"):
+        safe_url = ""
+    lines = [
+        "# ActMon Docker Agent installer (Windows) -- builds and runs the ActMon",
+        "# agent as a Windows container.",
+        "#",
+        "# LIMITATION: unlike the Linux version, this container only sees its OWN",
+        "# isolated process/network view -- there is no Windows equivalent of",
+        "# nsenter/--pid=host, so this is NOT the same as monitoring the real host.",
+        "#",
+        "# WARNING: this script embeds your ActMon registration token. Treat it as a",
+        "# secret: do not commit it to version control, do not share it, and delete",
+        "# it once the container is confirmed running.",
+        "$ErrorActionPreference = 'Stop'",
+        "",
+        "$RunOnceKey = 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce'",
+        "$RunOnceName = 'ActMonDockerSetup'",
+        "",
+        "if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {",
+        "    Write-Host 'Docker was not found -- installing Docker Desktop (silent)...'",
+        "    $installer = Join-Path $env:TEMP ('DockerDesktopInstaller-' + [guid]::NewGuid() + '.exe')",
+        "    Invoke-WebRequest -Uri 'https://desktop.docker.com/win/main/amd64/Docker Desktop Installer.exe' -OutFile $installer",
+        "    Start-Process -FilePath $installer -ArgumentList 'install', '--quiet', '--accept-license' -Wait",
+        "    Remove-Item $installer -Force -ErrorAction SilentlyContinue",
+        "    Write-Host 'Docker Desktop installed. Windows usually needs a RESTART the first time (to finish enabling the Containers/Hyper-V features) before Docker will actually run.'",
+        "",
+        "    $selfPath = $MyInvocation.MyCommand.Path",
+        "    if ($selfPath -and (Test-Path $selfPath)) {",
+        "        Set-ItemProperty -Path $RunOnceKey -Name $RunOnceName -Value \"powershell -NoProfile -ExecutionPolicy Bypass -File `\"$selfPath`\"\" -Force",
+        "        Write-Host 'This script will automatically continue the next time you log in after restarting -- no need to remember to re-run it yourself.'",
+        "    }",
+        "",
+        "    $answer = Read-Host 'Restart this machine now to finish setting up Docker? (Y/N)'",
+        "    if ($answer -match '^[Yy]') {",
+        "        Write-Host 'Restarting...'",
+        "        Restart-Computer -Force",
+        "    } else {",
+        "        Write-Host 'OK -- restart whenever you are ready. It will pick back up automatically after you log in, or you can re-run this script yourself.'",
+        "    }",
+        "    exit 0",
+        "}",
+        "",
+        "Remove-ItemProperty -Path $RunOnceKey -Name $RunOnceName -ErrorAction SilentlyContinue",
+        "",
+        "$dockerCli = Join-Path $env:ProgramFiles 'Docker\\Docker\\DockerCli.exe'",
+        "if (Test-Path $dockerCli) {",
+        "    Write-Host 'Switching Docker Desktop to Windows containers mode...'",
+        "    try { & $dockerCli -SwitchWindowsEngine | Out-Null } catch { Write-Host 'Could not switch automatically -- if the build below fails, right-click the Docker tray icon and choose Switch to Windows containers yourself.' }",
+        "}",
+        "",
+        "$WorkDir = Join-Path $env:TEMP ('actmon-docker-' + [guid]::NewGuid())",
+        "New-Item -ItemType Directory -Path $WorkDir | Out-Null",
+        "try {",
+        "    $dockerfile = @'",
+        "FROM mcr.microsoft.com/windows/servercore:ltsc2022",
+        "SHELL [\"powershell\", \"-NoProfile\", \"-Command\"]",
+        f"RUN $ProgressPreference = 'SilentlyContinue'; New-Item -ItemType Directory -Path C:\\actmon | Out-Null; Invoke-WebRequest -Uri '{safe_url}/agents/download/windows?fmt=exe' -OutFile C:\\actmon\\actmon-agent.exe",
+        "WORKDIR C:\\actmon",
+        "ENTRYPOINT [\"C:\\\\actmon\\\\actmon-agent.exe\"]",
+        "'@",
+        "    Set-Content -Path (Join-Path $WorkDir 'Dockerfile') -Value $dockerfile -Encoding ASCII",
+        "",
+        "    Write-Host 'Building the actmon-agent-windows image...'",
+        "    docker build -t actmon-agent-windows:latest $WorkDir",
+        "    if ($LASTEXITCODE -ne 0) { throw 'docker build failed' }",
+        "",
+        "    docker rm -f actmon-agent 2>$null | Out-Null",
+        "",
+        "    Write-Host 'Starting the ActMon agent container (--isolation=process)...'",
+        "    Write-Host 'If this fails with an isolation/build-mismatch error, your Windows Server build does not match mcr.microsoft.com/windows/servercore:ltsc2022 -- see the wizard for how to pick a matching tag.'",
+        "    docker run -d --name actmon-agent --restart=always --isolation=process "
+        f"-e ACTMON_ACCESS_TOKEN='{safe_token}' -e ACTMON_URL='{safe_url}' actmon-agent-windows:latest",
+        "    if ($LASTEXITCODE -ne 0) { throw 'docker run failed' }",
+        "",
+        "    Write-Host \"Done -- check 'docker logs -f actmon-agent' and the Agents page in ActMon.\"",
+        "    Write-Host 'Delete this script now that the container is running -- it contains your token.'",
+        "} finally {",
+        "    Remove-Item -Recurse -Force $WorkDir -ErrorAction SilentlyContinue",
+        "}",
+    ]
+    return _to_ascii("\r\n".join(lines) + "\r\n")
+
+
+def build_docker_install_bat(token: str, url: str) -> str:
+    """Double-clickable wrapper (.bat) around build_docker_setup_ps1 — same
+    "download one file, double-click, click Yes" shape as
+    build_windows_install_bat's Agent installer, so there is no PowerShell
+    terminal to open, no folder to navigate to, and no -ExecutionPolicy flag
+    to type by hand. Self-elevates (UAC), same net session / Start-Process
+    -Verb RunAs pattern already used there.
+
+    Downloads the real .ps1 to a STABLE path (%ProgramData%\\ActMon, not
+    %TEMP%) rather than embedding its logic inline — this matters because the
+    .ps1's own RunOnce-after-reboot continuation (see build_docker_setup_ps1)
+    re-invokes itself by that exact path; a %TEMP% file could be cleared
+    before the next login."""
+    from urllib.parse import quote
+
+    safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
+    safe_url = (url or "").strip().replace('"', "").replace("'", "").rstrip("/")
+    script_url = f"{safe_url}/agents/install/actmon-docker-setup.ps1?token={safe_token}&url={quote(safe_url, safe='')}"
+    # Same %-doubling reason as build_windows_install_bat's msi_url_bat: a
+    # percent-encoded URL's %3A/%2F sequences would otherwise be misread by
+    # cmd.exe's own %-expansion before the line ever reaches PowerShell.
+    script_url_bat = script_url.replace("%", "%%")
+    lines = [
+        "@echo off",
+        "title ActMon Docker Agent Installer",
+        "net session >nul 2>&1",
+        "if %errorlevel% neq 0 (",
+        "  echo Requesting administrator privileges...",
+        "  powershell -NoProfile -Command \"Start-Process -FilePath '%~f0' -Verb RunAs\"",
+        "  exit /b",
+        ")",
+        "set \"ACTMON_DIR=%ProgramData%\\ActMon\"",
+        "if not exist \"%ACTMON_DIR%\" mkdir \"%ACTMON_DIR%\" >nul 2>&1",
+        "set \"ACTMON_PS1=%ACTMON_DIR%\\deploy-actmon-docker.ps1\"",
+        "echo Downloading the ActMon Docker installer...",
+        f"powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{script_url_bat}' -OutFile '%ACTMON_PS1%' -UseBasicParsing\"",
+        "if not exist \"%ACTMON_PS1%\" (",
+        "  echo Failed to download the installer - check your network and the ActMon server URL.",
+        "  pause",
+        "  exit /b 1",
+        ")",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ACTMON_PS1%\"",
+        "echo.",
+        "pause",
+    ]
+    return _to_ascii("\r\n".join(lines) + "\r\n")
+
+
 def _to_ascii(s: str) -> str:
     """Guarantee generated install scripts are pure ASCII. Windows PowerShell 5.1
     mis-decodes non-ASCII bytes fetched via DownloadString (em dash -> 'â€"'), which

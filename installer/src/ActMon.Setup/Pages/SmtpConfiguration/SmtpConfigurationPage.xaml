@@ -1,0 +1,63 @@
+<UserControl x:Class="ActMon.Setup.Pages.SmtpConfiguration.SmtpConfigurationPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mvvm="clr-namespace:ActMon.Setup.Mvvm"
+             mc:Ignorable="d" d:DesignWidth="640">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="8">
+        <TextBlock Text="SMTP Configuration" FontSize="20" FontWeight="Bold" Foreground="#0F172A"/>
+        <TextBlock Foreground="#64748B" Margin="0,4,0,0" TextWrapping="Wrap"
+                   Text="Optional. Signing in never requires SMTP — without it, ActMon simply skips emailing a one-time login code. Configure it now, or later from ActMon's own Settings."/>
+
+        <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
+            <RadioButton Content="Skip for now" IsChecked="{Binding ConfigureNow, Converter={StaticResource InverseBoolToBool}}" GroupName="smtp" Margin="0,0,20,0" VerticalAlignment="Center"/>
+            <RadioButton Content="Configure SMTP now" IsChecked="{Binding ConfigureNow}" GroupName="smtp" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <StackPanel Visibility="{Binding ConfigureNow, Converter={StaticResource BoolToVis}}" Margin="0,20,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="Host:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="Port:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Port, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8" HorizontalAlignment="Left" Width="100"/>
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Username:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="Password:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <PasswordBox Grid.Row="3" Grid.Column="1" Padding="4" Margin="0,0,0,8" mvvm:PasswordBoxBehavior.BindPassword="True"
+                             mvvm:PasswordBoxBehavior.BoundPassword="{Binding Password, UpdateSourceTrigger=PropertyChanged}"/>
+
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="Use TLS:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <CheckBox Grid.Row="4" Grid.Column="1" IsChecked="{Binding UseTls}" VerticalAlignment="Center" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="Sender email:" VerticalAlignment="Center" Margin="0,0,0,8"/>
+                <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding SenderEmail, UpdateSourceTrigger=PropertyChanged}" Padding="4" Margin="0,0,0,8"/>
+
+                <TextBlock Grid.Row="6" Grid.Column="0" Text="Sender name:" VerticalAlignment="Center"/>
+                <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding SenderName, UpdateSourceTrigger=PropertyChanged}" Padding="4"/>
+            </Grid>
+
+            <TextBlock Text="{Binding ValidationError}" Foreground="#DC2626" Margin="0,12,0,0" TextWrapping="Wrap"
+                       Visibility="{Binding ValidationError, Converter={StaticResource NullToVis}}"/>
+        </StackPanel>
+    </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cn from '@/lib/cn';
 import client from '@/api/client';
@@ -8,17 +8,16 @@ import ChartCard from '@/components/charts/ChartCard';
 import { STATUS } from '@/components/charts/status';
 import Badge, { LiveBadge } from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
-import CopyButton from '@/components/ui/CopyButton';
 import Icon from '@/components/ui/Icon';
 import Input from '@/components/ui/Input';
 import Notice from '@/components/ui/Notice';
 import Table, { EmptyState } from '@/components/ui/Table';
 import TrendChart from '@/components/gauges/TrendChart';
-import { InlineLoading, PageLoading } from '@/components/ui/Loading';
+import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
-import { MetricTile, Panel, SqlBlock, SqlCell, StatCell, StateChip, TablePanel } from '@/pages/_shared/enginePanels';
+import { MetricTile, Panel, SqlCell, StateChip, TablePanel } from '@/pages/_shared/enginePanels';
 import { fmtNumber } from '@/config/dbCatalog';
-import { WAIT_CLASS_TONES, explainWait, isIdleWait } from '@/config/oracleWaits';
+import { WAIT_CLASS_TONES, isIdleWait } from '@/config/oracleWaits';
 
 /**
  * Live Oracle sessions — what is running right now, what each one is waiting on,
@@ -61,12 +60,10 @@ export function waitBand(seconds) {
 export default function OracleLiveQueries({ connId, embedded = false }) {
   const params = useParams();
   const id = connId || params.id;
+  const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [expanded, setExpanded] = useState(null);
-  const [plans, setPlans] = useState({});
-  const [planBusy, setPlanBusy] = useState({});
   const [countdown, setCountdown] = useState(REFRESH_MS / 1000);
   const [history, setHistory] = useState([]);
   const countRef = useRef(null);
@@ -100,25 +97,6 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
       waiting: rows.filter((r) => !isIdleWait(r.wait_event, r.wait_class)).length,
     }]);
   }, [data]);
-
-  const fetchPlan = useCallback(async (sqlId) => {
-    if (!sqlId || plans[sqlId]) return;
-    setPlanBusy((b) => ({ ...b, [sqlId]: true }));
-    try {
-      const res = await client.get(`/connections/oracle/${id}/oracle-sql-plan`, { params: { sql_id: sqlId } });
-      setPlans((p) => ({ ...p, [sqlId]: res.data }));
-    } catch (e) {
-      setPlans((p) => ({ ...p, [sqlId]: { error: e?.message || 'The plan could not be read.' } }));
-    } finally {
-      setPlanBusy((b) => ({ ...b, [sqlId]: false }));
-    }
-  }, [id, plans]);
-
-  const toggle = (key, sqlId) => {
-    if (expanded === key) { setExpanded(null); return; }
-    setExpanded(key);
-    if (sqlId) fetchPlan(sqlId);
-  };
 
   const rows = data?.queries || [];
 
@@ -333,11 +311,11 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                     const band = waitBand(r.seconds_in_wait);
                     return {
                       key,
-                      onClick: () => toggle(key, r.sql_id),
+                      onClick: () => navigate(`/oracle-dashboard/${id}/live-queries/session`, { state: { row: r } }),
                       cells: {
                         sid: (
                           <span className="flex items-center gap-1.5">
-                            <Icon name={expanded === key ? 'chevron-down' : 'chevron-right'} size={12} className="text-subtle" />
+                            <Icon name="chevron-right" size={12} className="text-subtle" />
                             <span className="font-mono text-[12px] font-semibold">
                               {r.sid}<span className="text-subtle">,{r.serial_number}</span>
                             </span>
@@ -400,20 +378,6 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                       body="Nothing is connected to this instance apart from background processes." />
                   )}
                 />
-
-                {page.map((r, i) => {
-                  const key = `${r.sid}-${r.serial_number}-${i}`;
-                  if (expanded !== key) return null;
-                  return (
-                    <div key={key} className="border-t border-border bg-sunken px-card py-3">
-                      <SessionDetail
-                        session={r}
-                        plan={plans[r.sql_id]}
-                        planBusy={planBusy[r.sql_id]}
-                      />
-                    </div>
-                  );
-                })}
                 {pager}
               </>
             )}
@@ -421,121 +385,5 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
         </TablePanel>
       </div>
     </>
-  );
-}
-
-/* ── one session, expanded ─────────────────────────────────────────────────── */
-
-function SessionDetail({ session: s, plan, planBusy }) {
-  const k = explainWait(s.wait_event, s.wait_class);
-  const sql = s.sql_fulltext || s.sql_text || '';
-
-  return (
-    <div className="space-y-gutter">
-      <div className="grid gap-gutter-sm sm:grid-cols-3 xl:grid-cols-6">
-        <StatCell label="Executions" value={fmtNumber(s.executions)} />
-        <StatCell label="Avg elapsed" value={`${fmtNumber(s.avg_elapsed_ms)} ms`} />
-        <StatCell label="Avg CPU" value={`${fmtNumber(s.avg_cpu_ms)} ms`} />
-        <StatCell label="Buffer gets" value={fmtNumber(s.buffer_gets)} />
-        <StatCell label="Disk reads" value={fmtNumber(s.disk_reads)}
-          tone={num(s.disk_reads) > num(s.buffer_gets) * 0.1 ? 'warn' : 'neutral'}
-          hint="High against buffer gets means it is reading from disk, not cache" />
-        <StatCell label="Connected since" value={s.logon_time || '—'} />
-      </div>
-
-      {/* The wait explanation is the point of this view: a session's event name
-          without its meaning tells an operator nothing actionable. */}
-      <Notice
-        tone={k.tone === 'danger' ? 'danger' : k.tone === 'warning' ? 'warning' : 'info'}
-        className="mb-0"
-        title={`${k.label}${s.wait_event ? ` — ${s.wait_event}` : ''}.`}
-      >
-        {k.why} <b className="block pt-1">What to do: {k.action}</b>
-      </Notice>
-
-      {sql ? (
-        <Panel title="Statement" icon="terminal"
-          subtitle={s.sql_id ? `sql_id ${s.sql_id}` : undefined}
-          actions={<CopyButton text={sql} />}
-        >
-          <SqlBlock sql={sql} className="max-h-64 overflow-auto" />
-        </Panel>
-      ) : (
-        <p className="text-[12px] text-subtle">
-          This session has no current statement — it is connected but idle.
-        </p>
-      )}
-
-      {s.sql_id && (
-        <TablePanel title="Execution plan" icon="layers"
-          subtitle={plan?.sql_stats?.optimizer_mode
-            ? `Optimiser mode ${plan.sql_stats.optimizer_mode}, cost ${fmtNumber(plan.sql_stats.optimizer_cost)}`
-            : 'v$sql_plan for this sql_id'}>
-          {planBusy ? (
-            <div className="px-card"><InlineLoading label="Reading the plan…" /></div>
-          ) : plan?.error ? (
-            <p className="px-card py-4 text-[12px] text-muted">{plan.error}</p>
-          ) : (
-            <>
-              <Table
-                columns={[
-                  { key: 'op', label: 'Operation' },
-                  { key: 'object', label: 'Object' },
-                  { key: 'cost', label: 'Cost', align: 'right' },
-                  { key: 'rows', label: 'Est. rows', align: 'right' },
-                  { key: 'bytes', label: 'Est. bytes', align: 'right' },
-                  { key: 'pred', label: 'Predicates' },
-                ]}
-                rows={(plan?.plan || []).map((p) => ({
-                  key: String(p.id),
-                  cells: {
-                    op: (
-                      /* Indentation carries the plan tree — an operation's depth is
-                         what tells you which step feeds which. */
-                      <span className="font-mono text-[11px] whitespace-pre text-fg"
-                        style={{ paddingLeft: `${num(p.depth) * 12}px` }}>
-                        {p.operation}{p.options ? ` ${p.options}` : ''}
-                      </span>
-                    ),
-                    object: p.object_name ? (
-                      <span className="block text-[11px] leading-tight">
-                        <span className="block font-mono text-fg">{p.object_name}</span>
-                        <span className="block text-subtle">{p.object_owner} · {p.object_type}</span>
-                      </span>
-                    ) : null,
-                    cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
-                    rows: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
-                    bytes: <span className="font-mono text-[11px] text-muted">{fmtNumber(p.bytes)}</span>,
-                    pred: (
-                      <span className="block max-w-[260px] font-mono text-[10px] leading-snug break-words text-subtle">
-                        {p.access_predicates || p.filter_predicates || ''}
-                      </span>
-                    ),
-                  },
-                }))}
-                empty={<EmptyState icon="layers" title="No plan available"
-                  body="The statement has aged out of the shared pool, or v$sql_plan is not readable by this login." />}
-              />
-
-              {(plan?.indexes_used || []).length > 0 && (
-                <div className="border-t border-border px-card py-2.5">
-                  <p className="mb-1.5 text-[11px] font-bold tracking-wide text-subtle uppercase">
-                    Indexes this plan uses
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {plan.indexes_used.map((ix, i) => (
-                      <Badge key={`${ix.index_name}-${i}`} tone="accent" size="xs">
-                        <Icon name="key" size={9} />
-                        {ix.index_name || ix.operation}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </TablePanel>
-      )}
-    </div>
   );
 }

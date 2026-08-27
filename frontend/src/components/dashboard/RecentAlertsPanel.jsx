@@ -16,13 +16,15 @@ import { metricShort } from '@/config/alertCatalog';
  * the severity chart and the KPI tile count — so narrowing it costs no request and
  * can't disagree with the numbers shown elsewhere on the page.
  *
- * The list does NOT scroll inside itself: it grows and scrolls with the page, which
- * is what the layout spec asks for. `MAX_ROWS` is the safety valve — a feed of two
- * hundred alerts would otherwise make the page metres long, and the rows past the
- * cap are reported in the footer rather than silently dropped.
+ * The card matches the height of the chart column beside it (CSS grid stretches
+ * this sibling to that height already) and never grows past it — the list scrolls
+ * WITHIN the card instead. A "More Alerts" action already exists (header button +
+ * the footer link below), so there's no need to make the dashboard itself metres
+ * long just to show every row; `MAX_ROWS` is a soft cap on top of that (rows past
+ * it are reported in the footer, never silently dropped).
  */
 
-const MAX_ROWS = 40;
+const MAX_ROWS = 12;
 
 const SEVERITY_TEXT = {
   critical: 'text-danger-fg',
@@ -53,7 +55,7 @@ export default function RecentAlertsPanel({
   const hidden = matching.length - visible.length;
 
   return (
-    <section className={cn('card flex flex-col', className)}>
+    <section className={cn('card flex min-h-0 flex-col overflow-hidden', className)}>
       <header className="flex items-center gap-2 px-card pt-card pb-3">
         <h2 className="truncate-safe min-w-0 flex-1 text-[17px] font-bold text-fg">{title}</h2>
         <button
@@ -91,7 +93,7 @@ export default function RecentAlertsPanel({
         })}
       </div>
 
-      <div className={cn('flex-1 px-card pb-card', loading && 'opacity-55')}>
+      <div className={cn('min-h-0 flex-1 overflow-y-auto px-card pb-card', loading && 'opacity-55')}>
         {visible.length === 0 ? (
           <Empty filtered={filter !== 'all' && counts.total > 0} />
         ) : (

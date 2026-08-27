@@ -53,6 +53,12 @@ class ConnectionMaster(Base):
     # transitions (see oracle_history_flush_service).
     oracle_deployment_type = Column(String(50))
     oracle_role = Column(String(50))
+    # RAC per-instance status baseline — {"<instance_number>": "<status>"} from
+    # the last collector cycle, compared every cycle to detect an actual
+    # OPEN->non-OPEN (eviction) or non-OPEN->OPEN (rejoin) TRANSITION, the same
+    # role-transition-detection idea as oracle_role above, just keyed per node
+    # instead of a single value (see oracle_history_flush_service.flush_rac_nodes).
+    oracle_rac_node_status = Column(JSON)
 
     # MSSQL
     windows_authentication = Column(Boolean)

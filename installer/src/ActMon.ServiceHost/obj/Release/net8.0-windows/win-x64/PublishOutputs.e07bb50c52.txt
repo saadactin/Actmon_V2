@@ -1,0 +1,5 @@
+E:\ACTMON V1\installer\packaging\dist\ServiceHost-final\appsettings.Development.json
+E:\ACTMON V1\installer\packaging\dist\ServiceHost-final\appsettings.json
+E:\ACTMON V1\installer\packaging\dist\ServiceHost-final\ActMon.ServiceHost.pdb
+E:\ACTMON V1\installer\packaging\dist\ServiceHost-final\ActMon.Setup.Core.pdb
+E:\ACTMON V1\installer\packaging\dist\ServiceHost-final\ActMon.ServiceHost.exe

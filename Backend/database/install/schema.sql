@@ -1997,7 +1997,8 @@ CREATE TABLE public.connection_master (
     cloud_config jsonb,
     cloud_monitor_client_secret_enc text,
     oracle_deployment_type character varying(50),
-    oracle_role character varying(50)
+    oracle_role character varying(50),
+    oracle_rac_node_status json
 );
 
 
@@ -4923,6 +4924,65 @@ CREATE TABLE IF NOT EXISTS public.agent_pending_update (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_pending_update_agent
     ON public.agent_pending_update (agent_name, issued_at DESC);
+
+
+--
+-- Oracle Storage Health — maintenance approval/execution audit trail (Phase 3).
+-- One row = the full lifecycle of one action: requested -> approved/rejected
+-- -> executed -> result. The partial unique index is the "no duplicate/
+-- concurrent maintenance jobs on the same object" safety guard — only one
+-- non-terminal (pending_approval/approved/running) row can exist per
+-- (conn_id, object_type, object_name) at a time.
+--
+
+CREATE TABLE IF NOT EXISTS public.oracle_maintenance_jobs (
+    id                     SERIAL PRIMARY KEY,
+    org_id                 INTEGER      NOT NULL DEFAULT 1,
+    conn_id                INTEGER      NOT NULL REFERENCES public.connection_master(id),
+
+    object_type            VARCHAR(50)  NOT NULL,
+    object_name            VARCHAR(500) NOT NULL,
+    tablespace_name        VARCHAR(200),
+
+    detected_issue         TEXT NOT NULL,
+    evidence                TEXT NOT NULL,
+    recommended_action     VARCHAR(50)  NOT NULL,
+    expected_benefit       TEXT,
+    risk                   TEXT,
+    proposed_sql           TEXT NOT NULL,
+
+    status                 VARCHAR(30)  NOT NULL DEFAULT 'pending_approval',
+
+    requested_by           INTEGER,
+    requested_at           TIMESTAMP DEFAULT now(),
+    approved_by            INTEGER,
+    approved_at            TIMESTAMP,
+    rejected_by            INTEGER,
+    rejected_at            TIMESTAMP,
+    rejection_reason       TEXT,
+
+    start_requested_at     TIMESTAMP,
+    scheduled_at            TIMESTAMP,
+    notification_recipients JSONB,
+
+    executed_sql           TEXT,
+    execution_started_at   TIMESTAMP,
+    execution_ended_at     TIMESTAMP,
+
+    before_metrics         JSONB,
+    after_metrics           JSONB,
+    reclaimed_mb            NUMERIC,
+    error_details           TEXT,
+
+    created_at              TIMESTAMP DEFAULT now(),
+    updated_at               TIMESTAMP DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oracle_maint_job_org ON public.oracle_maintenance_jobs (org_id);
+CREATE INDEX IF NOT EXISTS idx_oracle_maint_job_conn ON public.oracle_maintenance_jobs (conn_id);
+CREATE INDEX IF NOT EXISTS idx_oracle_maint_job_status ON public.oracle_maintenance_jobs (status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_oracle_maint_job_active
+    ON public.oracle_maintenance_jobs (conn_id, object_type, object_name)
+    WHERE status IN ('pending_approval', 'approved', 'running');
 
 
 --

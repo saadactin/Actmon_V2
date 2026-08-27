@@ -21,6 +21,9 @@ from app.services.agent.agent_install_service import (
     DbConfigRequest,
     EnrollRequest,
     InstallTokenRequest,
+    build_docker_install_bat,
+    build_docker_setup_ps1,
+    build_docker_setup_sh,
     build_linux_setup_sh,
     build_token_msi,
     build_windows_install_bat,
@@ -228,6 +231,21 @@ def route_universal_msi(url: str = Query(...), db: Session = Depends(get_db)):
 @router.get("/install/actmon-setup.sh", summary="Linux one-shot systemd setup (deb & rpm distros)")
 def route_setup_sh(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64")):
     return PlainTextResponse(build_linux_setup_sh(token, url), media_type="text/x-shellscript")
+
+
+@router.get("/install/actmon-docker-setup.sh", summary="Docker one-shot build+run (real host visibility via nsenter)")
+def route_docker_setup_sh(token: str = Query(...), url: str = Query(...), os: str = Query("debian")):
+    return PlainTextResponse(build_docker_setup_sh(token, url, os), media_type="text/x-shellscript")
+
+
+@router.get("/install/actmon-docker-setup.ps1", summary="Windows Docker one-shot build+run (container-scoped visibility only)")
+def route_docker_setup_ps1(token: str = Query(...), url: str = Query(...)):
+    return PlainTextResponse(build_docker_setup_ps1(token, url), media_type="text/plain")
+
+
+@router.get("/install/actmon-docker-setup.bat", summary="Double-clickable Windows Docker installer (self-elevating wrapper)")
+def route_docker_setup_bat(token: str = Query(...), url: str = Query(...)):
+    return PlainTextResponse(build_docker_install_bat(token, url), media_type="text/plain")
 
 
 @router.get("/fs-poll", summary="Agent long-polls for pending file-browse jobs")
