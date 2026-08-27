@@ -7,6 +7,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repository.resource_repo import ResourceRepository
+from app.services.exposure_service import compute_exposure, exposure_to_findings
 
 logger = logging.getLogger("cloud_svc.security")
 
@@ -276,8 +277,11 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
                 })
 
         # ── OCI NSG (Network Security Group) checks ───────────────────
+        # ingress_rules moved from a count to the actual rule list (needed for
+        # real internet-exposure analysis — see exposure_service.py); count it
+        # here rather than trusting the field's old shape.
         if rtype == "NetworkSecurityGroup":
-            ingress = config.get("ingress_rules", 0)
+            ingress = len(config.get("ingress_rules") or [])
             if ingress >= 5:
                 findings.append({
                     "resource_id": rid,
@@ -384,6 +388,13 @@ async def run_security_scan(account_id: uuid.UUID, db: AsyncSession) -> Dict[str
                     "recommendation": "Attach authorizers (JWT/OAuth2) to all API deployments and restrict to known consumers.",
                     "category": "Security",
                 })
+
+    # Real internet-exposure findings (public IP + a world-open rule that
+    # actually reaches it), additive to the per-resource heuristics above —
+    # those catch a permissive rule even before anything sits behind it; this
+    # catches the case that actually matters: something live and reachable.
+    exposure_report = compute_exposure(resources)
+    findings.extend(exposure_to_findings(exposure_report))
 
     # Group by category and severity
     by_category: Dict[str, int] = {}

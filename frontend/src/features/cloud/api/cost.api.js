@@ -15,9 +15,26 @@ export const getCostAnalytics = async (accountId) => {
   return data;
 };
 
-export const getCostReport = async (accountId, days, groupBy = 'service') => {
+export const getCostReport = async (accountId, days, groupBy = 'service', options = {}) => {
+  const {
+    region, service, resourceType, costComponent, status,
+    minCost, maxCost, dimensions, page, pageSize,
+  } = options;
   const { data } = await cloudAxios.get(`/cost/report/${accountId}`, {
-    params: { days, group_by: groupBy },
+    params: {
+      days,
+      group_by: groupBy,
+      region,
+      service,
+      resource_type: resourceType,
+      cost_component: costComponent,
+      status,
+      min_cost: minCost,
+      max_cost: maxCost,
+      dimensions,
+      page,
+      page_size: pageSize,
+    },
   });
   return data;
 };

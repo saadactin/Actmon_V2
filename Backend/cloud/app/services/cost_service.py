@@ -603,6 +603,127 @@ def _identify_from_provider_id(pid: str) -> Tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+# ── Cost component classification ───────────────────────────────────────────
+# What "Cost Component" means, and what it deliberately does NOT mean:
+#
+# Verified against 46,804 real OCI usage line items (resourceId × service ×
+# day, 30-day window): zero resources were ever billed under more than one
+# `service` value. An instance and its attached volume are already separate
+# billed rows, each under its own service (Compute vs Block Storage) — there
+# is no such thing as "one resource billed 60% Compute / 40% Storage" in the
+# data these APIs return. So a cost component is a property of the BILLED ROW
+# (== today's `service` field), not a fabricated sub-split of one resource.
+# Grouping by component is what lets "Instance A (Compute) / Block Volume A
+# (Storage), attached to Instance A" be shown as two independently-filterable
+# lines that also happen to be related — exactly matching how the data is
+# actually billed, not an invented decomposition.
+#
+# Each map is keyed on the exact strings the provider's billing API returns
+# today (OCI: live-verified; Azure/AWS: each provider's own well-documented,
+# stable service-name vocabulary). Anything not listed falls through to a
+# same-word substring match, then to "Other" — never guessed into a specific
+# bucket, so an unrecognized service is honestly "Other" rather than silently
+# misfiled as "Compute".
+_COST_COMPONENTS = ("Compute", "Database", "Storage", "Network", "Other")
+
+_OCI_COMPONENT_MAP = {
+    "compute": "Compute",
+    "database": "Database",
+    "block storage": "Storage",
+    "object storage": "Storage",
+    "file storage": "Storage",
+    "load balancer": "Network",
+    "virtual cloud network": "Network",
+    "virtual private network": "Network",
+    "key management": "Other",
+    "key management - shard 2": "Other",
+    "logging": "Other",
+    "analytics": "Other",
+    "telemetry": "Other",
+    "oracle web application firewall (waf)": "Other",
+}
+
+_AWS_COMPONENT_MAP = {
+    "amazon elastic compute cloud - compute": "Compute",
+    "aws lambda": "Compute",
+    "amazon elastic container service": "Compute",
+    "amazon elastic kubernetes service": "Compute",
+    "amazon relational database service": "Database",
+    "amazon dynamodb": "Database",
+    "amazon elasticache": "Database",
+    "amazon redshift": "Database",
+    "amazon documentdb (with mongodb compatibility)": "Database",
+    "amazon neptune": "Database",
+    "amazon simple storage service": "Storage",
+    "amazon elastic block store": "Storage",
+    "amazon elastic file system": "Storage",
+    "amazon virtual private cloud": "Network",
+    "elastic load balancing": "Network",
+    "amazon cloudfront": "Network",
+    "amazon route 53": "Network",
+    "aws data transfer": "Network",
+    "tax": "Other",
+    "aws key management service": "Other",
+    "amazoncloudwatch": "Other",
+}
+
+_AZURE_COMPONENT_MAP = {
+    "virtual machines": "Compute",
+    "azure app service": "Compute",
+    "container instances": "Compute",
+    "azure kubernetes service": "Compute",
+    "storage": "Storage",
+    "azure database for postgresql": "Database",
+    "azure database for mysql": "Database",
+    "sql database": "Database",
+    "azure cosmos db": "Database",
+    "redis cache": "Database",
+    "virtual network": "Network",
+    "load balancer": "Network",
+    "application gateway": "Network",
+    "azure dns": "Network",
+    "bandwidth": "Network",
+    "key vault": "Other",
+    "log analytics": "Other",
+    "azure monitor": "Other",
+    "backup": "Other",
+}
+
+_COMPONENT_MAPS = {"AWS": _AWS_COMPONENT_MAP, "AZURE": _AZURE_COMPONENT_MAP,
+                   "OCI": _OCI_COMPONENT_MAP, "ORACLE": _OCI_COMPONENT_MAP}
+
+# Substring fallback for services not in the maps above — the long tail of
+# AWS/Azure service names (hundreds of them) isn't worth hardcoding in full.
+# Checked in this order so a name containing both words picks the more
+# specific bucket (e.g. "network storage" would hit storage first).
+_COMPONENT_KEYWORDS = (
+    ("database", "Database"), ("db", "Database"), ("cache", "Database"),
+    ("storage", "Storage"), ("disk", "Storage"), ("volume", "Storage"),
+    ("bucket", "Storage"),
+    ("network", "Network"), ("gateway", "Network"), ("dns", "Network"),
+    ("vpn", "Network"), ("load balanc", "Network"), ("bandwidth", "Network"),
+    ("data transfer", "Network"),
+    ("compute", "Compute"), ("lambda", "Compute"), ("function", "Compute"),
+    ("kubernetes", "Compute"), ("container", "Compute"),
+    ("virtual machine", "Compute"), ("app service", "Compute"),
+)
+
+
+def _normalize_cost_component(provider: str, service: Optional[str]) -> str:
+    """A billed service name -> one of _COST_COMPONENTS. Never raises; an
+    unrecognized or missing service is honestly "Other"."""
+    if not service:
+        return "Other"
+    key = service.strip().lower()
+    mapped = _COMPONENT_MAPS.get((provider or "").upper(), {}).get(key)
+    if mapped:
+        return mapped
+    for needle, bucket in _COMPONENT_KEYWORDS:
+        if needle in key:
+            return bucket
+    return "Other"
+
+
 async def prewarm_cost_cache(account) -> None:
     """Fire this right after a discovery scan completes so the Cost page's
     first load hits a warm cache instead of a cold 30-50s provider billing
@@ -1234,16 +1355,43 @@ class CostService:
 
     async def get_cost_report(
         self, account_id: uuid.UUID | str, days: int, group_by: str = "service",
+        *,
+        region: Optional[str] = None,
+        service: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        cost_component: Optional[str] = None,
+        status: Optional[str] = None,
+        min_cost: Optional[float] = None,
+        max_cost: Optional[float] = None,
+        dimensions: Optional[str] = None,
+        page: Optional[int] = None,
+        page_size: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Real cost ledger for the requested lookback window (clamped to
-        MAX_REPORT_DAYS), in one of two shapes:
+        MAX_REPORT_DAYS), in one of three shapes:
 
         group_by="service"  — one row per day per service (the spend timeline).
         group_by="resource" — one row per billed RESOURCE, totalled over the
             window, enriched from our inventory with the resource's name, type,
-            size and what it is attached to. Per-resource-PER-DAY is deliberately
-            not offered: OCI alone returns ~11k rows for 7 days, so a year would
-            be ~570k rows — unusable in a browser and pointless in a report.
+            size, cost component, and what it is attached to. Per-resource-PER-DAY
+            is deliberately not offered: OCI alone returns ~11k rows for 7 days,
+            so a year would be ~570k rows — unusable in a browser and pointless
+            in a report.
+        group_by="summary"  — the SAME per-resource rows reduced to one row per
+            unique combination of `dimensions` (comma-separated: provider,
+            account_name, region, service, resource_type, cost_component,
+            status), each with resource_count and a cost total per component
+            plus overall total. This is the drill-down tree's per-node counts
+            and the "Group By: X" summary table, computed once server-side
+            rather than re-reduced from scratch by the browser on every
+            grouping change.
+
+        The `region`/`service`/`resource_type`/`cost_component`/`status`/
+        `min_cost`/`max_cost` filters apply to all three shapes (day-rows for
+        "service" mode have no resource_type/status, so those two are simply a
+        no-op there). `page`/`page_size` are opt-in — omitting both returns
+        every matching row exactly as before, so existing callers (the
+        Detailed Cost Report panel) are unaffected.
         """
         from app.repository.cloud_account_repo import CloudAccountRepository
 
@@ -1264,12 +1412,22 @@ class CostService:
 
         rows: List[Dict[str, Any]] = []
         currencies: List[Optional[str]] = []
+        needs_resource_rows = group_by in ("resource", "summary")
+        # Accounts whose provider has no per-resource billing API (AWS today)
+        # never populate `cost_map` below. group_by="summary" still owes them
+        # a real answer (it powers the cost-component summary cards), so it
+        # falls back to that account's day/service rows instead of going
+        # silently empty — group_by="resource" does NOT fall back, preserving
+        # the deliberate, honest per-account gap agreed for AWS.
+        accounts_without_resource_rows: List[Any] = []
 
-        if group_by == "resource":
+        if needs_resource_rows:
             res_repo = ResourceRepository(self.db)
             for acc in accounts:
                 cost_map = await fetch_real_costs_by_resource(acc, days)
                 if not cost_map:
+                    if group_by == "summary":
+                        accounts_without_resource_rows.append(acc)
                     continue
                 # Providers report only an ID on billing rows (OCI never sends a
                 # name), so join our own inventory for the human-readable detail.
@@ -1291,18 +1449,40 @@ class CostService:
                     # match, so a billed row is never fully anonymous.
                     id_type, id_name = _identify_from_provider_id(pid)
                     in_inventory = res is not None
+                    row_service = entry.get("service")
                     currencies.append(entry.get("currency"))
                     rows.append({
                         "provider": acc.provider,
                         "account_id": str(acc.id),
                         "account_name": acc.account_name,
-                        "service": entry.get("service"),
+                        "service": row_service,
+                        # A billed row's own service IS its cost component —
+                        # see the classifier's docstring for why this is the
+                        # real granularity, not a fabricated sub-split.
+                        "cost_component": _normalize_cost_component(acc.provider, row_service),
                         "region": entry.get("region")
                                   or (res.region_or_zone if in_inventory else None),
                         "resource_name": (res.resource_name if in_inventory else None) or id_name,
                         "resource_type": (res.resource_type if in_inventory else None) or id_type,
                         "status": res.status if in_inventory else None,
                         "provider_resource_id": pid,
+                        # Our own DB id (not the provider's), so the UI can link
+                        # straight to /cloud/resources/{id} — that route takes
+                        # the internal id, never the provider_resource_id above.
+                        "resource_id": str(res.id) if in_inventory else None,
+                        # Only meaningful when unmatched — OCI's per-resource
+                        # billing carries no compartment on rows that DO join
+                        # to inventory, since the resource's own record already
+                        # has that context. For an unmatched row (id_type is
+                        # often None too, e.g. Object Storage's billing-internal
+                        # resourceId isn't a parseable OCID) this is the only
+                        # location clue available, so surface it instead of a
+                        # bare ID with nothing else to go on.
+                        "compartment_name": None if in_inventory else entry.get("compartment_name"),
+                        # Generalizes the storage->compute attachment link to any
+                        # resource type, so "Block Volume A attached to Instance
+                        # A" is representable without being folded into one row.
+                        "parent_resource_id": cfg.get("attached_to_id"),
                         "size_gb": size_gb,
                         "attachment_status": cfg.get("attachment_status"),
                         "attached_to_name": cfg.get("attached_to_name"),
@@ -1314,28 +1494,121 @@ class CostService:
                         "cost": entry.get("monthly_cost"),
                         "currency": entry.get("currency"),
                     })
-            # Most expensive first — that is the question this view answers.
-            rows.sort(key=lambda x: -(x["cost"] or 0))
-        else:
-            for acc in accounts:
+
+        if not needs_resource_rows or accounts_without_resource_rows:
+            fallback_accounts = accounts if not needs_resource_rows else accounts_without_resource_rows
+            for acc in fallback_accounts:
                 for r in await fetch_cost_report(acc, days):
+                    row_service = r.get("service")
                     currencies.append(r.get("currency"))
                     rows.append({
                         "date": r.get("date"),
                         "provider": acc.provider,
                         "account_id": str(acc.id),
                         "account_name": acc.account_name,
-                        "service": r.get("service"),
+                        "service": row_service,
+                        "cost_component": _normalize_cost_component(acc.provider, row_service),
+                        # Real for AWS (Cost Explorer's USAGE_TYPE dimension);
+                        # None for OCI/Azure, which get resource_type from their
+                        # per-resource join in group_by="resource" instead.
+                        "resource_type": r.get("resource_type"),
                         "region": r.get("region"),
                         "cost": r.get("cost"),
                         "currency": r.get("currency"),
                     })
+
+        # ── Server-side filters, shared by every group_by shape ─────────────
+        def _matches(r: Dict[str, Any]) -> bool:
+            if region and r.get("region") != region:
+                return False
+            if service and r.get("service") != service:
+                return False
+            if resource_type and r.get("resource_type") != resource_type:
+                return False
+            if cost_component and r.get("cost_component") != cost_component:
+                return False
+            if status and r.get("status") != status:
+                return False
+            cost = r.get("cost") or 0
+            if min_cost is not None and cost < min_cost:
+                return False
+            if max_cost is not None and cost > max_cost:
+                return False
+            return True
+
+        rows = [r for r in rows if _matches(r)]
+
+        # "in_inventory" only exists on true per-resource rows, never on the
+        # day/service fallback rows mixed into group_by="summary" for
+        # providers without per-resource billing — `"in_inventory" in r`
+        # excludes those instead of miscounting every one of them as unmatched.
+        unmatched = sum(1 for r in rows if "in_inventory" in r and not r["in_inventory"])
+
+        if group_by == "summary":
+            dims = [d.strip() for d in (dimensions or "service").split(",") if d.strip()]
+            valid_dims = {"provider", "account_name", "region", "service",
+                          "resource_type", "cost_component", "status"}
+            dims = [d for d in dims if d in valid_dims] or ["service"]
+
+            groups: Dict[tuple, Dict[str, Any]] = {}
+            group_resources: Dict[tuple, set] = {}
+            for r in rows:
+                key = tuple(r.get(d) for d in dims)
+                g = groups.setdefault(key, {
+                    **{d: r.get(d) for d in dims},
+                    "resource_count": 0,
+                    "compute_cost": 0.0, "database_cost": 0.0, "storage_cost": 0.0,
+                    "network_cost": 0.0, "other_cost": 0.0, "total_cost": 0.0,
+                })
+                # Rows with no provider_resource_id are AWS's day/service
+                # fallback (see accounts_without_resource_rows above) — AWS
+                # has no resource identity at this granularity, so each row
+                # counts as its own bucket and resource_count there means
+                # "billing line items", not distinct resources.
+                group_resources.setdefault(key, set()).add(r.get("provider_resource_id") or id(r))
+                cost = float(r.get("cost") or 0)
+                g["total_cost"] += cost
+                component_key = f"{r.get('cost_component', 'Other').lower()}_cost"
+                if component_key in g:
+                    g[component_key] += cost
+                else:
+                    g["other_cost"] += cost
+            for key, g in groups.items():
+                g["resource_count"] = len(group_resources[key])
+                for k in ("compute_cost", "database_cost", "storage_cost", "network_cost",
+                          "other_cost", "total_cost"):
+                    g[k] = round(g[k], 2)
+
+            summary_rows = sorted(groups.values(), key=lambda x: -x["total_cost"])
+            total_cost = round(sum(g["total_cost"] for g in summary_rows), 2) if summary_rows else None
+            return {
+                "account_id": str(account_id),
+                "days": days,
+                "group_by": "summary",
+                "dimensions": dims,
+                "currency": _single_currency(currencies) if rows else None,
+                "total_cost": total_cost,
+                "row_count": len(summary_rows),
+                "unmatched_resources": unmatched,
+                "rows": summary_rows,
+            }
+
+        # Most expensive first for resource rows — that is the question this
+        # view answers; day rows read best chronologically.
+        if group_by == "resource":
+            rows.sort(key=lambda x: -(x["cost"] or 0))
+        else:
             rows.sort(key=lambda x: (x["date"] or "", -(x["cost"] or 0)))
 
         total_cost = round(sum(float(r["cost"] or 0) for r in rows), 2) if rows else None
-        unmatched = sum(
-            1 for r in rows if group_by == "resource" and not r.get("in_inventory")
-        )
+        total_row_count = len(rows)
+
+        paginated = rows
+        if page is not None or page_size is not None:
+            page = max(1, page or 1)
+            page_size = max(1, min(page_size or 50, 500))
+            start = (page - 1) * page_size
+            paginated = rows[start:start + page_size]
 
         return {
             "account_id": str(account_id),
@@ -1343,9 +1616,14 @@ class CostService:
             "group_by": group_by,
             "currency": _single_currency(currencies) if rows else None,
             "total_cost": total_cost,
-            "row_count": len(rows),
+            # Total matching rows regardless of pagination — unchanged meaning
+            # from before pagination existed, so existing callers that read
+            # `row_count` (not `rows.length`) keep working.
+            "row_count": total_row_count,
+            "page": page,
+            "page_size": page_size,
             # Billed IDs with no inventory match — usually deleted resources still
             # billed for part of the window, or sub-resources we don't scan.
             "unmatched_resources": unmatched,
-            "rows": rows,
+            "rows": paginated,
         }

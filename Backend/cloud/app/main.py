@@ -22,6 +22,7 @@ setup_logging("DEBUG" if settings.DEBUG else "INFO")
 from app.models.cloud_account import CloudAccount   # noqa: F401
 from app.models.resource import CloudResource       # noqa: F401
 from app.models.discovery_job import DiscoveryJob   # noqa: F401
+from app.models.alert import CloudAlert             # noqa: F401
 
 
 @asynccontextmanager

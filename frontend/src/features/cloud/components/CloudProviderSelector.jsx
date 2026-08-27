@@ -9,6 +9,7 @@
  */
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Cloud, Globe, Plus, Search } from 'lucide-react';
+import ProviderLogo from './ProviderLogo';
 import { usePermissions } from '@/hooks/usePermissions';
 
 // ─── Provider metadata ────────────────────────────────────────────────────────
@@ -137,9 +138,7 @@ export const CloudProviderSelector = ({
           className="inline-flex h-control min-w-[200px] items-center gap-2 whitespace-nowrap rounded-control border border-border bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:border-strong"
         >
           {triggerProvider ? (
-            <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[triggerProvider] ?? 'border-border bg-sunken text-muted'}`}>
-              {triggerProvider}
-            </span>
+            <ProviderLogo provider={triggerProvider} size={18} />
           ) : (
             <Cloud size={15} className="text-subtle" />
           )}
@@ -202,6 +201,7 @@ export const CloudProviderSelector = ({
                   <div key={provider}>
                     {/* Provider header */}
                     <div className="flex items-center gap-2 px-3 pt-3 pb-1">
+                      <ProviderLogo provider={provider} size={16} />
                       <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[provider]}`}>
                         {provider}
                       </span>
@@ -324,9 +324,10 @@ export const ProviderSummaryBar = ({
             }`}
             disabled={count === 0}
           >
-            {/* Provider badge */}
-            <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[provider]}`}>
-              {provider}
+            {/* Brand mark on a white plate. It replaces a text badge that just
+                repeated the provider name shown immediately to its right. */}
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-border bg-white">
+              <ProviderLogo provider={provider} size={24} />
             </span>
 
             <div className="text-left">

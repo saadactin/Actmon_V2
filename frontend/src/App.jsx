@@ -1,6 +1,7 @@
 import { lazy, useEffect } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
+import { AUTH_DISABLED } from '@/auth/devAuthBypass';
 import Placeholder from '@/pages/Placeholder';
 import { NAV_INDEX } from '@/config/navigation';
 import { ADMIN_RESOURCES } from '@/config/adminResources';
@@ -187,7 +188,7 @@ export default function App() {
           a signed-out visit to any app route rendered the full shell (nav, "Signed
           out" account menu, pages that would all 401) instead of going straight to
           the login page. */}
-      <Route element={token ? <AppShell user={user} onSignOut={onSignOut} /> : <Navigate to={APP.loginRoute} replace />}>
+      <Route element={(token || AUTH_DISABLED) ? <AppShell user={user} onSignOut={onSignOut} /> : <Navigate to={APP.loginRoute} replace />}>
         <Route index element={<Navigate to={APP.defaultRoute} replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/alerts" element={<AlertsPage />} />

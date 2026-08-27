@@ -182,6 +182,45 @@ class OCIProvider(BaseCloudProvider):
                 break
         return items
 
+    @staticmethod
+    def _summarize_usages_windowed(usage_client, tenant_id, start_date, end_date, *,
+                                    granularity, query_type, group_by, compartment_depth=None):
+        """Every usage item across [start_date, end_date), split into <=90-day
+        windows and concatenated.
+
+        The Usage API hard-rejects a DAILY-granularity request spanning more
+        than 93 days ('Daily date range is more than 93 days') — confirmed
+        live: a 180 or 365-day report silently came back with 0 rows because
+        the single oversized request errored and the caller's cache wrapper
+        swallows the exception into an empty default. Splitting into several
+        <=90-day requests (10 margin below the real 93-day cap) and summing
+        their items — which every caller here already does by resourceId/
+        service/date — produces the same total a single wider call would,
+        had OCI allowed one.
+        """
+        from datetime import timedelta
+        import oci
+
+        MAX_WINDOW_DAYS = 90
+        items = []
+        window_start = start_date
+        while window_start < end_date:
+            window_end = min(window_start + timedelta(days=MAX_WINDOW_DAYS), end_date)
+            kwargs = dict(
+                tenant_id=tenant_id,
+                time_usage_started=window_start.strftime("%Y-%m-%dT00:00:00Z"),
+                time_usage_ended=window_end.strftime("%Y-%m-%dT00:00:00Z"),
+                granularity=granularity,
+                query_type=query_type,
+                group_by=group_by,
+            )
+            if compartment_depth is not None:
+                kwargs["compartment_depth"] = compartment_depth
+            request = oci.usage_api.models.RequestSummarizedUsagesDetails(**kwargs)
+            items.extend(OCIProvider._summarize_usages_all(usage_client, request))
+            window_start = window_end
+        return items
+
     async def get_cost_data(self) -> List[Dict[str, Any]]:
         """OCI Usage API — retrieve cost per service for the last 30 days."""
         import asyncio
@@ -239,11 +278,16 @@ class OCIProvider(BaseCloudProvider):
         """OCI Usage API grouped by resourceId — real spend per resource OCID over
         the given window, keyed to match provider_resource_id in cloud_resources.
 
-        Also carries the billed service and region per resource. OCI never
-        populates resource_name on usage rows (only resource_id), so display
-        names have to come from our own inventory table — the caller joins them.
-        Resources OCI doesn't bill individually (e.g. VCNs, NSGs) simply never
-        appear here; callers show NA for those, never a guessed figure."""
+        Also carries the billed service, region and compartment per resource.
+        OCI never populates resource_name on usage rows (only resource_id), so
+        display names have to come from our own inventory table — the caller
+        joins them. Resources OCI doesn't bill individually (e.g. VCNs, NSGs)
+        simply never appear here; callers show NA for those, never a guessed
+        figure. compartment_name is carried specifically so a row that will
+        NEVER match inventory (a deleted resource still billed for part of the
+        window — Object Storage's billing-internal resourceId format isn't
+        even a parseable OCID) can still tell the user where it lived, instead
+        of showing a bare opaque ID."""
         import asyncio
         from datetime import date, timedelta
 
@@ -252,17 +296,14 @@ class OCIProvider(BaseCloudProvider):
 
             usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
             today = date.today()
-            start = (today - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
-            end = today.strftime("%Y-%m-%dT00:00:00Z")
-            request = oci.usage_api.models.RequestSummarizedUsagesDetails(
-                tenant_id=self.auth.tenancy_ocid,
-                time_usage_started=start,
-                time_usage_ended=end,
-                granularity="DAILY",
-                query_type="COST",
-                group_by=["resourceId", "service", "region"],
+            usage_items = self._summarize_usages_windowed(
+                usage_client, self.auth.tenancy_ocid, today - timedelta(days=days), today,
+                granularity="DAILY", query_type="COST",
+                # 4 is the Usage API's hard cap on groupBy keys; compartmentName
+                # needs compartment_depth set or the API rejects the request.
+                group_by=["resourceId", "service", "region", "compartmentName"],
+                compartment_depth=1,
             )
-            usage_items = self._summarize_usages_all(usage_client, request)
             by_resource: Dict[str, Dict[str, Any]] = {}
             for item in usage_items:
                 rid = getattr(item, "resource_id", None)
@@ -273,6 +314,7 @@ class OCIProvider(BaseCloudProvider):
                     "currency": item.currency or None,
                     "service": item.service or None,
                     "region": getattr(item, "region", None) or None,
+                    "compartment_name": getattr(item, "compartment_name", None) or None,
                 })
                 row["monthly_cost"] += float(item.computed_amount or 0)
             for row in by_resource.values():
@@ -297,17 +339,11 @@ class OCIProvider(BaseCloudProvider):
 
             usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
             today = date.today()
-            start = (today - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
-            end = today.strftime("%Y-%m-%dT00:00:00Z")
-            request = oci.usage_api.models.RequestSummarizedUsagesDetails(
-                tenant_id=self.auth.tenancy_ocid,
-                time_usage_started=start,
-                time_usage_ended=end,
-                granularity="DAILY",
-                query_type="COST",
+            usage_items = self._summarize_usages_windowed(
+                usage_client, self.auth.tenancy_ocid, today - timedelta(days=days), today,
+                granularity="DAILY", query_type="COST",
                 group_by=["service", "region"],
             )
-            usage_items = self._summarize_usages_all(usage_client, request)
             rows = []
             for item in usage_items:
                 started = getattr(item, "time_usage_started", None)

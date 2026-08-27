@@ -11,6 +11,25 @@ import IconButton from '@/components/ui/IconButton';
 import Button from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Loading';
 
+// ── Edge Metadata ──────────────────────────────────────────────────
+// One definition per relationship kind, shared by the renderer and the legend so
+// the two can never disagree. `dash` distinguishes an inferred-but-real capability
+// (a permission) from a hard structural link at a glance.
+const EDGE_STYLE = {
+  contains: { color: '#14b8a6', label: 'Contains' },
+  network: { color: '#0ea5e9', label: 'Network / subnet' },
+  security: { color: '#eab308', label: 'Security group' },
+  role: { color: '#94a3b8', label: 'Assumes role' },
+  attached: { color: '#f97316', label: 'Storage attached' },
+  'routes-to': { color: '#ec4899', label: 'Load balances to' },
+  dataflow: { color: '#10b981', label: 'Data flow / trigger', dash: '6,6' },
+  // A permission says "is allowed to reach", not "does reach" — dashed, and
+  // labelled so nobody reads it as observed traffic.
+  permission: { color: '#8b5cf6', label: 'Can access (IAM)', dash: '2,5' },
+  'managed-by': { color: '#a3a3a3', label: 'Managed by', dash: '4,4' },
+  unknown: { color: '#9ca3af', label: 'Other' },
+};
+
 // ── Type Metadata ──────────────────────────────────────────────────
 // NOTE: these are literal hex values, not theme tokens — they colour the
 // SVG graph itself (nodes/edges/legend swatches) and must stay pixel-identical
@@ -22,10 +41,22 @@ const TYPE_META = {
   LambdaFunction: { color: '#a855f7', label: 'Lambda' },
   DynamoDBTable: { color: '#10b981', label: 'DynamoDB Table' },
   RDSInstance: { color: '#06b6d4', label: 'RDS Database' },
+  AuroraCluster: { color: '#06b6d4', label: 'Aurora Cluster' },
+  DocumentDBCluster: { color: '#06b6d4', label: 'DocumentDB Cluster' },
+  NeptuneCluster: { color: '#06b6d4', label: 'Neptune Cluster' },
+  RedshiftCluster: { color: '#06b6d4', label: 'Redshift Cluster' },
+  ElastiCacheRedis: { color: '#f97316', label: 'ElastiCache (Redis)' },
+  ElastiCacheMemcached: { color: '#f97316', label: 'ElastiCache (Memcached)' },
   EKSCluster: { color: '#6366f1', label: 'EKS Cluster' },
   LoadBalancer: { color: '#ec4899', label: 'Load Balancer' },
   SecurityGroup: { color: '#eab308', label: 'Security Group' },
   VPC: { color: '#14b8a6', label: 'VPC Network' },
+  // Subnets are discovered for all three clouds, so one shared entry — a lighter
+  // shade of the network colour, to read as a tier inside the network.
+  Subnet: { color: '#5eead4', label: 'Subnet' },
+  SecurityList: { color: '#eab308', label: 'Security List' },
+  RouteTable: { color: '#a3a3a3', label: 'Route Table' },
+  DhcpOptions: { color: '#a3a3a3', label: 'DHCP Options' },
   IAMRole: { color: '#64748b', label: 'IAM Role' },
   APIGateway: { color: '#ec4899', label: 'API Gateway' },
   BedrockModel: { color: '#10b981', label: 'Bedrock Model' },
@@ -66,8 +97,17 @@ const TYPE_META = {
   // ── OCI ── (types as emitted by the OCI scanner)
   ComputeInstance: { color: '#f59e0b', label: 'Compute Instance' },
   BlockVolume: { color: '#3b82f6', label: 'Block Volume' },
+  BootVolume: { color: '#3b82f6', label: 'Boot Volume' },
   ObjectStorageBucket: { color: '#3b82f6', label: 'Object Storage' },
+  FileSystem: { color: '#3b82f6', label: 'File System' },
   AutonomousDatabase: { color: '#10b981', label: 'Autonomous DB' },
+  DbSystem: { color: '#0d9488', label: 'DB System' },
+  MySQLDbSystem: { color: '#0d9488', label: 'MySQL DB System' },
+  NoSQLTable: { color: '#10b981', label: 'NoSQL Table' },
+  AnalyticsInstance: { color: '#0ea5e9', label: 'Analytics Instance' },
+  WebAppFirewall: { color: '#eab308', label: 'Web App Firewall' },
+  VirtualCircuit: { color: '#14b8a6', label: 'Virtual Circuit' },
+  DrgAttachment: { color: '#14b8a6', label: 'DRG Attachment' },
   VCN: { color: '#14b8a6', label: 'Virtual Cloud Network' },
   Function: { color: '#a855f7', label: 'OCI Function' },
   OKECluster: { color: '#6366f1', label: 'OKE Cluster' },
@@ -93,6 +133,11 @@ export const CloudTopologyPage = ({ embedded = false }) => {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
   const [accountView, setAccountView] = useState('ALL');
+  // Provider-created boilerplate (default VPCs/security groups/subnets, OCI's
+  // default route table & security list...) can be a large fraction of the
+  // graph and crowds out what was actually built — checked removes those nodes
+  // (and any edge touching one) from the layout entirely, not just dims them.
+  const [hideDefaults, setHideDefaults] = useState(false);
 
   // ── Zoom / Pan ─────────────────────────────────────────────────
   const [zoom, setZoom] = useState(0.85);
@@ -110,15 +155,39 @@ export const CloudTopologyPage = ({ embedded = false }) => {
 
   const { data: topology, isLoading, refetch } = useTopology(currentAccountView);
 
-  const nodes = topology?.nodes || [];
-  const edges = topology?.edges || [];
+  const rawNodes = topology?.nodes || [];
+  const rawEdges = topology?.edges || [];
+  const defaultCount = rawNodes.filter((n) => n.is_default).length;
+
+  // When hiding defaults, drop those nodes AND any edge touching one — an edge
+  // to a node that no longer exists in the layout would either dangle or force
+  // every consumer below to re-check both ends, so it's resolved once here.
+  const nodes = hideDefaults ? rawNodes.filter((n) => !n.is_default) : rawNodes;
+  const edges = hideDefaults
+    ? (() => {
+      const visible = new Set(nodes.map((n) => n.id));
+      return rawEdges.filter((e) => visible.has(e.source) && visible.has(e.target));
+    })()
+    : rawEdges;
+
+  // The API's precomputed stats describe the FULL graph, so once defaults are
+  // hidden they'd overstate what's actually on screen — recompute from the
+  // filtered arrays instead of trusting them in that case.
+  const edgeCounts = hideDefaults
+    ? edges.reduce((acc, e) => { acc[e.type] = (acc[e.type] || 0) + 1; return acc; }, {})
+    : (topology?.edge_type_counts
+      || edges.reduce((acc, e) => { acc[e.type] = (acc[e.type] || 0) + 1; return acc; }, {}));
+  const isolatedCount = hideDefaults
+    ? nodes.filter((n) => !edges.some((e) => e.source === n.id || e.target === n.id)).length
+    : (topology?.isolated_nodes ?? 0);
 
   // ── Layout columns ─────────────────────────────────────────────
   // Identity & Network — firewalls, networks, roles (AWS + Azure + OCI)
   const col1Types = [
     'VPC', 'SecurityGroup', 'IAMRole',
     'VirtualNetwork', 'NetworkSecurityGroup', 'PublicIP', 'NetworkInterface',
-    'VCN', 'ResourceGroup', 'Compartment', 'IAMGroup', 'IAMPolicy',
+    'VCN', 'Subnet', 'SecurityList', 'RouteTable', 'DhcpOptions',
+    'ResourceGroup', 'Compartment', 'IAMGroup', 'IAMPolicy',
     'LoadBalancer', 'ApplicationGateway', 'PrivateEndpoint', 'ManagedIdentity',
     'NATGateway', 'DNSZone', 'Bastion', 'RouteTable',
   ];
@@ -284,21 +353,52 @@ export const CloudTopologyPage = ({ embedded = false }) => {
 
       {/* ── Legend ──────────────────────────────────────────────── */}
       <CloudSection className="mb-3 shrink-0" bodyClassName="flex items-center gap-4 flex-wrap">
-        {[
-          { color: '#eab308', label: 'Security edge' },
-          { color: '#10b981', label: 'Data flow' },
-          { color: '#14b8a6', label: 'Contains' },
-          { color: '#9ca3af', label: 'IAM role' },
-          { color: '#d1d5db', label: 'Default resource' },
-        ].map((l) => (
-          <div key={l.label} className="inline-flex items-center gap-1.5 text-xs text-muted">
-            <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: l.color }} />
-            {l.label}
-          </div>
-        ))}
-        <div className="ml-auto inline-flex items-center gap-1.5 text-xs text-subtle">
-          <Icon name="info" size={12} />
-          {nodes.length} nodes · {edges.length} edges
+        {/* Driven by what the graph actually contains, with counts — a fixed
+            legend listed edge kinds this account may not have and omitted ones
+            it did. */}
+        {Object.entries(edgeCounts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([type, count]) => {
+            const s = EDGE_STYLE[type] || EDGE_STYLE.unknown;
+            return (
+              <div key={type} className="inline-flex items-center gap-1.5 text-xs text-muted">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: s.color }} />
+                {s.label}
+                <span className="text-subtle">({count})</span>
+              </div>
+            );
+          })}
+        {edges.length === 0 && (
+          <span className="text-xs text-subtle">No relationships discovered yet</span>
+        )}
+        <div className="ml-auto inline-flex items-center gap-3 text-xs text-subtle">
+          {defaultCount > 0 && (
+            <label className="flex shrink-0 cursor-pointer select-none items-center gap-2 rounded-control border border-border bg-surface px-3 py-1.5 font-semibold text-muted hover:bg-sunken">
+              <input
+                type="checkbox"
+                checked={hideDefaults}
+                onChange={(e) => setHideDefaults(e.target.checked)}
+                className="h-4 w-4 rounded border-border accent-[var(--accent)] focus:ring-2 focus:ring-accent"
+              />
+              Hide default resources
+              <span className="rounded-full bg-sunken px-1.5 text-[11px] font-bold text-subtle">{defaultCount}</span>
+            </label>
+          )}
+          {/* Unconnected nodes are worth surfacing: they usually mean a scanner
+              is not collecting a relationship, not that nothing is related. */}
+          {isolatedCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1"
+              title="Resources with no discovered relationship. Usually a scanner gap rather than a genuinely standalone resource."
+            >
+              <Icon name="alert-triangle" size={12} />
+              {isolatedCount} unconnected
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1.5">
+            <Icon name="info" size={12} />
+            {nodes.length} nodes · {edges.length} edges
+          </span>
         </div>
       </CloudSection>
 
@@ -394,13 +494,8 @@ export const CloudTopologyPage = ({ embedded = false }) => {
                 const mx = (x1 + x2) / 2;
                 const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
 
-                const colors = {
-                  security: '#eab308',
-                  dataflow: '#10b981',
-                  contains: '#14b8a6',
-                  role: '#94a3b8',
-                };
-                const c = colors[edge.type] || '#9ca3af';
+                const style = EDGE_STYLE[edge.type] || EDGE_STYLE.unknown;
+                const c = style.color;
 
                 return (
                   <g key={edge.id} style={{ opacity: hl && qm ? 1 : 0.15, transition: 'opacity 0.25s' }}>
@@ -413,7 +508,7 @@ export const CloudTopologyPage = ({ embedded = false }) => {
                       fill="none"
                       stroke={hl ? c : '#cbd5e1'}
                       strokeWidth={hl ? 3 : 2}
-                      strokeDasharray={edge.type === 'dataflow' ? '6,6' : undefined}
+                      strokeDasharray={style.dash}
                       markerEnd={hl ? 'url(#arrow-highlight)' : 'url(#arrow)'}
                       style={{ transition: 'stroke 0.2s, stroke-width 0.2s' }}
                     />
@@ -573,6 +668,37 @@ export const CloudTopologyPage = ({ embedded = false }) => {
               ))}
             </dl>
 
+            {/* Wildcard IAM grants. Without this, a resource whose policy says
+                Resource:"*" looks like it has no access at all — the edge is
+                genuinely undrawable because AWS never records which specific
+                resources were meant, so state that instead of showing nothing. */}
+            {selectedNode.broad_access?.length > 0 && (
+              <div className="mb-3 rounded-control border border-border bg-sunken p-3">
+                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                  Account-wide access (IAM wildcard)
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedNode.broad_access.map((g) => (
+                    <span
+                      key={g}
+                      className="rounded-md px-2 py-0.5 text-[11px] font-semibold"
+                      style={{
+                        color: EDGE_STYLE.permission.color,
+                        background: `${EDGE_STYLE.permission.color}20`,
+                      }}
+                    >
+                      {g}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-subtle">
+                  Its role grants these on <strong>every</strong> resource of that
+                  service, so no per-resource edge can be drawn — the policy names
+                  no specific target.
+                </p>
+              </div>
+            )}
+
             {/* Connections */}
             <ConnectionList title="Inputs" connections={inbound} onSelect={setSelectedNodeId} />
             <div className="mt-3" />
@@ -615,14 +741,27 @@ function ConnectionList({ title, connections, onSelect }) {
                   className="w-full flex items-center gap-2.5 px-3 py-2 bg-surface border border-border rounded-control text-left cursor-pointer hover:bg-accent-soft hover:border-strong transition-colors"
                 >
                   <span className="w-1 h-6 rounded-sm shrink-0" style={{ background: m.color }} />
-                  <span className="flex-1 text-sm font-medium text-fg truncate">
-                    {c.node.name}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-fg truncate">
+                      {c.node.name}
+                    </span>
+                    {/* The specific relationship ("attached to (Stopped)",
+                        "can write", "uses (TABLE_NAME)") is far more useful than
+                        the bare edge kind. */}
+                    {c.edge.label && (
+                      <span className="block text-[11px] text-subtle truncate">
+                        {c.edge.label}
+                      </span>
+                    )}
                   </span>
                   <span
                     className="text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0"
-                    style={{ color: m.color, background: `${m.color}20` }}
+                    style={{
+                      color: (EDGE_STYLE[c.edge.type] || EDGE_STYLE.unknown).color,
+                      background: `${(EDGE_STYLE[c.edge.type] || EDGE_STYLE.unknown).color}20`,
+                    }}
                   >
-                    {c.edge.type}
+                    {(EDGE_STYLE[c.edge.type] || EDGE_STYLE.unknown).label}
                   </span>
                 </button>
               );

@@ -13,12 +13,13 @@ import cn from '@/lib/cn';
 import {
   Server, HardDrive, SquareFunction, Database, Container, Scale, Inbox,
   Megaphone, Globe, Lock, Shield, User, Bot, Brain, BookOpen, Cloud,
-  MapPin, Link2, Unlink,
+  MapPin, Link2, Unlink, Milestone, Route, Zap, FolderOpen, BarChart3,
+  ShieldAlert, Cable, Workflow,
 } from 'lucide-react';
 
 // Resource types that represent detachable block storage across providers —
 // these are the only ones with a meaningful Attached/Unattached state.
-const STORAGE_TYPES = new Set(['BlockVolume', 'ManagedDisk', 'EBSVolume']);
+const STORAGE_TYPES = new Set(['BlockVolume', 'ManagedDisk', 'EBSVolume', 'BootVolume']);
 
 // Tone classes mirror Badge's own tone palette, so the icon avatar beside a
 // resource's name always matches the tone of its type pill (rendered via <Badge>).
@@ -36,6 +37,22 @@ const TYPE_META = {
   LambdaFunction: { Icon: SquareFunction, tone: 'info' },
   DynamoDBTable: { Icon: Database, tone: 'success' },
   RDSInstance: { Icon: Database, tone: 'success' },
+  AutonomousDatabase: { Icon: Database, tone: 'success' },
+  DbSystem: { Icon: Database, tone: 'success' },
+  MySQLDbSystem: { Icon: Database, tone: 'success' },
+  NoSQLTable: { Icon: Database, tone: 'success' },
+  AuroraCluster: { Icon: Database, tone: 'success' },
+  DocumentDBCluster: { Icon: Database, tone: 'success' },
+  NeptuneCluster: { Icon: Database, tone: 'success' },
+  RedshiftCluster: { Icon: Database, tone: 'success' },
+  MySQLServer: { Icon: Database, tone: 'success' },
+  PostgreSQLServer: { Icon: Database, tone: 'success' },
+  CosmosDB: { Icon: Database, tone: 'success' },
+  // Caches, not durable stores — same family as the databases above but a
+  // distinct icon so "in-memory, ephemeral" reads differently at a glance.
+  ElastiCacheRedis: { Icon: Zap, tone: 'warning' },
+  ElastiCacheMemcached: { Icon: Zap, tone: 'warning' },
+  RedisCache: { Icon: Zap, tone: 'warning' },
   EKSCluster: { Icon: Container, tone: 'warning' },
   LoadBalancer: { Icon: Scale, tone: 'neutral' },
   SQSQueue: { Icon: Inbox, tone: 'neutral' },
@@ -51,6 +68,18 @@ const TYPE_META = {
   BlockVolume: { Icon: HardDrive, tone: 'warning' },
   ManagedDisk: { Icon: HardDrive, tone: 'warning' },
   EBSVolume: { Icon: HardDrive, tone: 'warning' },
+  BootVolume: { Icon: HardDrive, tone: 'warning' },
+  // OCI's per-VCN objects — Security Lists are a real security boundary
+  // (same tone as SecurityGroup/NSG); Route Tables and DHCP Options are
+  // network plumbing, not security-relevant, so neutral.
+  SecurityList: { Icon: Shield, tone: 'neutral' },
+  RouteTable: { Icon: Route, tone: 'neutral' },
+  DhcpOptions: { Icon: Milestone, tone: 'neutral' },
+  FileSystem: { Icon: FolderOpen, tone: 'accent' },
+  AnalyticsInstance: { Icon: BarChart3, tone: 'info' },
+  WebAppFirewall: { Icon: ShieldAlert, tone: 'warning' },
+  VirtualCircuit: { Icon: Cable, tone: 'accent' },
+  DrgAttachment: { Icon: Workflow, tone: 'accent' },
 };
 
 function getMeta(type) {
@@ -60,6 +89,12 @@ function getMeta(type) {
 function isStopped(status) {
   const s = (status || '').toLowerCase();
   return s.includes('stop') || s.includes('deallocat');
+}
+
+// Shared with the row renderer below, so the hide-defaults filter and the
+// "default" badge agree on exactly the same definition of "default".
+function isDefaultResource(item) {
+  return !!item.is_default || item.resource_name.toLowerCase() === 'default' || item.config?.is_default === true;
 }
 
 function statusTone(status) {
@@ -76,6 +111,10 @@ export const ResourceTable = ({ accountId }) => {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
   const [attachFilter, setAttachFilter] = useState('All');
+  // Provider-created boilerplate (default VPCs/security groups, "default" IAM
+  // paths...) shows up in every account and crowds out what someone actually
+  // built — checked hides it, unchecked (the default) shows everything as before.
+  const [hideDefaults, setHideDefaults] = useState(false);
   const [sortKey, setSortKey] = useState('resource_type');
   const [sortAsc, setSortAsc] = useState(true);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
@@ -134,10 +173,12 @@ export const ResourceTable = ({ accountId }) => {
   const hasStorage = (resources || []).some((r) => STORAGE_TYPES.has(r.resource_type));
   const attachedCount = (resources || []).filter((r) => r.config?.attachment_status === 'Attached').length;
   const unattachedCount = (resources || []).filter((r) => r.config?.attachment_status === 'Unattached').length;
+  const defaultCount = (resources || []).filter(isDefaultResource).length;
 
   const filtered = (resources || [])
     .filter((r) => typeFilter === 'All' || r.resource_type === typeFilter)
     .filter((r) => attachFilter === 'All' || r.config?.attachment_status === attachFilter)
+    .filter((r) => !hideDefaults || !isDefaultResource(r))
     .filter((r) => !search || r.resource_name.toLowerCase().includes(search.toLowerCase()) || r.resource_type.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
       const av = a[sortKey] || '';
@@ -156,8 +197,8 @@ export const ResourceTable = ({ accountId }) => {
     return acc;
   }, {});
 
-  const hasFilters = search || typeFilter !== 'All' || attachFilter !== 'All';
-  const clearFilters = () => { setSearch(''); setTypeFilter('All'); setAttachFilter('All'); };
+  const hasFilters = search || typeFilter !== 'All' || attachFilter !== 'All' || hideDefaults;
+  const clearFilters = () => { setSearch(''); setTypeFilter('All'); setAttachFilter('All'); setHideDefaults(false); };
 
   const columns = [
     { key: 'name', label: 'Resource Name', sortable: true, sortKey: 'resource_name' },
@@ -169,7 +210,7 @@ export const ResourceTable = ({ accountId }) => {
   ];
 
   const rows = filtered.map((item) => {
-    const isDefault = item.is_default || item.resource_name.toLowerCase() === 'default' || item.config?.is_default === true;
+    const isDefault = isDefaultResource(item);
     const meta = getMeta(item.resource_type);
     const tone = isDefault ? 'neutral' : meta.tone;
     const sTone = statusTone(item.status);
@@ -286,12 +327,30 @@ export const ResourceTable = ({ accountId }) => {
         </div>
       )}
 
-      {/* Search bar */}
-      <CloudFilterBar
-        search={search}
-        onSearchChange={setSearch}
-        searchPlaceholder={`Search ${filtered.length} resources…`}
-      />
+      {/* Search bar + display options. CloudFilterBar doesn't accept children
+          (it only renders its own search box + `filters` selects), so the
+          checkbox is a plain sibling in the same flex-wrap row rather than a
+          change to that shared component. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <CloudFilterBar
+          className="flex-1"
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder={`Search ${filtered.length} resources…`}
+        />
+        {defaultCount > 0 && (
+          <label className="flex shrink-0 cursor-pointer select-none items-center gap-2 rounded-control border border-border bg-surface px-3 py-2 text-xs font-semibold text-muted hover:bg-sunken">
+            <input
+              type="checkbox"
+              checked={hideDefaults}
+              onChange={(e) => setHideDefaults(e.target.checked)}
+              className="h-4 w-4 rounded border-border accent-[var(--accent)] focus:ring-2 focus:ring-accent"
+            />
+            Hide default resources
+            <span className="rounded-full bg-sunken px-1.5 text-[11px] font-bold text-subtle">{defaultCount}</span>
+          </label>
+        )}
+      </div>
 
       {/* Table */}
       <div className="card overflow-hidden">
