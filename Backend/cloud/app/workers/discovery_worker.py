@@ -41,6 +41,10 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
         await disco_repo.set_running(job_id, task_id=str(job_id))
         await db.commit()
 
+        # Bound outside the try so the failure handler can tell "this job was
+        # logging drift" from "it died before it got that far".
+        drift_job_id: uuid.UUID | None = None
+
         try:
             account = await account_repo.get_by_id(account_id)
             if not account:
@@ -80,11 +84,28 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             seen_ids: set[str] = set()
             write_lock = asyncio.Lock()
 
+            # Configuration drift is only meaningful against a known previous
+            # state. Decided ONCE, before any batch lands: an account with
+            # nothing on file is being baselined, and calling all 1,500 of its
+            # resources "new" would be noise, not history. Checking per-batch
+            # would get this wrong — batch 2 always sees batch 1's rows and
+            # would report every later resource as freshly created.
+            baseline_count = await resource_repo.count_by_account(account_id)
+            if baseline_count > 0:
+                drift_job_id = job_id
+            if drift_job_id is None:
+                logger.info(
+                    "Discovery job=%s account has no inventory on file — this sweep "
+                    "establishes the drift baseline, no changes will be logged.", job_id,
+                )
+
             async def on_batch(batch: list[dict]) -> None:
                 if not batch:
                     return
                 async with write_lock:  # serialize writes on the shared session
-                    await resource_repo.upsert_resources(account_id, batch)
+                    await resource_repo.upsert_resources(
+                        account_id, batch, drift_job_id=drift_job_id
+                    )
                     for r in batch:
                         pid = r.get("provider_resource_id")
                         if pid:
@@ -116,19 +137,41 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                     f"existing resources were kept rather than pruned. First failure: "
                     f"{failures[0]}",
                 )
+                # The change log gets a narrower version of the same caution. A
+                # scope that fails to enumerate produces MISSING data, not wrong
+                # data — whatever this sweep did report, it genuinely read from
+                # the provider. So a field that changed to a new value is still
+                # trustworthy, while a field that went empty may simply have
+                # been unreadable. Only the latter is discarded. Dropping the
+                # whole sweep instead would mean an account that routinely has a
+                # few unreachable scopes never shows any drift at all.
+                if drift_job_id:
+                    from app.repository.drift_repo import DriftRepository
+
+                    dropped = await DriftRepository(db).delete_unreliable_for_job(drift_job_id)
+                    if dropped:
+                        logger.warning(
+                            "Discovery job=%s discarded %d change-log row(s) whose value "
+                            "went empty during an incomplete sweep (possible scan gap, "
+                            "not a confirmed removal).", job_id, dropped,
+                        )
                 await db.commit()
             elif seen_ids:
                 # Streamed path: batches already persisted. Prune rows from prior
                 # scans that weren't seen this time.
                 async with write_lock:
-                    removed = await resource_repo.delete_stale(account_id, list(seen_ids))
+                    removed = await resource_repo.delete_stale(
+                        account_id, list(seen_ids), drift_job_id=drift_job_id
+                    )
                     await db.commit()
                 count = len(seen_ids)
                 logger.info("Discovery job=%s pruned %d stale resources", job_id, removed)
             elif resources:
                 # Nothing streamed (e.g. on_batch failed for every batch) but the
                 # provider did return resources — persist them without wiping first.
-                count = await resource_repo.upsert_resources(account_id, resources)
+                count = await resource_repo.upsert_resources(
+                    account_id, resources, drift_job_id=drift_job_id
+                )
                 await db.commit()
             else:
                 # Scan returned nothing at all. This can mean a genuinely empty
@@ -195,4 +238,25 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                 "Discovery failed: job=%s error=%s", job_id, exc, exc_info=True
             )
             await disco_repo.fail_job(job_id, str(exc))
+            # A scan that died partway through is an incomplete sweep by
+            # definition, so its diffs get the same treatment as a sweep that
+            # could not enumerate every scope: discarded, not published as
+            # change. Inventory rows already written are still kept — those are
+            # real observations, and wiping them is what the prune guard exists
+            # to prevent. Best-effort: recording the failure matters more.
+            if drift_job_id:
+                try:
+                    from app.repository.drift_repo import DriftRepository
+
+                    dropped = await DriftRepository(db).delete_for_job(drift_job_id)
+                    if dropped:
+                        logger.warning(
+                            "Discovery job=%s discarded %d change-log row(s) from a "
+                            "failed sweep.", job_id, dropped,
+                        )
+                except Exception as drift_exc:
+                    logger.warning(
+                        "Discovery job=%s could not discard its change-log rows: %s",
+                        job_id, drift_exc,
+                    )
             await db.commit()
