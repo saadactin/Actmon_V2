@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,29 +58,36 @@ class AlertRepository:
         resource_type: Optional[str] = None,
         context: Optional[dict] = None,
         simulated: bool = False,
-    ) -> CloudAlert:
+    ) -> Tuple[CloudAlert, bool]:
         """Record a condition. With a dedupe_key, a recurrence updates the
         existing alert rather than adding a row — otherwise a condition seen on
         every discovery cycle would bury the feed in identical entries.
 
         A recurrence of something already RESOLVED re-opens it: the problem came
         back, and silently leaving it resolved would hide that.
+
+        Returns `(alert, just_opened)`. `just_opened` is True only for a brand
+        new alert or one re-opened from RESOLVED — the two transitions worth
+        notifying about. A recurrence that was already OPEN/ACKNOWLEDGED just
+        bumps last_seen_at/occurrence_count and is False, so a condition seen on
+        every discovery cycle doesn't re-notify on every cycle.
         """
         now = datetime.now(timezone.utc)
 
         if dedupe_key:
             existing = await self.get_by_dedupe_key(dedupe_key)
             if existing is not None:
+                was_resolved = existing.state == STATE_RESOLVED
                 existing.last_seen_at = now
                 existing.occurrence_count = (existing.occurrence_count or 1) + 1
                 existing.details = details
                 existing.severity = severity
-                if existing.state == STATE_RESOLVED:
+                if was_resolved:
                     existing.state = STATE_OPEN
                     existing.is_read = False
                     existing.resolved_at = None
                 await self.db.flush()
-                return existing
+                return existing, was_resolved
 
         alert = CloudAlert(
             account_id=account_id,
@@ -102,7 +109,7 @@ class AlertRepository:
         self.db.add(alert)
         await self.db.flush()
         await self.db.refresh(alert)
-        return alert
+        return alert, True
 
     async def acknowledge(self, alert_id: uuid.UUID) -> Optional[CloudAlert]:
         alert = await self.get_by_id(alert_id)

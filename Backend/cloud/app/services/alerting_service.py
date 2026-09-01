@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert import STATE_ACKNOWLEDGED, STATE_OPEN, STATE_RESOLVED
 from app.repository.alert_repo import AlertRepository
+from app.services.notification_bridge import queue_notifications_for_alert
 
 logger = logging.getLogger("cloud_svc.alerts")
 
@@ -87,9 +88,13 @@ class AlertingService:
         resource_name: Optional[str] = None,
         resource_type: Optional[str] = None,
         context: Optional[dict] = None,
+        account_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Record an alert, deduplicating on dedupe_key when given."""
-        alert = await self.repo.upsert(
+        """Record an alert, deduplicating on dedupe_key when given. A new
+        alert, or one re-opened from RESOLVED, is also queued for delivery
+        through the notification channels configured for its severity —
+        a plain recurrence of an already-OPEN alert just updates the row."""
+        alert, just_opened = await self.repo.upsert(
             anomaly_type=anomaly_type,
             details=details,
             severity=severity,
@@ -101,6 +106,10 @@ class AlertingService:
             context=context,
             simulated=simulated,
         )
+        if just_opened and not simulated:
+            queued = await queue_notifications_for_alert(self.db, alert, account_name=account_name)
+            if queued:
+                logger.info("Queued %d notification(s) for alert %s", queued, alert.id)
         await self.db.commit()
         logger.info(
             "Alert recorded: %s (severity=%s, occurrence=%s)",
@@ -183,6 +192,7 @@ async def check_storage_attachment_alerts(
             dedupe_key=key,
             resource_name=r.get("resource_name"),
             resource_type=r.get("resource_type"),
+            account_name=account_name,
             context={
                 "provider_resource_id": pid,
                 "attached_to": attached_to,
