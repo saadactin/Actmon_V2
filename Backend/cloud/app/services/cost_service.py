@@ -141,7 +141,14 @@ _TRANSIENT_ATTEMPTS = 3
 
 # Longest the Cost page will wait on billing APIs before rendering with whatever
 # is cached. The refresh continues in the background, so a reload picks it up.
-_ANALYTICS_DEADLINE_SECONDS = 12
+#
+# Was 12s. Live-tested 2026-09-03 against a genuinely (mildly) throttled Azure
+# subscription: get_cost_data() recovered on its 2nd retry in 14.2s — a real,
+# successful recovery that the old 12s deadline would have thrown away as
+# "still loading, show stale/NA" even though the data was seconds from
+# landing. 20s covers that case without materially changing the "provider is
+# just slow/down" case, which was already falling back past either deadline.
+_ANALYTICS_DEADLINE_SECONDS = 20
 
 
 def _is_transient(exc: Exception) -> bool:
