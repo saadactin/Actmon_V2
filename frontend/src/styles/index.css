@@ -347,3 +347,38 @@
 .anim-pop-in { animation: pop-in var(--dur-fast) var(--ease-out) both; }
 .anim-slide-right { animation: slide-in-right var(--dur-normal) var(--ease-out) both; }
 .anim-slide-left { animation: slide-in-left var(--dur-normal) var(--ease-out) both; }
+
+/* ── Monitor pulse loader ──────────────────────────────────────────────────
+   A "live radar ping" radiating from a steady centre dot, used by
+   InlineLoading/PageLoading instead of a plain ring spinner — a monitoring
+   product waiting on real telemetry should look like it's actively scanning,
+   not just stuck spinning.
+
+   Rings rest fully faded out (opacity 0) at both 0% and 100%, and the centre
+   dot rests at its normal scale — so prefers-reduced-motion, which snaps to
+   the final frame, shows a plain steady dot with no ring, never a ring
+   frozen mid-fade. */
+@keyframes monitor-ping {
+  0%   { transform: scale(0.5); opacity: 0; }
+  15%  { opacity: 0.55; }
+  70%  { opacity: 0; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes monitor-heartbeat {
+  0%, 58%, 100% { transform: scale(1); }
+  18%           { transform: scale(1.22); }
+  32%           { transform: scale(0.92); }
+  46%           { transform: scale(1.08); }
+}
+.monitor-ring { animation: monitor-ping 2.2s var(--ease) infinite; }
+.monitor-ring-delay { animation-delay: 1.1s; }
+.monitor-dot { animation: monitor-heartbeat 1.9s var(--ease) infinite; }
+
+/* Mini "live metrics" equalizer bars — ticking up and down beside a loading
+   label so a multi-second wait reads as background work happening, not a
+   frozen page. Rests mid-height at 0%/100%, a plausible static bar chart. */
+@keyframes monitor-bar {
+  0%, 100% { transform: scaleY(0.4); }
+  50%      { transform: scaleY(1); }
+}
+.monitor-bar { animation: monitor-bar 1s ease-in-out infinite; transform-origin: bottom; }

@@ -58,8 +58,19 @@ export const AlertsPage = ({ embedded = false }) => {
 
   useEffect(() => {
     fetchAlerts();
-    const interval = setInterval(fetchAlerts, 10000); // Polling every 10s
-    return () => clearInterval(interval);
+    // Plain setInterval (not react-query) has no built-in background-tab
+    // pause — without this check it polled a hidden/backgrounded tab every
+    // 10s forever. Skip the tick while hidden, and catch up immediately
+    // when the tab becomes visible again instead of waiting up to 10s.
+    const interval = setInterval(() => {
+      if (document.visibilityState !== 'hidden') fetchAlerts();
+    }, 10000);
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchAlerts(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [fetchAlerts]);
 
   const act = async (id, action) => {

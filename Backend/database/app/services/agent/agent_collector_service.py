@@ -34,6 +34,7 @@ logger = logging.getLogger("agent_collector")
 
 _stop_event = threading.Event()
 _thread = None
+_start_lock = threading.Lock()
 
 # ─────────────────────────────────────────────────────────────
 # Threshold configuration (can be moved to env vars later)
@@ -417,12 +418,17 @@ def _collect_postgres_wait_events_only(agent_name: str, conn_rec: ConnectionMast
 # ─────────────────────────────────────────────────────────────
 
 def _collect_oracle(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
+    # Defined before the try, and closed in `finally` below — previously this
+    # was only ever called on the success path, so any query failing partway
+    # through (a struggling Oracle instance is exactly when that happens)
+    # leaked the raw oracledb connection + cursor every single collection
+    # cycle, compounding whatever was already wrong with the instance.
+    _closer = lambda: None  # noqa: E731
     try:
         # Agent-hosted Oracle (localhost on the DB box) → run every query THROUGH the
         # agent; the backend can't reach it and has no oracledb driver. Standalone
         # Oracle at a reachable address keeps the direct driver path.
         from app.services.common import db_proxy_service
-        _closer = lambda: None  # noqa: E731
         if db_proxy_service.agent_host_for_conn(conn_rec.id, db) is not None:
             q = db_proxy_service.make_runner(conn_rec, db)
         else:
@@ -547,7 +553,6 @@ def _collect_oracle(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
                 count=_ti(r[4]),
             ))
 
-        _closer()
         return True
 
     except ImportError:
@@ -557,6 +562,11 @@ def _collect_oracle(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
         _record_error(agent_name, str(exc))
         logger.error(f"[agent_collector] Oracle failed for {agent_name}: {exc}")
         return False
+    finally:
+        try:
+            _closer()
+        except Exception:  # noqa: BLE001 — closing must never mask the real error or crash the loop
+            pass
 
 
 def _collect_oracle_extras_only(agent_name: str, conn_rec: ConnectionMaster, db):
@@ -565,9 +575,12 @@ def _collect_oracle_extras_only(agent_name: str, conn_rec: ConnectionMaster, db)
     equivalent, so this is the only pull-side round-trip still worth running once
     the probe has already confirmed the DB is up. Best-effort only, never affects
     status."""
+    # Same leak as _collect_oracle above: only ever closed on the success path
+    # previously, so a query failing partway through never released the raw
+    # oracledb connection/cursor. Defined before the try, closed in `finally`.
+    _closer = lambda: None  # noqa: E731
     try:
         from app.services.common import db_proxy_service
-        _closer = lambda: None  # noqa: E731
         if db_proxy_service.agent_host_for_conn(conn_rec.id, db) is not None:
             q = db_proxy_service.make_runner(conn_rec, db)
         else:
@@ -632,9 +645,13 @@ def _collect_oracle_extras_only(agent_name: str, conn_rec: ConnectionMaster, db)
                 count=_ti(r[4]),
             ))
 
-        _closer()
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[agent_collector] Oracle extras-only skipped for {agent_name}: {exc}")
+    finally:
+        try:
+            _closer()
+        except Exception:  # noqa: BLE001 — closing must never mask the real error or crash the loop
+            pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -700,11 +717,14 @@ def _collect_mongodb(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
 # ─────────────────────────────────────────────────────────────
 
 def _collect_mssql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
+    # Same leak as the Oracle collectors above — only closed on success
+    # previously, so a mid-collection failure leaked the raw pymssql
+    # connection/cursor every cycle. Defined before the try, closed in `finally`.
+    _closer = lambda: None  # noqa: E731
     try:
         # Agent-hosted SQL Server (localhost on the DB box) → query THROUGH the agent;
         # the backend can't reach it. Standalone SQL Server keeps the direct driver.
         from app.services.common import db_proxy_service
-        _closer = lambda: None  # noqa: E731
         if db_proxy_service.agent_host_for_conn(conn_rec.id, db) is not None:
             q = db_proxy_service.make_runner(conn_rec, db)
         else:
@@ -782,7 +802,6 @@ def _collect_mssql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
             uptime_seconds=uptime,
         ))
 
-        _closer()
         _check_thresholds(agent_name, total, max_conn, cache_hit, db)
         return True
 
@@ -793,6 +812,11 @@ def _collect_mssql(agent_name: str, conn_rec: ConnectionMaster, db) -> bool:
         _record_error(agent_name, str(exc))
         logger.error(f"[agent_collector] MSSQL failed for {agent_name}: {exc}")
         return False
+    finally:
+        try:
+            _closer()
+        except Exception:  # noqa: BLE001 — closing must never mask the real error or crash the loop
+            pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -806,9 +830,11 @@ def _collect_clickhouse(agent_name: str, conn_rec: ConnectionMaster, db) -> bool
     """ClickHouse is never backend-direct-capable — the agent runs on the DB host, so
     every query goes THROUGH the agent (dbquery channel). A direct clickhouse_driver
     connection is used only when the connection isn't agent-linked."""
+    # Same leak as the Oracle/MSSQL collectors above — only closed on success
+    # previously. Defined before the try, closed in `finally`.
+    _closer = lambda: None  # noqa: E731
     try:
         from app.services.common import db_proxy_service
-        _closer = lambda: None  # noqa: E731
         if db_proxy_service.agent_host_for_conn(conn_rec.id, db) is not None:
             q = db_proxy_service.make_runner(conn_rec, db)
         else:
@@ -875,7 +901,6 @@ def _collect_clickhouse(agent_name: str, conn_rec: ConnectionMaster, db) -> bool
             uptime_seconds=uptime,
         ))
         db.commit()
-        _closer()
         _check_thresholds(agent_name, tcp_conn, max_q, cache_hit, db)
         return True
 
@@ -887,6 +912,11 @@ def _collect_clickhouse(agent_name: str, conn_rec: ConnectionMaster, db) -> bool
         _record_error(agent_name, str(exc))
         logger.error(f"[agent_collector] ClickHouse failed for {agent_name}: {exc}")
         return False
+    finally:
+        try:
+            _closer()
+        except Exception:  # noqa: BLE001 — closing must never mask the real error or crash the loop
+            pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1569,16 +1599,23 @@ def _manager_loop(interval_sec: int, resync_sec: int):
 
 def start_agent_collector(interval_sec: int = 60):
     global _thread
-    _stop_event.clear()
-    resync_sec = max(15, int(_os.getenv("COLLECTOR_RESYNC_SEC", "20") or 20))
-    _thread = threading.Thread(
-        target=_manager_loop,
-        args=(interval_sec, resync_sec),
-        daemon=True,
-        name="agent_collector_manager",
-    )
-    _thread.start()
-    logger.info("[agent_collector] Background manager thread launched.")
+    # Every other scheduler in this app guards its start against a second
+    # concurrent call — this one didn't, so a lifespan re-entry (a reload,
+    # or startup running twice in one process) could spawn a second manager
+    # thread double-driving _sync_agent_threads against the same agents.
+    with _start_lock:
+        if _thread and _thread.is_alive():
+            return
+        _stop_event.clear()
+        resync_sec = max(15, int(_os.getenv("COLLECTOR_RESYNC_SEC", "20") or 20))
+        _thread = threading.Thread(
+            target=_manager_loop,
+            args=(interval_sec, resync_sec),
+            daemon=True,
+            name="agent_collector_manager",
+        )
+        _thread.start()
+        logger.info("[agent_collector] Background manager thread launched.")
 
 
 def stop_agent_collector():

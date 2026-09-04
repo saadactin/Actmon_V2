@@ -61,11 +61,18 @@ function parseRecipients(str) {
 export default function OracleJobDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { state } = useLocation();
+  const { state, pathname } = useLocation();
   const qc = useQueryClient();
   const { toasts, push, dismiss } = useToasts();
   const snapshot = state?.job;
-  const backTo = `/oracle-dashboard/${id}/storage-health`;
+  // Same page, two entry points — Storage Health's shrink/move/rebuild
+  // findings, and the newer Maintenance module's direct operations. Back
+  // must return to whichever actually started this job, not always
+  // Storage Health, or the Maintenance module's tab context is lost.
+  const maintenanceSection = state?.maintenanceSection;
+  const backTo = pathname.includes('/maintenance/job')
+    ? `/oracle-dashboard/${id}/maintenance${maintenanceSection ? `?section=${maintenanceSection}` : ''}`
+    : `/oracle-dashboard/${id}/storage-health`;
 
   const [aiThread, setAiThread] = useState([]);
   const [aiQuestion, setAiQuestion] = useState('');
@@ -134,13 +141,17 @@ export default function OracleJobDetailPage() {
   });
 
   if (!snapshot) {
+    const fromMaintenance = pathname.includes('/maintenance/job');
     return (
       <>
         <PageHeader title="Maintenance Job" icon="clipboard" backTo={backTo} />
         <Notice tone="info" title="No job selected.">
-          This page shows detail for one maintenance job handed to it from Storage Health — open it by clicking a row there.
+          This page shows detail for one maintenance job — open it by clicking a row on{' '}
+          {fromMaintenance ? 'the Maintenance module' : 'Storage Health'} instead of loading this URL directly.
         </Notice>
-        <Button variant="primary" iconRight="chevron-right" onClick={() => navigate(backTo)}>Open Storage Health</Button>
+        <Button variant="primary" iconRight="chevron-right" onClick={() => navigate(backTo)}>
+          {fromMaintenance ? 'Open Maintenance' : 'Open Storage Health'}
+        </Button>
       </>
     );
   }

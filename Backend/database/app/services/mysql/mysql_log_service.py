@@ -29,6 +29,20 @@ SELF_HEAL_HISTORY_DIR = os.path.join(
     "data", "mysql_self_heal_history",
 )
 
+# Well-known MySQL/MariaDB error-log install locations — tried in order when
+# the server itself reports no path (log_error empty / skip_log_error) or the
+# reported path isn't readable. Same list _ssh_read_errorlog() below checks
+# over SSH; kept here too so an agent-connected host (no SSH needed) gets the
+# identical discovery instead of only ever trying the one exact path MySQL
+# reported.
+_COMMON_ERROR_LOG_PATHS = [
+    "/var/log/mysql/error.log",
+    "/var/log/mariadb/mariadb.log",
+    "/var/lib/mysql/mysql.err",
+    r"C:\ProgramData\MySQL\MySQL Server 8.0\Data\mysql_error.log",
+    r"C:\ProgramData\MySQL\MySQL Server 8.0\Data\error.log",
+]
+
 # ── Log classification patterns ───────────────────────────────────────────────
 
 MYSQL_LOG_LEVEL_PATTERN = re.compile(
@@ -463,21 +477,98 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
     # whenever we have SOME candidate path, since the `os.path.exists` check
     # below only ever tests THIS backend's own filesystem, never the actual
     # (usually remote) MySQL host's.
-    if mysql_error_path and not mysql_is_down:
-        agent_row = db_proxy_service.agent_host_for_conn(conn_id, db)
-        if agent_row and agent_row.token:
-            from app.services.agent import agent_fs_service
+    #
+    # If MySQL itself reports no path at all (log_error empty), this used to
+    # give up immediately and the UI pointed people at "Configure SSH" as if
+    # that were the only way to find the file — but SSH's own fallback
+    # (_ssh_read_errorlog below) doesn't actually need MySQL to report a path
+    # either: it just checks well-known install locations. There's no reason
+    # an agent-connected host couldn't do the same, without needing SSH.
+    agent_row = db_proxy_service.agent_host_for_conn(conn_id, db) if not mysql_is_down else None
+    if agent_row and agent_row.token:
+        from app.services.agent import agent_fs_service
+
+        # Real MySQL (not MariaDB) writes its default error log as
+        # "<hostname>.err" inside datadir — the exact name the "log_error
+        # empty" fallback above already tries to derive, but silently gives
+        # up on any error. Ask again here, undefended, since we already have
+        # a live connection (the log_error query above succeeded) and this
+        # is the single most likely real filename on a Windows install.
+        hostname_candidate = None
+        try:
+            hn_engine = create_engine(mysql_url, connect_args={"connect_timeout": 2})
+            with hn_engine.connect() as hn_conn:
+                dd, hn = hn_conn.execute(text("SELECT @@datadir, @@hostname")).fetchone()
+            if dd and hn:
+                sep = "\\" if "\\" in dd else "/"
+                hostname_candidate = dd.rstrip("/\\") + sep + f"{hn}.err"
+        except Exception:
+            pass
+
+        candidate_paths = (
+            ([mysql_error_path] if mysql_error_path else [])
+            + ([hostname_candidate] if hostname_candidate else [])
+            + [p for p in _COMMON_ERROR_LOG_PATHS if p not in (mysql_error_path, hostname_candidate)]
+        )
+        for candidate in candidate_paths:
             try:
-                raw = agent_fs_service.request(agent_row.token, "getfile", mysql_error_path, timeout=15)
-                if raw is not None:
-                    content_str = raw.decode("utf-8", errors="ignore")
-                    raw_lines = [l for l in content_str.splitlines()[-500:] if l.strip()]
-                    agent_logs = _parse_ssh_log_lines(raw_lines, mysql_is_down)
-                    return {
-                        "status": "success", "source": "agent_file", "log_path": mysql_error_path,
-                        "mysql_down": mysql_is_down, "total": len(agent_logs),
-                        "summary": build_mysql_log_summary(agent_logs), "logs": agent_logs,
-                    }
+                raw = agent_fs_service.request(agent_row.token, "getfile", candidate, timeout=15)
+            except Exception:
+                continue
+            if raw is not None and len(raw.strip()) > 10:
+                content_str = raw.decode("utf-8", errors="ignore")
+                raw_lines = [l for l in content_str.splitlines()[-500:] if l.strip()]
+                agent_logs = _parse_ssh_log_lines(raw_lines, mysql_is_down)
+                return {
+                    "status": "success", "source": "agent_file", "log_path": candidate,
+                    "mysql_down": mysql_is_down, "total": len(agent_logs),
+                    "summary": build_mysql_log_summary(agent_logs), "logs": agent_logs,
+                }
+
+        # Nothing at any guessed name — ask the agent to actually LIST the
+        # data directory and find whatever the real error-log file is
+        # called, exactly like SSH's `find` does, instead of only ever
+        # trying names we happened to guess. Windows-only for now (the
+        # datadir shape above is Windows-specific); a Linux data directory
+        # would already have been covered by _COMMON_ERROR_LOG_PATHS.
+        datadir_guess = None
+        if hostname_candidate:
+            datadir_guess = hostname_candidate.rsplit("\\", 1)[0] if "\\" in hostname_candidate else hostname_candidate.rsplit("/", 1)[0]
+        elif mysql_error_path and ("\\" in mysql_error_path or "/" in mysql_error_path):
+            sep = "\\" if "\\" in mysql_error_path else "/"
+            datadir_guess = mysql_error_path.rsplit(sep, 1)[0]
+        if datadir_guess and "\\" in datadir_guess:
+            try:
+                # The agent's "shell" op runs this through plain cmd.exe on
+                # Windows (see actmon_agent.py's _shell()), which has no
+                # Get-ChildItem — so PowerShell has to be invoked explicitly.
+                # -EncodedCommand (base64 UTF-16LE) sidesteps the otherwise
+                # painful nested-quoting problem of a single-quoted path
+                # inside a double-quoted -Command inside a cmd.exe string.
+                import base64 as _b64
+                ps_script = (
+                    "Get-ChildItem -LiteralPath '" + datadir_guess.replace("'", "''") + "' "
+                    "-Filter *.err -ErrorAction SilentlyContinue | "
+                    "Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName"
+                )
+                encoded = _b64.b64encode(ps_script.encode("utf-16-le")).decode("ascii")
+                shell_cmd = f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+                out = agent_fs_service.request(agent_row.token, "shell", shell_cmd, timeout=15)
+                out_text = (out or b"").decode("utf-8", "ignore")
+                if out_text.startswith("EXIT:"):
+                    out_text = out_text.split("\n", 1)[1] if "\n" in out_text else ""
+                found_path = next((l.strip() for l in out_text.splitlines() if l.strip()), None)
+                if found_path:
+                    raw = agent_fs_service.request(agent_row.token, "getfile", found_path, timeout=15)
+                    if raw is not None and len(raw.strip()) > 10:
+                        content_str = raw.decode("utf-8", errors="ignore")
+                        raw_lines = [l for l in content_str.splitlines()[-500:] if l.strip()]
+                        agent_logs = _parse_ssh_log_lines(raw_lines, mysql_is_down)
+                        return {
+                            "status": "success", "source": "agent_file", "log_path": found_path,
+                            "mysql_down": mysql_is_down, "total": len(agent_logs),
+                            "summary": build_mysql_log_summary(agent_logs), "logs": agent_logs,
+                        }
             except Exception:
                 pass
 
@@ -511,12 +602,34 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
                 "note": note, "ssh_host": connection.ssh_host or connection.host,
             }
 
-        _note_extra = (
-            " SSH connected but no error log found — MariaDB error logging is disabled (skip_log_error). "
-            "Run fix_mariadb_errorlog.py or use the Self-Heal terminal to enable it."
-            if (connection.ssh_user and connection.ssh_password)
-            else " Configure SSH credentials (SSH Config button) to enable remote log reading."
-        )
+        # Whichever of these actually ran (agent or SSH), it already searched
+        # every common install location — including asking the host itself
+        # to list its data directory — not just the one path MySQL reported.
+        # If nothing turned up, the real cause is that the server isn't
+        # writing errors to a file at all (MariaDB's skip_log_error, or a
+        # real MySQL server whose log_error was left unset and is instead
+        # logging only to the console/Windows Event Log), and pointing the
+        # user at "Configure SSH" would be telling them to fix something
+        # that was never the problem: an agent-connected host already
+        # checked exactly what SSH would have.
+        if agent_row and agent_row.token:
+            _note_extra = (
+                " This host's agent already checked every common install location, including listing "
+                "the data directory itself — this isn't a connectivity problem. Either error logging is "
+                "genuinely disabled (MariaDB's skip_log_error), or log_error was never set and this server "
+                "is writing errors elsewhere (console output, or the Windows Event Log on a Windows install) "
+                "instead of a plain file. Configuring SSH would not find anything the agent didn't already "
+                "look for — set log_error explicitly in the server's config and restart it, or check the "
+                "Windows Event Viewer's Application log for the MySQL/MariaDB source."
+            )
+        elif connection.ssh_user and connection.ssh_password:
+            _note_extra = (
+                " SSH connected but no error log found in any common location — error logging is either "
+                "disabled (MariaDB's skip_log_error) or log_error was never set. Run fix_mariadb_errorlog.py "
+                "or use the Self-Heal terminal to enable it."
+            )
+        else:
+            _note_extra = " Configure SSH credentials (SSH Config button) to enable remote log reading."
 
         # 4. performance_schema.events_errors_summary last-resort
         if not (mysql_is_down and not _is_local_host):
@@ -555,6 +668,10 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
             "status": "success", "source": "none",
             "log_path": mysql_error_path or "not found",
             "mysql_down": mysql_is_down, "total": 0,
+            # Lets the frontend hide "Configure SSH" when it already knows
+            # that button won't help — an agent-connected host has already
+            # searched every location SSH would have.
+            "agent_tried": bool(agent_row and agent_row.token),
             "summary": {
                 "severities": {"CRITICAL": 0, "ERROR": 0, "WARNING": 0, "INFO": 0},
                 "statuses":   {"OPEN": 0, "PENDING": 0, "RESOLVED": 0},
@@ -562,7 +679,7 @@ def get_error_logs(conn_id: int, db: Session) -> dict:
             },
             "logs": [],
             "note": (
-                "Error log is not accessible. MariaDB error logging may be disabled (skip_log_error)."
+                "Error log is not accessible — the server reports no log_error path."
                 + _note_extra
                 + f" Log path reported by MySQL: {mysql_error_path or 'unknown (log_error is empty)'}"
             ),

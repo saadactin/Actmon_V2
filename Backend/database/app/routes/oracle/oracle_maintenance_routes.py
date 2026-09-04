@@ -5,7 +5,7 @@ mutating/approval-gated and requires a real authenticated user.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -22,6 +22,17 @@ from app.services.oracle.oracle_maintenance_service import (
     list_maintenance_jobs,
     list_maintenance_jobs_all,
     get_maintenance_job,
+    request_direct_maintenance,
+)
+from app.services.oracle.oracle_maintenance_telemetry_service import (
+    oracle_maintenance_overview,
+    table_maintenance_telemetry,
+    index_maintenance_telemetry,
+    statistics_maintenance_telemetry,
+    partition_maintenance_telemetry,
+    space_maintenance_telemetry,
+    datafile_resize_info,
+    tablespace_space_analysis,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Oracle Maintenance"])
@@ -50,6 +61,14 @@ class MaintenanceStartBody(BaseModel):
 
 class MaintenanceScheduleBody(BaseModel):
     scheduled_at: datetime  # UTC — the frontend sends an ISO string with offset/Z
+    recipients: Optional[List[str]] = None
+
+
+class DirectMaintenanceRequestBody(BaseModel):
+    object_type: str
+    object_name: str
+    action: str
+    params: Optional[Dict[str, Any]] = None
     recipients: Optional[List[str]] = None
 
 
@@ -110,3 +129,67 @@ def route_reject_maintenance(
     claims: dict = Depends(current_claims), db: Session = Depends(get_db),
 ):
     return reject_maintenance(job_id, db, claims, body.reason)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Maintenance module — real-time telemetry (Table/Index/Statistics/
+#  Partition/Space) and direct (non-finding) operation requests.
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance-overview")
+def route_oracle_maintenance_overview(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_maintenance_overview(conn_id, db)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/table-telemetry")
+def route_table_maintenance_telemetry(conn_id: int, db: Session = Depends(get_db)):
+    return table_maintenance_telemetry(conn_id, db)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/index-telemetry")
+def route_index_maintenance_telemetry(conn_id: int, db: Session = Depends(get_db)):
+    return index_maintenance_telemetry(conn_id, db)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/statistics-telemetry")
+def route_statistics_maintenance_telemetry(conn_id: int, db: Session = Depends(get_db)):
+    return statistics_maintenance_telemetry(conn_id, db)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/partition-telemetry")
+def route_partition_maintenance_telemetry(conn_id: int, db: Session = Depends(get_db)):
+    return partition_maintenance_telemetry(conn_id, db)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/space-telemetry")
+def route_space_maintenance_telemetry(conn_id: int, db: Session = Depends(get_db)):
+    return space_maintenance_telemetry(conn_id, db)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/datafile-resize-info")
+def route_datafile_resize_info(conn_id: int, file_name: str, db: Session = Depends(get_db)):
+    return datafile_resize_info(conn_id, db, file_name)
+
+
+@router.get("/connections/oracle/{conn_id}/oracle-maintenance/tablespace-analysis")
+def route_tablespace_space_analysis(conn_id: int, tablespace_name: str, db: Session = Depends(get_db)):
+    return tablespace_space_analysis(conn_id, db, tablespace_name)
+
+
+@router.post("/connections/oracle/{conn_id}/oracle-maintenance/request-direct")
+def route_request_direct_maintenance(
+    conn_id: int, body: DirectMaintenanceRequestBody,
+    claims: dict = Depends(current_claims), db: Session = Depends(get_db),
+):
+    """One call for the Maintenance module's operation buttons: validates
+    against live Oracle, creates the job (already 'approved' — the
+    confirmation dialog the user just clicked through IS the approval step
+    for a directly-chosen operation), and immediately starts it so the
+    frontend can go straight to watching live job status, the same page
+    JobDetailPage already provides for the Storage Health flow."""
+    job = request_direct_maintenance(
+        conn_id, db, body.object_type, body.object_name, body.action, claims, params=body.params,
+    )
+    started = start_maintenance(job["id"], db, claims, recipients=body.recipients)
+    started["warnings"] = job.get("warnings", [])
+    return started

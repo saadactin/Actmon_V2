@@ -1,17 +1,17 @@
 """
-Agent reaper - keeps the agent/host list honest when an agent is uninstalled.
+Agent reaper - keeps the agent/host list honest when an agent stops reporting.
 
-An uninstalled agent simply stops pushing. This background thread notices the
-silence (measured against the DB clock, so timezone handling is Postgres's job) and:
+An agent that's genuinely down (host powered off, service stopped, network
+unreachable) simply stops pushing. This background thread notices the silence
+(measured against the DB clock, so timezone handling is Postgres's job) and
+marks agents / agent-hosts OFFLINE after AGENT_OFFLINE_SECS of silence.
 
-  * marks agents / agent-hosts OFFLINE after AGENT_OFFLINE_SECS of silence, and
-  * REMOVES a long-silent host agent (AGENT_REMOVE_SECS) *only* when it has no DB
-    monitoring attached - so a pure host (uninstalled laptop/server) disappears,
-    while a host with a configured database just goes offline and is kept until
-    an operator removes it explicitly.
-
-If the agent is reinstalled it re-enrolls on its next push and reappears.
-Thresholds are overridable via env: AGENT_OFFLINE_SECS, AGENT_REMOVE_SECS.
+It never deletes an agent or host row, no matter how long it's been silent —
+a laptop switched off for a week (or a year) still shows up as Offline, not
+removed, so nobody mistakes "the machine is off" for "ActMon uninstalled
+itself". If the agent is reinstalled — or the same machine just comes back
+online — it re-enrolls on its next push and goes back to Online automatically.
+Thresholds are overridable via env: AGENT_OFFLINE_SECS.
 """
 import logging
 import os
@@ -29,7 +29,6 @@ logger = logging.getLogger("agent_reaper")
 # flap offline↔online). Now Super Admin configurable from the Settings page —
 # see monitoring_settings_service.get_settings().offline_after_sec, read fresh on
 # every reap pass below instead of a fixed constant.
-REMOVE_AFTER = int(os.getenv("AGENT_REMOVE_SECS", "900"))      # 15 min silence -> uninstalled
 
 # PostgreSQL is NOT a telemetry store — it keeps only a short IN-FLIGHT BUFFER of
 # telemetry rows (the transport window that feeds Redis/ClickHouse via the insert
@@ -40,6 +39,7 @@ _last_prune = 0.0
 
 _stop = threading.Event()
 _thread = None
+_start_lock = threading.Lock()
 
 
 def _notify(db, agent_name, message, severity):
@@ -216,25 +216,12 @@ def reap_once():
             "AND last_infra_at < now() - make_interval(secs => :s)"), {"s": offline_after})
         changed["offline_hosts"] = r.rowcount or 0
 
-        # 3) Remove long-silent host agents that have NO database monitoring attached
-        #    (the "uninstalled laptop/server" case, e.g. ACTIN-CS-81/85). A host with a
-        #    configured DB target (e.g. a PostgreSQL/MySQL server) is KEPT and only
-        #    marked offline - we never silently delete a configured monitoring target.
-        stale = db.execute(text(
-            "SELECT s.id, s.hostname FROM os_servers s "
-            "WHERE s.collector='agent' AND s.last_infra_at IS NOT NULL "
-            "AND s.last_infra_at < now() - make_interval(secs => :s) "
-            "AND NOT EXISTS (SELECT 1 FROM database_instances di WHERE di.server_id = s.id)"),
-            {"s": REMOVE_AFTER}).fetchall()
-        for sid, hostname in stale:
-            db.execute(text("DELETE FROM os_servers WHERE id=:id"), {"id": sid})
-            # matching host-agent row (agent_name == hostname, host-type only)
-            db.execute(text("DELETE FROM agents WHERE agent_name=:n AND (db_type IS NULL OR lower(db_type)='host')"),
-                       {"n": hostname})
-            changed["removed_hosts"].append(hostname)
-            _notify(db, hostname, f"Host '{hostname}' was removed - its agent has been "
-                                  f"uninstalled/silent for over {REMOVE_AFTER // 60} minutes.", "critical")
-            logger.info("[reaper] removed uninstalled host '%s' (id %s)", hostname, sid)
+        # No step 3 anymore — this used to DELETE a host's agent/server row once
+        # it had been silent past REMOVE_AFTER (e.g. a laptop switched off for
+        # 15+ minutes with no database attached to it). That made a merely-off
+        # machine look "uninstalled" in the UI. An offline agent now just stays
+        # offline, however long that lasts — it reappears on its own the moment
+        # the machine (and its agent service) comes back and pushes again.
 
         db.commit()
     except Exception as e:  # noqa: BLE001
@@ -255,13 +242,17 @@ def _loop(interval):
 
 def start_agent_reaper(interval_sec=15):
     global _thread
-    if _thread and _thread.is_alive():
-        return
-    _stop.clear()
-    _thread = threading.Thread(target=_loop, args=(interval_sec,), daemon=True, name="agent-reaper")
-    _thread.start()
-    logger.info("[reaper] started (offline>%ss, remove>%ss, every %ss)",
-                monitoring_settings_service.get_settings().offline_after_sec, REMOVE_AFTER, interval_sec)
+    # The is_alive() check and the thread creation below weren't atomic — two
+    # near-simultaneous calls (a lifespan re-entry) could both pass the check
+    # before either had started its thread, spawning duplicate reapers.
+    with _start_lock:
+        if _thread and _thread.is_alive():
+            return
+        _stop.clear()
+        _thread = threading.Thread(target=_loop, args=(interval_sec,), daemon=True, name="agent-reaper")
+        _thread.start()
+        logger.info("[reaper] started (offline>%ss, every %ss, never removes an agent/host)",
+                    monitoring_settings_service.get_settings().offline_after_sec, interval_sec)
 
 
 def stop_agent_reaper():

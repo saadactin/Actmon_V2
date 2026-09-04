@@ -16,6 +16,7 @@ import {
   statusBadge, fmtNum, fmtBytes, now, shortVersion, C,
 } from '../_shared/reportKit';
 import { computeHealthScore } from '@/utils/mysqlHealth';
+import { PageLoading } from '@/components/ui/Loading';
 
 const ENGINE = {
   key: 'mysql',
@@ -141,14 +142,7 @@ export default function MySQLReportsPage() {
   };
 
   const initialLoading = isLive ? (reportLoading && !dash && !report) : (reportLoading && !report);
-  if (initialLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f1f5f9]">
-      <div className="text-center">
-        <div className="w-12 h-12 border-4 border-green-200 border-t-green-600 rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-slate-600 font-semibold">Loading MySQL report…</p>
-      </div>
-    </div>
-  );
+  if (initialLoading) return <PageLoading title="Loading MySQL report…" illustration />;
 
   /* ── derived values shared by both live and historical branches ── */
   const slowSection  = report?.slow_queries || {};

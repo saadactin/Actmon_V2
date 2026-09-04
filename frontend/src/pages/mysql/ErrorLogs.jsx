@@ -233,10 +233,17 @@ export default function ErrorLogs() {
   const summary = data?.summary || {};
   const counts = summary.severities || { CRITICAL: 0, ERROR: 0, WARNING: 0, INFO: 0 };
   const hasSSH = !!(sshData?.ssh_user);
+  // This host's agent already searched every common error-log location
+  // before giving up (see mysql_log_service.py) — offering "Configure SSH"
+  // as the fix here would be pointing at something that was never the
+  // problem, since SSH wouldn't find anything the agent didn't already
+  // check for.
+  const agentAlreadyTried = source === 'none' && !!data?.agent_tried;
 
   const sourceLabel = {
     performance_schema: 'performance_schema.error_log (MySQL Error Log)',
     performance_schema_errors: 'performance_schema error summary',
+    agent_file: `Agent file read: ${logPath}`,
     ssh_file: `SSH file: ${logPath}`,
     ssh_journald: 'SSH journald (systemd)',
     ssh_syslog: 'SSH syslog',
@@ -270,12 +277,18 @@ export default function ErrorLogs() {
             <h1 className="text-lg font-black text-slate-800">Error Logs</h1>
             <p className="text-xs text-slate-500">{sourceLabel}</p>
           </div>
-          <button onClick={() => setShowSSH(true)}
-            className={`flex items-center gap-2 px-3 h-8 border rounded-lg text-xs font-semibold ${
-              hasSSH ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'
-            }`}>
-            {hasSSH ? <><Shield size={12} /> SSH ✓ Configured</> : <><Settings size={12} /> Configure SSH</>}
-          </button>
+          {/* Hidden only for the "not yet configured" call-to-action when the
+              agent already proved SSH wouldn't help — if SSH IS already
+              configured, keep showing that as a plain status, it's not
+              misleading either way. */}
+          {(hasSSH || !agentAlreadyTried) && (
+            <button onClick={() => setShowSSH(true)}
+              className={`flex items-center gap-2 px-3 h-8 border rounded-lg text-xs font-semibold ${
+                hasSSH ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700'
+              }`}>
+              {hasSSH ? <><Shield size={12} /> SSH ✓ Configured</> : <><Settings size={12} /> Configure SSH</>}
+            </button>
+          )}
         </div>
 
         {error ? (
@@ -347,7 +360,7 @@ export default function ErrorLogs() {
                       <AlertTriangle size={32} className="text-amber-400 mb-3" />
                       <p className="font-semibold text-slate-700 text-base">Error logging is not accessible</p>
                       <p className="text-xs text-slate-500 mt-2 max-w-lg leading-relaxed">{note}</p>
-                      {!hasSSH && (
+                      {!hasSSH && !agentAlreadyTried && (
                         <button onClick={() => setShowSSH(true)}
                           className="mt-4 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-700 flex items-center gap-2">
                           <Settings size={13} /> Configure SSH

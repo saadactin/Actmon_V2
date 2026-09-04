@@ -14,6 +14,7 @@ import { Panel, SqlBlock, StatCell } from '@/pages/_shared/enginePanels';
 import { fmtNumber, fmtDateTime } from '@/config/dbCatalog';
 import { engineFor, fmtMs, SEVERITY_TONES, SEVERITY_LABELS } from '@/config/slowQueryCatalog';
 import { SeverityBadge, AiAnalysisResult } from './SlowQueriesPage';
+import PgHintPlanPanel from '@/pages/postgresql/PgHintPlanPanel';
 
 /**
  * One slow query's full analysis — the shared detail page every engine opens
@@ -756,6 +757,10 @@ export default function SlowQueryDetailPage({ tech }) {
                 </>
               )}
             </Step>
+
+            {tech === 'postgresql' && (
+              <PgHintPlanPanel connId={id} sqlText={sql} database={row.database_name || row.schema_name} />
+            )}
           </>
         )}
       </div>

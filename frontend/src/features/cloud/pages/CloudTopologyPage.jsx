@@ -9,7 +9,7 @@ import CloudSection from '../components/CloudSection';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import Button from '@/components/ui/Button';
-import { Spinner } from '@/components/ui/Loading';
+import { PageLoading } from '@/components/ui/Loading';
 
 // ── Edge Metadata ──────────────────────────────────────────────────
 // One definition per relationship kind, shared by the renderer and the legend so
@@ -445,10 +445,7 @@ export const CloudTopologyPage = ({ embedded = false }) => {
 
           {/* Loading state */}
           {isLoading && (
-            <div className="absolute inset-0 z-[8] flex flex-col items-center justify-center gap-3">
-              <Spinner size="lg" />
-              <span className="text-sm text-muted">Building topology graph…</span>
-            </div>
+            <PageLoading title="Building topology graph…" className="absolute inset-0 z-[8]" illustration />
           )}
 
           {/* Empty state */}

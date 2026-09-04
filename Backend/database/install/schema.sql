@@ -4980,6 +4980,36 @@ CREATE TABLE IF NOT EXISTS public.oracle_maintenance_jobs (
 CREATE INDEX IF NOT EXISTS idx_oracle_maint_job_org ON public.oracle_maintenance_jobs (org_id);
 CREATE INDEX IF NOT EXISTS idx_oracle_maint_job_conn ON public.oracle_maintenance_jobs (conn_id);
 CREATE INDEX IF NOT EXISTS idx_oracle_maint_job_status ON public.oracle_maintenance_jobs (status);
+
+CREATE TABLE IF NOT EXISTS public.postgres_plan_comparisons (
+    id                     SERIAL PRIMARY KEY,
+    org_id                 INTEGER      NOT NULL DEFAULT 1,
+    conn_id                INTEGER      NOT NULL REFERENCES public.connection_master(id),
+
+    database_name          VARCHAR(200),
+    query_text             TEXT NOT NULL,
+    query_hash             VARCHAR(64),
+
+    hint_text              TEXT,
+    analyzed               BOOLEAN NOT NULL DEFAULT false,
+
+    original_plan          JSONB,
+    hinted_plan            JSONB,
+    original_planning_ms   NUMERIC,
+    original_execution_ms  NUMERIC,
+    hinted_planning_ms     NUMERIC,
+    hinted_execution_ms    NUMERIC,
+
+    result                 VARCHAR(20),
+    warnings               JSONB,
+    error_details          TEXT,
+
+    requested_by           INTEGER,
+    created_at             TIMESTAMP DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pg_plan_cmp_conn ON public.postgres_plan_comparisons (conn_id);
+CREATE INDEX IF NOT EXISTS idx_pg_plan_cmp_hash ON public.postgres_plan_comparisons (query_hash);
+CREATE INDEX IF NOT EXISTS idx_pg_plan_cmp_created ON public.postgres_plan_comparisons (created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_oracle_maint_job_active
     ON public.oracle_maintenance_jobs (conn_id, object_type, object_name)
     WHERE status IN ('pending_approval', 'approved', 'running');

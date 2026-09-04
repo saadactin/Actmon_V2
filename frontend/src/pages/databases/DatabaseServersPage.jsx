@@ -16,6 +16,7 @@ import { QK } from '@/api/queryKeys';
 import { usePermissions } from '@/hooks/usePermissions';
 import PageHeader from '@/components/layout/PageHeader';
 import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
+import { PageLoading } from '@/components/ui/Loading';
 import { engineColor } from '@/config/agents';
 
 /* ══════════════════════════════════════════════════════
@@ -632,14 +633,7 @@ export default function DatabaseServersPage({ tech = null }) {
   const healthPct = summary.total > 0 ? Math.round((summary.connected / summary.total) * 100) : 0;
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-indigo-900 border-t-indigo-400 rounded-full animate-spin mx-auto mb-4"/>
-          <p className="text-slate-400 font-semibold">Loading infrastructure…</p>
-        </div>
-      </div>
-    );
+    return <PageLoading title="Loading infrastructure…" illustration />;
   }
 
   /* ── Tech selector (default landing) ─────────────── */

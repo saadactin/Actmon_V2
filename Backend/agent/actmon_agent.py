@@ -452,14 +452,25 @@ def _self_update(url, token):
         return "ERR:" + str(e)
 
 
-# ── DB connection reuse ────────────────────────────────────────────────────────
+# ── DB connection pool ─────────────────────────────────────────────────────────
 # A dashboard refresh issues ~20 queries. Opening a fresh connection for each
 # (Oracle thin-mode connect is several seconds) made the panel so slow the server's
 # per-query timeout tripped — poisoning the whole dashboard onto the (wrong) direct
-# path. Keep one short-lived connection per target and reuse it. The agent runs jobs
-# single-threaded, so the connection is never used concurrently; the lock only guards
-# the dict (and future-proofs against a threaded caller).
-_DBQ_CACHE = {}                 # (dbtype,host,port,user,db) -> {"cn": conn, "ts": epoch}
+# path. Keep short-lived connections per target and reuse them.
+#
+# Jobs used to run strictly single-threaded (one dbquery at a time, whole-agent),
+# so a single cached connection per key was always safe — nothing else could ever
+# be using it. Job handling now runs on a small worker pool (see _poll_jobs_until
+# / _JOB_POOL below), so several dbquery calls for the SAME connection can be in
+# flight concurrently — e.g. one dashboard tab plus a background auto-refresh
+# both hitting the same Oracle connection at once. Most DB driver connection
+# objects are NOT safe to share across threads/cursors concurrently, so this is
+# now a small per-key POOL (checkout/release) instead of one shared connection:
+# each concurrent caller gets its OWN connection, reused across calls once
+# returned. Pool size per key is naturally capped by _JOB_POOL's own worker
+# count (a job holds at most one connection while it runs), so there's no
+# separate cap here.
+_DBQ_POOL = {}                  # key -> [ {"cn": conn, "ts": epoch}, ... ]  (idle only)
 _DBQ_LOCK = threading.Lock()
 _DBQ_IDLE = 300                 # close a connection left unused this many seconds
 
@@ -557,33 +568,42 @@ def _ora_init_thick(oracledb):
 
 
 def _dbq_get_conn(key, dbtype, host, port, user, pw, dbname):
-    """Return (connection, reused). Reuses a fresh cached connection; otherwise opens a
-    new one (closing any stale entry first). Raises on connect failure."""
+    """Check out a connection for `key`: reuse an idle pooled one if a fresh one is
+    available, else open a new one. Returns (connection, reused). Raises on connect
+    failure. The caller owns this connection exclusively until it calls
+    _dbq_release() — never touch it from more than one thread at a time."""
     now = time.time()
-    stale = None
+    stale = []
+    reused_cn = None
     with _DBQ_LOCK:
-        ent = _DBQ_CACHE.get(key)
-        if ent and (now - ent["ts"]) < _DBQ_IDLE:
-            ent["ts"] = now
-            return ent["cn"], True
-        stale = ent
-        if stale:
-            _DBQ_CACHE.pop(key, None)
-    if stale:
-        try: stale["cn"].close()
+        idle = _DBQ_POOL.get(key) or []
+        while idle:
+            ent = idle.pop()
+            if (now - ent["ts"]) < _DBQ_IDLE:
+                reused_cn = ent["cn"]
+                break
+            stale.append(ent)
+    for ent in stale:
+        try: ent["cn"].close()
         except Exception: pass  # noqa: BLE001
+    if reused_cn is not None:
+        return reused_cn, True
     cn = _dbq_open(dbtype, host, port, user, pw, dbname)
-    with _DBQ_LOCK:
-        _DBQ_CACHE[key] = {"cn": cn, "ts": now}
     return cn, False
 
 
-def _dbq_drop(key):
-    with _DBQ_LOCK:
-        ent = _DBQ_CACHE.pop(key, None)
-    if ent:
-        try: ent["cn"].close()
-        except Exception: pass  # noqa: BLE001
+def _dbq_release(key, cn, healthy):
+    """Return a connection to the idle pool for reuse (if `healthy`), or close it.
+    Always call this exactly once per _dbq_get_conn() checkout, on every path
+    (success or failure) — a connection that's never released is simply never
+    reused, not leaked, but every unreleased checkout is one more cold connect
+    the next caller pays for."""
+    if healthy:
+        with _DBQ_LOCK:
+            _DBQ_POOL.setdefault(key, []).append({"cn": cn, "ts": time.time()})
+        return
+    try: cn.close()
+    except Exception: pass  # noqa: BLE001
 
 
 def _dbquery(arg):
@@ -641,20 +661,28 @@ def _dbquery(arg):
     except Exception as e:  # noqa: BLE001
         return json.dumps({"error": "connect failed: %s" % e})
     try:
-        return _run(cn)
+        result = _run(cn)
     except Exception as e:  # noqa: BLE001
         # A reused connection may have been dropped by the DB (idle timeout) — retry
-        # once with a fresh one before giving up.
+        # once with a fresh one before giving up. Only this ONE bad connection is
+        # discarded (not the whole pool) — other idle/in-flight connections for the
+        # same key are unrelated callers' and may be perfectly healthy.
+        _dbq_release(key, cn, healthy=False)
         if reused:
-            _dbq_drop(key)
             try:
-                cn, _ = _dbq_get_conn(key, dbtype, host, port, user, pw, dbname)
-                return _run(cn)
+                cn2, _ = _dbq_get_conn(key, dbtype, host, port, user, pw, dbname)
             except Exception as e2:  # noqa: BLE001
-                _dbq_drop(key)
                 return json.dumps({"error": "query failed: %s" % e2})
-        _dbq_drop(key)
+            try:
+                result2 = _run(cn2)
+            except Exception as e2:  # noqa: BLE001
+                _dbq_release(key, cn2, healthy=False)
+                return json.dumps({"error": "query failed: %s" % e2})
+            _dbq_release(key, cn2, healthy=True)
+            return result2
         return json.dumps({"error": "query failed: %s" % e})
+    _dbq_release(key, cn, healthy=True)
+    return result
 
 
 def _win_diag(arg):
@@ -842,13 +870,39 @@ def _self_update_check(url):
         _log("self-update check failed: %s" % e)
 
 
+_JOB_WORKERS = int(os.environ.get("ACTMON_JOB_WORKERS", "4") or 4)
+_JOB_POOL = ThreadPoolExecutor(max_workers=_JOB_WORKERS, thread_name_prefix="actmon-job")
+
+
+def _run_job_safe(url, token, job_id, op, jp, jd):
+    try:
+        _handle_job(url, token, job_id, op, jp, jd)
+    except Exception as e:  # noqa: BLE001 — one bad job must not end this worker.
+        # run_agent()'s supervisor restarts the whole agent the moment a THREAD it
+        # started dies, but these are _JOB_POOL's own internal worker threads, not
+        # one of those supervised threads — an uncaught exception here would just
+        # silently end that one worker (ThreadPoolExecutor quietly replaces it on
+        # the next submit(), so the pool keeps working, but it's still one job
+        # whose failure never got logged). Log and move on.
+        _log("job %s (%s) raised %s - skipped" % (job_id, op, e))
+
+
 def _poll_jobs_until(url, token, until_ts=None, stop_event=None):
     """Answer host jobs (shell/dbquery/etc). With `until_ts` given, spends that idle
     window then returns (legacy call shape); with `until_ts=None`, loops forever —
     used as the dedicated job-poll thread in run_agent(), so a slow push cycle
     (WMI/infra collection, DB pushes) can never starve the server's job requests,
     and vice versa. The two used to share one thread; a stalled push cycle made the
-    agent silently miss every job request until it came back around."""
+    agent silently miss every job request until it came back around.
+
+    Jobs are DISPATCHED to _JOB_POOL rather than run inline here: this loop's only
+    job is to keep polling and handing off work, never to block on one job's own
+    execution. Jobs used to run one at a time, whole-agent — a single slow query
+    (or one queued behind a few others) held up every other on-demand request,
+    including completely unrelated ones, often past the caller's own timeout. A
+    dashboard with several tabs/widgets open (each polling the same connection)
+    made this common, not rare. See _JOB_WORKERS / _dbq_get_conn's pooling above
+    for the connection-handling side of this same change."""
     while (until_ts is None or time.time() < until_ts) and not (stop_event is not None and stop_event.is_set()):
         try:
             jobs = _get_text("%s/agents/fs-poll?token=%s&hold=12" % (url, token), timeout=20)
@@ -864,14 +918,7 @@ def _poll_jobs_until(url, token, until_ts=None, stop_event=None):
             job_id, op = parts[0], parts[1]
             jp = _b64d(parts[2]) if len(parts) > 2 else ""
             jd = _b64d(parts[3]) if len(parts) > 3 else ""
-            try:
-                _handle_job(url, token, job_id, op, jp, jd)
-            except Exception as e:  # noqa: BLE001 — one bad job must not end this thread.
-                # run_agent()'s supervisor now restarts the whole agent the moment any
-                # worker thread dies, so an uncaught exception here went from "this one
-                # job silently fails" to "the agent takes a full restart hit" — a single
-                # malformed or unexpected job payload is not worth that.
-                _log("job %s (%s) raised %s - skipped" % (job_id, op, e))
+            _JOB_POOL.submit(_run_job_safe, url, token, job_id, op, jp, jd)
 
 
 def collect_mysql(tgt, state):

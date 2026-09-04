@@ -20,6 +20,9 @@ export default function ConfirmDialog({
   onCancel,
   /** In flight. Both buttons lock, so the action cannot be fired twice. */
   loading = false,
+  /** Confirm stays disabled regardless of loading — e.g. a destructive action
+   * gated behind a typed acknowledgement the caller hasn't completed yet. */
+  confirmDisabled = false,
   /** Richer body than one sentence — used instead of `message`, not alongside it. */
   children,
 }) {
@@ -37,6 +40,7 @@ export default function ConfirmDialog({
           <Button
             variant={tone === 'danger' ? 'danger' : 'primary'}
             loading={loading}
+            disabled={confirmDisabled}
             onClick={onConfirm}
           >
             {confirmLabel}

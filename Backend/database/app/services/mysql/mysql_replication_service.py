@@ -7,6 +7,15 @@ from sqlalchemy.orm import Session
 from app.models.connection_model import ConnectionMaster
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def _engine(conn: ConnectionMaster):
@@ -330,7 +339,7 @@ def get_replication_status(conn_id: int, db: Session, live: bool = False) -> dic
     result["health"]        = health
     result["health_detail"] = details
 
-    return result
+    return _self_cache(conn_id, "mysql_replication_status", result, db)
 
 
 def get_replication_variables(conn_id: int, db: Session, live: bool = False) -> dict:
@@ -371,5 +380,7 @@ def get_replication_variables(conn_id: int, db: Session, live: bool = False) -> 
         ) or "auto_increment" in k},
     }
 
-    return {"status": "success", "variables": merged, "categories": categories,
-            "total_count": len(merged)}
+    return _self_cache(conn_id, "mysql_replication_variables", {
+        "status": "success", "variables": merged, "categories": categories,
+        "total_count": len(merged),
+    }, db)

@@ -15,6 +15,7 @@ import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
+import { PageLoading } from '@/components/ui/Loading';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import IconButton from '@/components/ui/IconButton';
@@ -125,9 +126,7 @@ const EmptyPane = ({ text }) => (
     <p className="text-[15px] text-subtle max-w-xs">{text}</p>
   </div>
 );
-const SpinnerPane = () => (
-  <div className="min-h-[440px] flex items-center justify-center"><Icon name="spinner" size={20} className="animate-spin text-accent-text" /></div>
-);
+const SpinnerPane = () => <PageLoading minHeight={440} illustration />;
 
 /** Card container with a title bar — the token-styled twin of the old "Section". */
 /** `onBack` puts a small "← label" affordance at the very start of the header,
@@ -2428,10 +2427,7 @@ export default function InfraHostDetail() {
       />
 
       {isLoading ? (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <Icon name="spinner" size={28} className="animate-spin text-accent-text mb-3" />
-          <p className="text-muted font-semibold text-[15px]">Gathering host details…</p>
-        </div>
+        <PageLoading title="Gathering host details…" illustration />
       ) : failed ? (
         <div className="card px-card py-8 text-center">
           <Icon name="alert" size={32} className="mx-auto text-danger mb-3" />

@@ -166,15 +166,21 @@ audit_router = APIRouter(prefix="/api/v1/admin/audit-logs", tags=["Admin - Audit
 
 
 @audit_router.get("")
-def list_audit(limit: int = 300, table_name: str = None, db: Session = Depends(get_db)):
-    sql = "SELECT * FROM vw_audit_log"
-    params = {"l": limit}
+def list_audit(limit: int = 300, offset: int = 0, table_name: str = None, db: Session = Depends(get_db)):
+    # audit_log grows forever — previously this only ever returned the newest
+    # `limit` rows with no way to reach anything older, while the frontend's
+    # own page-2/3/... controls silently re-sliced that same fixed set
+    # instead of asking the database for more. `offset` (+ `total`, so the
+    # UI can compute a real page count) makes "next page" actually work.
+    where = " WHERE table_name = :t" if table_name else ""
+    params = {"l": limit, "o": offset}
     if table_name:
-        sql += " WHERE table_name = :t"
         params["t"] = table_name
-    sql += " ORDER BY audit_id DESC LIMIT :l"
-    rows = db.execute(text(sql), params).mappings().all()
-    return {"data": [dict(r) for r in rows]}
+    rows = db.execute(
+        text(f"SELECT * FROM vw_audit_log{where} ORDER BY audit_id DESC LIMIT :l OFFSET :o"), params,
+    ).mappings().all()
+    total = db.execute(text(f"SELECT COUNT(*) FROM vw_audit_log{where}"), params).scalar()
+    return {"data": [dict(r) for r in rows], "total": total}
 
 
 admin_crud_routers.append(audit_router)
@@ -185,10 +191,15 @@ def _readonly_list_router(path: str, view: str, order_pk: str, title: str, limit
     rr = APIRouter(prefix=f"/api/v1/admin/{path}", tags=[f"Admin - {title}"])
 
     @rr.get("")
-    def _list(limit: int = limit_default, db: Session = Depends(get_db)):
-        rows = db.execute(text(f"SELECT * FROM {view} ORDER BY {order_pk} DESC LIMIT :l"),
-                          {"l": limit}).mappings().all()
-        return {"data": [dict(r) for r in rows]}
+    def _list(limit: int = limit_default, offset: int = 0, db: Session = Depends(get_db)):
+        # Same fix as list_audit() above: these views grow forever (every
+        # login, every session, every password change) and previously had no
+        # offset at all — "page 2" in the UI just re-sliced the same fixed
+        # `limit` rows already in memory instead of ever reaching older ones.
+        rows = db.execute(text(f"SELECT * FROM {view} ORDER BY {order_pk} DESC LIMIT :l OFFSET :o"),
+                          {"l": limit, "o": offset}).mappings().all()
+        total = db.execute(text(f"SELECT COUNT(*) FROM {view}")).scalar()
+        return {"data": [dict(r) for r in rows], "total": total}
 
     return rr
 

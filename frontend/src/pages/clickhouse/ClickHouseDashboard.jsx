@@ -533,7 +533,7 @@ export default function ClickHouseDashboard() {
         {/* ══ RUNNING QUERIES ═══════════════════════════════════════════════ */}
         {on('queries') && (
           <div className="space-y-gutter">
-            {running.isLoading ? <InlineLoading label="Reading system.processes…" /> : (
+            {running.isLoading ? <PageLoading title="Reading system.processes…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
                   <MetricTile label="Running now" value={running.data?.total ?? 0} icon="zap" />
@@ -551,7 +551,7 @@ export default function ClickHouseDashboard() {
         {/* ══ QUERY LOG ═════════════════════════════════════════════════════ */}
         {on('querylog') && (
           <div className="space-y-gutter">
-            {queryLog.isLoading ? <InlineLoading label="Reading system.query_log…" /> : (
+            {queryLog.isLoading ? <PageLoading title="Reading system.query_log…" illustration /> : (
               <TablePanel
                 title={`Query log (${queryLog.data?.total ?? 0})`}
                 icon="logs"
@@ -642,7 +642,7 @@ export default function ClickHouseDashboard() {
         {/* ══ SLOW QUERIES ══════════════════════════════════════════════════ */}
         {on('slowqueries') && (
           <div className="space-y-gutter">
-            {slow.isLoading ? <InlineLoading label="Reading slow queries…" /> : (
+            {slow.isLoading ? <PageLoading title="Reading slow queries…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
                   <MetricTile label="Slow queries" value={slow.data?.total ?? 0} icon="trend" />
@@ -709,7 +709,7 @@ export default function ClickHouseDashboard() {
         {/* ══ PARTITIONS ════════════════════════════════════════════════════ */}
         {on('partitions') && (
           <div className="space-y-gutter">
-            {partitions.isLoading ? <InlineLoading label="Reading system.parts…" /> : (
+            {partitions.isLoading ? <PageLoading title="Reading system.parts…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
                   <MetricTile label="Partitions" value={partitionRows.length} icon="layers" />
@@ -795,7 +795,7 @@ export default function ClickHouseDashboard() {
         {/* ══ MERGES ════════════════════════════════════════════════════════ */}
         {on('merges') && (
           <div className="space-y-gutter">
-            {merges.isLoading ? <InlineLoading label="Reading system.merges…" /> : (
+            {merges.isLoading ? <PageLoading title="Reading system.merges…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3">
                   <MetricTile label="Merges running" value={liveMerges.length} icon="branch"
@@ -897,7 +897,7 @@ export default function ClickHouseDashboard() {
         {/* ══ REPLICAS ══════════════════════════════════════════════════════ */}
         {on('replicas') && (
           <div className="space-y-gutter">
-            {replicas.isLoading ? <InlineLoading label="Reading system.replicas…" /> : (
+            {replicas.isLoading ? <PageLoading title="Reading system.replicas…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3 xl:grid-cols-6">
                   <MetricTile label="Replicated tables" value={replicas.data?.summary?.total_replicated_tables ?? 0} icon="copy" />
@@ -1009,7 +1009,7 @@ export default function ClickHouseDashboard() {
         {/* ══ CLUSTERS ══════════════════════════════════════════════════════ */}
         {on('clusters') && (
           <div className="space-y-gutter">
-            {clusters.isLoading ? <InlineLoading label="Reading system.clusters…" /> : (
+            {clusters.isLoading ? <PageLoading title="Reading system.clusters…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3">
                   <MetricTile label="Clusters" value={(clusters.data?.cluster_summary || []).length} icon="network" />
@@ -1088,7 +1088,7 @@ export default function ClickHouseDashboard() {
         {/* ══ SYSTEM METRICS ════════════════════════════════════════════════ */}
         {on('sysmetrics') && (
           <div className="space-y-gutter">
-            {sysMetrics.isLoading ? <InlineLoading label="Reading system.metrics…" /> : (
+            {sysMetrics.isLoading ? <PageLoading title="Reading system.metrics…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4 xl:grid-cols-6">
                   <MetricTile label="Memory resident" icon="memory"
@@ -1182,7 +1182,7 @@ export default function ClickHouseDashboard() {
         {/* ══ SETTINGS ══════════════════════════════════════════════════════ */}
         {on('settings') && (
           <div className="space-y-gutter">
-            {settings.isLoading ? <InlineLoading label="Reading system.settings…" /> : (
+            {settings.isLoading ? <PageLoading title="Reading system.settings…" illustration /> : (
               <TablePanel
                 title="Settings"
                 icon="settings"

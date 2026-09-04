@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Paged } from '@/components/ui/Pagination';
 import PageHeader from '@/components/layout/PageHeader';
+import { PageLoading } from '@/components/ui/Loading';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -148,14 +149,7 @@ export default function CollectionAnalysis() {
     a.click();
   };
 
-  if (collLoading) return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="text-center">
-        <div className="w-10 h-10 border-4 border-green-200 border-t-green-600 rounded-full animate-spin mx-auto mb-3" />
-        <p className="text-slate-500 font-semibold text-sm">Loading collection data…</p>
-      </div>
-    </div>
-  );
+  if (collLoading) return <PageLoading title="Loading collection data…" illustration />;
 
   const PALETTE = [C.green, C.blue, C.orange, C.red, C.purple, C.teal, C.yellow, C.emerald, '#ec4899', '#64748b'];
 
@@ -304,9 +298,7 @@ export default function CollectionAnalysis() {
         {/* ════ INDEXES ════ */}
         {tab === 'indexes' && (
           idxLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="w-8 h-8 border-4 border-green-200 border-t-green-600 rounded-full animate-spin" />
-            </div>
+            <PageLoading illustration />
           ) : (
             <div className="space-y-5">
               <div className="grid grid-cols-3 gap-3">

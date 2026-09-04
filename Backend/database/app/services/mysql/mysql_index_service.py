@@ -9,6 +9,15 @@ from sqlalchemy.orm import Session
 from app.models.connection_model import ConnectionMaster
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 def _mysql_engine(conn: ConnectionMaster):
     pw = quote_plus(conn.password or "")
     url = (
@@ -106,6 +115,7 @@ def get_index_analysis(conn_id: int, db: Session, live: bool = False) -> dict:
             WHERE TABLE_SCHEMA NOT IN
                   ('performance_schema','information_schema','mysql','sys')
             ORDER BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+            LIMIT 500
         """)
 
         idx_map = defaultdict(lambda: {
@@ -329,4 +339,4 @@ def get_index_analysis(conn_id: int, db: Session, live: bool = False) -> dict:
         ),
     }
 
-    return result
+    return _self_cache(conn_id, "mysql_index_analysis", result, db)

@@ -5,6 +5,7 @@ import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
+import { PageLoading } from '@/components/ui/Loading';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Select from '@/components/ui/Select';
@@ -130,12 +131,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
     return (
       <>
         <Header name={name} d={d} state={state} />
-        <div className="grid min-h-[40vh] place-items-center">
-          <div
-            className="h-7 w-7 animate-spin rounded-full border-[3px] border-border"
-            style={{ borderTopColor: 'var(--accent)' }}
-          />
-        </div>
+        <PageLoading illustration />
       </>
     );
   }

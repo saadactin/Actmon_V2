@@ -18,6 +18,15 @@ from app.models.connection_model import ConnectionMaster
 from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 # ── ActMon-internal query classification ──────────────────────────────────────
 #
 # `performance_schema.events_statements_summary_by_digest` (and the raw slow
@@ -486,7 +495,7 @@ def get_slow_queries(conn_id: int, db: Session, live: bool = False) -> dict:
             "ssh_host":                rec.ssh_host or rec.host,
         }
         _normalize_mysql_rows(all_queries, response)
-        return response
+        return _self_cache(conn_id, "mysql_slow_queries", response, db)
 
     except Exception as e:
         raise HTTPException(500, f"MySQL error: {str(e)}")

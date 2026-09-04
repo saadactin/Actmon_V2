@@ -31,10 +31,46 @@ TICK_SECONDS = 4  # a human just clicked Start and is watching a live page — p
 EXECUTION_TIMEOUT_MS = 30 * 60 * 1000  # 30 minutes — SHRINK/MOVE/REBUILD on a large object legitimately takes time
 
 _ACTION_LABELS = {
-    "shrink_space": "Shrink Space",
-    "move": "Move",
-    "index_maintenance_rebuild": "Rebuild Index",
+    "shrink_space": "Shrink Space", "move": "Move", "truncate_table": "Truncate Table",
+    "enable_row_movement": "Enable Row Movement", "disable_row_movement": "Disable Row Movement",
+    "index_maintenance_rebuild": "Rebuild Index", "index_rebuild_online": "Rebuild Index Online",
+    "index_coalesce": "Coalesce Index", "index_rebuild_unusable": "Rebuild Unusable Index",
+    "gather_table_stats": "Gather Table Statistics", "gather_schema_stats": "Gather Schema Statistics",
+    "gather_index_stats": "Gather Index Statistics",
+    "move_partition": "Move Partition", "shrink_partition": "Shrink Partition",
+    "rebuild_partition": "Rebuild Partition", "merge_partition": "Merge Partition",
+    "split_partition": "Split Partition", "drop_partition": "Drop Partition",
+    "purge_recyclebin": "Purge Recycle Bin", "datafile_resize": "Resize Datafile",
 }
+
+# object_type -> the 'object_type' oracle_storage_object_detail() understands,
+# and how to turn this job's object_name into the (owner, name) pair it takes.
+# Anything not listed here has no meaningful "size before/after" — before/
+# after stay null rather than guessing, matching the spec's "space reclaimed
+# where applicable".
+_SNAPSHOT_KIND = {
+    "table": "segment", "segment": "segment", "index": "index",
+    "partition": "partition", "datafile": "datafile",
+}
+
+
+def _capture_snapshot(conn_id, db, object_type: str, object_name: str):
+    kind = _SNAPSHOT_KIND.get(object_type)
+    if not kind:
+        return None
+    try:
+        if kind == "datafile":
+            # object_name is a filesystem path, not OWNER.NAME — may itself
+            # contain dots (Windows paths, versioned filenames), so it is
+            # never split like every other object_type here.
+            return oracle_storage_object_detail(conn_id, db, "datafile", "", object_name)
+        if kind == "partition":
+            owner, table, partition = object_name.split(".", 2)
+            return oracle_storage_object_detail(conn_id, db, "partition", owner, f"{table}.{partition}")
+        owner, name = object_name.split(".", 1)
+        return oracle_storage_object_detail(conn_id, db, kind, owner, name)
+    except Exception as exc:  # noqa: BLE001 — a snapshot failure must not abort the job itself
+        return {"status": "error", "error": str(exc)}
 
 
 def _notify(db, job, event: str, extra: dict = None):
@@ -153,10 +189,10 @@ def _tick():
         job_id = job.id
         conn_id = job.conn_id
         object_type = job.object_type
-        owner, name = job.object_name.split(".", 1)
+        object_name = job.object_name
         sql = job.proposed_sql
 
-        before = oracle_storage_object_detail(conn_id, db, object_type, owner, name)
+        before = _capture_snapshot(conn_id, db, object_type, object_name) or {}
 
         try:
             conn = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
@@ -165,9 +201,10 @@ def _tick():
             engine = _get_engine(conn)
             _execute_ddl(engine, sql)
 
-            after = oracle_storage_object_detail(conn_id, db, object_type, owner, name)
+            after = _capture_snapshot(conn_id, db, object_type, object_name) or {}
             reclaimed_mb = None
-            if before.get("status") == "success" and after.get("status") == "success":
+            if before.get("status") == "success" and after.get("status") == "success" \
+                    and before.get("size_mb") is not None and after.get("size_mb") is not None:
                 reclaimed_mb = round((before.get("size_mb") or 0) - (after.get("size_mb") or 0), 2)
 
             job = db.query(OracleMaintenanceJob).filter(OracleMaintenanceJob.id == job_id).first()

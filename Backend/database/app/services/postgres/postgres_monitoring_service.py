@@ -92,6 +92,21 @@ def _pg_conn(conn_id: int, db: Session):
     return conn, _pg_engine(conn)
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    """Write back a freshly-built live result as this connection's snapshot,
+    same as svc_monitoring_dashboard() already did — without it, a connection
+    with no background agent collector polling it (a direct, non-agent-routed
+    connection) never gets a snapshot written at all, so every single page
+    load falls all the way through to a live query instead of the instant
+    cached read the dashboard is designed around."""
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Module-level constants (used by tables_detail)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -134,7 +149,8 @@ _IDX_SQL = (
     "  pg_get_indexdef(s.indexrelid)                  AS index_def "
     "FROM pg_stat_user_indexes s "
     "JOIN pg_index ix ON ix.indexrelid = s.indexrelid "
-    "ORDER BY s.idx_scan ASC"
+    "ORDER BY s.idx_scan ASC "
+    "LIMIT 200"
 )
 
 _PARAM_GROUPS: dict = {
@@ -1148,7 +1164,7 @@ def svc_pg_slow_queries(conn_id: int, db: Session):
         "error":   error,
     }
     _normalize_pg_rows(queries, response)
-    return response
+    return _self_cache(conn_id, "pg_slow_queries", response, db)
 
 
 def svc_pg_slow_queries_filtered(
@@ -1328,7 +1344,8 @@ def svc_pg_index_analysis(conn_id: int, db: Session):
             "FROM pg_stat_user_indexes "
             "WHERE idx_scan = 0 "
             "AND indexname NOT LIKE '%_pkey' "
-            "ORDER BY pg_relation_size(indexrelid) DESC"
+            "ORDER BY pg_relation_size(indexrelid) DESC "
+            "LIMIT 100"
         )
         unused_indexes = [dict(r) for r in rows]
         for idx in unused_indexes:
@@ -1388,14 +1405,14 @@ def svc_pg_index_analysis(conn_id: int, db: Session):
         "total_tables":  len(bloated_tables),
     }
 
-    return {
+    return _self_cache(conn_id, "pg_index_analysis", {
         "status":         "success",
         "unused_indexes": unused_indexes,
         "all_indexes":    all_indexes,
         "bloated_tables": bloated_tables,
         "summary":        summary,
         "errors":         errors,
-    }
+    }, db)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1794,7 +1811,7 @@ def svc_replication_detail(conn_id: int, db: Session):
             except Exception:
                 pass
 
-    return {
+    return _self_cache(conn_id, "pg_replication_detail", {
         "status":           "success",
         "role":             server_role,
         "is_recovery":      is_recovery,
@@ -1813,7 +1830,7 @@ def svc_replication_detail(conn_id: int, db: Session):
         "subscriptions":    subscriptions,
         "recovery_state":   recovery_state,
         "errors":           errors,
-    }
+    }, db)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1966,7 +1983,7 @@ def svc_queries_detail(conn_id: int, db: Session):
     except Exception:
         pass
 
-    return {
+    return _self_cache(conn_id, "pg_queries_detail", {
         "status":            "success",
         "pg_ss_available":   pg_ss_available,
         "total_statements":  len(all_stmts),
@@ -1989,7 +2006,7 @@ def svc_queries_detail(conn_id: int, db: Session):
         # cached snapshot (agent-pushed or freshly queried) serves both the
         # unfiltered legacy view and the new filtered one — no second fetch.
         "all_stmts":         all_stmts,
-    }
+    }, db)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2185,7 +2202,7 @@ def svc_tables_detail(conn_id: int, db: Session):
     total_bytes    = sum(t.get("total_bytes", 0) for t in all_tables)
     databases_list = sorted(set(t["database"] for t in all_tables))
 
-    return {
+    return _self_cache(conn_id, "pg_tables_detail", {
         "status":         "success",
         "tables":         all_tables,
         "total_count":    len(all_tables),
@@ -2195,7 +2212,7 @@ def svc_tables_detail(conn_id: int, db: Session):
         "autovac_config": autovac_config,
         "databases":      databases_list,
         "errors":         errors,
-    }
+    }, db)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2713,7 +2730,7 @@ def svc_config_detail(conn_id: int, db: Session):
     modified_count        = sum(1 for s in all_settings.values() if s["is_modified"])
     pending_restart_count = sum(1 for s in all_settings.values() if s.get("pending_restart"))
 
-    return {
+    return _self_cache(conn_id, "pg_config_detail", {
         "status":                "success",
         "version":               version_str,
         "uptime":                uptime_str,
@@ -2724,7 +2741,7 @@ def svc_config_detail(conn_id: int, db: Session):
         "modified_count":        modified_count,
         "pending_restart_count": pending_restart_count,
         "errors":                errors,
-    }
+    }, db)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2851,7 +2868,7 @@ def svc_users_detail(conn_id: int, db: Session):
     superuser_count = len([r for r in roles if r.get("rolsuper")])
     expired_count   = len([r for r in roles if r.get("expired")])
 
-    return {
+    return _self_cache(conn_id, "pg_users_detail", {
         "status":        "success",
         "roles":         roles,
         "memberships":   memberships,
@@ -2865,7 +2882,7 @@ def svc_users_detail(conn_id: int, db: Session):
             "expired_count":   expired_count,
         },
         "errors": errors,
-    }
+    }, db)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3029,7 +3046,7 @@ def svc_storage_detail(conn_id: int, db: Session):
     total_index_bytes = sum(t.get("index_bytes", 0) for t in top_tables)
     total_dead_tup    = sum(t.get("n_dead_tup",  0) for t in top_tables)
 
-    return {
+    return _self_cache(conn_id, "pg_storage_detail", {
         "status":              "success",
         "db_sizes":            db_sizes,
         "tablespaces":         tablespaces,
@@ -3047,7 +3064,7 @@ def svc_storage_detail(conn_id: int, db: Session):
             "vacuum_needed":     len(vacuum_needed),
         },
         "errors": errors,
-    }
+    }, db)
 
 
 # ═════════════════════════════════════════════════════════════════════════════

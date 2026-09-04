@@ -330,6 +330,10 @@ export default function App() {
         <Route path="/oracle-dashboard/:id/storage-health/object" element={<StorageObjectDetailPage />} />
         <Route path="/oracle-dashboard/:id/storage-health/job" element={<OracleJobDetailPage />} />
         <Route path="/oracle-dashboard/:id/storage-health" element={<OracleStorageHealth />} />
+        {/* Same job detail page as above, reached from the Maintenance module
+            instead of Storage Health — a distinct path so its own URL/back
+            button reflects where the job was actually started from. */}
+        <Route path="/oracle-dashboard/:id/maintenance/job" element={<OracleJobDetailPage />} />
         <Route path="/oracle-dashboard/:id/reports" element={<OracleReportsPage />} />
         <Route path="/oracle-dashboard/:id/:tab" element={<OracleDashboard />} />
 

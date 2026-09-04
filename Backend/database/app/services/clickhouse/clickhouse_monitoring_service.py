@@ -194,6 +194,20 @@ def _fmt_bytes(b):
     return f"{b} B"
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    """Write back a freshly-built live result as this connection's snapshot —
+    without it, a connection with no background agent collector polling it
+    never gets a snapshot written at all, so every single page load falls all
+    the way through to a live query against the customer's ClickHouse instead
+    of the instant cached read the dashboard is designed around."""
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  Service functions
 # ═════════════════════════════════════════════════════════════════════════════
@@ -380,7 +394,7 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
         "total_count": 0,
     }
 
-    return {
+    return _self_cache(conn_id, "ch_dashboard", {
         "status": "success",
         "connection": {"id": conn.id, "name": conn.connection_name, "host": conn.host,
                        "port": conn.port, "database": conn.database_name},
@@ -402,7 +416,7 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
         "disk_usage": disk_usage,
         "query_stats": query_stats,
         "errors": errors if errors else None,
-    }
+    }, db)
 
 
 def get_queries(conn_id: int, db: Session) -> dict:
@@ -420,7 +434,7 @@ def get_queries(conn_id: int, db: Session) -> dict:
         "FROM system.processes ORDER BY elapsed DESC",
     )
     metrics_rows, _ = _safe_query(conn, "SELECT metric, value FROM system.metrics")
-    return {
+    return _self_cache(conn_id, "ch_queries", {
         "status": "success" if not error else "error",
         "queries": queries,
         "total": len(queries),
@@ -431,7 +445,7 @@ def get_queries(conn_id: int, db: Session) -> dict:
             "insert_queries":     int(_metric_value(metrics_rows, "InsertQuery")),
         },
         "error": error,
-    }
+    }, db)
 
 
 def get_query_log(conn_id: int, db: Session) -> dict:

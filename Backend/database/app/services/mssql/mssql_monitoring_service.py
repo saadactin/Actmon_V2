@@ -94,6 +94,21 @@ def _get_conn_or_404(conn_id: int, db: Session) -> ConnectionMaster:
     return conn_rec
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    """Write back a freshly-built live result as this connection's snapshot,
+    same as get_monitoring_dashboard() already did — without it, a connection
+    with no background agent collector polling it never gets a snapshot
+    written at all, so every single page load falls all the way through to
+    a live query instead of the instant cached read the dashboard is
+    designed around."""
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 # ── Service functions ─────────────────────────────────────────────────────────
 
 def get_monitoring_dashboard(conn_id: int, db: Session):
@@ -699,7 +714,7 @@ def get_slow_queries(conn_id: int, db: Session):
             "error": None,
         }
         _normalize_mssql_rows(normalised, response)
-        return response
+        return _self_cache(conn_id, "mssql_slow_queries", response, db)
     except Exception as e:
         return {
             "status": "error",
@@ -957,7 +972,7 @@ def get_index_analysis(conn_id: int, db: Session):
         "note": "unused_indexes count reflects indexes with zero reads since the last SQL Server restart. Validate before dropping.",
     }
 
-    return {
+    return _self_cache(conn_id, "mssql_index_analysis", {
         "status": "success",
         "unused_indexes": unused_indexes,
         "missing_indexes": missing_indexes,
@@ -965,4 +980,4 @@ def get_index_analysis(conn_id: int, db: Session):
         "all_indexes_count": all_indexes_count,
         "summary": summary,
         "errors": errors,
-    }
+    }, db)

@@ -24,7 +24,7 @@ import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptOracleTableDetails } from '@/pages/_shared/tableDetailsAdapters';
-import MaintenanceWindow from '@/pages/alerts/MaintenanceWindow';
+import OracleMaintenanceModule from './OracleMaintenanceModule';
 import {
   DefRow, MetricTile, Panel, SqlCell, StatCell, StateChip, StatusPill, TablePanel, UsageBar,
 } from '@/pages/_shared/enginePanels';
@@ -394,7 +394,29 @@ export default function OracleDashboard() {
   const slowSql = q('oracleSlowSql', 'oracle-slow-queries', { refetchInterval: 30000, enabled: on('slowqueries') });
   const locks = q('oracleLocks', 'oracle-locks', { refetchInterval: 10000, enabled: on('locks') });
   const sqlMonitor = q('oracleSqlMonitor', 'oracle-sql-monitor', { refetchInterval: 5000, enabled: on('sqlmonitor') });
+  // One pass instead of 3 separate .filter() calls over the same array on
+  // every render (this data refreshes every 5s; the countdown tick re-runs
+  // the render every 1s regardless).
+  const sqlMonitorCounts = useMemo(() => {
+    const rows = sqlMonitor.data?.executions || [];
+    let executing = 0; let parallel = 0; let finished = 0;
+    for (const e of rows) {
+      if (e.status === 'EXECUTING') executing++; else finished++;
+      if (num(e.px_allocated) > 0) parallel++;
+    }
+    return { executing, parallel, finished };
+  }, [sqlMonitor.data]);
   const params = q('oracleParams', 'oracle-parameters', { staleTime: 120000, enabled: on('parameters') });
+  // Was an inline IIFE re-filtering up to ~400 parameters on every render —
+  // including the once-a-second countdown tick this whole dashboard re-
+  // renders on, even while the Parameters tab sits idle with nothing typed.
+  // Memoized on the actual inputs that can change its result instead.
+  const filteredParams = useMemo(() => {
+    const base = paramScope === 'key' ? (params.data?.key_params || []) : (params.data?.all_params || []);
+    const scoped = paramScope === 'modified' ? base.filter((p) => p.ismodified && p.ismodified !== 'FALSE') : base;
+    const term = paramSearch.trim().toLowerCase();
+    return term ? scoped.filter((p) => `${p.name} ${p.value}`.toLowerCase().includes(term)) : scoped;
+  }, [params.data, paramScope, paramSearch]);
 
   // Per-step live progress for one monitored execution — only fetched once a
   // row is actually opened, not for the whole list every tick.
@@ -935,7 +957,7 @@ export default function OracleDashboard() {
         {/* ══ TOP SQL ═══════════════════════════════════════════════════════ */}
         {on('sql') && (
           <div className="space-y-gutter">
-            {topSql.isLoading ? <InlineLoading label="Reading v$sql…" /> : (
+            {topSql.isLoading ? <PageLoading title="Reading v$sql…" illustration /> : (
               <>
                 {topSql.data?.status === 'error' && (
                   <Notice tone="danger" title="Could not read v$sql.">{topSql.data.error}</Notice>
@@ -1017,7 +1039,7 @@ export default function OracleDashboard() {
         {/* ══ OBJECTS ═══════════════════════════════════════════════════════ */}
         {on('objects') && (
           <div className="space-y-gutter">
-            {objects.isLoading ? <InlineLoading label="Counting objects…" /> : (
+            {objects.isLoading ? <PageLoading title="Counting objects…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4 xl:grid-cols-5">
                   <MetricTile label="Objects" value={fmtNumber(objects.data?.summary?.total_objects)} icon="boxes" />
@@ -1089,7 +1111,7 @@ export default function OracleDashboard() {
         {/* ══ TABLES ════════════════════════════════════════════════════════ */}
         {on('tables') && (
           <div className="space-y-gutter">
-            {schema.isLoading ? <InlineLoading label="Reading the schema…" /> : (
+            {schema.isLoading ? <PageLoading title="Reading the schema…" illustration /> : (
               <ObjectTable
                 title={`Tables in ${schema.data?.owner || 'schema'}`}
                 icon="table"
@@ -1131,7 +1153,7 @@ export default function OracleDashboard() {
         {/* ══ DATA GUARD ════════════════════════════════════════════════════ */}
         {on('dataguard') && (
           <div className="space-y-gutter">
-            {dataGuard.isLoading ? <InlineLoading label="Reading Data Guard status…" /> : (
+            {dataGuard.isLoading ? <PageLoading title="Reading Data Guard status…" illustration /> : (
               <>
                 <Panel title="Data Guard" icon="shield"
                   subtitle={dataGuard.data?.configured
@@ -1270,7 +1292,7 @@ export default function OracleDashboard() {
         {/* ══ RAC ═══════════════════════════════════════════════════════════ */}
         {on('rac') && (
           <div className="space-y-gutter">
-            {racNodes.isLoading ? <InlineLoading label="Reading RAC instance status…" /> : (
+            {racNodes.isLoading ? <PageLoading title="Reading RAC instance status…" illustration /> : (
               <>
                 <Panel title="RAC Cluster" icon="server"
                   subtitle={`${racNodes.data?.nodes_total ?? (racNodes.data?.nodes || []).length} instance(s) via GV$INSTANCE`}
@@ -1348,7 +1370,7 @@ export default function OracleDashboard() {
         {/* ══ SERVICES ══════════════════════════════════════════════════════ */}
         {on('services') && (
           <div className="space-y-gutter">
-            {services.isLoading ? <InlineLoading label="Reading Oracle Services…" /> : (
+            {services.isLoading ? <PageLoading title="Reading Oracle Services…" illustration /> : (
               <TablePanel title="Oracle Services" icon="branch" subtitle="DBA_SERVICES / GV$ACTIVE_SERVICES — per-instance availability, independent of overall database health">
                 <Table2
                   columns={[
@@ -1382,7 +1404,7 @@ export default function OracleDashboard() {
         {/* ══ ASM ═══════════════════════════════════════════════════════════ */}
         {on('asm') && (
           <div className="space-y-gutter">
-            {asm.isLoading ? <InlineLoading label="Reading ASM disk groups…" /> : (
+            {asm.isLoading ? <PageLoading title="Reading ASM disk groups…" illustration /> : (
               asm.data?.status !== 'success' ? (
                 <EmptyState icon="disk" title="ASM Not Configured" body="This instance does not use Automatic Storage Management." />
               ) : (
@@ -1420,7 +1442,7 @@ export default function OracleDashboard() {
         {/* ══ MULTITENANT (CDB/PDB) ═════════════════════════════════════════ */}
         {on('multitenant') && (
           <div className="space-y-gutter">
-            {cdbPdb.isLoading ? <InlineLoading label="Reading CDB/PDB status…" /> : (
+            {cdbPdb.isLoading ? <PageLoading title="Reading CDB/PDB status…" illustration /> : (
               cdbPdb.data?.status !== 'success' ? (
                 <EmptyState icon="boxes" title="Not a Multitenant (CDB) Database" body="This instance is not a Container Database." />
               ) : (
@@ -1461,7 +1483,7 @@ export default function OracleDashboard() {
         {/* ══ REDO LOGS ═════════════════════════════════════════════════════ */}
         {on('redologs') && (
           <div className="space-y-gutter">
-            {redo.isLoading ? <InlineLoading label="Reading redo log groups…" /> : (
+            {redo.isLoading ? <PageLoading title="Reading redo log groups…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
                   <MetricTile label="Groups" value={(redo.data?.log_groups || []).length} icon="refresh" />
@@ -1556,7 +1578,7 @@ export default function OracleDashboard() {
         {/* ══ PROCESSES ═════════════════════════════════════════════════════ */}
         {on('processes') && (
           <div className="space-y-gutter">
-            {processes.isLoading ? <InlineLoading label="Reading background processes…" /> : (
+            {processes.isLoading ? <PageLoading title="Reading background processes…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3">
                   <MetricTile label="Background processes" value={processes.data?.total ?? '—'} icon="cpu" />
@@ -1612,7 +1634,7 @@ export default function OracleDashboard() {
         {/* ══ USERS ═════════════════════════════════════════════════════════ */}
         {on('users') && (
           <div className="space-y-gutter">
-            {users.isLoading ? <InlineLoading label="Reading dba_users…" /> : (
+            {users.isLoading ? <PageLoading title="Reading dba_users…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
                   <MetricTile label="Accounts" value={users.data?.total ?? '—'} icon="key" />
@@ -1648,7 +1670,7 @@ export default function OracleDashboard() {
         {/* ══ SYSTEM STATS ══════════════════════════════════════════════════ */}
         {on('systemstats') && (
           <div className="space-y-gutter">
-            {sysStats.isLoading ? <InlineLoading label="Reading v$sysstat…" /> : (
+            {sysStats.isLoading ? <PageLoading title="Reading v$sysstat…" illustration /> : (
               <>
                 {Object.keys(sysStats.data?.key_stats || {}).length > 0 && (
                   <Panel title="Statistics worth watching" icon="trend"
@@ -1716,7 +1738,7 @@ export default function OracleDashboard() {
         {/* ══ SLOW SQL ══════════════════════════════════════════════════════ */}
         {on('slowqueries') && (
           <div className="space-y-gutter">
-            {slowSql.isLoading ? <InlineLoading label="Reading v$sqlarea…" /> : (
+            {slowSql.isLoading ? <PageLoading title="Reading v$sqlarea…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
                   <MetricTile label="Statements" value={slowSql.data?.total ?? 0} icon="clock" />
@@ -1745,7 +1767,7 @@ export default function OracleDashboard() {
         )}
 
         {/* ══ MAINTENANCE ═══════════════════════════════════════════════════ */}
-        {on('maintenance') && <MaintenanceWindow connId={id} />}
+        {on('maintenance') && <OracleMaintenanceModule connId={id} />}
 
         {/* ══ LIVE QUERIES ══════════════════════════════════════════════════ */}
         {on('live') && <OracleLiveQueries connId={id} embedded />}
@@ -1753,7 +1775,7 @@ export default function OracleDashboard() {
         {/* ══ LOCKS ═════════════════════════════════════════════════════════ */}
         {on('locks') && (
           <div className="space-y-gutter">
-            {locks.isLoading ? <InlineLoading label="Reading v$lock…" /> : (
+            {locks.isLoading ? <PageLoading title="Reading v$lock…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3">
                   <MetricTile label="Sessions waiting on a lock" value={locks.data?.total_waits ?? 0} icon="lock"
@@ -1860,7 +1882,7 @@ export default function OracleDashboard() {
         {/* ══ SQL MONITOR ═══════════════════════════════════════════════════ */}
         {on('sqlmonitor') && (
           <div className="space-y-gutter">
-            {sqlMonitor.isLoading ? <InlineLoading label="Reading v$sql_monitor…" /> : (
+            {sqlMonitor.isLoading ? <PageLoading title="Reading v$sql_monitor…" illustration /> : (
               <>
                 {sqlMonitor.data?.licensed === false && (
                   <Notice tone="warning" title="Real-Time SQL Monitoring is not available on this instance.">
@@ -1873,18 +1895,18 @@ export default function OracleDashboard() {
                     <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-3">
                       <MetricTile
                         label="Executing now"
-                        value={(sqlMonitor.data?.executions || []).filter((e) => e.status === 'EXECUTING').length}
+                        value={sqlMonitorCounts.executing}
                         icon="activity"
-                        tone={(sqlMonitor.data?.executions || []).some((e) => e.status === 'EXECUTING') ? 'accent' : 'neutral'}
+                        tone={sqlMonitorCounts.executing > 0 ? 'accent' : 'neutral'}
                       />
                       <MetricTile
                         label="Parallel executions"
-                        value={(sqlMonitor.data?.executions || []).filter((e) => num(e.px_allocated) > 0).length}
+                        value={sqlMonitorCounts.parallel}
                         icon="layers"
                       />
                       <MetricTile
                         label="Recently finished (10 min)"
-                        value={(sqlMonitor.data?.executions || []).filter((e) => e.status !== 'EXECUTING').length}
+                        value={sqlMonitorCounts.finished}
                         icon="clock"
                       />
                     </div>
@@ -1977,7 +1999,7 @@ export default function OracleDashboard() {
         {/* ══ PARAMETERS ════════════════════════════════════════════════════ */}
         {on('parameters') && (
           <div className="space-y-gutter">
-            {params.isLoading ? <InlineLoading label="Reading v$parameter…" /> : (
+            {params.isLoading ? <PageLoading title="Reading v$parameter…" illustration /> : (
               <TablePanel
                 title="Initialisation parameters"
                 icon="settings"
@@ -2008,18 +2030,7 @@ export default function OracleDashboard() {
                 )}
               >
                 <Paged
-                  rows={(() => {
-                    const base = paramScope === 'key'
-                      ? (params.data?.key_params || [])
-                      : (params.data?.all_params || []);
-                    const scoped = paramScope === 'modified'
-                      ? base.filter((p) => p.ismodified && p.ismodified !== 'FALSE')
-                      : base;
-                    const term = paramSearch.trim().toLowerCase();
-                    return term
-                      ? scoped.filter((p) => `${p.name} ${p.value}`.toLowerCase().includes(term))
-                      : scoped;
-                  })()}
+                  rows={filteredParams}
                   unit="parameters"
                 >
                   {(page, pager) => (

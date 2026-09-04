@@ -11,6 +11,7 @@ import { accountLocation } from '../utils/regions';
 import ProviderLogo from './ProviderLogo';
 import { usePermissions } from '@/hooks/usePermissions';
 import Table, { EmptyState } from '@/components/ui/Table';
+import { PageLoading } from '@/components/ui/Loading';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
 import Icon from '@/components/ui/Icon';
@@ -104,12 +105,7 @@ export const CloudAccountList = ({
   const isScanningRow = (accountId) => !!activeDiscoveryJobs?.[accountId];
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 px-card py-24">
-        <Icon name="spinner" size={28} className="animate-spin text-accent-text" />
-        <span className="text-[13px] text-muted">Loading accounts…</span>
-      </div>
-    );
+    return <PageLoading title="Loading accounts…" illustration />;
   }
 
   const emptyState = (

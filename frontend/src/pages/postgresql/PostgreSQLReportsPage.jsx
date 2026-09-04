@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import client from '@/api/client';
 import { PERIODS, ReportShell, shortVersion } from '@/pages/_shared/reportKit';
+import { PageLoading } from '@/components/ui/Loading';
 
 /* Identity for the shared report shell. The MySQL report supplies the same shape;
    this page used to duplicate the whole shell — header, e-mail modal, PDF capture
@@ -321,14 +322,7 @@ export default function PostgreSQLReportsPage() {
     hasRepl && Number(replLag) > 1048576 && { tone: 'amber', label: `Replication Lag: ${fmtBytes(replLag)}` },
   ].filter(Boolean);
 
-  if (l1 && !dash) return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f1f5f9]">
-      <div className="text-center">
-        <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-slate-600 font-semibold">Loading PostgreSQL report…</p>
-      </div>
-    </div>
-  );
+  if (l1 && !dash) return <PageLoading title="Loading PostgreSQL report…" illustration />;
 
   return (
     <ReportShell

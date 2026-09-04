@@ -6,6 +6,7 @@ import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
 import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import Icon from '@/components/ui/Icon';
+import { PageLoading } from '@/components/ui/Loading';
 import IconButton from '@/components/ui/IconButton';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
@@ -301,9 +302,7 @@ export default function InfraPage() {
       </div>
 
       {isLoading ? (
-        <div className="grid place-items-center py-24">
-          <Icon name="spinner" size={26} className="animate-spin text-subtle" />
-        </div>
+        <PageLoading illustration />
       ) : tab === 'overview' ? (
         <InfraOverview
           hosts={overviewHosts}

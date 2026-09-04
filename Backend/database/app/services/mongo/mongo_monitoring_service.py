@@ -70,6 +70,21 @@ def _safe_int(val):
         return 0
 
 
+def _self_cache(conn_id: int, snapshot_type: str, res: dict, db: Session) -> dict:
+    """Write back a freshly-built live result as this connection's snapshot,
+    same as every other engine's dashboard service already does — without it,
+    a connection with no background agent collector polling it (a direct,
+    non-agent-routed connection) never gets a snapshot written at all, so
+    every single page load falls all the way through to a live query instead
+    of the instant cached read the dashboard is designed around."""
+    try:
+        from app.utils.agent_cache import store_snapshot_for_conn
+        store_snapshot_for_conn(conn_id, snapshot_type, res, db)
+    except Exception:
+        pass
+    return res
+
+
 def _get_conn_or_404(conn_id: int, db: Session):
     conn = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
@@ -313,7 +328,7 @@ def get_dashboard(conn_id: int, db: Session):
             "wt_cache_hit_pct":      wt_cache_hit_pct,
         }
 
-        return {
+        return _self_cache(conn_id, "mongo_dashboard", {
             "status": "success",
             "connection": {
                 "id":       conn.id,
@@ -352,7 +367,7 @@ def get_dashboard(conn_id: int, db: Session):
                 "wt_cache_pct":              wt_cache_pct,
             },
             "oplog_info": oplog_info,
-        }
+        }, db)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB dashboard error: {str(e)}")
@@ -425,7 +440,7 @@ def get_ops(conn_id: int, db: Session):
         waiting_count = sum(1 for o in ops if o.get("waitingForLock"))
         slow_count    = sum(1 for o in ops if (o.get("secs_running", 0) or 0) > 1)
 
-        return {
+        return _self_cache(conn_id, "mongo_ops", {
             "status":        "success",
             "ops":           ops,
             "total":         len(ops),
@@ -433,7 +448,7 @@ def get_ops(conn_id: int, db: Session):
             "waiting_count": waiting_count,
             "slow_count":    slow_count,
             "error":         error,
-        }
+        }, db)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB ops error: {str(e)}")
@@ -828,13 +843,13 @@ def get_collections(conn_id: int, db: Session):
         total_collections = sum(len(d["collections"]) for d in databases)
         total_docs        = sum(c["count"] for d in databases for c in d["collections"])
 
-        return {
+        return _self_cache(conn_id, "mongo_collections", {
             "status":            "success",
             "databases":         databases,
             "total_collections": total_collections,
             "total_docs":        total_docs,
             "errors":            errors,
-        }
+        }, db)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB collections error: {str(e)}")
@@ -925,14 +940,14 @@ def get_indexes(conn_id: int, db: Session):
 
         unused = [i for i in all_indexes if i["unused"]]
 
-        return {
+        return _self_cache(conn_id, "mongo_indexes", {
             "status":         "success",
             "indexes":        all_indexes,
             "total":          len(all_indexes),
             "unused_count":   len(unused),
             "unused_indexes": unused,
             "errors":         errors,
-        }
+        }, db)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB indexes error: {str(e)}")
@@ -970,7 +985,7 @@ def get_replication(conn_id: int, db: Session):
             rs_error = str(e)
 
         if rs_status is None:
-            return {
+            return _self_cache(conn_id, "mongo_replication", {
                 "status":         "success",
                 "is_replica_set": False,
                 "set_name":       "",
@@ -979,7 +994,7 @@ def get_replication(conn_id: int, db: Session):
                 "oplog":          {},
                 "replication_lag": [],
                 "error":          rs_error,
-            }
+            }, db)
 
         set_name  = rs_status.get("set", "")
         my_state  = rs_status.get("myState", 0)
@@ -1082,7 +1097,7 @@ def get_replication(conn_id: int, db: Session):
         except Exception as e:
             oplog_info = {"error": str(e)}
 
-        return {
+        return _self_cache(conn_id, "mongo_replication", {
             "status":          "success",
             "is_replica_set":  True,
             "set_name":        set_name,
@@ -1091,7 +1106,7 @@ def get_replication(conn_id: int, db: Session):
             "oplog":           oplog_info,
             "replication_lag": replication_lag,
             "ok":              rs_status.get("ok", 0),
-        }
+        }, db)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"MongoDB replication error: {str(e)}")

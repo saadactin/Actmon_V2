@@ -31,7 +31,7 @@ import ObjectTable from '@/pages/_shared/ObjectTable';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptMysqlTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 import { DATABASE_COLUMNS, TABLE_COLUMNS, TABLE_SORT_PRESETS } from '@/config/dbCatalog';
-import { PageLoading, Spinner } from '@/components/ui/Loading';
+import { PageLoading } from '@/components/ui/Loading';
 import { computeHealthScore } from '@/utils/mysqlHealth';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
@@ -270,10 +270,7 @@ function DiagnosisCenter({ id, error, data, refetch }) {
 
           <div className="flex-1 overflow-y-auto p-4">
             {logsLoading ? (
-              <div className="flex flex-col items-center justify-center h-48 gap-3">
-                <div className="w-8 h-8 border-2 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
-                <p className="text-slate-500 text-sm">Fetching logs via SSH…</p>
-              </div>
+              <PageLoading title="Fetching logs via SSH…" minHeight={192} illustration={false} />
             ) : logs.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-48 gap-3">
                 <FileText size={32} className="text-slate-700" />
@@ -2216,10 +2213,17 @@ export default function MySQLDashboard() {
                     hint="Click to see table breakdown"
                     onClick={() => setDrillModal({
                       title: 'Storage Breakdown by Table',
-                      subtitle: `${tables.length} tables · ${totalMB} MB total`,
+                      subtitle: `Largest 50 of ${tables.length} tables · ${totalMB} MB total`,
                       content: (
                         <div className="space-y-2">
-                          {tables.sort((a,b) => b.total_mb - a.total_mb).map((t, i) => (
+                          {/* [...tables] copies before sorting — Array.sort() mutates in place,
+                              and `tables` is the shared react-query cache array other parts of
+                              this render also read; sorting it directly here was silently
+                              reordering it out from under them. Capped to 50 rows — this is a
+                              breakdown view, not a full data table, and an unbounded map() over
+                              every table (thousands, on a large schema) rendered that many DOM
+                              nodes in one modal. */}
+                          {[...tables].sort((a,b) => b.total_mb - a.total_mb).slice(0, 50).map((t, i) => (
                             <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-2.5 border border-slate-100">
                               <span className="font-mono text-xs font-bold text-slate-700">{t.database}.{t.table}</span>
                               <div className="flex items-center gap-3 text-xs">
@@ -2236,10 +2240,10 @@ export default function MySQLDashboard() {
                     hint="Click to see data size per table"
                     onClick={() => setDrillModal({
                       title: 'Data Size by Table',
-                      subtitle: `${totalData} MB data across ${tables.length} tables`,
+                      subtitle: `Largest 50 of ${tables.length} tables · ${totalData} MB data total`,
                       content: (
                         <div className="space-y-2">
-                          {tables.sort((a,b) => b.data_mb - a.data_mb).map((t, i) => (
+                          {[...tables].sort((a,b) => b.data_mb - a.data_mb).slice(0, 50).map((t, i) => (
                             <div key={i} className="flex items-center justify-between bg-blue-50 rounded-xl px-4 py-2.5 border border-blue-100">
                               <span className="font-mono text-xs font-bold text-slate-700">{t.database}.{t.table}</span>
                               <div className="flex items-center gap-2 text-xs">
@@ -2255,10 +2259,10 @@ export default function MySQLDashboard() {
                     hint="Click to see index size per table"
                     onClick={() => setDrillModal({
                       title: 'Index Size by Table',
-                      subtitle: `${totalIdx} MB index across ${tables.length} tables`,
+                      subtitle: `Largest 50 of ${tables.length} tables · ${totalIdx} MB index total`,
                       content: (
                         <div className="space-y-2">
-                          {tables.sort((a,b) => b.index_mb - a.index_mb).map((t, i) => (
+                          {[...tables].sort((a,b) => b.index_mb - a.index_mb).slice(0, 50).map((t, i) => (
                             <div key={i} className="flex items-center justify-between bg-purple-50 rounded-xl px-4 py-2.5 border border-purple-100">
                               <span className="font-mono text-xs font-bold text-slate-700">{t.database}.{t.table}</span>
                               <span className="bg-purple-200 text-purple-800 font-bold px-2 py-0.5 rounded-full text-xs">{t.index_mb} MB</span>
@@ -2606,12 +2610,7 @@ function SparkCard({ label, data, color }) {
   );
 }
 function TabLoader({ label }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 py-20">
-      <Spinner size="lg" />
-      {label && <p className="text-[13px] text-muted">{label}</p>}
-    </div>
-  );
+  return <PageLoading title={label} illustration />;
 }
 function TrendCard({ title, data, color, unit = '', fmtVal }) {
   const fmt = fmtVal || (v => `${v}${unit}`);

@@ -235,11 +235,7 @@ function ReplicaStateBadge({ state }) {
 }
 
 function TabLoader() {
-  return (
-    <div className="flex items-center justify-center py-20">
-      <div className="w-8 h-8 border-4 border-green-200 border-t-green-600 rounded-full animate-spin" />
-    </div>
-  );
+  return <PageLoading illustration />;
 }
 
 function EmptyState({ icon: Icon = Inbox, message = 'No data available', sub = '' }) {

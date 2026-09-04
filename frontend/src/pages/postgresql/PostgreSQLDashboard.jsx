@@ -921,12 +921,7 @@ function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, 
   if (isLoading && !patroniDetected) return (
     <div className="space-y-5">
       <PatroniPanel connId={connId} />
-      <div className="flex items-center justify-center py-32">
-        <div className="text-center">
-          <div className="w-14 h-14 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
-          <p className="text-slate-500 font-semibold text-sm">Loading replication data…</p>
-        </div>
-      </div>
+      <PageLoading title="Loading replication data…" illustration />
     </div>
   );
 
@@ -1887,14 +1882,7 @@ function AdvancedQueriesTab({ connId, active: tabActive }) {
   const waitEvs = d.wait_events     || {};
   const backends= d.all_backends    || [];
 
-  if (isLoading && !d.status) return (
-    <div className="flex items-center justify-center py-32">
-      <div className="text-center">
-        <div className="w-14 h-14 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-slate-500 text-sm font-semibold">Loading query analytics…</p>
-      </div>
-    </div>
-  );
+  if (isLoading && !d.status) return <PageLoading title="Loading query analytics…" illustration />;
 
   const totalCalls = Object.values(byType).reduce((a,b)=>a+b,0);
 
@@ -2394,14 +2382,7 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
   const anaNeed     = d.analyze_needed || 0;
   const autovac     = d.autovac_config || {};
 
-  if (isLoading && !d.status) return (
-    <div className="flex items-center justify-center py-32">
-      <div className="text-center">
-        <div className="w-14 h-14 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-slate-500 text-sm font-semibold">Loading table statistics…</p>
-      </div>
-    </div>
-  );
+  if (isLoading && !d.status) return <PageLoading title="Loading table statistics…" illustration />;
 
   const maxSize = Math.max(...(d.tables||[]).map(t=>t.total_bytes||0), 1);
 
@@ -2729,14 +2710,7 @@ function AdvancedConfigTab({ detail, isLoading, refetch }) {
     setTimeout(() => setCopied(null), 1500);
   }
 
-  if (isLoading && !d.status) return (
-    <div className="flex items-center justify-center py-32">
-      <div className="text-center">
-        <div className="w-14 h-14 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-slate-500 font-semibold text-sm">Loading PostgreSQL configuration…</p>
-      </div>
-    </div>
-  );
+  if (isLoading && !d.status) return <PageLoading title="Loading PostgreSQL configuration…" illustration />;
 
   return (
     <div className="space-y-4">
@@ -3065,14 +3039,7 @@ function AdvancedUsersTab({ detail, isLoading, refetch }) {
   const summary    = d.summary    || {};
   const connSummary= d.conn_summary|| {};
 
-  if (isLoading && !d.status) return (
-    <div className="flex items-center justify-center py-32">
-      <div className="text-center">
-        <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-slate-500 font-semibold text-sm">Loading user data...</p>
-      </div>
-    </div>
-  );
+  if (isLoading && !d.status) return <PageLoading title="Loading user data…" illustration />;
 
   const sectionTabs = [
     { id:'roles',    label:'Roles & Permissions' },
@@ -3337,14 +3304,7 @@ function AdvancedStorageTab({ detail, isLoading, refetch }) {
   const avSettings  = d.autovacuum_settings|| {};
   const summary     = d.summary            || {};
 
-  if (isLoading && !d.status) return (
-    <div className="flex items-center justify-center py-32">
-      <div className="text-center">
-        <div className="w-12 h-12 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin mx-auto mb-4"/>
-        <p className="text-slate-500 font-semibold text-sm">Analyzing storage...</p>
-      </div>
-    </div>
-  );
+  if (isLoading && !d.status) return <PageLoading title="Analyzing storage…" illustration />;
 
   const sectionTabs = [
     { id:'tables',  label:'Top Tables' },
