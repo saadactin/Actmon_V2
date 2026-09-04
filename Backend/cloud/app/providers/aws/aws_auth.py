@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 
 logger = logging.getLogger("cloud_svc.aws.auth")
 
@@ -16,14 +16,33 @@ class AWSAuth:
         self.secret_access_key: str = credentials["secret_access_key"]
         self.session_token: str | None = credentials.get("session_token")
         self.region: str = credentials.get("region", "us-east-1")
+        # One shared Session (holds no sockets — see get_session). Clients are
+        # built per call and deliberately not cached (see get_client).
+        self._session: boto3.Session | None = None
+        self._lock = threading.RLock()
 
     def get_session(self) -> boto3.Session:
-        return boto3.Session(
-            aws_access_key_id=self.access_key_id,
-            aws_secret_access_key=self.secret_access_key,
-            aws_session_token=self.session_token,
-            region_name=self.region,
-        )
+        """One shared Session.
+
+        Building a Session is not free: it creates a botocore session that
+        loads and parses service model JSON from disk on first use per service.
+        A sweep asks for a client ~200 times, and every fresh Session repeated
+        that work and started with an empty connection pool.
+
+        boto3 Sessions are documented as NOT thread-safe to build concurrently,
+        so creation is guarded; sharing one afterwards to hand out clients is
+        the pattern boto3 itself recommends.
+        """
+        if self._session is None:
+            with self._lock:
+                if self._session is None:
+                    self._session = boto3.Session(
+                        aws_access_key_id=self.access_key_id,
+                        aws_secret_access_key=self.secret_access_key,
+                        aws_session_token=self.session_token,
+                        region_name=self.region,
+                    )
+        return self._session
 
     @staticmethod
     def _ssl_verify() -> bool | str:
@@ -51,9 +70,22 @@ class AWSAuth:
                       retries={"max_attempts": 3, "mode": "adaptive"})
 
     def get_client(self, service: str, region: str | None = None, slow_api: bool = False) -> Any:
-        session = self.get_session()
-        return session.client(service, region_name=region or self.region,
-                              config=self._config(slow_api), verify=self._ssl_verify())
+        """A client per call, from the shared Session.
+
+        The client is NOT cached, deliberately — a client owns a connection
+        pool, and sharing one across the scan fan-out was measured (on OCI,
+        where a clean before/after was possible) to take a sweep from 57m/468
+        resources to 370m/363 with 261 failed scopes. On a network that aborts
+        TLS this often, a shared pool spreads dead connections to every caller.
+        See oci_scanner._client_for_region.
+
+        The SESSION is shared, because it holds no sockets: it only parses
+        service model JSON, which is pure CPU and worth doing once.
+        """
+        return self.get_session().client(
+            service, region_name=region or self.region,
+            config=self._config(slow_api), verify=self._ssl_verify(),
+        )
 
     def get_resource(self, service: str, region: str | None = None) -> Any:
         session = self.get_session()
@@ -61,8 +93,17 @@ class AWSAuth:
                                 config=self._config(), verify=self._ssl_verify())
 
     async def validate(self) -> bool:
-        """Call STS GetCallerIdentity to confirm credentials are valid."""
-        try:
+        """Call STS GetCallerIdentity to confirm credentials are valid.
+
+        Goes through scan_pool.preflight, which retries dropped connections and
+        keeps "unreachable" distinct from "rejected". Previously this ran boto3
+        directly on the event loop with no retry, so one cut TLS handshake
+        aborted the whole scan and reported a working account as having lost
+        access.
+        """
+        from app.providers.scan_pool import preflight
+
+        def _check() -> bool:
             sts = self.get_client("sts")
             identity = sts.get_caller_identity()
             logger.info(
@@ -71,6 +112,7 @@ class AWSAuth:
                 identity.get("Arn"),
             )
             return True
-        except (BotoCoreError, ClientError) as exc:
-            logger.error("AWS auth failed: %s", exc)
-            raise ValueError(f"AWS authentication failed: {exc}") from exc
+
+        return await preflight(
+            _check, provider="AWS", endpoint=f"sts.{self.region}.amazonaws.com",
+        )

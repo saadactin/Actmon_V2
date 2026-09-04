@@ -112,12 +112,8 @@ class AzureScanner:
             from azure.mgmt.compute import ComputeManagementClient
             from azure.mgmt.network import NetworkManagementClient
 
-            compute = ComputeManagementClient(
-                self.auth.get_credential(), self.auth.subscription_id
-            )
-            net = NetworkManagementClient(
-                self.auth.get_credential(), self.auth.subscription_id
-            )
+            compute = self.auth.get_client(ComputeManagementClient)
+            net = self.auth.get_client(NetworkManagementClient)
             results = []
             for vm in compute.virtual_machines.list_all():
                 location = vm.location or "unknown"
@@ -214,9 +210,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.compute import ComputeManagementClient
 
-            compute = ComputeManagementClient(
-                self.auth.get_credential(), self.auth.subscription_id
-            )
+            compute = self.auth.get_client(ComputeManagementClient)
             disks = list(compute.disks.list())
 
             # Resolve power state for each distinct VM a disk is attached to, so
@@ -267,9 +261,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.storage import StorageManagementClient
 
-            storage = StorageManagementClient(
-                self.auth.get_credential(), self.auth.subscription_id
-            )
+            storage = self.auth.get_client(StorageManagementClient)
             results = []
             for acc in storage.storage_accounts.list():
                 results.append(
@@ -304,7 +296,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.sql import SqlManagementClient
 
-            sql = SqlManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            sql = self.auth.get_client(SqlManagementClient)
             results = []
             for server in sql.servers.list():
                 rg = server.id.split("/resourceGroups/")[1].split("/")[0]
@@ -353,7 +345,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.rdbms.postgresql_flexibleservers import PostgreSQLManagementClient
 
-            client = PostgreSQLManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            client = self.auth.get_client(PostgreSQLManagementClient)
             results = []
             for s in client.servers.list():
                 ha = getattr(s, "high_availability", None)
@@ -397,7 +389,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.rdbms.mysql_flexibleservers import MySQLManagementClient
 
-            client = MySQLManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            client = self.auth.get_client(MySQLManagementClient)
             results = []
             for s in client.servers.list():
                 ha = getattr(s, "high_availability", None)
@@ -442,7 +434,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.cosmosdb import CosmosDBManagementClient
 
-            client = CosmosDBManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            client = self.auth.get_client(CosmosDBManagementClient)
             results = []
             for acct in client.database_accounts.list():
                 # Unlike SQL/AKS/older Azure SDKs, this generation of
@@ -494,7 +486,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.redis import RedisManagementClient
 
-            client = RedisManagementClient(self.auth.get_credential(), self.auth.subscription_id)
+            client = self.auth.get_client(RedisManagementClient)
             results = []
             for r in client.redis.list_by_subscription():
                 results.append(
@@ -531,7 +523,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.containerservice import ContainerServiceClient
 
-            aks = ContainerServiceClient(self.auth.get_credential(), self.auth.subscription_id)
+            aks = self.auth.get_client(ContainerServiceClient)
             results = []
             for cluster in aks.managed_clusters.list():
                 results.append(
@@ -578,9 +570,7 @@ class AzureScanner:
         def _fetch():
             from azure.mgmt.network import NetworkManagementClient
 
-            net = NetworkManagementClient(
-                self.auth.get_credential(), self.auth.subscription_id
-            )
+            net = self.auth.get_client(NetworkManagementClient)
             results: List[Dict[str, Any]] = []
 
             # ── Subnets (as children of each VNet) ───────────────────────────

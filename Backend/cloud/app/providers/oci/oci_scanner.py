@@ -60,6 +60,21 @@ class OCIScanner:
     # Max scanner calls in flight at once across the whole region × compartment
     # fan-out. Keeps concurrent TLS/DNS well below the level that makes the
     # local network stack start refusing connections.
+    #
+    # This is an EMPIRICAL limit for this network, not a spare-capacity figure.
+    # Do not raise it to match SCAN_POOL_SIZE: that pool is deliberately wider
+    # because it also serves AWS (20) and several accounts scanning at once.
+    #
+    # Measured on the live OCI tenancy, same code, same account, back to back:
+    #
+    #   concurrency  8   57m   468 resources     1 failed scope
+    #   concurrency 24   88m   104 resources   636 failed scopes
+    #
+    # The 24-way run failed with 204 "Max retries exceeded", 188 SSL
+    # UNEXPECTED_EOF, 44 HTTP 429 and a scattering of WinSock 10053/10054 —
+    # exactly the symptoms described above, plus OCI rate-limiting us outright.
+    # More concurrency here does not buy throughput, it buys retries and an
+    # incomplete sweep that is then forbidden from pruning.
     _MAX_CONCURRENT_SCANS = 8
 
     @staticmethod
@@ -78,7 +93,27 @@ class OCIScanner:
             return oci.retry.NoneRetryStrategy()
 
     def _client_for_region(self, client_class, region: str):
-        """Create an OCI client configured for a specific region."""
+        """Create an OCI client configured for a specific region.
+
+        A NEW client per call, deliberately. Caching one per (service, region)
+        looks like the obvious win — an isolated list call costs ~18s through a
+        fresh client and ~0.04s through an already-warm one — but measured end
+        to end on this network it is catastrophic:
+
+            per-call client (this code)     57m   468 resources     1 failed scope
+            cached client, pool 16, conc 8  370m  363 resources   261 failed scopes
+
+        The isolated measurement was real but unrepresentative. This network
+        aborts TLS constantly (see scan_pool's notes on 10053/10054 and SSL
+        UNEXPECTED_EOF), and a shared pool accumulates those dead connections for
+        every caller, whereas a fresh client per call lets a broken connection
+        die with the client that owned it. Building a client per call is not
+        waste here — it is what keeps the sweep resilient.
+
+        If this is ever revisited: pool_block=True was in the failing version and
+        is the prime suspect, since a starved pool makes threads wait instead of
+        opening a replacement. Measure end to end before believing otherwise.
+        """
         cfg = dict(self.config)
         cfg["region"] = region
         return client_class(cfg, timeout=self._CLIENT_TIMEOUT,
@@ -1367,9 +1402,17 @@ class OCIScanner:
                 # needs to know WHICH ports are open to WHICH source — "1 ingress
                 # rule" answers neither question, so it was discarded right after
                 # being fetched even though the API call had already paid for it.
-                ingress: List[Dict[str, Any]] = []
-                egress: List[Dict[str, Any]] = []
+                # None until the rule call succeeds, so "we could not read the
+                # rules" stays distinguishable from "this NSG has no rules".
+                # These come from a SEPARATE per-NSG call that can fail on its
+                # own; defaulting it to [] made a failed read look identical to
+                # every rule having been deleted, and the change log reported
+                # exactly that as a HIGH security finding. Same convention
+                # _scan_s3 already uses for lifecycle_rules.
+                ingress: List[Dict[str, Any]] | None = None
+                egress: List[Dict[str, Any]] | None = None
                 try:
+                    ingress, egress = [], []
                     for rule in net.list_network_security_group_security_rules(nsg.id).data:
                         parsed = {
                             "protocol": rule.protocol,  # "6"=TCP "17"=UDP "1"=ICMP "all"
@@ -1385,7 +1428,13 @@ class OCIScanner:
                             parsed["destination_type"] = rule.destination_type
                             egress.append(parsed)
                 except Exception as exc:
-                    logger.debug("NSG rules fetch failed for %s: %s", nsg.id, exc)
+                    # Warning, not debug: this leaves the NSG's rules unknown,
+                    # and a silently-unknown firewall is worth seeing in the log.
+                    ingress, egress = None, None
+                    logger.warning(
+                        "NSG rules fetch failed for %s (%s) — recording rules as "
+                        "unknown rather than empty.", nsg.id, exc,
+                    )
 
                 results.append(
                     {
@@ -1397,7 +1446,13 @@ class OCIScanner:
                         "ip_address": None,
                         "config": {
                             "vcn_id": nsg.vcn_id,
-                            "total_rules": len(ingress) + len(egress),
+                            # None when the rules could not be read, so a count of 0 is
+                            # never confused with "unknown". SecurityList (above) keeps the
+                            # plain count: its rules arrive inline, so [] is a real answer.
+                            "total_rules": (
+                                None if ingress is None or egress is None
+                                else len(ingress) + len(egress)
+                            ),
                             "ingress_rules": ingress,
                             "egress_rules": egress,
                         },

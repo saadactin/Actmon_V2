@@ -56,17 +56,20 @@ class OCIAuth:
         )
 
     async def validate(self) -> bool:
-        import asyncio
+        """Confirm the credentials by reading the tenancy.
 
-        def _check():
+        Retries dropped connections rather than aborting the scan on the first
+        one — this network cuts TLS handshakes often enough that a single
+        unlucky preflight was failing whole scans. See scan_pool.preflight.
+        """
+        from app.providers.scan_pool import preflight
+
+        def _check() -> bool:
             identity = oci.identity.IdentityClient(self.get_config())
             tenancy = identity.get_tenancy(self.tenancy_ocid).data
             logger.info("OCI auth OK — Tenancy: %s", tenancy.name)
             return True
 
-        loop = asyncio.get_event_loop()
-        try:
-            return await loop.run_in_executor(None, _check)
-        except Exception as exc:
-            logger.error("OCI auth failed: %s", exc)
-            raise ValueError(f"OCI authentication failed: {exc}") from exc
+        return await preflight(
+            _check, provider="OCI", endpoint=f"identity.{self.region}.oraclecloud.com",
+        )

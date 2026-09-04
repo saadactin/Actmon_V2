@@ -23,6 +23,7 @@ from app.models.cloud_account import CloudAccount   # noqa: F401
 from app.models.resource import CloudResource       # noqa: F401
 from app.models.discovery_job import DiscoveryJob   # noqa: F401
 from app.models.alert import CloudAlert             # noqa: F401
+from app.models.drift import CloudResourceChange    # noqa: F401
 
 
 @asynccontextmanager
@@ -63,6 +64,24 @@ async def lifespan(app: FastAPI):
     from sqlalchemy import text as _text
 
     _log = _logging.getLogger("cloud_svc.startup")
+
+    # ── Columns added to tables that already exist ────────────────────────────
+    # create_all builds missing TABLES but never alters an existing one, so a
+    # column added after a table shipped needs saying out loud. ADD COLUMN IF
+    # NOT EXISTS makes this idempotent, so it is safe on every startup.
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(_text(
+                "ALTER TABLE cloud_resource_changes "
+                "ADD COLUMN IF NOT EXISTS value_vanished BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resource_changes_value_vanished "
+                "ON cloud_resource_changes (value_vanished)"
+            ))
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not reconcile cloud_resource_changes columns: %s", exc)
+
     try:
         async with engine.begin() as conn:
             result = await conn.execute(_text(
@@ -115,9 +134,10 @@ from app.api.routes.cost_estimate import router as cost_estimate_router
 from app.api.routes.topology import router as topology_router
 from app.api.routes.compliance import router as compliance_router
 from app.api.routes.alerts import router as alerts_router
+from app.api.routes.drift import router as drift_router
 
 # Standard API routes under /api/v1/
-for router in [accounts_router, discovery_router, resources_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router]:
+for router in [accounts_router, discovery_router, resources_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router]:
     app.include_router(router, prefix="/api/v1")
 
 

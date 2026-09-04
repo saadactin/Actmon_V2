@@ -7,6 +7,7 @@ import { getCostEstimate } from '../api/cost.api';
 import {
   Cloud, Server, DollarSign, Activity, Shield, ShieldAlert, ShieldCheck, ArrowRight,
   Clock, Layers, Globe, Sparkles, LayoutDashboard, ClipboardCheck, Bell, Share2,
+  GitCompareArrows,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -24,6 +25,7 @@ import { SecurityPosturePage } from './SecurityPosturePage';
 import { CloudTopologyPage } from './CloudTopologyPage';
 import { CompliancePage } from './CompliancePage';
 import { AlertsPage } from './AlertsPage';
+import { ConfigDriftPage } from './ConfigDriftPage';
 
 // Provider brand colours are pinned (external identity), same rationale as
 // CloudProviderSelector — never tokenized.
@@ -79,16 +81,19 @@ const TABS = [
   { id: 'topology', label: 'Topology', icon: Share2 },
   { id: 'compliance', label: 'Compliance', icon: ClipboardCheck },
   { id: 'alerts', label: 'Alerts', icon: Bell },
+  // Beside Alerts on purpose: an alert says a condition is true now, drift says
+  // what changed to make it true.
+  { id: 'drift', label: 'Config Drift', icon: GitCompareArrows },
 ];
 
 /**
  * One cloud account's full dashboard — reached via Cloud → Provider → Account,
  * exactly the way a database connection's own dashboard (e.g. PostgreSQL
  * Dashboard) is reached via Databases → Servers → connection. Overview,
- * Resources, Cost, Security, Topology, Compliance and Alerts are TABS of this
- * one page, scoped to this one account, instead of separate top-level pages —
- * the same shape as EngineDashboardHeader's Overview/Performance/Queries/…
- * tabs for a database connection.
+ * Resources, Cost, Security, Topology, Compliance, Alerts and Config Drift are
+ * TABS of this one page, scoped to this one account, instead of separate
+ * top-level pages — the same shape as EngineDashboardHeader's
+ * Overview/Performance/Queries/… tabs for a database connection.
  */
 // `provider` ('aws' | 'azure' | 'oci') comes in as a literal prop from the
 // route definition (App.jsx), same as CloudProviderAccountsPage — only
@@ -411,6 +416,11 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
       {tab === 'topology' && <CloudTopologyPage embedded accountId={routeAccountId} />}
       {tab === 'compliance' && <CompliancePage embedded accountId={routeAccountId} />}
       {tab === 'alerts' && <AlertsPage embedded accountId={routeAccountId} />}
+      {/* Keyed on the account so switching accounts resets the window/filter
+          state instead of carrying another account's drill-down across. */}
+      {tab === 'drift' && (
+        <ConfigDriftPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
     </>
   );
 };

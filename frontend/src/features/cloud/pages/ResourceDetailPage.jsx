@@ -11,6 +11,7 @@ import {
   Scale, Server, Settings, Boxes, Table2, Tag, Tags, Timer, Zap,
 } from 'lucide-react';
 import { DiagnosticModal } from '../components/DiagnosticModal';
+import { slugForProvider } from '../utils/providerScope';
 import CloudPageHeader from '../components/CloudPageHeader';
 import CloudSection from '../components/CloudSection';
 import Badge from '@/components/ui/Badge';
@@ -453,17 +454,21 @@ export const ResourceDetailPage = () => {
     staleTime: 60_000,
   });
 
-  // "Back" needs the resource's own provider/account to build a route that
-  // actually exists (there is no bare /cloud/resources list — resources only
-  // live under a specific account's Resources tab). The detail response only
-  // has account_id, so the provider slug comes from the accounts list, same
-  // lookup CloudDashboard already does for the reverse direction. Falls back
-  // to the provider chooser (always a real route) until accounts have loaded.
+  // Back has to be resolved, not hardcoded. This page is reached from six
+  // different places (the resource table, the dashboard, topology, cost,
+  // security, recommendations), and there is no /cloud/resources route — only
+  // /cloud/resources/:id — so a literal backTo="/cloud/resources" landed on the
+  // "no page is registered for this route" placeholder. The account's Resources
+  // tab is the real parent, so resolve it from the resource's own account.
   const { data: accounts } = useCloudAccounts();
   const owningAccount = (accounts || []).find((a) => a.id === resource?.account_id);
-  const backTo = owningAccount
-    ? `/cloud/${owningAccount.provider}-accounts/${owningAccount.id}/resources`
-    : '/cloud';
+  const parentResourcesRoute = owningAccount
+    ? `/cloud/${slugForProvider(owningAccount.provider)}-accounts/${owningAccount.id}/resources`
+    : null;
+  // Fall back to history when the account list hasn't loaded or the account is
+  // gone, so Back always does something sensible instead of 404-ing.
+  const goBack = () =>
+    parentResourcesRoute ? navigate(parentResourcesRoute) : navigate(-1);
 
   if (isLoading) {
     return <PageLoading title="Loading resource…" minHeight={320} />;
@@ -664,7 +669,7 @@ export const ResourceDetailPage = () => {
             <TypeIcon size={20} />
           </div>
         )}
-        backTo={backTo}
+        onBack={goBack}
         actions={(
           <div className="flex items-center gap-2">
             <StatusBadge status={resource.status} />

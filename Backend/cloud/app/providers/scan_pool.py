@@ -23,7 +23,10 @@ narrow enough not to overwhelm the local network stack.
 """
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger("cloud_svc.scan_pool")
 
 _scan_pool: ThreadPoolExecutor | None = None
 _query_pool: ThreadPoolExecutor | None = None
@@ -68,6 +71,12 @@ _TRANSIENT_MARKERS = (
     "connectionabortederror", "connectionclosederror", "timed out", "timeout",
     "readtimeout", "max retries exceeded", "endpointconnectionerror",
     "remotedisconnected", "incompleteread",
+    # botocore's ConnectionClosedError wording. Added after a real AWS scan
+    # failed on it and was reported as lost access: the class-name markers above
+    # never matched, because only str(exc) was being searched and botocore's
+    # message does not name its own class. Matching the type name too (see
+    # _describe) is the general fix; this covers the message itself.
+    "connection was closed",
 )
 _DENIAL_MARKERS = (
     "accessdenied", "not authorized", "unauthorizedoperation",
@@ -75,15 +84,98 @@ _DENIAL_MARKERS = (
 )
 
 
+def _describe(exc: BaseException) -> str:
+    """Exception class name plus message, lowercased, for marker matching.
+
+    The class name matters: several markers above (connectionclosederror,
+    endpointconnectionerror, readtimeout, remotedisconnected) name SDK exception
+    *types*, and an SDK message rarely repeats its own class name. Matching only
+    str(exc) left those markers dead, which is how a botocore
+    ConnectionClosedError — "Connection was closed before we received a valid
+    response from endpoint URL" — was classified as a permanent failure and
+    aborted a scan on a working account.
+    """
+    return f"{type(exc).__name__} {exc}".lower()
+
+
 def is_denial(exc: BaseException) -> bool:
     """A real answer: the credentials may not read this. Never retry it."""
-    low = str(exc).lower()
-    return any(m in low for m in _DENIAL_MARKERS)
+    return any(m in _describe(exc) for m in _DENIAL_MARKERS)
 
 
 def is_transient(exc: BaseException) -> bool:
     """A dropped/blocked connection, which says nothing about the account."""
     if is_denial(exc):
         return False
-    low = str(exc).lower()
-    return any(m in low for m in _TRANSIENT_MARKERS)
+    return any(m in _describe(exc) for m in _TRANSIENT_MARKERS)
+
+
+class ProviderUnreachable(Exception):
+    """The provider could not be reached. The credentials were never judged.
+
+    Distinct from a credential rejection on purpose: the two need opposite
+    responses from whoever reads the failure, and conflating them sends people
+    to rotate keys that were working fine.
+    """
+
+
+# Auth preflight retries. Matches AWSScanner._TRANSIENT_ATTEMPTS, because the
+# preflight sits on the same network as the scan it gates and there is no reason
+# for it to give up sooner than the calls behind it.
+PREFLIGHT_ATTEMPTS = 4
+
+
+async def preflight(check, *, provider: str, endpoint: str = "") -> bool:
+    """Run a credential check on the scan pool, retrying dropped connections.
+
+    Every call inside a sweep already retries transient failures, but the auth
+    preflight did not — so one dropped TLS handshake aborted the entire scan
+    before it read anything, and surfaced as "authentication failed", which the
+    UI renders as "often lost access". A live AWS account was reported as having
+    lost access because a single STS handshake was cut:
+
+        Connection was closed before we received a valid response from
+        endpoint URL: "https://sts.ap-south-1.amazonaws.com/"
+
+    Nothing about those credentials was wrong. This makes the preflight as
+    resilient as the scan behind it, and keeps "unreachable" and "rejected" as
+    separate outcomes.
+
+    `check` is a blocking callable; it runs on the scan pool rather than the
+    event loop, so a slow handshake cannot stall every other request in the
+    process.
+    """
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    last: BaseException | None = None
+    for attempt in range(PREFLIGHT_ATTEMPTS):
+        try:
+            return await loop.run_in_executor(scan_pool(), check)
+        except Exception as exc:
+            last = exc
+            # A denial IS an answer about the credentials — retrying it only
+            # delays telling the user something true.
+            if is_denial(exc) or not is_transient(exc):
+                logger.error("%s auth failed: %s", provider, exc)
+                raise ValueError(f"{provider} authentication failed: {exc}") from exc
+            if attempt == PREFLIGHT_ATTEMPTS - 1:
+                break
+            backoff = 2 * (attempt + 1)
+            logger.info(
+                "%s auth preflight hit a dropped connection (attempt %d/%d) — "
+                "retrying in %ss.", provider, attempt + 1, PREFLIGHT_ATTEMPTS, backoff,
+            )
+            await asyncio.sleep(backoff)
+
+    where = f" to {endpoint}" if endpoint else ""
+    logger.error(
+        "%s unreachable after %d attempts%s: %s",
+        provider, PREFLIGHT_ATTEMPTS, where, last,
+    )
+    raise ProviderUnreachable(
+        f"{provider} could not be reached{where} after {PREFLIGHT_ATTEMPTS} attempts. "
+        f"The connection was dropped before any reply arrived, so the credentials "
+        f"were never checked — this is a network/TLS failure, not lost access. "
+        f"Last error: {last}"
+    ) from last
