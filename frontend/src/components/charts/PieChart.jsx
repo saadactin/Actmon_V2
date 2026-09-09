@@ -30,6 +30,7 @@ export default function PieChart({
   size = 168,
   maxSlices = 6,
   unit = '',
+  format = (v) => v,
   emptyLabel = 'No data',
   legend = 'side',
   centerLabel,
@@ -103,7 +104,7 @@ export default function PieChart({
             onMouseEnter={() => setActive(s.key)}
             onMouseLeave={() => setActive(null)}
           >
-            <title>{`${s.label}: ${s.value}${unit} (${Math.round(s.share)}%)`}</title>
+            <title>{`${s.label}: ${format(s.value)}${unit} (${Math.round(s.share)}%)`}</title>
           </path>
         ))}
       </svg>
@@ -125,7 +126,7 @@ export default function PieChart({
             centerLabel ? <span className="text-[12px] font-medium text-muted">{centerLabel}</span> : null
           ) : (
             <span>
-              <span className="block text-2xl leading-none font-bold text-fg">{total}</span>
+              <span className="block text-2xl leading-none font-bold text-fg">{format(total)}</span>
               <span className="mt-1 block text-[10px] font-semibold text-subtle">total</span>
             </span>
           )}
@@ -156,7 +157,7 @@ export default function PieChart({
                   className={cn('flex items-center gap-1.5', item.onClick && 'hover:underline')}
                 >
                   <span className="font-medium text-muted">{item.label}</span>
-                  <span className="font-bold text-fg tabular-nums">{item.value}{unit}</span>
+                  <span className="font-bold text-fg tabular-nums">{format(item.value)}{unit}</span>
                 </button>
               </li>
             );
@@ -179,7 +180,7 @@ export default function PieChart({
               <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted" title={s.sub || s.label}>
                 {s.label}
               </span>
-              <span className="shrink-0 text-[11px] font-bold text-fg tabular-nums">{s.value}{unit}</span>
+              <span className="shrink-0 text-[11px] font-bold text-fg tabular-nums">{format(s.value)}{unit}</span>
               <span className="w-8 shrink-0 text-right text-[10px] text-subtle tabular-nums">
                 {Math.round(s.share)}%
               </span>

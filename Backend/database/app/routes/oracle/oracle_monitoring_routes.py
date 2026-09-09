@@ -250,10 +250,10 @@ def route_oracle_locks(conn_id: int, db: Session = Depends(get_db)):
     return oracle_locks(conn_id, db)
 
 
-# 22
+# 22 — extra query param: refresh (force a live re-fetch, bypassing the static-metadata cache)
 @router.get("/{conn_id}/oracle-parameters")
-def route_oracle_parameters(conn_id: int, db: Session = Depends(get_db)):
-    return oracle_parameters(conn_id, db)
+def route_oracle_parameters(conn_id: int, refresh: bool = False, db: Session = Depends(get_db)):
+    return oracle_parameters(conn_id, db, refresh)
 
 
 # 23 — extra query param: sql_id

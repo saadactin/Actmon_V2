@@ -4,6 +4,7 @@ Route file: app/routes/postgres/postgres_monitoring_routes.py
 """
 
 import csv, io, json, logging, os, re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, List, Any
 
 from fastapi import HTTPException
@@ -471,464 +472,554 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
 
     # `SELECT version()` never fails on a reachable PostgreSQL — an empty/unknown result
     # means the connection failed (agent timeout / unreachable). Return error so the empty
-    # result is NOT cached over good data (see _try_snapshot).
+    # result is NOT cached over good data (see _try_snapshot). Kept sequential and first:
+    # no point running 20 more queries against a connection already known dead.
     if not version or version == "unknown":
         return {"status": "error", "connection": connection_meta,
                 "error": "PostgreSQL unreachable (no version) — not caching empty result"}
 
-    uptime_str = "unknown"
-    try:
-        uptime_raw = _val(
-            engine,
-            "SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) "
-            "AS uptime FROM pg_postmaster_start_time()"
-        )
-        uptime_str = str(uptime_raw) if uptime_raw is not None else "unknown"
-    except Exception:
-        pass
+    # ── Every section below is independent — defined as a closure, then all
+    # submitted to one ThreadPoolExecutor together (mirrors the exact pattern
+    # mssql_monitoring_service.py's get_monitoring_dashboard() already uses).
+    # Wall-clock cost becomes "slowest single section", not "sum of every
+    # section" — this was previously ~35 sequential round-trips.
 
-    connections_by_state = {}
-    total_connections = 0
-    try:
-        rows = _rows(engine, "SELECT count(*) AS cnt, state FROM pg_stat_activity GROUP BY state")
-        for row in rows:
-            state_key = row.get("state") or "unknown"
-            cnt = int(row.get("cnt") or 0)
-            connections_by_state[state_key] = cnt
-            total_connections += cnt
-    except Exception:
-        pass
+    def _fetch_uptime():
+        try:
+            uptime_raw = _val(
+                engine,
+                "SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) "
+                "AS uptime FROM pg_postmaster_start_time()"
+            )
+            return str(uptime_raw) if uptime_raw is not None else "unknown"
+        except Exception:
+            return "unknown"
 
-    max_connections = 100
-    try:
-        max_raw = _val(engine, "SHOW max_connections")
-        max_connections = int(max_raw) if max_raw is not None else 100
-    except Exception:
-        pass
+    def _fetch_connections():
+        connections_by_state = {}
+        total_connections = 0
+        try:
+            rows = _rows(engine, "SELECT count(*) AS cnt, state FROM pg_stat_activity GROUP BY state")
+            for row in rows:
+                state_key = row.get("state") or "unknown"
+                cnt = int(row.get("cnt") or 0)
+                connections_by_state[state_key] = cnt
+                total_connections += cnt
+        except Exception:
+            pass
+        return connections_by_state, total_connections
 
-    connection_pct = round((total_connections / max_connections) * 100, 2) if max_connections > 0 else 0.0
+    def _fetch_max_connections():
+        try:
+            max_raw = _val(engine, "SHOW max_connections")
+            return int(max_raw) if max_raw is not None else 100
+        except Exception:
+            return 100
 
-    cache_hit_pct = 0.0
-    blks_hit = 0
-    blks_read = 0
-    try:
-        row = _rows(engine, "SELECT sum(blks_hit) AS hit, sum(blks_read) AS rd FROM pg_stat_database")
-        if row:
-            blks_hit  = int(row[0].get("hit") or 0)
-            blks_read = int(row[0].get("rd") or 0)
-            total_blks = blks_hit + blks_read
-            cache_hit_pct = round((blks_hit / total_blks) * 100, 2) if total_blks > 0 else 0.0
-    except Exception:
-        pass
+    def _fetch_cache_hit():
+        try:
+            row = _rows(engine, "SELECT sum(blks_hit) AS hit, sum(blks_read) AS rd FROM pg_stat_database")
+            if row:
+                blks_hit  = int(row[0].get("hit") or 0)
+                blks_read = int(row[0].get("rd") or 0)
+                total_blks = blks_hit + blks_read
+                cache_hit_pct = round((blks_hit / total_blks) * 100, 2) if total_blks > 0 else 0.0
+                return cache_hit_pct, blks_hit, blks_read
+        except Exception:
+            pass
+        return 0.0, 0, 0
 
-    commits = rollbacks = tup_returned = tup_fetched = 0
-    try:
-        row = _rows(
-            engine,
-            "SELECT sum(xact_commit) AS cmts, sum(xact_rollback) AS rbks, "
-            "sum(tup_returned) AS tr, sum(tup_fetched) AS tf FROM pg_stat_database"
-        )
-        if row:
-            commits      = int(row[0].get("cmts") or 0)
-            rollbacks    = int(row[0].get("rbks") or 0)
-            tup_returned = int(row[0].get("tr") or 0)
-            tup_fetched  = int(row[0].get("tf") or 0)
-    except Exception:
-        pass
+    def _fetch_commits():
+        try:
+            row = _rows(
+                engine,
+                "SELECT sum(xact_commit) AS cmts, sum(xact_rollback) AS rbks, "
+                "sum(tup_returned) AS tr, sum(tup_fetched) AS tf FROM pg_stat_database"
+            )
+            if row:
+                return (int(row[0].get("cmts") or 0), int(row[0].get("rbks") or 0),
+                        int(row[0].get("tr") or 0), int(row[0].get("tf") or 0))
+        except Exception:
+            pass
+        return 0, 0, 0, 0
 
-    databases = []
-    try:
-        databases = _rows(
-            engine,
-            "SELECT s.datname AS name, s.numbackends, "
-            "pg_database_size(s.datname) AS size_bytes, "
-            "s.xact_commit, s.xact_rollback, s.blks_read, s.blks_hit, "
-            "s.tup_inserted AS n_tup_ins, s.tup_updated AS n_tup_upd, "
-            "s.tup_deleted AS n_tup_del, "
-            "pg_catalog.pg_get_userbyid(d.datdba) AS owner, "
-            "pg_encoding_to_char(d.encoding) AS encoding, "
-            # Unlike MySQL, PostgreSQL records a real owner and collation per
-            # database, so these are facts rather than derivations.
-            "d.datcollate AS collation, d.datctype AS ctype, "
-            "d.datallowconn AS allow_conn, d.datconnlimit AS conn_limit "
-            "FROM pg_stat_database s "
-            "JOIN pg_database d ON s.datid = d.oid "
-            "WHERE s.datname NOT IN ('template0','template1') "
-            "ORDER BY size_bytes DESC"
-        )
-        databases = [dict(d) for d in databases]
-        for d in databases:
-            d["size_bytes"]    = int(d.get("size_bytes") or 0)
-            d["size_mb"]       = round(d["size_bytes"] / (1024 * 1024), 2)
-            d["xact_commit"]   = int(d.get("xact_commit") or 0)
-            d["xact_rollback"] = int(d.get("xact_rollback") or 0)
-            d["blks_read"]     = int(d.get("blks_read") or 0)
-            d["blks_hit"]      = int(d.get("blks_hit") or 0)
-            d["numbackends"]   = int(d.get("numbackends") or 0)
-            # Status from what PostgreSQL actually knows. There is deliberately no
-            # created_on: pg_database records no creation time, so the UI shows it
-            # as unavailable rather than inventing a proxy.
-            if d.get("allow_conn") is False:
-                d["status"] = "inaccessible"
-            elif d["numbackends"] > 0:
-                d["status"] = "active"
-            else:
-                d["status"] = "idle"
-            d["owner_source"] = "pg_database" if d.get("owner") else None
-    except Exception:
+    def _fetch_databases():
         databases = []
+        try:
+            databases = _rows(
+                engine,
+                "SELECT s.datname AS name, s.numbackends, "
+                "pg_database_size(s.datname) AS size_bytes, "
+                "s.xact_commit, s.xact_rollback, s.blks_read, s.blks_hit, "
+                "s.tup_inserted AS n_tup_ins, s.tup_updated AS n_tup_upd, "
+                "s.tup_deleted AS n_tup_del, "
+                "pg_catalog.pg_get_userbyid(d.datdba) AS owner, "
+                "pg_encoding_to_char(d.encoding) AS encoding, "
+                # Unlike MySQL, PostgreSQL records a real owner and collation per
+                # database, so these are facts rather than derivations.
+                "d.datcollate AS collation, d.datctype AS ctype, "
+                "d.datallowconn AS allow_conn, d.datconnlimit AS conn_limit "
+                "FROM pg_stat_database s "
+                "JOIN pg_database d ON s.datid = d.oid "
+                "WHERE s.datname NOT IN ('template0','template1') "
+                "ORDER BY size_bytes DESC"
+            )
+            databases = [dict(d) for d in databases]
+            for d in databases:
+                d["size_bytes"]    = int(d.get("size_bytes") or 0)
+                d["size_mb"]       = round(d["size_bytes"] / (1024 * 1024), 2)
+                d["xact_commit"]   = int(d.get("xact_commit") or 0)
+                d["xact_rollback"] = int(d.get("xact_rollback") or 0)
+                d["blks_read"]     = int(d.get("blks_read") or 0)
+                d["blks_hit"]      = int(d.get("blks_hit") or 0)
+                d["numbackends"]   = int(d.get("numbackends") or 0)
+                # Status from what PostgreSQL actually knows. There is deliberately no
+                # created_on: pg_database records no creation time, so the UI shows it
+                # as unavailable rather than inventing a proxy.
+                if d.get("allow_conn") is False:
+                    d["status"] = "inaccessible"
+                elif d["numbackends"] > 0:
+                    d["status"] = "active"
+                else:
+                    d["status"] = "idle"
+                d["owner_source"] = "pg_database" if d.get("owner") else None
+            return databases, None
+        except Exception as exc:
+            # A real failure here (bad grant on pg_stat_database/pg_database, a driver
+            # quirk over the agent path, etc.) previously looked identical to "this
+            # cluster genuinely has no databases," with no way to tell the two apart.
+            logging.getLogger("postgres_monitoring").warning(
+                "databases list failed for conn=%s: %s", conn_id, exc)
+            return [], str(exc)
 
-    total_databases = len(databases)
+    def _fetch_process_list():
+        try:
+            process_list = _rows(
+                engine,
+                "SELECT pid, usename, datname, state, "
+                "EXTRACT(EPOCH FROM (now() - query_start))::int AS duration_sec, "
+                "left(query, 200) AS query "
+                "FROM pg_stat_activity "
+                "WHERE state != 'idle' "
+                "AND query NOT LIKE '%pg_stat_activity%' "
+                "ORDER BY duration_sec DESC NULLS LAST "
+                "LIMIT 20"
+            )
+            process_list = [dict(p) for p in process_list]
+            for p in process_list:
+                p["duration_sec"] = int(p.get("duration_sec") or 0)
+            return process_list
+        except Exception:
+            return []
 
-    process_list = []
-    try:
-        process_list = _rows(
-            engine,
-            "SELECT pid, usename, datname, state, "
-            "EXTRACT(EPOCH FROM (now() - query_start))::int AS duration_sec, "
-            "left(query, 200) AS query "
-            "FROM pg_stat_activity "
-            "WHERE state != 'idle' "
-            "AND query NOT LIKE '%pg_stat_activity%' "
-            "ORDER BY duration_sec DESC NULLS LAST "
-            "LIMIT 20"
-        )
-        process_list = [dict(p) for p in process_list]
-        for p in process_list:
-            p["duration_sec"] = int(p.get("duration_sec") or 0)
-    except Exception:
-        process_list = []
+    def _fetch_long_running():
+        try:
+            long_running_queries = _rows(
+                engine,
+                "SELECT pid, usename, datname, state, "
+                "EXTRACT(EPOCH FROM (now() - query_start))::int AS duration_sec, "
+                "left(query, 200) AS query "
+                "FROM pg_stat_activity "
+                "WHERE state != 'idle' "
+                "AND query NOT LIKE '%pg_stat_activity%' "
+                "AND EXTRACT(EPOCH FROM (now() - query_start)) > 30 "
+                "ORDER BY duration_sec DESC NULLS LAST "
+                "LIMIT 20"
+            )
+            long_running_queries = [dict(q) for q in long_running_queries]
+            for q in long_running_queries:
+                q["duration_sec"] = int(q.get("duration_sec") or 0)
+            return long_running_queries
+        except Exception:
+            return []
 
-    long_running_queries = []
-    try:
-        long_running_queries = _rows(
-            engine,
-            "SELECT pid, usename, datname, state, "
-            "EXTRACT(EPOCH FROM (now() - query_start))::int AS duration_sec, "
-            "left(query, 200) AS query "
-            "FROM pg_stat_activity "
-            "WHERE state != 'idle' "
-            "AND query NOT LIKE '%pg_stat_activity%' "
-            "AND EXTRACT(EPOCH FROM (now() - query_start)) > 30 "
-            "ORDER BY duration_sec DESC NULLS LAST "
-            "LIMIT 20"
-        )
-        long_running_queries = [dict(q) for q in long_running_queries]
-        for q in long_running_queries:
-            q["duration_sec"] = int(q.get("duration_sec") or 0)
-    except Exception:
-        long_running_queries = []
-
-    replication = []
-    replication_state = "STANDALONE"
-    try:
-        replication = _rows(
-            engine,
-            "SELECT pid::text AS pid, usename, application_name, "
-            "COALESCE(client_addr::text, '') AS client_addr, "
-            "COALESCE(client_hostname, '') AS client_hostname, "
-            "COALESCE(state, 'streaming') AS state, "
-            "COALESCE(sent_lsn::text, '') AS sent_lsn, "
-            "COALESCE(write_lsn::text, '') AS write_lsn, "
-            "COALESCE(flush_lsn::text, '') AS flush_lsn, "
-            "COALESCE(replay_lsn::text, '') AS replay_lsn, "
-            "COALESCE(replay_lag::text, '0') AS replay_lag, "
-            "COALESCE(write_lag::text, '0') AS write_lag, "
-            "COALESCE(flush_lag::text, '0') AS flush_lag, "
-            "sync_state "
-            "FROM pg_stat_replication LIMIT 10"
-        )
-        replication = [dict(r) for r in replication]
-        if replication:
-            replication_state = "PRIMARY"
-    except Exception:
+    def _fetch_replication():
+        # replication/replication_state/is_recovery are correlated (each can override
+        # replication_state) — kept together in one closure rather than split, so the
+        # REPLICA-overrides-PRIMARY precedence stays exactly as it was sequentially.
         replication = []
+        replication_state = "STANDALONE"
+        is_recovery = False
+        try:
+            replication = _rows(
+                engine,
+                "SELECT pid::text AS pid, usename, application_name, "
+                "COALESCE(client_addr::text, '') AS client_addr, "
+                "COALESCE(client_hostname, '') AS client_hostname, "
+                "COALESCE(state, 'streaming') AS state, "
+                "COALESCE(sent_lsn::text, '') AS sent_lsn, "
+                "COALESCE(write_lsn::text, '') AS write_lsn, "
+                "COALESCE(flush_lsn::text, '') AS flush_lsn, "
+                "COALESCE(replay_lsn::text, '') AS replay_lsn, "
+                "COALESCE(replay_lag::text, '0') AS replay_lag, "
+                "COALESCE(write_lag::text, '0') AS write_lag, "
+                "COALESCE(flush_lag::text, '0') AS flush_lag, "
+                "sync_state "
+                "FROM pg_stat_replication LIMIT 10"
+            )
+            replication = [dict(r) for r in replication]
+            if replication:
+                replication_state = "PRIMARY"
+        except Exception:
+            replication = []
+        try:
+            is_recovery = bool(_val(engine, "SELECT pg_is_in_recovery()"))
+            if is_recovery:
+                replication_state = "REPLICA"
+        except Exception:
+            pass
+        return replication, replication_state, is_recovery
 
-    is_recovery = False
-    try:
-        is_recovery = bool(_val(engine, "SELECT pg_is_in_recovery()"))
-        if is_recovery:
-            replication_state = "REPLICA"
-    except Exception:
-        pass
+    def _fetch_table_stats():
+        try:
+            table_stats = _rows(
+                engine,
+                "SELECT schemaname, relname, n_live_tup, n_dead_tup, seq_scan, idx_scan, "
+                "last_vacuum, last_autovacuum, last_analyze, last_autoanalyze "
+                "FROM pg_stat_user_tables "
+                "ORDER BY n_live_tup DESC LIMIT 100"
+            )
+            table_stats = [dict(t) for t in table_stats]
+            for t in table_stats:
+                t["n_live_tup"]      = int(t.get("n_live_tup") or 0)
+                t["n_dead_tup"]      = int(t.get("n_dead_tup") or 0)
+                t["seq_scan"]        = int(t.get("seq_scan") or 0)
+                t["idx_scan"]        = int(t.get("idx_scan") or 0)
+                t["last_vacuum"]     = str(t.get("last_vacuum") or "")
+                t["last_autovacuum"] = str(t.get("last_autovacuum") or "")
+                t["last_analyze"]    = str(t.get("last_analyze") or "")
+                t["last_autoanalyze"]= str(t.get("last_autoanalyze") or "")
+            return table_stats
+        except Exception:
+            return []
 
-    table_stats = []
-    total_tables = 0
-    try:
-        table_stats = _rows(
-            engine,
-            "SELECT schemaname, relname, n_live_tup, n_dead_tup, seq_scan, idx_scan, "
-            "last_vacuum, last_autovacuum, last_analyze, last_autoanalyze "
-            "FROM pg_stat_user_tables "
-            "ORDER BY n_live_tup DESC LIMIT 100"
-        )
-        table_stats = [dict(t) for t in table_stats]
-        for t in table_stats:
-            t["n_live_tup"]      = int(t.get("n_live_tup") or 0)
-            t["n_dead_tup"]      = int(t.get("n_dead_tup") or 0)
-            t["seq_scan"]        = int(t.get("seq_scan") or 0)
-            t["idx_scan"]        = int(t.get("idx_scan") or 0)
-            t["last_vacuum"]     = str(t.get("last_vacuum") or "")
-            t["last_autovacuum"] = str(t.get("last_autovacuum") or "")
-            t["last_analyze"]    = str(t.get("last_analyze") or "")
-            t["last_autoanalyze"]= str(t.get("last_autoanalyze") or "")
-        total_tables = len(table_stats)
-    except Exception:
-        table_stats = []
+    def _fetch_cluster_total_tables():
+        # Cluster-wide table count — the connection DB (often "postgres") may hold no
+        # user tables, so counting only the connected DB shows 0. Sum every user DB.
+        # Postgres has no cross-database queries, so this means connecting to every
+        # database individually — parallelized the same way mssql_monitoring_service.py's
+        # per-database table fetch already is, instead of one connection at a time.
+        try:
+            with engine.connect() as _c:
+                _dbs = [r[0] for r in _c.execute(text(
+                    "SELECT datname FROM pg_database WHERE datistemplate = false"
+                )).fetchall()]
+        except Exception:
+            return None
+        if not _dbs:
+            return None
 
-    # Cluster-wide table count — the connection DB (often "postgres") may hold no
-    # user tables, so counting only the connected DB shows 0. Sum every user DB.
-    try:
-        with engine.connect() as _c:
-            _dbs = [r[0] for r in _c.execute(text(
-                "SELECT datname FROM pg_database WHERE datistemplate = false"
-            )).fetchall()]
-        _cluster_total = 0
-        for _dn in _dbs:
+        def _count_one_db(dbname):
             _e2 = None
             try:
-                _e2 = _pg_engine_db(conn_rec, _dn)
-                _cluster_total += int(_val(_e2, "SELECT count(*) FROM pg_stat_user_tables") or 0)
+                _e2 = _pg_engine_db(conn_rec, dbname)
+                return int(_val(_e2, "SELECT count(*) FROM pg_stat_user_tables") or 0)
             except Exception:
-                pass
+                return 0
             finally:
                 if _e2 is not None:
                     _e2.dispose()
-        if _cluster_total > total_tables:
-            total_tables = _cluster_total
-    except Exception:
-        pass
 
-    server_vars = {}
-    memory = {
-        "shared_buffers": "unknown",
-        "effective_cache_size": "unknown",
-        "work_mem": "unknown",
-        "cache_hit_pct": cache_hit_pct,
-    }
-    try:
-        for var in ("shared_buffers", "effective_cache_size", "work_mem",
-                    "max_wal_size", "wal_level", "log_min_duration_statement",
-                    "maintenance_work_mem", "checkpoint_completion_target", "data_directory"):
-            try:
-                val = _val(engine, f"SHOW {var}")
-                server_vars[var] = val
+        with ThreadPoolExecutor(max_workers=min(8, len(_dbs))) as db_pool:
+            return sum(db_pool.map(_count_one_db, _dbs))
+
+    def _fetch_server_vars():
+        var_names = ("shared_buffers", "effective_cache_size", "work_mem",
+                     "max_wal_size", "wal_level", "log_min_duration_statement",
+                     "maintenance_work_mem", "checkpoint_completion_target", "data_directory")
+        server_vars = {v: "unknown" for v in var_names}
+        memory = {"shared_buffers": "unknown", "effective_cache_size": "unknown", "work_mem": "unknown"}
+        try:
+            # current_setting(name) is exactly what SHOW name computes internally —
+            # one round trip for all 9 instead of 9, same formatted output.
+            select_list = ", ".join(f"current_setting('{v}') AS \"{v}\"" for v in var_names)
+            rows = _rows(engine, f"SELECT {select_list}")
+            row = rows[0] if rows else {}
+            for var in var_names:
+                val = row.get(var)
+                server_vars[var] = val if val is not None else "unknown"
                 if var in ("shared_buffers", "effective_cache_size", "work_mem"):
-                    memory[var] = val
-            except Exception:
-                server_vars[var] = "unknown"
-    except Exception:
-        pass
+                    memory[var] = server_vars[var]
+        except Exception:
+            pass
+        return server_vars, memory
 
-    bgwriter = {}
-    checkpoints = {}
-    try:
-        rows = _rows(engine, "SELECT * FROM pg_stat_bgwriter")
-        if rows:
-            bg = rows[0]
-            bgwriter = {
-                "buffers_clean":      int(bg.get("buffers_clean") or 0),
-                "maxwritten_clean":   int(bg.get("maxwritten_clean") or 0),
-                "buffers_backend":    int(bg.get("buffers_backend") or 0),
-                "buffers_alloc":      int(bg.get("buffers_alloc") or 0),
-                "stats_reset":        str(bg.get("stats_reset") or ""),
-                "buffers_checkpoint": int(bg.get("buffers_checkpoint") or 0),
-                "checkpoints_timed":  int(bg.get("checkpoints_timed") or 0),
-                "checkpoints_req":    int(bg.get("checkpoints_req") or 0),
-            }
-    except Exception:
-        pass
+    def _fetch_bgwriter_checkpoints():
+        # bgwriter/checkpoints are correlated (checkpoints' success path writes back
+        # into bgwriter, its failure path reads bgwriter) — kept in one closure.
+        bgwriter = {}
+        checkpoints = {}
+        try:
+            rows = _rows(engine, "SELECT * FROM pg_stat_bgwriter")
+            if rows:
+                bg = rows[0]
+                bgwriter = {
+                    "buffers_clean":      int(bg.get("buffers_clean") or 0),
+                    "maxwritten_clean":   int(bg.get("maxwritten_clean") or 0),
+                    "buffers_backend":    int(bg.get("buffers_backend") or 0),
+                    "buffers_alloc":      int(bg.get("buffers_alloc") or 0),
+                    "stats_reset":        str(bg.get("stats_reset") or ""),
+                    "buffers_checkpoint": int(bg.get("buffers_checkpoint") or 0),
+                    "checkpoints_timed":  int(bg.get("checkpoints_timed") or 0),
+                    "checkpoints_req":    int(bg.get("checkpoints_req") or 0),
+                }
+        except Exception:
+            pass
 
-    try:
-        cp_rows = _rows(engine, "SELECT * FROM pg_stat_checkpointer")
-        if cp_rows:
-            cp = cp_rows[0]
-            checkpoints = {
-                "checkpoints_timed":     int(cp.get("num_timed") or 0),
-                "checkpoints_req":       int(cp.get("num_requested") or 0),
-                "checkpoint_write_time": float(cp.get("write_time") or 0),
-                "checkpoint_sync_time":  float(cp.get("sync_time") or 0),
-                "buffers_written":       int(cp.get("buffers_written") or 0),
-                "stats_reset":           str(cp.get("stats_reset") or ""),
-            }
-            bgwriter["buffers_checkpoint"] = checkpoints["buffers_written"]
-    except Exception:
-        if bgwriter:
-            checkpoints = {
-                "checkpoints_timed":     bgwriter.get("checkpoints_timed", 0),
-                "checkpoints_req":       bgwriter.get("checkpoints_req", 0),
-                "checkpoint_write_time": 0.0,
-                "checkpoint_sync_time":  0.0,
-                "buffers_written":       bgwriter.get("buffers_checkpoint", 0),
-            }
+        try:
+            cp_rows = _rows(engine, "SELECT * FROM pg_stat_checkpointer")
+            if cp_rows:
+                cp = cp_rows[0]
+                checkpoints = {
+                    "checkpoints_timed":     int(cp.get("num_timed") or 0),
+                    "checkpoints_req":       int(cp.get("num_requested") or 0),
+                    "checkpoint_write_time": float(cp.get("write_time") or 0),
+                    "checkpoint_sync_time":  float(cp.get("sync_time") or 0),
+                    "buffers_written":       int(cp.get("buffers_written") or 0),
+                    "stats_reset":           str(cp.get("stats_reset") or ""),
+                }
+                bgwriter["buffers_checkpoint"] = checkpoints["buffers_written"]
+        except Exception:
+            if bgwriter:
+                checkpoints = {
+                    "checkpoints_timed":     bgwriter.get("checkpoints_timed", 0),
+                    "checkpoints_req":       bgwriter.get("checkpoints_req", 0),
+                    "checkpoint_write_time": 0.0,
+                    "checkpoint_sync_time":  0.0,
+                    "buffers_written":       bgwriter.get("buffers_checkpoint", 0),
+                }
+        return bgwriter, checkpoints
 
-    pg_stat_statements = []
-    _pgss_eng, _ = _pgss_engine(conn_rec)
-    try:
-        pg_stat_statements = _rows(
-            _pgss_eng or engine,
-            "SELECT userid::regrole AS usename, dbid::text AS dbname, query, calls, "
-            "total_exec_time, mean_exec_time, max_exec_time, min_exec_time, "
-            "stddev_exec_time, rows, shared_blks_hit, shared_blks_read "
-            "FROM pg_stat_statements "
-            "WHERE query NOT LIKE '%pg_stat_statements%' "
-            f"AND {pg_exclude_internal_tables_sql('query')} "
-            "ORDER BY mean_exec_time DESC LIMIT 50"
-        )
-        pg_stat_statements = [dict(s) for s in pg_stat_statements]
-        for s in pg_stat_statements:
-            s["usename"]         = str(s.get("usename") or "")
-            s["calls"]           = int(s.get("calls") or 0)
-            s["rows"]            = int(s.get("rows") or 0)
-            s["total_exec_time"] = float(s.get("total_exec_time") or 0)
-            s["mean_exec_time"]  = float(s.get("mean_exec_time") or 0)
-            s["max_exec_time"]   = float(s.get("max_exec_time") or 0)
-            s["min_exec_time"]   = float(s.get("min_exec_time") or 0)
-            s["stddev_exec_time"]= float(s.get("stddev_exec_time") or 0)
-            s["shared_blks_hit"] = int(s.get("shared_blks_hit") or 0)
-            s["shared_blks_read"]= int(s.get("shared_blks_read") or 0)
-    except Exception:
-        pg_stat_statements = []
+    def _fetch_pg_stat_statements():
+        _pgss_eng, _ = _pgss_engine(conn_rec)
+        try:
+            pg_stat_statements = _rows(
+                _pgss_eng or engine,
+                "SELECT userid::regrole AS usename, dbid::text AS dbname, query, calls, "
+                "total_exec_time, mean_exec_time, max_exec_time, min_exec_time, "
+                "stddev_exec_time, rows, shared_blks_hit, shared_blks_read "
+                "FROM pg_stat_statements "
+                "WHERE query NOT LIKE '%pg_stat_statements%' "
+                f"AND {pg_exclude_internal_tables_sql('query')} "
+                "ORDER BY mean_exec_time DESC LIMIT 50"
+            )
+            pg_stat_statements = [dict(s) for s in pg_stat_statements]
+            for s in pg_stat_statements:
+                s["usename"]         = str(s.get("usename") or "")
+                s["calls"]           = int(s.get("calls") or 0)
+                s["rows"]            = int(s.get("rows") or 0)
+                s["total_exec_time"] = float(s.get("total_exec_time") or 0)
+                s["mean_exec_time"]  = float(s.get("mean_exec_time") or 0)
+                s["max_exec_time"]   = float(s.get("max_exec_time") or 0)
+                s["min_exec_time"]   = float(s.get("min_exec_time") or 0)
+                s["stddev_exec_time"]= float(s.get("stddev_exec_time") or 0)
+                s["shared_blks_hit"] = int(s.get("shared_blks_hit") or 0)
+                s["shared_blks_read"]= int(s.get("shared_blks_read") or 0)
+            return pg_stat_statements
+        except Exception:
+            return []
 
-    pg_locks = []
-    try:
-        pg_locks = _rows(
-            engine,
-            "SELECT l.pid, l.locktype, c.relname AS relation_name, l.relation, "
-            "l.mode, l.granted, a.datname AS database_name, "
-            "EXTRACT(EPOCH FROM (now() - a.query_start))::int AS duration_sec, "
-            "CASE WHEN a.query_start IS NOT NULL "
-            "     THEN EXTRACT(EPOCH FROM (now() - a.query_start))::text || 's' "
-            "     ELSE NULL END AS duration "
-            "FROM pg_locks l "
-            "LEFT JOIN pg_class c ON l.relation = c.oid "
-            "LEFT JOIN pg_stat_activity a ON l.pid = a.pid "
-            "WHERE NOT l.granted OR l.locktype = 'relation' "
-            "LIMIT 50"
-        )
-        pg_locks = [dict(lk) for lk in pg_locks]
-        for lk in pg_locks:
-            lk["granted"]      = bool(lk.get("granted"))
-            lk["duration_sec"] = int(lk.get("duration_sec") or 0)
-    except Exception:
-        pg_locks = []
+    def _fetch_pg_locks():
+        try:
+            pg_locks = _rows(
+                engine,
+                "SELECT l.pid, l.locktype, c.relname AS relation_name, l.relation, "
+                "l.mode, l.granted, a.datname AS database_name, "
+                "EXTRACT(EPOCH FROM (now() - a.query_start))::int AS duration_sec, "
+                "CASE WHEN a.query_start IS NOT NULL "
+                "     THEN EXTRACT(EPOCH FROM (now() - a.query_start))::text || 's' "
+                "     ELSE NULL END AS duration "
+                "FROM pg_locks l "
+                "LEFT JOIN pg_class c ON l.relation = c.oid "
+                "LEFT JOIN pg_stat_activity a ON l.pid = a.pid "
+                "WHERE NOT l.granted OR l.locktype = 'relation' "
+                "LIMIT 50"
+            )
+            pg_locks = [dict(lk) for lk in pg_locks]
+            for lk in pg_locks:
+                lk["granted"]      = bool(lk.get("granted"))
+                lk["duration_sec"] = int(lk.get("duration_sec") or 0)
+            return pg_locks
+        except Exception:
+            return []
 
-    blocking_queries = []
-    try:
-        blocking_queries = _rows(
-            engine,
-            "SELECT blocked.pid AS blocked_pid, blocker.pid AS blocking_pid, "
-            "blocked.query AS query, blocker.query AS blocking_query, "
-            "bl.mode AS lock_mode "
-            "FROM pg_stat_activity blocked "
-            "JOIN pg_locks bl ON bl.pid = blocked.pid AND NOT bl.granted "
-            "JOIN pg_locks grant_lock ON grant_lock.locktype = bl.locktype "
-            "AND grant_lock.relation = bl.relation AND grant_lock.granted "
-            "JOIN pg_stat_activity blocker ON blocker.pid = grant_lock.pid "
-            "LIMIT 20"
-        )
-        blocking_queries = [dict(bq) for bq in blocking_queries]
-    except Exception:
-        blocking_queries = []
+    def _fetch_blocking_queries():
+        try:
+            blocking_queries = _rows(
+                engine,
+                "SELECT blocked.pid AS blocked_pid, blocker.pid AS blocking_pid, "
+                "blocked.query AS query, blocker.query AS blocking_query, "
+                "bl.mode AS lock_mode "
+                "FROM pg_stat_activity blocked "
+                "JOIN pg_locks bl ON bl.pid = blocked.pid AND NOT bl.granted "
+                "JOIN pg_locks grant_lock ON grant_lock.locktype = bl.locktype "
+                "AND grant_lock.relation = bl.relation AND grant_lock.granted "
+                "JOIN pg_stat_activity blocker ON blocker.pid = grant_lock.pid "
+                "LIMIT 20"
+            )
+            return [dict(bq) for bq in blocking_queries]
+        except Exception:
+            return []
 
-    replication_slots = []
-    try:
-        replication_slots = _rows(
-            engine,
-            "SELECT slot_name, plugin, slot_type, database, "
-            "CAST(active AS TEXT) AS active, xmin, restart_lsn "
-            "FROM pg_replication_slots"
-        )
-        replication_slots = [dict(s) for s in replication_slots]
-        for s in replication_slots:
-            s["active"] = str(s.get("active", "")).lower() == "true"
-    except Exception:
-        replication_slots = []
+    def _fetch_replication_slots():
+        try:
+            replication_slots = _rows(
+                engine,
+                "SELECT slot_name, plugin, slot_type, database, "
+                "CAST(active AS TEXT) AS active, xmin, restart_lsn "
+                "FROM pg_replication_slots"
+            )
+            replication_slots = [dict(s) for s in replication_slots]
+            for s in replication_slots:
+                s["active"] = str(s.get("active", "")).lower() == "true"
+            return replication_slots
+        except Exception:
+            return []
 
-    tablespaces = []
-    try:
-        tablespaces = _rows(
-            engine,
-            "SELECT spcname AS name, pg_catalog.pg_get_userbyid(spcowner) AS owner, "
-            "pg_tablespace_size(oid) AS size_bytes "
-            "FROM pg_tablespace"
-        )
-        tablespaces = [dict(t) for t in tablespaces]
-        for t in tablespaces:
-            t["size_bytes"] = int(t.get("size_bytes") or 0)
-            t["size_mb"]    = round(t["size_bytes"] / (1024 * 1024), 2)
-    except Exception:
-        tablespaces = []
+    def _fetch_tablespaces():
+        try:
+            tablespaces = _rows(
+                engine,
+                "SELECT spcname AS name, pg_catalog.pg_get_userbyid(spcowner) AS owner, "
+                "pg_tablespace_size(oid) AS size_bytes "
+                "FROM pg_tablespace"
+            )
+            tablespaces = [dict(t) for t in tablespaces]
+            for t in tablespaces:
+                t["size_bytes"] = int(t.get("size_bytes") or 0)
+                t["size_mb"]    = round(t["size_bytes"] / (1024 * 1024), 2)
+            return tablespaces
+        except Exception:
+            return []
 
-    users_activity = []
-    try:
-        rows = _rows(
-            engine,
-            "SELECT usename, datname, "
-            "count(*) AS total, "
-            "count(*) FILTER (WHERE state='active') AS active, "
-            "count(*) FILTER (WHERE state='idle') AS idle, "
-            "count(*) FILTER (WHERE state LIKE 'idle in transaction%') AS idle_in_transaction, "
-            "count(*) FILTER (WHERE wait_event_type='Lock') AS waiting, "
-            "COALESCE(max(EXTRACT(EPOCH FROM (now()-query_start))::int), 0) AS max_duration "
-            "FROM pg_stat_activity "
-            "WHERE usename IS NOT NULL "
-            "GROUP BY usename, datname ORDER BY total DESC"
-        )
-        users_activity = [dict(u) for u in rows]
-        for u in users_activity:
-            u["total"]               = int(u.get("total") or 0)
-            u["active"]              = int(u.get("active") or 0)
-            u["idle"]                = int(u.get("idle") or 0)
-            u["idle_in_transaction"] = int(u.get("idle_in_transaction") or 0)
-            u["waiting"]             = int(u.get("waiting") or 0)
-            u["max_duration"]        = int(u.get("max_duration") or 0)
-    except Exception:
-        users_activity = []
+    def _fetch_users_activity():
+        try:
+            rows = _rows(
+                engine,
+                "SELECT usename, datname, "
+                "count(*) AS total, "
+                "count(*) FILTER (WHERE state='active') AS active, "
+                "count(*) FILTER (WHERE state='idle') AS idle, "
+                "count(*) FILTER (WHERE state LIKE 'idle in transaction%') AS idle_in_transaction, "
+                "count(*) FILTER (WHERE wait_event_type='Lock') AS waiting, "
+                "COALESCE(max(EXTRACT(EPOCH FROM (now()-query_start))::int), 0) AS max_duration "
+                "FROM pg_stat_activity "
+                "WHERE usename IS NOT NULL "
+                "GROUP BY usename, datname ORDER BY total DESC"
+            )
+            users_activity = [dict(u) for u in rows]
+            for u in users_activity:
+                u["total"]               = int(u.get("total") or 0)
+                u["active"]              = int(u.get("active") or 0)
+                u["idle"]                = int(u.get("idle") or 0)
+                u["idle_in_transaction"] = int(u.get("idle_in_transaction") or 0)
+                u["waiting"]             = int(u.get("waiting") or 0)
+                u["max_duration"]        = int(u.get("max_duration") or 0)
+            return users_activity
+        except Exception:
+            return []
+
+    def _fetch_scan_totals():
+        total_seq_scan = total_idx_scan = n_tup_ins = n_tup_upd = n_tup_del = 0
+        try:
+            rows = _rows(engine,
+                "SELECT sum(seq_scan) AS total_seq_scan, sum(idx_scan) AS total_idx_scan "
+                "FROM pg_stat_user_tables")
+            if rows:
+                total_seq_scan = int(rows[0].get("total_seq_scan") or 0)
+                total_idx_scan = int(rows[0].get("total_idx_scan") or 0)
+            rows2 = _rows(engine,
+                "SELECT sum(n_tup_ins) AS ins, sum(n_tup_upd) AS upd, sum(n_tup_del) AS del "
+                "FROM pg_stat_user_tables")
+            if rows2:
+                n_tup_ins = int(rows2[0].get("ins") or 0)
+                n_tup_upd = int(rows2[0].get("upd") or 0)
+                n_tup_del = int(rows2[0].get("del") or 0)
+        except Exception:
+            pass
+        return total_seq_scan, total_idx_scan, n_tup_ins, n_tup_upd, n_tup_del
+
+    def _fetch_temp_files():
+        try:
+            rows = _rows(engine, "SELECT sum(temp_files) AS tf, sum(temp_bytes) AS tb FROM pg_stat_database")
+            if rows:
+                return int(rows[0].get("tf") or 0), int(rows[0].get("tb") or 0)
+        except Exception:
+            pass
+        return 0, 0
+
+    def _fetch_postmaster_start():
+        try:
+            return str(_val(engine, "SELECT pg_postmaster_start_time()"))
+        except Exception:
+            return "unknown"
+
+    def _fetch_autovacuum():
+        try:
+            val = _val(engine, "SHOW autovacuum")
+            return str(val).lower() == "on"
+        except Exception:
+            return True
+
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        f_uptime = pool.submit(_fetch_uptime)
+        f_connections = pool.submit(_fetch_connections)
+        f_max_conn = pool.submit(_fetch_max_connections)
+        f_cache_hit = pool.submit(_fetch_cache_hit)
+        f_commits = pool.submit(_fetch_commits)
+        f_databases = pool.submit(_fetch_databases)
+        f_process_list = pool.submit(_fetch_process_list)
+        f_long_running = pool.submit(_fetch_long_running)
+        f_replication = pool.submit(_fetch_replication)
+        f_table_stats = pool.submit(_fetch_table_stats)
+        f_cluster_total = pool.submit(_fetch_cluster_total_tables)
+        f_server_vars = pool.submit(_fetch_server_vars)
+        f_bgwriter = pool.submit(_fetch_bgwriter_checkpoints)
+        f_pgss = pool.submit(_fetch_pg_stat_statements)
+        f_pg_locks = pool.submit(_fetch_pg_locks)
+        f_blocking = pool.submit(_fetch_blocking_queries)
+        f_repl_slots = pool.submit(_fetch_replication_slots)
+        f_tablespaces = pool.submit(_fetch_tablespaces)
+        f_users_activity = pool.submit(_fetch_users_activity)
+        f_scan_totals = pool.submit(_fetch_scan_totals)
+        f_temp_files = pool.submit(_fetch_temp_files)
+        f_postmaster_start = pool.submit(_fetch_postmaster_start)
+        f_autovacuum = pool.submit(_fetch_autovacuum)
+
+        uptime_str = f_uptime.result()
+        connections_by_state, total_connections = f_connections.result()
+        max_connections = f_max_conn.result()
+        cache_hit_pct, blks_hit, blks_read = f_cache_hit.result()
+        commits, rollbacks, tup_returned, tup_fetched = f_commits.result()
+        databases, databases_error = f_databases.result()
+        process_list = f_process_list.result()
+        long_running_queries = f_long_running.result()
+        replication, replication_state, is_recovery = f_replication.result()
+        table_stats = f_table_stats.result()
+        cluster_total = f_cluster_total.result()
+        server_vars, memory = f_server_vars.result()
+        bgwriter, checkpoints = f_bgwriter.result()
+        pg_stat_statements = f_pgss.result()
+        pg_locks = f_pg_locks.result()
+        blocking_queries = f_blocking.result()
+        replication_slots = f_repl_slots.result()
+        tablespaces = f_tablespaces.result()
+        users_activity = f_users_activity.result()
+        total_seq_scan, total_idx_scan, n_tup_ins, n_tup_upd, n_tup_del = f_scan_totals.result()
+        temp_files, temp_bytes = f_temp_files.result()
+        pg_postmaster_start_time = f_postmaster_start.result()
+        autovacuum_enabled = f_autovacuum.result()
+
+    memory["cache_hit_pct"] = cache_hit_pct
+    connection_pct = round((total_connections / max_connections) * 100, 2) if max_connections > 0 else 0.0
+    total_databases = len(databases)
+    total_tables = len(table_stats)
+    if cluster_total is not None and cluster_total > total_tables:
+        total_tables = cluster_total
 
     total_size_bytes = sum(d.get("size_bytes", 0) for d in databases)
     total_size_mb    = round(total_size_bytes / (1024 * 1024), 2)
     total_size       = f"{round(total_size_mb / 1024, 2)} GB" if total_size_mb > 1024 else f"{total_size_mb} MB"
-
-    total_seq_scan = total_idx_scan = n_tup_ins = n_tup_upd = n_tup_del = 0
-    try:
-        rows = _rows(engine,
-            "SELECT sum(seq_scan) AS total_seq_scan, sum(idx_scan) AS total_idx_scan "
-            "FROM pg_stat_user_tables")
-        if rows:
-            total_seq_scan = int(rows[0].get("total_seq_scan") or 0)
-            total_idx_scan = int(rows[0].get("total_idx_scan") or 0)
-        rows2 = _rows(engine,
-            "SELECT sum(n_tup_ins) AS ins, sum(n_tup_upd) AS upd, sum(n_tup_del) AS del "
-            "FROM pg_stat_user_tables")
-        if rows2:
-            n_tup_ins = int(rows2[0].get("ins") or 0)
-            n_tup_upd = int(rows2[0].get("upd") or 0)
-            n_tup_del = int(rows2[0].get("del") or 0)
-    except Exception:
-        pass
-
-    temp_files = temp_bytes = 0
-    try:
-        rows = _rows(engine, "SELECT sum(temp_files) AS tf, sum(temp_bytes) AS tb FROM pg_stat_database")
-        if rows:
-            temp_files = int(rows[0].get("tf") or 0)
-            temp_bytes = int(rows[0].get("tb") or 0)
-    except Exception:
-        pass
-
-    pg_postmaster_start_time = "unknown"
-    try:
-        pg_postmaster_start_time = str(_val(engine, "SELECT pg_postmaster_start_time()"))
-    except Exception:
-        pass
-
-    autovacuum_enabled = True
-    try:
-        val = _val(engine, "SHOW autovacuum")
-        autovacuum_enabled = str(val).lower() == "on"
-    except Exception:
-        pass
 
     active_connections = connections_by_state.get("active", 0)
 
@@ -964,6 +1055,7 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
         "connection": connection_meta,
         "health_summary": health_summary,
         "databases":  databases,
+        "databases_error": databases_error,
         "query_stats": {
             "commits": commits, "xact_commit": commits,
             "rollbacks": rollbacks, "xact_rollback": rollbacks,

@@ -43,6 +43,15 @@ def mssql_run_command(connection_id: int, payload: dict, db: Session = Depends(g
     return mssql_self_heal_service.run_command(connection_id, payload, db)
 
 
+@router.post("/{connection_id}/sspi-diagnostics")
+def mssql_sspi_diagnostics(connection_id: int, db: Session = Depends(get_db)):
+    """Dedicated deep diagnostic workflow for error 17806 (SSPI/Kerberos handshake
+    failure) — auth scheme, SPN, DNS, port reachability, time sync, domain context,
+    plus a deterministic root-cause summary. Read-only; user-triggered, not part of
+    the routine error-deep-analysis path."""
+    return mssql_self_heal_service.run_sspi_diagnostics(connection_id, db)
+
+
 @router.get("/{connection_id}/error-logs")
 def get_mssql_error_logs(connection_id: int, limit: int = 50, db: Session = Depends(get_db)):
     return mssql_error_service.get_error_logs(connection_id, limit, db)

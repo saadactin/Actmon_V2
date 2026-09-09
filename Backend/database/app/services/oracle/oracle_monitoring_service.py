@@ -2401,7 +2401,12 @@ def oracle_locks(conn_id: int, db: Session):
 #  22. PARAMETERS
 # ──────────────────────────────────────────────────────────────
 
-def oracle_parameters(conn_id: int, db: Session):
+def oracle_parameters(conn_id: int, db: Session, refresh: bool = False):
+    from app.utils import static_metadata_cache
+    if not refresh:
+        cached = static_metadata_cache.get(conn_id, "oracle_parameters")
+        if cached is not None:
+            return cached
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
     KEY_PARAMS = [
@@ -2462,7 +2467,9 @@ def oracle_parameters(conn_id: int, db: Session):
     except Exception:
         pass
 
-    return {"status": "success", "key_params": params, "all_params": all_params, "total": len(all_params)}
+    result = {"status": "success", "key_params": params, "all_params": all_params, "total": len(all_params)}
+    static_metadata_cache.store(conn_id, "oracle_parameters", result)
+    return result
 
 
 # ──────────────────────────────────────────────────────────────

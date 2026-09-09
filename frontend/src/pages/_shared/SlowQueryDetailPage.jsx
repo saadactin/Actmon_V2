@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import cn from '@/lib/cn';
 import client from '@/api/client';
 import PageHeader from '@/components/layout/PageHeader';
 import Badge from '@/components/ui/Badge';
@@ -14,7 +15,8 @@ import { Panel, SqlBlock, StatCell } from '@/pages/_shared/enginePanels';
 import { fmtNumber, fmtDateTime } from '@/config/dbCatalog';
 import { engineFor, fmtMs, SEVERITY_TONES, SEVERITY_LABELS } from '@/config/slowQueryCatalog';
 import { SeverityBadge, AiAnalysisResult } from './SlowQueriesPage';
-import PgHintPlanPanel from '@/pages/postgresql/PgHintPlanPanel';
+import PlanDiagram from './PlanDiagram';
+import { pgTree, mysqlTree, oracleTree, mongoTree } from './planTree';
 
 /**
  * One slow query's full analysis — the shared detail page every engine opens
@@ -49,6 +51,8 @@ function Step({ n, title, subtitle, children }) {
  * renders whichever one is genuinely there rather than forcing a common table
  * onto data that doesn't fit it. */
 function PlanResult({ data }) {
+  const [view, setView] = useState('table'); // 'table' | 'diagram' — default matches today's behaviour exactly
+
   if (data.plan_error || data.error) {
     return <Notice tone="warning" title="The plan could not be read.">{data.plan_error || data.error}</Notice>;
   }
@@ -56,6 +60,7 @@ function PlanResult({ data }) {
   // Postgres / MySQL shape: EXPLAIN (ANALYZE) node tree
   if (Array.isArray(data.nodes)) {
     if (!data.nodes.length) return <p className="text-[12px] text-subtle">No plan nodes returned.</p>;
+    const tree = data.raw ? (pgTree(data.raw) || mysqlTree(data.raw)) : null;
     return (
       <div className="space-y-gutter-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -64,36 +69,41 @@ function PlanResult({ data }) {
           {!data.analyzed && (
             <Badge tone="warning" size="xs">Estimated plan — params replaced with NULL</Badge>
           )}
+          {tree && <PlanViewToggle view={view} onChange={setView} className="ml-auto" />}
         </div>
-        <Table
-          columns={[
-            { key: 'node', label: 'Node type' },
-            { key: 'rel', label: 'Relation' },
-            { key: 'r', label: data.analyzed ? 'Actual rows' : 'Est. rows', align: 'right' },
-            { key: 't', label: data.analyzed ? 'Actual time' : 'Est. cost', align: 'right' },
-          ]}
-          rows={data.nodes.map((n, i) => ({
-            key: i,
-            cells: {
-              node: (
-                <span className="font-mono text-[11px]">
-                  {'  '.repeat(n.depth || 0)}{n.node_type}
-                  {String(n.node_type || '').includes('Seq Scan') && (
-                    <Badge tone="danger" size="xs" className="ml-1.5">seq scan</Badge>
-                  )}
-                </span>
-              ),
-              rel: <span className="font-mono text-[11px] text-muted">{n.relation || n.alias || '—'}</span>,
-              r: <span className="font-mono">{fmtNumber(data.analyzed ? n.actual_rows : n.plan_rows)}</span>,
-              t: <span className="font-mono">
-                {data.analyzed
-                  ? (n.actual_total_time != null ? fmtMs(n.actual_total_time) : '—')
-                  : (n.total_cost != null ? n.total_cost.toFixed(2) : '—')}
-              </span>,
-            },
-          }))}
-          empty={<EmptyState icon="terminal" title="No plan nodes" />}
-        />
+        {view === 'diagram' && tree ? (
+          <PlanDiagram tree={tree} />
+        ) : (
+          <Table
+            columns={[
+              { key: 'node', label: 'Node type' },
+              { key: 'rel', label: 'Relation' },
+              { key: 'r', label: data.analyzed ? 'Actual rows' : 'Est. rows', align: 'right' },
+              { key: 't', label: data.analyzed ? 'Actual time' : 'Est. cost', align: 'right' },
+            ]}
+            rows={data.nodes.map((n, i) => ({
+              key: i,
+              cells: {
+                node: (
+                  <span className="font-mono text-[11px]">
+                    {'  '.repeat(n.depth || 0)}{n.node_type}
+                    {(String(n.node_type || '').includes('Seq Scan') || n.node_type === 'Table Scan') && (
+                      <Badge tone="danger" size="xs" className="ml-1.5">full scan</Badge>
+                    )}
+                  </span>
+                ),
+                rel: <span className="font-mono text-[11px] text-muted">{n.relation || n.alias || '—'}</span>,
+                r: <span className="font-mono">{fmtNumber(data.analyzed ? n.actual_rows : n.plan_rows)}</span>,
+                t: <span className="font-mono">
+                  {data.analyzed
+                    ? (n.actual_total_time != null ? fmtMs(n.actual_total_time) : '—')
+                    : (n.total_cost != null ? n.total_cost.toFixed(2) : '—')}
+                </span>,
+              },
+            }))}
+            empty={<EmptyState icon="terminal" title="No plan nodes" />}
+          />
+        )}
         {(data.hints || []).map((h, i) => (
           <Notice key={i} tone={h.level === 'critical' ? 'danger' : 'warning'} title={h.title}>
             {h.text}{h.fix && <span className="mt-0.5 block italic text-subtle">{h.fix}</span>}
@@ -105,26 +115,34 @@ function PlanResult({ data }) {
 
   // Oracle shape: v$sql_plan rows
   if (Array.isArray(data.plan) && data.plan.length && typeof data.plan[0] === 'object') {
+    const tree = oracleTree(data.plan);
     return (
       <>
-        <Table
-          columns={[
-            { key: 'op', label: 'Operation' },
-            { key: 'obj', label: 'Object' },
-            { key: 'cost', label: 'Cost', align: 'right' },
-            { key: 'card', label: 'Cardinality', align: 'right' },
-          ]}
-          rows={data.plan.map((p, i) => ({
-            key: p.id ?? i,
-            cells: {
-              op: <span className="font-mono text-[11px]">{'  '.repeat(p.depth || 0)}{p.operation} {p.options || ''}</span>,
-              obj: p.object_name ? <span className="font-mono text-[11px] text-muted">{p.object_owner}.{p.object_name}</span> : null,
-              cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
-              card: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
-            },
-          }))}
-          empty={<EmptyState icon="terminal" title="No plan rows" body="v$sql_plan has nothing for this sql_id — it may have aged out of the shared pool." />}
-        />
+        <div className="mb-gutter-sm flex justify-end">
+          {tree && <PlanViewToggle view={view} onChange={setView} />}
+        </div>
+        {view === 'diagram' && tree ? (
+          <PlanDiagram tree={tree} />
+        ) : (
+          <Table
+            columns={[
+              { key: 'op', label: 'Operation' },
+              { key: 'obj', label: 'Object' },
+              { key: 'cost', label: 'Cost', align: 'right' },
+              { key: 'card', label: 'Cardinality', align: 'right' },
+            ]}
+            rows={data.plan.map((p, i) => ({
+              key: p.id ?? i,
+              cells: {
+                op: <span className="font-mono text-[11px]">{'  '.repeat(p.depth || 0)}{p.operation} {p.options || ''}</span>,
+                obj: p.object_name ? <span className="font-mono text-[11px] text-muted">{p.object_owner}.{p.object_name}</span> : null,
+                cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
+                card: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
+              },
+            }))}
+            empty={<EmptyState icon="terminal" title="No plan rows" body="v$sql_plan has nothing for this sql_id — it may have aged out of the shared pool." />}
+          />
+        )}
         {(data.hints || []).map((h, i) => (
           <Notice key={i} tone={h.level === 'critical' ? 'danger' : 'warning'} title={h.title} className="mt-gutter-sm">
             {h.text}{h.fix && <span className="mt-0.5 block italic text-subtle">{h.fix}</span>}
@@ -151,23 +169,52 @@ function PlanResult({ data }) {
   // MongoDB shape: real .explain()
   if (data.query_planner || data.execution_stats) {
     const stats = data.execution_stats || {};
+    const tree = mongoTree(data.query_planner);
     return (
       <div className="space-y-gutter-sm">
-        {data.plan_summary && <Badge tone="accent">{data.plan_summary}</Badge>}
+        <div className="flex flex-wrap items-center gap-2">
+          {data.plan_summary && <Badge tone="accent">{data.plan_summary}</Badge>}
+          {tree && <PlanViewToggle view={view} onChange={setView} className="ml-auto" />}
+        </div>
         <div className="grid grid-cols-2 gap-gutter-sm sm:grid-cols-4">
           <StatCell label="Returned" value={fmtNumber(stats.nReturned)} />
           <StatCell label="Keys examined" value={fmtNumber(stats.totalKeysExamined)} />
           <StatCell label="Docs examined" value={fmtNumber(stats.totalDocsExamined)} />
           <StatCell label="Execution time" value={stats.executionTimeMillis != null ? fmtMs(stats.executionTimeMillis) : '—'} />
         </div>
-        <Panel title="Query planner" icon="terminal">
-          <SqlBlock sql={JSON.stringify(data.query_planner, null, 2)} className="max-h-72 overflow-auto" />
-        </Panel>
+        {view === 'diagram' && tree ? (
+          <PlanDiagram tree={tree} />
+        ) : (
+          <Panel title="Query planner" icon="terminal">
+            <SqlBlock sql={JSON.stringify(data.query_planner, null, 2)} className="max-h-72 overflow-auto" />
+          </Panel>
+        )}
       </div>
     );
   }
 
   return <p className="text-[12px] text-subtle">No plan data returned.</p>;
+}
+
+function PlanViewToggle({ view, onChange, className }) {
+  return (
+    <div className={cn('inline-flex rounded-control border border-border p-0.5', className)}>
+      {[{ id: 'table', icon: 'list', label: 'Table' }, { id: 'diagram', icon: 'branch', label: 'Diagram' }].map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => onChange(opt.id)}
+          className={cn(
+            'flex items-center gap-1.5 rounded-control px-2.5 py-1 text-[11px] font-semibold transition-colors',
+            view === opt.id ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken',
+          )}
+        >
+          <Icon name={opt.icon} size={12} />
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function StatCellInline({ label, value }) {
@@ -757,10 +804,6 @@ export default function SlowQueryDetailPage({ tech }) {
                 </>
               )}
             </Step>
-
-            {tech === 'postgresql' && (
-              <PgHintPlanPanel connId={id} sqlText={sql} database={row.database_name || row.schema_name} />
-            )}
           </>
         )}
       </div>

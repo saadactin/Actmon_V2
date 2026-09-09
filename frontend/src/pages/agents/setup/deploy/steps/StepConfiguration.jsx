@@ -80,10 +80,6 @@ export default function StepConfiguration({ data, setData }) {
               className="mt-3 w-full max-w-md h-11 px-3.5 rounded-lg border border-slate-300 text-[15px] outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-50" />
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <Toggle on={data.enableHostMonitoring !== false} onChange={(v) => setData({ enableHostMonitoring: v })} />
-          <span className="text-[15px] text-slate-700">Enable host-monitoring</span>
-        </div>
       </div>
 
       <div className="mt-5 rounded-lg bg-sky-50 border border-sky-200 p-4 flex gap-3">

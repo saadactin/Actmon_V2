@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cn from '@/lib/cn';
 import client from '@/api/client';
-import PageHeader from '@/components/layout/PageHeader';
+import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import CopyButton from '@/components/ui/CopyButton';
@@ -16,6 +16,7 @@ import { InlineLoading, PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
 import { MetricTile, Panel, SqlBlock, TablePanel } from '@/pages/_shared/enginePanels';
 import { fmtNumber } from '@/config/dbCatalog';
+import { MSSQL_DASHBOARD_TABS, mssqlTabRoute } from '@/config/mssqlDashboardNav';
 
 /**
  * SQL Server error log.
@@ -35,6 +36,8 @@ const deepAnalyze = (id, body) =>
   client.post(`/mssql/${id}/error-deep-analysis`, body).then((r) => r.data);
 const runCommand = (id, body) =>
   client.post(`/mssql/${id}/run-command`, body).then((r) => r.data);
+const sspiDiagnose = (id) =>
+  client.post(`/mssql/${id}/sspi-diagnostics`).then((r) => r.data);
 
 /**
  * SQL Server severity is a number, and the bands are the documented ones:
@@ -61,6 +64,7 @@ const RISK = {
 
 export default function MSSQLErrorLogs() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [band, setBand] = useState('ALL');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
@@ -95,20 +99,29 @@ export default function MSSQLErrorLogs() {
   const critical = counts.FATAL + counts.ERROR;
 
   const header = (
-    <PageHeader
-      title="SQL Server Error Log"
-      description="Select an entry to see what it means, whether it is still happening, and how to fix it"
-      icon="logs"
-      backTo={`/mssql-dashboard/${id}`}
-      actions={(
-        <>
+    <>
+      <EngineDashboardHeader
+        tech="mssql"
+        connectionId={id}
+        tabs={MSSQL_DASHBOARD_TABS}
+        activeTab="error-logs"
+        onTabChange={(t) => navigate(mssqlTabRoute(id, t))}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-lg font-black text-fg">SQL Server Error Log</h1>
+          <p className="text-xs text-subtle">
+            Select an entry to see what it means, whether it is still happening, and how to fix it
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
           {data?.source && <Badge tone="outline">{data.source}</Badge>}
           <Button variant="secondary" icon="refresh" loading={isFetching} onClick={() => refetch()}>
             Refresh
           </Button>
-        </>
-      )}
-    />
+        </div>
+      </div>
+    </>
   );
 
   if (isLoading) return <>{header}<PageLoading title="Reading the error log…" /></>;
@@ -267,6 +280,9 @@ function ErrorAnalysisDrawer({ connId, row, onClose }) {
   const [err, setErr] = useState(null);
   const [entries, setEntries] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [sspi, setSspi] = useState(null);
+  const [sspiLoading, setSspiLoading] = useState(false);
+  const [sspiErr, setSspiErr] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -299,6 +315,19 @@ function ErrorAnalysisDrawer({ connId, row, onClose }) {
       }]);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const runSspiDiagnostics = async () => {
+    setSspiLoading(true);
+    setSspiErr(null);
+    try {
+      const d = await sspiDiagnose(connId);
+      setSspi(d);
+    } catch (e) {
+      setSspiErr(e?.message || String(e));
+    } finally {
+      setSspiLoading(false);
     }
   };
 
@@ -367,6 +396,35 @@ function ErrorAnalysisDrawer({ connId, row, onClose }) {
               {analysis.impact && (
                 <Panel title="Impact" icon="alert">
                   <p className="text-[13px] text-fg">{analysis.impact}</p>
+                </Panel>
+              )}
+
+              {analysis.error_number === 17806 && (
+                <Panel title="SSPI / Kerberos diagnostics" icon="shield"
+                  subtitle="Read-only — auth scheme, SPN, DNS, ports, time sync, domain context">
+                  {!sspi && !sspiLoading && (
+                    <>
+                      <p className="mb-2 text-[12px] text-muted">
+                        Runs a dedicated set of read-only checks on the SQL Server's own host
+                        (via its agent) to narrow down the SSPI/Kerberos failure. Nothing is
+                        changed automatically.
+                      </p>
+                      <Button size="sm" icon="diagnose" onClick={runSspiDiagnostics}>
+                        Run Full SSPI Diagnostics
+                      </Button>
+                    </>
+                  )}
+                  {sspiLoading && <InlineLoading label="Running SSPI diagnostics…" />}
+                  {sspiErr && <Notice tone="danger" title="Diagnostics failed.">{sspiErr}</Notice>}
+                  {sspi && sspi.status === 'disabled' && (
+                    <Notice tone="info" title="Disabled.">{sspi.message}</Notice>
+                  )}
+                  {sspi && sspi.status === 'success' && <SspiReport report={sspi} />}
+                  {sspi && (
+                    <Button size="sm" variant="ghost" icon="refresh" className="mt-2" onClick={runSspiDiagnostics}>
+                      Re-run
+                    </Button>
+                  )}
                 </Panel>
               )}
 
@@ -443,6 +501,67 @@ function ErrorAnalysisDrawer({ connId, row, onClose }) {
         </div>
       )}
     </Drawer>
+  );
+}
+
+const SSPI_STATUS = {
+  PASS: { label: 'PASS', tone: 'success' },
+  INFO: { label: 'INFO', tone: 'neutral' },
+  WARNING: { label: 'WARNING', tone: 'warning' },
+  CRITICAL: { label: 'CRITICAL', tone: 'danger' },
+  UNKNOWN: { label: 'UNKNOWN', tone: 'outline' },
+};
+
+const SSPI_CHECK_LABELS = {
+  auth_scheme: 'Authentication scheme', service_info: 'SQL Server service info',
+  spn: 'SPN', dns_forward: 'DNS forward lookup', dns_reverse: 'DNS reverse lookup',
+  sql_port: 'SQL port', kerberos_port: 'Kerberos port (88)', rpc_port: 'RPC port (135)',
+  time_sync: 'Time synchronization', domain_context: 'Domain / Kerberos context',
+};
+
+/** Renders an already-computed error-17806 report: one status-badged row per
+ * check, the deterministic root-cause summary, and an explicit confirmation
+ * that nothing was changed automatically — nothing here is click-to-run. */
+function SspiReport({ report }) {
+  const checks = report.checks || {};
+  const rc = report.root_cause || {};
+  return (
+    <div className="space-y-gutter-sm">
+      <div className="space-y-1">
+        {Object.entries(checks).map(([key, c]) => {
+          const s = SSPI_STATUS[c?.status] || SSPI_STATUS.UNKNOWN;
+          return (
+            <div key={key} className="flex items-start justify-between gap-2 rounded-card border border-border bg-sunken p-2">
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold text-fg">{SSPI_CHECK_LABELS[key] || key}</p>
+                {c?.detail != null && <p className="mt-0.5 truncate text-[11px] text-muted">{String(c.detail)}</p>}
+              </div>
+              <Badge tone={s.tone} size="xs">{s.label}</Badge>
+            </div>
+          );
+        })}
+      </div>
+
+      {rc.likely_cause && (
+        <Notice tone={rc.confidence === 'high' ? 'danger' : rc.confidence === 'medium' ? 'warning' : 'info'}
+          className="mb-0" title={rc.likely_cause}>
+          {rc.recommended_action}
+          {(rc.findings || []).length > 1 && (
+            <ul className="mt-1.5 list-disc pl-4 text-[11px]">
+              {rc.findings.map((f, i) => (
+                <li key={i}>
+                  <b>{SSPI_CHECK_LABELS[f.check] || f.check}</b> — {f.status}: {f.detail}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Notice>
+      )}
+
+      <p className="text-[11px] font-semibold text-muted">
+        Automatic remediation: {report.automatic_remediation || 'NOT EXECUTED'}
+      </p>
+    </div>
   );
 }
 

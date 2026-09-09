@@ -15,7 +15,7 @@ enrolls once, then pushes host CPU/memory to /data on a fixed interval.
 
 import datetime
 import os
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -23,6 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.agent_model import Agent, AgentToken
+from app.services.agent.agent_permissions import PERMISSION_CATALOG
 from app.services.common.credential_encryption_service import credential_encryption
 
 # Backend/agent/dist/* (this file: Backend/database/app/services/agent/…)
@@ -34,6 +35,41 @@ RPM_PATH = os.path.join(_BACKEND_DIR, "agent", "dist", "actmon-agent.rpm")
 
 
 _token_match = credential_encryption.token_match_filter
+
+# Catalog key -> the WiX Secure property that carries it (product.wxs's
+# PermissionsDlg). Same set for every catalog key — the MSI checkbox list is
+# the static mirror of agent_permissions.PERMISSION_CATALOG.
+_MSI_PERM_PROPERTY = {
+    "host_monitoring":   "PERM_HOSTMON",
+    "database_access":   "PERM_DBACCESS",
+    "remote_diagnostics": "PERM_DIAG",
+    "remote_command":    "PERM_CMD",
+    "process_control":   "PERM_PROCCTRL",
+    "service_control":   "PERM_SVCCTRL",
+    "self_update":       "PERM_SELFUPDATE",
+    "remote_file_write": "PERM_FILEWRITE",
+    "firewall_control":  "PERM_FWCTRL",
+    "reboot":            "PERM_REBOOT",
+}
+
+
+def granted_permissions_for_token(token: str, db: Session) -> Optional[str]:
+    """The stored comma-separated permission set for this token, or None if
+    the token has no record / was never given one (grandfathered/unrestricted —
+    see agent_permissions.py)."""
+    rec = db.query(AgentToken).filter(_token_match(AgentToken.token_hash, AgentToken.token, token)).first()
+    return rec.granted_permissions if rec else None
+
+
+def _msi_permission_props(permissions: Optional[List[str]]) -> list:
+    """(property, "1" | "") pairs for every catalog key, as msiexec property
+    overrides for the granted set. Returns [] (no overrides — the MSI's own
+    WiX-declared defaults apply) when `permissions` is None, e.g. a token with
+    no recorded choice."""
+    if permissions is None:
+        return []
+    granted = set(permissions)
+    return [(prop, "1" if key in granted else "") for key, prop in _MSI_PERM_PROPERTY.items()]
 
 
 def msi_available() -> bool:
@@ -103,6 +139,11 @@ class InstallTokenRequest(BaseModel):
     token: str
     token_name: Optional[str] = None
     os_type: Optional[str] = None
+    # Granted permission keys from agent_permissions.PERMISSION_CATALOG, chosen
+    # in the wizard's Configuration step. None (the field omitted) leaves any
+    # existing grant untouched on an update, or unrestricted on a fresh token —
+    # only a wizard that actually asked the question sends this.
+    permissions: Optional[List[str]] = None
 
 
 class EnrollRequest(BaseModel):
@@ -143,14 +184,18 @@ def svc_create_install_token(req: InstallTokenRequest, db: Session):
     """Upsert the ingestion token issued by the wizard."""
     base = (req.token_name or "actmon-agent").strip() or "actmon-agent"
     rec = db.query(AgentToken).filter(_token_match(AgentToken.token_hash, AgentToken.token, req.token)).first()
+    perms = ",".join(req.permissions) if req.permissions is not None else None
     if rec:
         rec.token_name = base
         rec.agent_name = rec.agent_name or base
         rec.os_type = req.os_type
         rec.token_hash = rec.token_hash or credential_encryption.hash_token(req.token)
+        if req.permissions is not None:
+            rec.granted_permissions = perms
     else:
         rec = AgentToken(token=req.token, token_hash=credential_encryption.hash_token(req.token),
-                         token_name=base, agent_name=base, os_type=req.os_type)
+                         token_name=base, agent_name=base, os_type=req.os_type,
+                         granted_permissions=perms)
         db.add(rec)
     db.commit()
     db.refresh(rec)
@@ -448,13 +493,18 @@ def _read_linux_agent() -> str:
         return LINUX_AGENT
 
 
-def build_linux_setup_sh(token: str, url: str) -> str:
+def build_linux_setup_sh(token: str, url: str, permissions: Optional[List[str]] = None) -> str:
     """One-shot root installer for ANY systemd Linux (Debian/Ubuntu AND RHEL/CentOS/
     Oracle/Fedora). Installs the agent + systemd service directly — no dpkg/rpm needed."""
     safe_token = "".join(c for c in (token or "") if c.isalnum() or c in "-_")
     safe_url = (url or "").strip().replace("'", "")
     if not safe_url.lower().startswith("http"):
         safe_url = ""
+    # Empty string (not omitted) when permissions is None — same "grandfathered/
+    # unrestricted" meaning as a NULL AgentToken.granted_permissions column;
+    # actmon_agent.py's _resolve_permissions() treats a missing/blank env var
+    # the same way.
+    safe_perms = ",".join(permissions) if permissions is not None else ""
     agent = _read_linux_agent().replace("\r\n", "\n")
     return f"""#!/usr/bin/env bash
 # ActMon Agent installer — works on any systemd Linux (deb- or rpm-based).
@@ -467,7 +517,7 @@ cat > /usr/lib/actmon/actmon-agent.sh <<'ACTMON_AGENT_EOF'
 ACTMON_AGENT_EOF
 chmod 755 /usr/lib/actmon/actmon-agent.sh
 
-printf 'ACTMON_ACCESS_TOKEN=%s\\nACTMON_URL=%s\\n' '{safe_token}' '{safe_url}' > /etc/actmon/agent.conf
+printf 'ACTMON_ACCESS_TOKEN=%s\\nACTMON_URL=%s\\nACTMON_PERMISSIONS=%s\\n' '{safe_token}' '{safe_url}' '{safe_perms}' > /etc/actmon/agent.conf
 chmod 600 /etc/actmon/agent.conf
 
 cat > /etc/systemd/system/actmon-agent.service <<'ACTMON_UNIT_EOF'
@@ -752,7 +802,7 @@ def _to_ascii(s: str) -> str:
     return s.encode("ascii", "ignore").decode("ascii")
 
 
-def build_windows_install_bat(token: str, url: str) -> str:
+def build_windows_install_bat(token: str, url: str, permissions: Optional[List[str]] = None) -> str:
     """A double-clickable installer (.bat) with token+URL baked in — self-elevates
     (UAC), downloads a per-request MSI with the token/URL already configured, and
     installs it silently. No PowerShell copy-paste, no properties to type.
@@ -825,7 +875,9 @@ def build_windows_install_bat(token: str, url: str) -> str:
         # Install Dir, Progress, Finish). msiexec still BLOCKS this script
         # until the user finishes it (or cancels), same as a silent install
         # would, so everything below still runs only once it's really done.
-        f"msiexec /i \"%ACTMON_MSI%\" ACCESS_TOKEN=\"{safe_token}\" ACTMON_URL=\"{safe_url_bat}\" /norestart /l*v \"%ACTMON_MSILOG%\"",
+        f"msiexec /i \"%ACTMON_MSI%\" ACCESS_TOKEN=\"{safe_token}\" ACTMON_URL=\"{safe_url_bat}\" "
+        + " ".join(f'{prop}="{val}"' for prop, val in _msi_permission_props(permissions))
+        + " /norestart /l*v \"%ACTMON_MSILOG%\"",
         "set \"ACTMON_MSIEXIT=%errorlevel%\"",
         "del /f /q \"%ACTMON_MSI%\" >nul 2>&1",
         # 0 = success, 3010 = success but a reboot is recommended (never required
@@ -860,7 +912,7 @@ def build_windows_install_bat(token: str, url: str) -> str:
     return _to_ascii("\r\n".join(lines) + "\r\n")
 
 
-def build_windows_setup_ps1(token: str, url: str) -> str:
+def build_windows_setup_ps1(token: str, url: str, permissions: Optional[List[str]] = None) -> str:
     """One-shot elevated installer (STRICT ASCII — PS 5.1 safe), reached via the
     copy-paste one-liner (`Start-Process powershell -Verb RunAs ...`, built in
     SetupWizard.jsx) — so by the time this script body runs, it is already
@@ -891,6 +943,11 @@ def build_windows_setup_ps1(token: str, url: str) -> str:
     # why this deliberately avoids the per-request /install/actmon-agent.msi
     # (candle.exe/light.exe, Windows-only, no Wine on this Linux backend).
     msi_url = f"{safe_url}/agents/download/windows"
+    # Each becomes one more quoted -ArgumentList element, PS 5.1-safe backtick-
+    # escaped quotes, same style as the ACCESS_TOKEN/ACTMON_URL entries above it.
+    perm_ps1_args = "\n    ".join(
+        f'"{prop}=`"{val}`"",' for prop, val in _msi_permission_props(permissions)
+    )
     script = f"""$ErrorActionPreference = 'Stop'
 $url    = '{safe_url}'
 $token  = '{safe_token}'
@@ -924,6 +981,7 @@ try {{
   $proc = Start-Process msiexec.exe -ArgumentList @(
     '/i', "`"$msi`"",
     "ACCESS_TOKEN=`"$token`"", "ACTMON_URL=`"$url`"",
+    {perm_ps1_args}
     '/norestart', '/l*v', "`"$msiLog`""
   ) -Wait -PassThru
   Remove-Item $msi -Force -ErrorAction SilentlyContinue

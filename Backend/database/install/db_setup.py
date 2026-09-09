@@ -157,6 +157,10 @@ _SCHEMA_PATCHES = [
          ON agent_stable_changes (agent_name, ts DESC)""",
     # Per-agent last failure reason — surfaced in the UI when a collection errors.
     """ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_error TEXT""",
+    # Agent permissions (Add-Agent wizard's Configuration step) — NULL means
+    # grandfathered/unrestricted (a token issued before this column existed),
+    # see Backend/database/app/services/agent/agent_permissions.py.
+    """ALTER TABLE agent_tokens ADD COLUMN IF NOT EXISTS granted_permissions TEXT""",
     # Oracle Storage Health: approval no longer auto-queues execution — a human
     # must explicitly click Start, recorded here.
     """ALTER TABLE oracle_maintenance_jobs ADD COLUMN IF NOT EXISTS start_requested_at TIMESTAMP""",
@@ -164,31 +168,6 @@ _SCHEMA_PATCHES = [
     """ALTER TABLE oracle_maintenance_jobs
          ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP,
          ADD COLUMN IF NOT EXISTS notification_recipients JSONB""",
-    # PostgreSQL Query Plan Analysis / pg_hint_plan comparison history.
-    """CREATE TABLE IF NOT EXISTS public.postgres_plan_comparisons (
-        id                     SERIAL PRIMARY KEY,
-        org_id                 INTEGER      NOT NULL DEFAULT 1,
-        conn_id                INTEGER      NOT NULL REFERENCES public.connection_master(id),
-        database_name          VARCHAR(200),
-        query_text             TEXT NOT NULL,
-        query_hash             VARCHAR(64),
-        hint_text              TEXT,
-        analyzed               BOOLEAN NOT NULL DEFAULT false,
-        original_plan          JSONB,
-        hinted_plan            JSONB,
-        original_planning_ms   NUMERIC,
-        original_execution_ms  NUMERIC,
-        hinted_planning_ms     NUMERIC,
-        hinted_execution_ms    NUMERIC,
-        result                 VARCHAR(20),
-        warnings               JSONB,
-        error_details          TEXT,
-        requested_by           INTEGER,
-        created_at             TIMESTAMP DEFAULT now()
-    )""",
-    "CREATE INDEX IF NOT EXISTS idx_pg_plan_cmp_conn ON public.postgres_plan_comparisons (conn_id)",
-    "CREATE INDEX IF NOT EXISTS idx_pg_plan_cmp_hash ON public.postgres_plan_comparisons (query_hash)",
-    "CREATE INDEX IF NOT EXISTS idx_pg_plan_cmp_created ON public.postgres_plan_comparisons (created_at DESC)",
     # Employee-code generator collision fix: uk_employee_org_code spans soft-deleted
     # rows, but the old generator computed MAX() over live rows only — so a deleted
     # ACTnnn code got regenerated and violated the constraint on insert. Recompute

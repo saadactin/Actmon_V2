@@ -39,7 +39,19 @@ if sys.version_info < (3, 5):
 # is actually running (and confirm an update really landed) instead of assuming.
 # BUMP THIS whenever agent behaviour changes — the update ledger compares it to
 # the version it expected to see after an upgrade.
-AGENT_VERSION = "1.1.1"
+AGENT_VERSION = "1.1.2"
+
+# Python's default urllib User-Agent ("Python-urllib/3.x") is a well-known
+# scripting-library signature that Cloudflare's Bot Fight Mode (and similar
+# WAF/bot products many customers front their ActMon server with) blocks by
+# default with a 403 — confirmed live: an identical request succeeds with any
+# other User-Agent and fails only when it says "Python-urllib". Installing a
+# global opener here means every urllib call in this file (urlopen with a
+# Request OR a bare url string, AND urlretrieve in _self_update) picks this
+# header up automatically, with nothing to remember at each call site.
+_opener = urllib.request.build_opener()
+_opener.addheaders = [("User-Agent", "ActMon-Agent/%s" % AGENT_VERSION)]
+urllib.request.install_opener(_opener)
 
 
 def _read_registry():
@@ -92,6 +104,103 @@ def _resolve_config():
     if url:
         url = url.rstrip("/")
     return token, url
+
+
+_PERMISSIONS_CACHE = {"loaded": False, "granted": None}   # None = unrestricted (grandfathered)
+
+
+# Catalog key -> the flat REG_SZ value name product.wxs's PermissionsDlg writes
+# it as (each bound 1:1 to one MSI Secure property, no subkey/custom action
+# needed — same flat-value pattern Token/Url/HostMonitoring already used).
+_WIN_REG_PERM_NAMES = {
+    "host_monitoring":    "Perm_HostMonitoring",
+    "database_access":    "Perm_DatabaseAccess",
+    "remote_diagnostics": "Perm_RemoteDiagnostics",
+    "remote_command":     "Perm_RemoteCommand",
+    "process_control":    "Perm_ProcessControl",
+    "service_control":    "Perm_ServiceControl",
+    "self_update":        "Perm_SelfUpdate",
+    "remote_file_write":  "Perm_RemoteFileWrite",
+    "firewall_control":   "Perm_FirewallControl",
+    "reboot":             "Perm_Reboot",
+}
+
+
+def _resolve_permissions():
+    """(token, url) has a Windows-registry / --arg / env-var resolution chain
+    (_resolve_config above) — this mirrors it for the granted-permissions set
+    baked in at install time. Missing entirely (an agent installed before this
+    feature existed, or a dev/manual run) means unrestricted, matching the
+    backend's own NULL-means-grandfathered rule for AgentToken.granted_permissions.
+
+    Windows: every current MSI-based install writes all ten Perm_* registry
+    values (each has a WiX property default, so even a silent /qn install
+    writes them) — their total ABSENCE is what signals a pre-this-feature
+    agent, not any particular value being unset. Linux/manual: a single
+    comma-joined ACTMON_PERMISSIONS (env var or --permissions arg), or its
+    absence for the same grandfathered meaning."""
+    if _PERMISSIONS_CACHE["loaded"]:
+        return _PERMISSIONS_CACHE["granted"]
+    granted = None
+    raw = _arg("permissions")
+    if raw is None:
+        raw = os.environ.get("ACTMON_PERMISSIONS")
+    if raw is not None:
+        # "" is a deliberate "nothing granted" (every checkbox unchecked),
+        # not "unset" — only actual absence means grandfathered/unrestricted.
+        granted = {p.strip() for p in raw.split(",") if p.strip()}
+    elif IS_WINDOWS:
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\ActMon\Agent") as k:
+                seen_any = False
+                found = set()
+                for key, regname in _WIN_REG_PERM_NAMES.items():
+                    val = _reg_get(k, regname)
+                    if val is not None:
+                        seen_any = True
+                        if str(val).strip() == "1":
+                            found.add(key)
+                if seen_any:
+                    granted = found
+        except (OSError, ImportError):
+            pass
+    _PERMISSIONS_CACHE["loaded"] = True
+    _PERMISSIONS_CACHE["granted"] = granted
+    return granted
+
+
+# Local mirror of Backend/database/app/services/agent/agent_permissions.py's
+# PERMISSION_CATALOG op lists — kept here too since this file ships standalone
+# (PyInstaller exe / raw script on Linux) and can't import the backend package.
+# KEEP IN SYNC if that catalog ever changes.
+_OP_TO_PERMISSION = {
+    "dbquery": "database_access",
+    "list": "remote_diagnostics", "read": "remote_diagnostics", "regget": "remote_diagnostics",
+    "netfiles": "remote_diagnostics", "netcfg": "remote_diagnostics", "diag": "remote_diagnostics",
+    "runcmd": "remote_command", "shell": "remote_command",
+    "killproc": "process_control",
+    "svcctl": "service_control",   # overridden to "reboot" below when path is a reboot
+    "selfupdate": "self_update",
+    "write": "remote_file_write", "regset": "remote_file_write",
+    "putfile": "remote_file_write", "getfile": "remote_file_write",
+    "fwctl": "firewall_control",
+}
+
+
+def _permission_denied(op, path):
+    """True if this op is gated by a permission this agent was NOT granted.
+    Second line of defense — the backend already refuses to queue a job like
+    this via agent_fs_service.request(), this only matters if that check is
+    ever bypassed or a future code path forgets it."""
+    granted = _resolve_permissions()
+    if granted is None:
+        return False
+    key = "reboot" if (op == "svcctl" and (path or "").split(":", 1)[0].strip().lower() == "reboot") \
+        else _OP_TO_PERMISSION.get(op)
+    if key is None:
+        return False
+    return key not in granted
 
 
 def _post(url, payload, timeout=15):
@@ -761,6 +870,11 @@ _CROSS_PLATFORM_OPS = ("dbquery", "shell", "getfile", "putfile")   # safe on the
 
 def _handle_job(url, token, job_id, op, path, data):
     try:
+        if _permission_denied(op, path):
+            out = ("ERR:this agent was not granted the permission required for "
+                    "op '%s'" % op).encode("utf-8")
+            _job_result(url, token, job_id, base64.b64encode(out).decode())
+            return
         if not IS_WINDOWS and op not in _CROSS_PLATFORM_OPS:
             out = ("ERR:op '%s' is not supported on the Linux agent yet "
                    "(host metrics + database monitoring are)." % op).encode("utf-8")
@@ -1492,10 +1606,15 @@ def run_agent(stop_event=None):
     threads = [
         threading.Thread(target=_poll_jobs_until, args=(url, token),
                          kwargs={"stop_event": stop_event}, daemon=True, name="actmon-job-poll"),
-        threading.Thread(target=_infra_loop,
-                         args=(url, token, os_type, collect_host, collector_url, collector, interval, stop_event, identity),
-                         daemon=True, name="actmon-infra"),
     ]
+    _granted_perms = _resolve_permissions()
+    if _granted_perms is None or "host_monitoring" in _granted_perms:
+        threads.append(threading.Thread(
+            target=_infra_loop,
+            args=(url, token, os_type, collect_host, collector_url, collector, interval, stop_event, identity),
+            daemon=True, name="actmon-infra"))
+    else:
+        _log("host monitoring not granted for this install — skipping host metrics collection")
     for group_name, names in (
         ("mysql", {"mysql", "mariadb"}),
         ("postgresql", {"postgresql", "postgres"}),

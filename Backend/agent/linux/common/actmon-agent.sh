@@ -15,6 +15,37 @@ INTERVAL="${ACTMON_INTERVAL:-30}"
 SELF="${BASH_SOURCE[0]:-$0}"   # own path — used for self-update re-exec
 echo "ActMon Agent starting on $(hostname) -> ${ACTMON_URL}"
 
+# Permission enforcement — mirrors Backend/database/app/services/agent/
+# agent_permissions.py's PERMISSION_CATALOG (KEEP IN SYNC if it changes) for
+# the subset of ops this lightweight script actually has (no dbquery/runcmd/
+# shell/selfupdate/regget/regset/getfile/putfile here — see actmon_agent.py,
+# the Python agent used by the .deb/.rpm install path, for those).
+# ACTMON_PERMISSIONS unset entirely = grandfathered/unrestricted (an install
+# from before this feature, or a manual run); set (even to "") = exactly that
+# comma-separated set is granted, matching the backend's NULL-vs-"" rule.
+_perm_key_for_op() {
+  case "$1" in
+    list|read|netcfg|netfiles|diag) echo "remote_diagnostics" ;;
+    write) echo "remote_file_write" ;;
+    fwctl) echo "firewall_control" ;;
+    killproc) echo "process_control" ;;
+    svcctl) case "$2" in reboot|reboot:*) echo "reboot" ;; *) echo "service_control" ;; esac ;;
+    *) echo "" ;;
+  esac
+}
+
+_perm_denied() {
+  [ -z "${ACTMON_PERMISSIONS+x}" ] && return 1   # unset entirely -> unrestricted
+  local key; key="$(_perm_key_for_op "$1" "$2")"
+  [ -z "$key" ] && return 1                       # op this catalog doesn't gate
+  case ",${ACTMON_PERMISSIONS}," in *",${key},"*) return 1 ;; *) return 0 ;; esac
+}
+
+_host_monitoring_denied() {
+  [ -z "${ACTMON_PERMISSIONS+x}" ] && return 1
+  case ",${ACTMON_PERMISSIONS}," in *",host_monitoring,"*) return 1 ;; *) return 0 ;; esac
+}
+
 # HTTP helpers — prefer curl, fall back to wget.
 if command -v curl >/dev/null 2>&1; then
   http_get()  { curl -sS -m "${2:-30}" "$1"; }
@@ -57,9 +88,15 @@ fw_ensure() {
 # Answer one host job: run the op locally, push output back base64-encoded.
 # Ops: list/read/write (file explorer) · netcfg (IP config) · fwctl (allow/block IPs) · svcctl (restart/reboot).
 handle_fs_job() {
-  local id="$1" op="$2" path_b64="$3" data_b64="$4" path data out
+  local id="$1" op="$2" path_b64="$3" data_b64="$4" path data out b64
   path="$(printf '%s' "$path_b64" | base64 -d 2>/dev/null || true)"
   data="$(printf '%s' "$data_b64" | base64 -d 2>/dev/null || true)"
+  if _perm_denied "$op" "$path"; then
+    b64="$(printf 'ERR:this agent was not granted the permission required for op '\''%s'\''' "$op" | base64 | tr -d '\n')"
+    http_post "${ACTMON_URL}/agents/fs-result" \
+      "{\"token\":\"${ACTMON_ACCESS_TOKEN}\",\"id\":\"${id}\",\"data_b64\":\"${b64}\"}" || true
+    return
+  fi
   case "$op" in
     list) out="$(ls -lAH --time-style=long-iso -- "$path" 2>&1 || true)" ;;
     read) out="$(printf 'SIZE:%s\n' "$(stat -Lc %s -- "$path" 2>/dev/null || echo -1)"; head -c 65536 -- "$path" 2>/dev/null || true)" ;;
@@ -154,16 +191,20 @@ while [ -z "${BUNDLE}" ]; do
 done
 
 while true; do
-  # Re-fetch the collector each cycle so backend collector changes apply WITHOUT
-  # a restart (keep the previous bundle if the fetch fails).
-  nb="$(http_get "${ACTMON_URL}/agents/collector/linux" 20 2>/dev/null || true)"
-  [ -n "${nb}" ] && BUNDLE="${nb}"
-  raw="$(bash -c "${BUNDLE}" 2>/dev/null || true)"
-  b64="$(printf '%s' "${raw}" | base64 | tr -d '\n')"
-  http_post "${ACTMON_URL}/agents/infra" \
-    "{\"token\":\"${ACTMON_ACCESS_TOKEN}\",\"os_type\":\"linux\",\"raw_b64\":\"${b64}\"}" \
-    && echo "$(date +%H:%M:%S)  infra pushed" \
-    || echo "$(date +%H:%M:%S)  push failed"
+  if _host_monitoring_denied; then
+    echo "$(date +%H:%M:%S)  host monitoring not granted for this install — skipping infra push"
+  else
+    # Re-fetch the collector each cycle so backend collector changes apply WITHOUT
+    # a restart (keep the previous bundle if the fetch fails).
+    nb="$(http_get "${ACTMON_URL}/agents/collector/linux" 20 2>/dev/null || true)"
+    [ -n "${nb}" ] && BUNDLE="${nb}"
+    raw="$(bash -c "${BUNDLE}" 2>/dev/null || true)"
+    b64="$(printf '%s' "${raw}" | base64 | tr -d '\n')"
+    http_post "${ACTMON_URL}/agents/infra" \
+      "{\"token\":\"${ACTMON_ACCESS_TOKEN}\",\"os_type\":\"linux\",\"raw_b64\":\"${b64}\"}" \
+      && echo "$(date +%H:%M:%S)  infra pushed" \
+      || echo "$(date +%H:%M:%S)  push failed"
+  fi
   # Keep the agent current (re-execs if the backend has a newer build).
   self_update || true
   # Spend the wait window answering file-browse jobs instead of sleeping.

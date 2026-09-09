@@ -66,7 +66,6 @@ from app.routes.cosmosdb.cosmosdb_routes import router as cosmosdb_router
 
 from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
 from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
-from app.routes.postgres.postgres_hint_plan_routes import router as postgres_hint_plan_router
 from app.routes.postgres.patroni_routes import router as patroni_router
 from app.routes.postgres.postgres_drilldown_routes import router as postgres_drilldown_router
 from app.routes.drilldown_routes import router as drilldown_router
@@ -244,7 +243,6 @@ app.include_router(server_router)
 # Error analysis routes
 app.include_router(postgres_error_router)
 app.include_router(postgres_monitoring_router)
-app.include_router(postgres_hint_plan_router)
 app.include_router(patroni_router)
 app.include_router(postgres_drilldown_router)
 app.include_router(drilldown_router)

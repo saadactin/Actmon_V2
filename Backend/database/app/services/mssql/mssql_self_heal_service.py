@@ -11,6 +11,9 @@ Given an error log line (e.g. "Error: 18456, Severity: 14, State: 5") this servi
 Nothing is ever executed automatically — every remediation step is click-to-run, and any
 write/DDL step is refused unless the connected login holds the required server role.
 """
+import json
+import logging
+import os
 import re
 import time
 import datetime
@@ -21,6 +24,8 @@ from sqlalchemy import create_engine, text
 from urllib.parse import quote_plus
 
 from app.models.connection_model import ConnectionMaster
+
+logger = logging.getLogger("mssql_self_heal")
 
 
 # ── connection helpers ────────────────────────────────────────────────────────
@@ -410,7 +415,7 @@ def error_analysis(connection_id: int, payload: dict, db: Session):
         "impact": kb.get("impact"),
         "category": kb.get("category"),
         "severity_label": ("CRITICAL" if en in (823, 824, 9002, 1105)
-                           else "HIGH" if en in (18456, 701, 4060)
+                           else "HIGH" if en in (18456, 701, 4060, 17806)
                            else "MEDIUM"),
         "is_still_occurring": still_occurring,
         "occurrences": occurrences,
@@ -504,3 +509,388 @@ def run_command(connection_id: int, payload: dict, db: Session):
         return {"status": "error", "command": sql, "read_only": read_only,
                 "duration_ms": int((time.time() - started) * 1000),
                 "error": clean[:500], "error_full": raw[:1000]}
+
+
+# ── error 17806 (SSPI/Kerberos handshake failure) — dedicated deep diagnostic ──
+# Read-only by construction: every command below is a query/read verb (setspn -L/-X,
+# Resolve-DnsName, Test-NetConnection, w32tm /query, Get-CimInstance, nltest, klist).
+# There is no execution path for a "fix" here — run_command()'s pipeline is SQL-only
+# and could not run a PowerShell string even if asked to; any remediation surfaced
+# below is advisory text, never auto-executed (matches the existing 18456 state-13
+# precedent: an OS-level instruction returned as text, not run).
+#
+# This is intentionally NOT wired into error_analysis()/`_remediation_for()` — those
+# stay fast and unchanged for every error number (including 17806's existing KB
+# entry + generic diagnostics). This is a separate, user-triggered endpoint so a
+# routine error-log view never pays for a live SQL round-trip + an agent job.
+
+_SSPI_ENABLED_ENV = "MSSQL_SSPI_DIAGNOSTICS_ENABLED"
+_SSPI_SECTION_RE = re.compile(r"===SECTION::(\w+)===\s*")
+_SSPI_OS_KEYS = ("spn", "dns_forward", "dns_reverse", "sql_port",
+                 "kerberos_port", "rpc_port", "time_sync", "domain_context")
+
+
+def _split_ps_sections(output: str) -> dict:
+    """Split a composite PowerShell script's stdout back into named sections, keyed
+    by marker name — a PowerShell-flavored analog of pg_diagnose_service.py's own
+    marker-based `_split_sections()`. A section missing from the output (script
+    error before reaching it, output truncated) simply isn't in the returned dict."""
+    parts = _SSPI_SECTION_RE.split(output or "")
+    sections = {}
+    for i in range(1, len(parts) - 1, 2):
+        sections[parts[i]] = parts[i + 1].strip()
+    return sections
+
+
+def _build_sspi_script(sql_host: str, sql_port: int, service_account: str) -> str:
+    """One composite, read-only PowerShell script covering every OS-level SSPI/
+    Kerberos check — a single agent round-trip instead of eight, mirroring
+    pg_diagnose_service.py's 'one script, many marked sections' pattern. Every
+    section is independently try/caught so one failing (or slow) cmdlet can't take
+    the rest of the report down with it — only the OUTER agent timeout is shared."""
+    host_lit = (sql_host or "").replace('"', '`"')
+    acct_lit = (service_account or "").replace('"', '`"')
+    port_val = int(sql_port or 1433)
+    return f"""
+$ErrorActionPreference = 'Continue'
+$sqlHost = "{host_lit}"
+$sqlPort = {port_val}
+$svcAccount = "{acct_lit}"
+
+Write-Output "===SECTION::SPN==="
+try {{
+    if ($svcAccount -and $svcAccount -ne "") {{
+        $spnList = (setspn -L $svcAccount 2>&1 | Out-String)
+    }} else {{
+        $spnList = "SPN check: Unable to determine service account automatically"
+    }}
+    $dupScan = (setspn -X 2>&1 | Out-String)
+    @{{ service_account = $svcAccount; spn_list = $spnList; duplicate_scan = $dupScan }} | ConvertTo-Json -Compress
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::DNS_FORWARD==="
+try {{
+    $fwd = Resolve-DnsName -Name $sqlHost -ErrorAction Stop | Select-Object Name,IPAddress,Type
+    $fwd | ConvertTo-Json -Compress
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::DNS_REVERSE==="
+try {{
+    $ip = (Resolve-DnsName -Name $sqlHost -ErrorAction Stop | Where-Object {{ $_.IPAddress }} | Select-Object -First 1 -ExpandProperty IPAddress)
+    if ($ip) {{
+        $rev = Resolve-DnsName -Name $ip -Type PTR -ErrorAction Stop | Select-Object Name,NameHost
+        $rev | ConvertTo-Json -Compress
+    }} else {{
+        @{{ error = "no IP resolved from forward lookup" }} | ConvertTo-Json -Compress
+    }}
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::SQL_PORT==="
+try {{
+    $t = Test-NetConnection -ComputerName $sqlHost -Port $sqlPort -WarningAction SilentlyContinue
+    @{{ computer = $t.ComputerName; port = $t.RemotePort; succeeded = $t.TcpTestSucceeded }} | ConvertTo-Json -Compress
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::KERBEROS_PORT==="
+try {{
+    $cs2 = Get-CimInstance Win32_ComputerSystem
+    if ($cs2.PartOfDomain) {{
+        $t2 = Test-NetConnection -ComputerName $cs2.Domain -Port 88 -WarningAction SilentlyContinue
+        @{{ target = $cs2.Domain; port = 88; succeeded = $t2.TcpTestSucceeded }} | ConvertTo-Json -Compress
+    }} else {{
+        @{{ error = "host is not domain-joined" }} | ConvertTo-Json -Compress
+    }}
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::RPC_PORT==="
+try {{
+    $cs3 = Get-CimInstance Win32_ComputerSystem
+    if ($cs3.PartOfDomain) {{
+        $t3 = Test-NetConnection -ComputerName $cs3.Domain -Port 135 -WarningAction SilentlyContinue
+        @{{ target = $cs3.Domain; port = 135; succeeded = $t3.TcpTestSucceeded; note = "dynamic RPC ports above 135 may also be required" }} | ConvertTo-Json -Compress
+    }} else {{
+        @{{ error = "host is not domain-joined" }} | ConvertTo-Json -Compress
+    }}
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::TIME_SYNC==="
+try {{
+    $tstatus = (w32tm /query /status 2>&1 | Out-String)
+    $tsource = (w32tm /query /source 2>&1 | Out-String)
+    @{{ status = $tstatus; source = $tsource }} | ConvertTo-Json -Compress
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+
+Write-Output "===SECTION::DOMAIN_CONTEXT==="
+try {{
+    $cs4 = Get-CimInstance Win32_ComputerSystem
+    $dc = ""
+    if ($cs4.PartOfDomain) {{
+        $dc = (nltest /dsgetdc:$($cs4.Domain) 2>&1 | Out-String)
+    }}
+    $tickets = (klist 2>&1 | Out-String)
+    @{{ domain = $cs4.Domain; part_of_domain = $cs4.PartOfDomain; dsgetdc = $dc; klist = $tickets }} | ConvertTo-Json -Compress
+}} catch {{ @{{ error = "$_" }} | ConvertTo-Json -Compress }}
+"""
+
+
+def _sspi_json(raw_section: str):
+    """Parse one section's JSON body; returns None if the section is missing/blank,
+    raises nothing on malformed JSON (caller treats that as UNKNOWN)."""
+    if not raw_section:
+        return None
+    return json.loads(raw_section)
+
+
+def _classify_spn(raw_section):
+    try:
+        data = _sspi_json(raw_section)
+    except Exception:
+        return {"status": "UNKNOWN", "evidence": f"unparseable output: {(raw_section or '')[:200]}"}
+    if data is None:
+        return {"status": "UNKNOWN", "evidence": "SPN check produced no output."}
+    if "error" in data:
+        return {"status": "UNKNOWN", "evidence": data["error"]}
+    spn_list = data.get("spn_list") or ""
+    dup_scan = data.get("duplicate_scan") or ""
+    if "Unable to determine" in spn_list:
+        return {"status": "WARNING", "detail": "Unable to determine service account automatically",
+                "evidence": spn_list}
+    m = re.search(r"(\d+)\s+group", dup_scan, re.IGNORECASE)
+    if m and int(m.group(1)) > 0:
+        return {"status": "CRITICAL", "detail": "Duplicate SPN detected", "evidence": dup_scan[:500]}
+    if "No such SPN found" in spn_list or not spn_list.strip():
+        return {"status": "WARNING", "detail": "No SPN registered for this service account",
+                "evidence": spn_list[:500]}
+    return {"status": "PASS", "detail": "SPN registered, no duplicates detected", "evidence": spn_list[:500]}
+
+
+def _classify_dns(raw_section):
+    try:
+        data = _sspi_json(raw_section)
+    except Exception:
+        return {"status": "UNKNOWN", "evidence": f"unparseable output: {(raw_section or '')[:200]}"}
+    if data is None:
+        return {"status": "UNKNOWN", "evidence": "DNS check produced no output."}
+    if isinstance(data, dict) and "error" in data:
+        return {"status": "WARNING", "detail": "DNS lookup failed", "evidence": data["error"]}
+    return {"status": "PASS", "detail": "resolved", "evidence": data}
+
+
+def _classify_port(raw_section):
+    try:
+        data = _sspi_json(raw_section)
+    except Exception:
+        return {"status": "UNKNOWN", "evidence": f"unparseable output: {(raw_section or '')[:200]}"}
+    if data is None:
+        return {"status": "UNKNOWN", "evidence": "Port check produced no output."}
+    if "error" in data:
+        return {"status": "UNKNOWN", "evidence": data["error"]}
+    if data.get("succeeded"):
+        return {"status": "PASS", "detail": f"port {data.get('port')} reachable", "evidence": data}
+    return {"status": "CRITICAL", "detail": f"port {data.get('port')} NOT reachable", "evidence": data}
+
+
+def _classify_time_sync(raw_section):
+    try:
+        data = _sspi_json(raw_section)
+    except Exception:
+        return {"status": "UNKNOWN", "evidence": f"unparseable output: {(raw_section or '')[:200]}"}
+    if data is None:
+        return {"status": "UNKNOWN", "evidence": "Time-sync check produced no output."}
+    if "error" in data:
+        return {"status": "UNKNOWN", "evidence": data["error"]}
+    status_text = data.get("status") or ""
+    if re.search(r"NOT SYNCHRONIZED|error|not been started|access is denied", status_text, re.IGNORECASE):
+        return {"status": "WARNING", "detail": "Time service not synchronized", "evidence": status_text[:500]}
+    return {"status": "PASS", "detail": "time synchronized", "evidence": status_text[:500]}
+
+
+def _classify_domain_context(raw_section):
+    try:
+        data = _sspi_json(raw_section)
+    except Exception:
+        return {"status": "UNKNOWN", "evidence": f"unparseable output: {(raw_section or '')[:200]}"}
+    if data is None:
+        return {"status": "UNKNOWN", "evidence": "Domain-context check produced no output."}
+    if "error" in data:
+        return {"status": "UNKNOWN", "evidence": data["error"]}
+    if not data.get("part_of_domain"):
+        return {"status": "WARNING",
+                "detail": "Host is not domain-joined — Kerberos is not possible from this host",
+                "evidence": data}
+    return {"status": "INFO", "detail": f"domain: {data.get('domain')}", "evidence": data}
+
+
+_SSPI_CHECK_ORDER = ("sql_port", "spn", "auth_scheme", "time_sync", "kerberos_port",
+                     "rpc_port", "dns_forward", "dns_reverse", "domain_context")
+_SSPI_SEVERITY_RANK = {"CRITICAL": 3, "WARNING": 2, "UNKNOWN": 1, "INFO": 0, "PASS": 0}
+
+
+def _sspi_root_cause(checks: dict) -> dict:
+    """Pure, deterministic root-cause rules over the normalized check statuses —
+    no agent/DB access, so this is trivially unit-testable in isolation. Never
+    forces a single-cause guess when the evidence is genuinely mixed (spec case 5)."""
+    findings = []
+    for name in _SSPI_CHECK_ORDER:
+        c = checks.get(name) or {}
+        status = c.get("status", "UNKNOWN")
+        if status in ("CRITICAL", "WARNING"):
+            findings.append({"check": name, "status": status, "detail": c.get("detail", "")})
+    findings.sort(key=lambda f: _SSPI_SEVERITY_RANK.get(f["status"], 0), reverse=True)
+
+    if not findings:
+        return {
+            "likely_cause": "No obvious SSPI/Kerberos misconfiguration detected in these checks.",
+            "recommended_action": "The failure may be transient or client-specific — review the SQL "
+                                   "Server error log around the failure time and the client's own "
+                                   "event log for more detail.",
+            "confidence": "low", "findings": [],
+        }
+
+    if len(findings) > 1:
+        return {
+            "likely_cause": "Multiple potential causes detected.",
+            "recommended_action": "Review each finding below, starting with the highest severity — "
+                                   "do not assume a single root cause when several checks failed.",
+            "confidence": "medium", "findings": findings,
+        }
+
+    only = findings[0]
+    if only["check"] == "sql_port":
+        cause = "Network/firewall/connectivity issue may be preventing the authentication handshake."
+        action = "Confirm the SQL Server port is open between the client and this host (firewall, NSG, routing)."
+    elif only["check"] == "spn":
+        cause = ("Possible duplicate/misconfigured SPN causing Kerberos authentication failure."
+                  if only["status"] == "CRITICAL" else "Likely Kerberos/SPN configuration issue.")
+        action = ("Review the duplicate SPN and SQL Server service account configuration before "
+                  "modifying the SPN." if only["status"] == "CRITICAL" else
+                  "Review the SPN registration for the SQL Server service account.")
+    elif only["check"] == "time_sync":
+        cause = "Clock synchronization may be contributing to Kerberos authentication failure."
+        action = ("Kerberos tickets are time-sensitive — verify the client, this host and the domain "
+                  "controller are all within the domain's allowed clock skew (default 5 minutes).")
+    elif only["check"] in ("kerberos_port", "rpc_port"):
+        port = 88 if only["check"] == "kerberos_port" else 135
+        cause = "Domain controller connectivity issue may be preventing Kerberos ticket issuance."
+        action = f"Confirm port {port} is reachable from this host to its domain controller."
+    elif only["check"] == "auth_scheme":
+        cause = ("Diagnostic connection negotiated NTLM instead of Kerberos — evidence of a "
+                  "Kerberos/SPN issue, not conclusive on its own.")
+        action = "Cross-check against the SPN and DNS findings above before concluding Kerberos is misconfigured."
+    else:
+        cause = f"{only['check']} check reported {only['status']}: {only['detail']}"
+        action = "Review this finding directly."
+
+    return {"likely_cause": cause, "recommended_action": action,
+            "confidence": "high" if only["status"] == "CRITICAL" else "medium",
+            "findings": findings}
+
+
+def run_sspi_diagnostics(connection_id: int, db: Session):
+    """Dedicated, read-only deep diagnostic workflow for SQL Server error 17806
+    (SSPI/Kerberos handshake failure). User-triggered (not part of error_analysis()'s
+    fast path) so a routine error-log view never pays for this endpoint's SQL +
+    agent round-trips. Gated by MSSQL_SSPI_DIAGNOSTICS_ENABLED for an instant,
+    zero-code-change rollback if anything unexpected surfaces in production."""
+    if os.environ.get(_SSPI_ENABLED_ENV, "true").strip().lower() == "false":
+        return {"status": "disabled", "message": "SSPI deep diagnostics are disabled by configuration."}
+
+    conn = _get_conn_or_404(connection_id, db)
+    checks: dict = {}
+
+    # ── SQL-side evidence — same _engine()/_rows() helpers as every other branch ──
+    service_account = None
+    try:
+        engine = _engine(conn)
+        rows = _rows(engine, "SELECT session_id, client_net_address, auth_scheme "
+                              "FROM sys.dm_exec_connections WHERE session_id = @@SPID;")
+        scheme = ((rows[0].get("auth_scheme") if rows else None) or "").strip()
+        scheme_u = scheme.upper()
+        if scheme_u == "KERBEROS":
+            checks["auth_scheme"] = {"status": "PASS", "detail": scheme,
+                                      "evidence": "Diagnostic connection negotiated Kerberos."}
+        elif scheme_u == "NTLM":
+            checks["auth_scheme"] = {"status": "WARNING", "detail": scheme,
+                                      "evidence": "Diagnostic connection fell back to NTLM instead of "
+                                                   "Kerberos — evidence, not proof, of a Kerberos/SPN issue."}
+        elif scheme_u:
+            checks["auth_scheme"] = {"status": "INFO", "detail": scheme,
+                                      "evidence": "Non-Windows auth scheme — this check is only "
+                                                   "meaningful for Windows authentication."}
+        else:
+            checks["auth_scheme"] = {"status": "UNKNOWN", "detail": None, "evidence": "auth_scheme not returned."}
+    except Exception as e:
+        checks["auth_scheme"] = {"status": "UNKNOWN", "detail": None, "evidence": f"query failed: {e}"}
+
+    try:
+        engine = _engine(conn)
+        svc_rows = _rows(engine, "SELECT servicename, service_account FROM sys.dm_server_services "
+                                  "WHERE servicename LIKE 'SQL Server (%';")
+        info_rows = _rows(engine, "SELECT SERVERPROPERTY('ComputerNamePhysicalNetBIOS') AS computer_name, "
+                                    "SERVERPROPERTY('ServerName') AS server_name, "
+                                    "SERVERPROPERTY('InstanceName') AS instance_name;")
+        if svc_rows:
+            service_account = svc_rows[0].get("service_account")
+        info = info_rows[0] if info_rows else {}
+        checks["service_info"] = {
+            "status": "INFO",
+            "service_account": service_account,
+            "computer_name": info.get("computer_name"),
+            "server_name": info.get("server_name"),
+            "instance_name": info.get("instance_name"),
+        }
+    except Exception as e:
+        checks["service_info"] = {"status": "UNKNOWN", "evidence": f"query failed: {e}"}
+
+    # ── OS-level evidence — one composite agent round-trip ──
+    host = None
+    try:
+        from app.services.common import db_proxy_service
+        host = db_proxy_service.agent_host_for_conn(connection_id, db)
+    except Exception as e:
+        logger.debug("SSPI diagnostics: agent_host_for_conn failed for connection %s: %s", connection_id, e)
+
+    if not host or not getattr(host, "token", None):
+        for key in _SSPI_OS_KEYS:
+            checks[key] = {"status": "UNKNOWN",
+                            "evidence": "No agent is linked to this SQL Server's host — OS-level checks unavailable."}
+    else:
+        try:
+            from app.services.agent import agent_fs_service
+            from app.services.common.diagnose_engine import _ps_encoded
+            script = _build_sspi_script(conn.host, conn.port or 1433, service_account or "")
+            started = time.time()
+            raw = agent_fs_service.request(host.token, "shell", _ps_encoded(script), timeout=60)
+            duration_ms = int((time.time() - started) * 1000)
+            logger.info("SSPI diagnostics: connection=%s agent job duration_ms=%s status=%s",
+                        connection_id, duration_ms, "no_response" if raw is None else "completed")
+            if raw is None:
+                for key in _SSPI_OS_KEYS:
+                    checks[key] = {"status": "UNKNOWN", "evidence": "Agent did not respond within the timeout."}
+            else:
+                txt = raw.decode("utf-8", "replace")
+                if txt.startswith("EXIT:"):
+                    _, _, txt = txt.partition("\n")
+                sections = _split_ps_sections(txt)
+                checks["spn"] = _classify_spn(sections.get("SPN"))
+                checks["dns_forward"] = _classify_dns(sections.get("DNS_FORWARD"))
+                checks["dns_reverse"] = _classify_dns(sections.get("DNS_REVERSE"))
+                checks["sql_port"] = _classify_port(sections.get("SQL_PORT"))
+                checks["kerberos_port"] = _classify_port(sections.get("KERBEROS_PORT"))
+                checks["rpc_port"] = _classify_port(sections.get("RPC_PORT"))
+                checks["time_sync"] = _classify_time_sync(sections.get("TIME_SYNC"))
+                checks["domain_context"] = _classify_domain_context(sections.get("DOMAIN_CONTEXT"))
+        except Exception as e:
+            logger.warning("SSPI diagnostics: agent dispatch failed for connection %s: %s", connection_id, e)
+            for key in _SSPI_OS_KEYS:
+                checks.setdefault(key, {"status": "UNKNOWN", "evidence": f"agent dispatch failed: {e}"})
+
+    root_cause = _sspi_root_cause(checks)
+    return {
+        "status": "success",
+        "error_number": 17806,
+        "checks": checks,
+        "root_cause": root_cause,
+        "automatic_remediation": "NOT EXECUTED",
+        "analyzed_at": datetime.datetime.now().isoformat(),
+    }

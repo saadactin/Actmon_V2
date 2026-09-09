@@ -71,6 +71,11 @@ class AgentToken(Base):
     token_name = Column(String(255), nullable=True)
     agent_name = Column(String(255), nullable=True)
     os_type = Column(String(50), nullable=True)
+    # Comma-separated permission keys from agent_permissions.py's catalog (e.g.
+    # "host_monitoring,database_access,remote_command"). NULL means this token
+    # predates the permissions feature (or was otherwise never given a set) and
+    # is grandfathered as full access — see agent_permissions.is_allowed().
+    granted_permissions = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

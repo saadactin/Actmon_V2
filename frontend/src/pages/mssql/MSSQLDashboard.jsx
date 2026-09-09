@@ -213,6 +213,10 @@ export default function MSSQLDashboard() {
 
     const dbItems = dbRows.map((row) => mssqlDatabaseRow(row, tableCounts));
     const tableItems = tableRows.map(mssqlTableRow);
+    // Computed here (inside the memo keyed on `data`) rather than inline in the
+    // Storage tab's render — that IIFE re-ran this sort on every render,
+    // including the once-a-second countdown tick.
+    const topTables = [...tableItems].sort((a, b) => b.total_bytes - a.total_bytes).slice(0, 10);
 
     const connPct = num(hs.connection_usage_pct);
     const cachePct = num(hs.buffer_cache_hit_pct);
@@ -235,6 +239,7 @@ export default function MSSQLDashboard() {
 
       dbItems,
       tableItems,
+      topTables,
       waitRows: clean(p.wait_stats),
       queryRows,
       ioRows: clean(p.disk_io),
@@ -255,6 +260,14 @@ export default function MSSQLDashboard() {
       healthScore: computeHealthScore({
         connPct, cachePct, blocking: blocking.length, cpuPct, memPct,
       }),
+
+      jobAlerts: p.job_alerts || { failed_count: 0, failed_jobs: [] },
+      backupStatus: p.backup_status || { at_risk_count: 0, at_risk: [], threshold_hours: 24 },
+      vlfInfo: p.vlf_info || { warning_count: 0, high_vlf: [], all: [], warning_threshold: 1000 },
+      planCache: p.plan_cache || {},
+      memoryGrants: p.memory_grants || { waiting_count: 0, requested_mb: 0 },
+      longTransactions: clean(p.long_transactions),
+      dbLag: Array.isArray(alwaysOn.database_lag) ? alwaysOn.database_lag : [],
 
       tableDbOptions: [
         { id: '__all__', label: 'All databases' },
@@ -293,10 +306,11 @@ export default function MSSQLDashboard() {
 
   const {
     connection, hs, cpu, memory, serverInfo, sessions, replication, blocking,
-    users, dbItems, tableItems, waitRows, queryRows,
+    users, dbItems, tableItems, topTables, waitRows, queryRows,
     ioRows, topQueryRows, waitingRequests, connPct, cachePct, cpuPct, sqlCpuPct,
     memPct, longRunning, agGroups, hasAlwaysOn, unhealthyAg, healthScore,
     tableDbOptions, collectorErrors,
+    jobAlerts, backupStatus, vlfInfo, planCache, memoryGrants, longTransactions, dbLag,
   } = d;
 
   const alerts = {
@@ -381,6 +395,46 @@ export default function MSSQLDashboard() {
                 <StatusPill ok={false}
                   label={`${longRunning.length} quer${longRunning.length === 1 ? 'y' : 'ies'} over ${LONG_QUERY_MS / 1000}s`}
                   onClick={() => setActiveTab('queries')} />
+              )}
+              <StatusPill ok={jobAlerts.failed_count === 0}
+                label={`Jobs: ${jobAlerts.failed_count} failed`}
+                hint={jobAlerts.failed_count
+                  ? `Recently failed: ${jobAlerts.failed_jobs.map((j) => j.job_name).join(', ')}`
+                  : 'No failed SQL Agent job runs in the recent history checked.'} />
+              <StatusPill ok={backupStatus.at_risk_count === 0}
+                label={`Backups: ${backupStatus.at_risk_count} at risk`}
+                hint={backupStatus.at_risk_count
+                  ? `No full backup in the last ${backupStatus.threshold_hours}h: ${backupStatus.at_risk.map((b) => b.database_name).join(', ')}`
+                  : `Every database has a full backup within the last ${backupStatus.threshold_hours}h.`} />
+              <StatusPill ok={vlfInfo.warning_count === 0}
+                label={`VLF: ${vlfInfo.warning_count} high`}
+                hint={vlfInfo.warning_count
+                  ? `Over ${vlfInfo.warning_threshold} virtual log files: ${vlfInfo.high_vlf.map((v) => `${v.database_name} (${fmtNumber(v.vlf_count)})`).join(', ')}`
+                  : 'No database has an excessive virtual-log-file count.'}
+                onClick={() => setActiveTab('storage')} />
+              {cpu.signal_wait_pct != null && (
+                <StatusPill ok={cpu.signal_wait_pct < 25}
+                  label={`CPU pressure: ${cpu.signal_wait_pct}%`}
+                  hint="Share of non-idle wait time spent SIGNALED (ready to run, waiting for a free scheduler) rather than blocked on a resource. Above ~25% usually means the box needs more CPU, not faster disks or fewer locks."
+                  onClick={() => setActiveTab('performance')} />
+              )}
+              <StatusPill ok={memoryGrants.waiting_count === 0}
+                label={`Memory grants: ${memoryGrants.waiting_count} waiting`}
+                hint={memoryGrants.waiting_count
+                  ? `${memoryGrants.waiting_count} quer${memoryGrants.waiting_count === 1 ? 'y is' : 'ies are'} waiting on ~${memoryGrants.requested_mb} MB of workspace memory (sorts/hashes) that isn't available yet.`
+                  : 'No query is currently waiting on a memory grant.'}
+                onClick={() => setActiveTab('performance')} />
+              <StatusPill ok={longTransactions.length === 0}
+                label={`Long txns: ${longTransactions.length}`}
+                hint={longTransactions.length
+                  ? 'Open transactions with no active request right now — still holding locks and pinning the log from truncating.'
+                  : 'No transaction has been open longer than a minute with nothing currently running on it.'}
+                onClick={() => setActiveTab('locks')} />
+              {planCache.total_plans > 0 && (
+                <StatusPill ok={planCache.adhoc_single_use_pct < 50}
+                  label={`Ad-hoc plans: ${planCache.adhoc_single_use_pct}%`}
+                  hint={`${fmtNumber(planCache.adhoc_single_use)} of ${fmtNumber(planCache.total_plans)} cached plans are single-use ad-hoc (${planCache.total_cache_mb} MB total cache). A high share wastes cache memory on plans never reused — consider "optimize for ad hoc workloads".`}
+                  onClick={() => setActiveTab('performance')} />
               )}
             </div>
 
@@ -876,6 +930,37 @@ export default function MSSQLDashboard() {
               )}
             </Panel>
 
+            {hasAlwaysOn && (
+              <TablePanel title="Database replica lag" icon="clock"
+                subtitle="How far behind each secondary actually is — sync-health above says healthy/not, this says by how much">
+                <Table2
+                  columns={[
+                    { key: 'db', label: 'Database' },
+                    { key: 'replica', label: 'Replica' },
+                    { key: 'state', label: 'Sync state' },
+                    { key: 'send', label: 'Send queue', align: 'right' },
+                    { key: 'redo', label: 'Redo queue', align: 'right' },
+                  ]}
+                  rows={dbLag.map((r, i) => {
+                    const sendKb = num(r.log_send_queue_size);
+                    const redoKb = num(r.redo_queue_size);
+                    return {
+                      key: `${r.database_name}-${r.replica_server_name}-${i}`,
+                      cells: {
+                        db: <span className="font-semibold text-accent-text">{r.database_name}</span>,
+                        replica: r.replica_server_name,
+                        state: <StateChip value={r.synchronization_state_desc} tones={SYNC_TONES} fallback="warning" />,
+                        send: <span className={sendKb > 10000 ? 'font-mono text-warning-fg' : 'font-mono'}>{fmtNumber(sendKb)} KB</span>,
+                        redo: <span className={redoKb > 10000 ? 'font-mono text-warning-fg' : 'font-mono'}>{fmtNumber(redoKb)} KB</span>,
+                      },
+                    };
+                  })}
+                  empty={<EmptyState icon="clock" title="No per-database replica state"
+                    body="sys.dm_hadr_database_replica_states returned nothing for this replica." />}
+                />
+              </TablePanel>
+            )}
+
             <TablePanel title="Replication participants" icon="database"
               subtitle="Databases marked as published, subscribed or acting as distributor">
               <Table2
@@ -959,7 +1044,6 @@ export default function MSSQLDashboard() {
           );
           const dataBytes = dbItems.reduce((a, d) => a + num(d.size_bytes), 0);
           const logBytes = dbItems.reduce((a, d) => a + num(d.log_bytes), 0);
-          const topTables = [...tableItems].sort((a, b) => b.total_bytes - a.total_bytes).slice(0, 10);
 
           return (
             <div className="space-y-gutter">
@@ -987,7 +1071,7 @@ export default function MSSQLDashboard() {
                       { key: 'log', label: 'Log', value: num(d.log_bytes), status: STATUS.warning },
                     ],
                   }))}
-                  chartProps={{ emptyLabel: 'No databases to measure', labelWidth: 130 }}
+                  chartProps={{ emptyLabel: 'No databases to measure', labelWidth: 130, format: fmtBytes }}
                   title="Space by database"
                   icon="database"
                   subtitle="Data and log files, largest first"
@@ -1022,7 +1106,7 @@ export default function MSSQLDashboard() {
                       { key: 'index', label: 'Indexes', value: t.index_bytes, status: STATUS.warning },
                     ],
                   }))}
-                  chartProps={{ emptyLabel: 'No table sizes collected', labelWidth: 170 }}
+                  chartProps={{ emptyLabel: 'No table sizes collected', labelWidth: 170, format: fmtBytes }}
                   title="Largest tables"
                   icon="table"
                   subtitle="Data against index footprint"

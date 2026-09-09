@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Server, Loader2, ChevronRight } from 'lucide-react';
@@ -21,6 +21,22 @@ export default function StepAgent({ data, setData }) {
   // Only host agents carry a token and can host a DB plugin — hide token-less rows
   // (those are DB connections, not agents, and can't be attached to).
   const selectable = (agents || []).filter((a) => a.agent_token);
+
+  // useWizardDraft deliberately strips `agentToken` before writing the draft to
+  // sessionStorage (it's a bearer credential, same as a password) — so a page
+  // reload mid-wizard restores `agentMode`/`agentId` but drops the token. Left
+  // alone, StepCredentials silently falls back to testing/saving directly from
+  // the backend instead of through the agent, with no visible sign anything
+  // changed. Re-resolve it here from the (always freshly-fetched) agents list
+  // the moment it's missing, so a genuinely-selected agent never silently stops
+  // being used just because the page was reloaded.
+  useEffect(() => {
+    if (data.agentMode === 'existing' && data.agentId && !data.agentToken) {
+      const match = selectable.find((a) => a.name === data.agentId);
+      if (match) setData({ agentToken: match.agent_token });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.agentMode, data.agentId, data.agentToken, agents]);
 
   return (
     <div className="space-y-8 max-w-3xl">

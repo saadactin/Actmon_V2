@@ -77,10 +77,11 @@ const QUICK_LINKS = {
     { path: 'index-analysis', label: 'Indexes', icon: 'layers' },
     { path: 'reports', label: 'Reports', icon: 'report' },
   ],
+  /* Slow Queries / Error Logs / Indexes / Wait Analysis moved into the main
+     tab strip (see `config/mssqlDashboardNav.js`) — Slow Queries was already
+     a tab, so keeping it here too was a straight duplicate. Reports is the
+     only genuine "sub-page that isn't a tab" left. */
   mssql: [
-    { path: 'slow-queries', label: 'Slow Queries', icon: 'trend' },
-    { path: 'error-logs', label: 'Error Logs', icon: 'logs' },
-    { path: 'index-analysis', label: 'Indexes', icon: 'layers' },
     { path: 'reports', label: 'Reports', icon: 'report' },
   ],
   oracle: [

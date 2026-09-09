@@ -102,6 +102,8 @@ const OracleReportsPage = lazy(() => import('@/pages/oracle/OracleReportsPage'))
 const MSSQLDashboard = lazy(() => import('@/pages/mssql/MSSQLDashboard'));
 const MssqlErrorLogs = lazy(() => import('@/pages/mssql/ErrorLogs'));
 const MssqlIndexAnalysis = lazy(() => import('@/pages/mssql/IndexAnalysis'));
+const MssqlFragmentationAnalysis = lazy(() => import('@/pages/mssql/FragmentationAnalysis'));
+const MssqlWaitAnalysis = lazy(() => import('@/pages/mssql/WaitAnalysis'));
 const MssqlReportsPage = lazy(() => import('@/pages/mssql/MSSQLReportsPage'));
 
 // MongoDB — ported verbatim. 13 tabs.
@@ -344,6 +346,8 @@ export default function App() {
         <Route path="/mssql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="mssql" />} />
         <Route path="/mssql-dashboard/:id/error-logs" element={<MssqlErrorLogs />} />
         <Route path="/mssql-dashboard/:id/index-analysis" element={<MssqlIndexAnalysis />} />
+        <Route path="/mssql-dashboard/:id/fragmentation" element={<MssqlFragmentationAnalysis />} />
+        <Route path="/mssql-dashboard/:id/wait-analysis" element={<MssqlWaitAnalysis />} />
         <Route path="/mssql-dashboard/:id/reports" element={<MssqlReportsPage />} />
         <Route path="/mssql-dashboard/:id/:tab" element={<MSSQLDashboard />} />
 

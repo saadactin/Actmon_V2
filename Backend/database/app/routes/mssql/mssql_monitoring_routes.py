@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import SessionLocal
 from app.services.mssql import mssql_monitoring_service
 from app.services.mssql import mssql_ai_analysis
+from app.services.mssql import mssql_wait_analysis_service
 
 router = APIRouter(
     prefix="/api/v1/connections/mssql",
@@ -77,3 +78,25 @@ def get_mssql_error_logs(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/mssql-index-analysis")
 def get_mssql_index_analysis(conn_id: int, db: Session = Depends(get_db)):
     return mssql_monitoring_service.get_index_analysis(conn_id, db)
+
+
+@router.get("/{conn_id}/mssql-fragmentation-analysis")
+def get_mssql_fragmentation_analysis(conn_id: int, db: Session = Depends(get_db)):
+    return mssql_monitoring_service.get_fragmentation_analysis(conn_id, db)
+
+
+@router.get("/{conn_id}/mssql-fragmentation-analysis/detail")
+def get_mssql_fragmentation_detail(conn_id: int, table_name: str, index_name: str,
+                                    partition_number: Optional[int] = None, db: Session = Depends(get_db)):
+    return mssql_monitoring_service.get_fragmentation_detail(conn_id, db, table_name, index_name, partition_number)
+
+
+@router.post("/{conn_id}/mssql-fragmentation-analysis/analyze-groq")
+def analyze_mssql_fragmentation(conn_id: int, payload: mssql_ai_analysis.MssqlFragmentationGroqRequest,
+                                 db: Session = Depends(get_db)):
+    return mssql_ai_analysis.analyze_fragmentation_groq(conn_id, payload, db)
+
+
+@router.get("/{conn_id}/mssql-wait-analysis")
+def get_mssql_wait_analysis(conn_id: int, db: Session = Depends(get_db)):
+    return mssql_wait_analysis_service.get_wait_analysis(conn_id, db)

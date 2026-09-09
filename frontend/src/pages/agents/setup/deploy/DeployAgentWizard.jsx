@@ -84,7 +84,7 @@ export default function DeployAgentWizard() {
   const [sessionId] = useState(uuid);
   const [draft, setDraft] = useWizardDraft('deploy-agent', {
     method: 'script', tokenMode: 'new', tokenName: '', os: 'linux', arch: 'amd64',
-    enableHostMonitoring: true, setupHostname: false, tags: [],
+    setupHostname: false, tags: [],
   });
   const data = { ...draft, token, sessionId };
 

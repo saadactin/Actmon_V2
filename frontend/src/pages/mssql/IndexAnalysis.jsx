@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cn from '@/lib/cn';
 import client from '@/api/client';
-import PageHeader from '@/components/layout/PageHeader';
+import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import CopyButton from '@/components/ui/CopyButton';
@@ -15,6 +15,7 @@ import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
 import { MetricTile, Panel, SqlBlock, StatCell, TablePanel } from '@/pages/_shared/enginePanels';
 import { fmtNumber } from '@/config/dbCatalog';
+import { MSSQL_DASHBOARD_TABS, mssqlTabRoute } from '@/config/mssqlDashboardNav';
 
 /**
  * SQL Server index analysis — three lists, all from the connected database:
@@ -59,6 +60,7 @@ const TABS = [
 
 export default function MSSQLIndexAnalysis() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [tab, setTab] = useState('unused');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(null); // key of the expanded row
@@ -93,17 +95,26 @@ export default function MSSQLIndexAnalysis() {
     .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`);
 
   const header = (
-    <PageHeader
-      title="SQL Server Index Analysis"
-      description="Unused indexes, optimiser candidates and redundant pairs — for the connected database"
-      icon="layers"
-      backTo={`/mssql-dashboard/${id}`}
-      actions={(
+    <>
+      <EngineDashboardHeader
+        tech="mssql"
+        connectionId={id}
+        tabs={MSSQL_DASHBOARD_TABS}
+        activeTab="index-analysis"
+        onTabChange={(t) => navigate(mssqlTabRoute(id, t))}
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h1 className="text-lg font-black text-fg">SQL Server Index Analysis</h1>
+          <p className="text-xs text-subtle">
+            Unused indexes, optimiser candidates and redundant pairs — for the connected database
+          </p>
+        </div>
         <Button variant="secondary" icon="refresh" loading={isFetching} onClick={() => refetch()}>
           Refresh
         </Button>
-      )}
-    />
+      </div>
+    </>
   );
 
   if (isLoading) return <>{header}<PageLoading title="Analysing indexes…" /></>;

@@ -62,8 +62,10 @@ export default function StackedBar({
  * One shared scale across rows, so lengths are comparable between categories.
  *
  *   rows [{ key, label, total, segments: [...], onClick }]
+ *   format  value → display string (e.g. bytes → "72 MB") — same convention
+ *           as BarList/ColumnChart; defaults to the raw number.
  */
-export function StackedBarList({ rows, labelWidth = 96, emptyLabel = 'No data' }) {
+export function StackedBarList({ rows, labelWidth = 96, emptyLabel = 'No data', format = (v) => v }) {
   if (!rows.length) {
     return <p className="py-6 text-center text-[13px] text-subtle">{emptyLabel}</p>;
   }
@@ -106,8 +108,8 @@ export function StackedBarList({ rows, labelWidth = 96, emptyLabel = 'No data' }
               </span>
             </span>
 
-            <span className="w-8 shrink-0 text-right text-[11px] font-bold text-fg tabular-nums">
-              {row.total}
+            <span className="w-16 shrink-0 text-right text-[11px] font-bold text-fg tabular-nums">
+              {format(row.total)}
             </span>
           </div>
         );
@@ -120,10 +122,10 @@ export function StackedBarList({ rows, labelWidth = 96, emptyLabel = 'No data' }
               className="w-full"
               label={
                 <span className="flex flex-col gap-0.5">
-                  <b className="text-[13px]">{row.total} total</b>
+                  <b className="text-[13px]">{format(row.total)} total</b>
                   <span className="opacity-75">{row.label}</span>
                   <span className="opacity-60">
-                    {row.segments.map((s) => `${s.label} ${s.value}`).join(' · ')}
+                    {row.segments.map((s) => `${s.label} ${format(s.value)}`).join(' · ')}
                   </span>
                 </span>
               }

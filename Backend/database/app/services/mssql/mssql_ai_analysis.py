@@ -209,3 +209,87 @@ Return this exact JSON structure:
         return {"status": "success", "analysis": analysis}
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+# ── Groq-powered fragmentation explanation ────────────────────────────────────
+class MssqlFragmentationGroqRequest(BaseModel):
+    table_name:          str
+    index_name:          str
+    type_desc:           str = "NONCLUSTERED"
+    is_unique:           bool = False
+    frag_pct:             float = 0.0
+    page_count:           int   = 0
+    recommended_action:   str   = "REORGANIZE"
+    fill_factor:          Optional[int]   = None
+    action_note:          Optional[str]   = None
+    # Populated only when the user has already run the on-demand DETAILED-mode
+    # precise check on this index — plain-LIMITED-mode sweeps never have these.
+    page_density_pct:     Optional[float] = None
+    fragment_count:       Optional[int]   = None
+    avg_fragment_size_pages: Optional[float] = None
+
+
+def analyze_fragmentation_groq(conn_id: int, payload: MssqlFragmentationGroqRequest, db: Session) -> dict:
+    """Plain-language explanation for one fragmented index finding — deliberately
+    narrower than analyze_slow_query_groq's multi-section report: fragmentation
+    has one real decision (REORGANIZE vs REBUILD, already computed from
+    Microsoft's own published thresholds) that this doesn't need to second-guess,
+    just explain in the context of THIS specific index."""
+    rec = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id,
+        ConnectionMaster.db_type == "mssql",
+    ).first()
+    if not rec:
+        return {"status": "error", "error": "SQL Server connection not found"}
+    if not (payload.index_name or "").strip():
+        return {"status": "error", "error": "No index name provided"}
+
+    try:
+        from groq import Groq
+        client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
+
+        approx_mb = round((payload.page_count * 8) / 1024, 1)
+        precise_block = ""
+        if payload.page_density_pct is not None:
+            precise_block = f"""
+=== PRECISE CHECK (on-demand DETAILED scan, already run on this exact index) ===
+Page density (avg_page_space_used_in_percent): {payload.page_density_pct}% — how full each page actually is
+Fragment count: {payload.fragment_count}
+Average fragment size: {payload.avg_fragment_size_pages} pages
+"""
+        note_block = f"\nWhy REBUILD was forced despite fragmentation possibly being under 30%: {payload.action_note}" if payload.action_note else ""
+        prompt = f"""You are a Microsoft SQL Server (T-SQL) performance expert. Explain this ONE fragmented index finding in plain language for a DBA who already knows what an index is but wants the specifics of THIS case. Return ONLY valid JSON — no markdown, no code fences.
+
+=== FINDING ===
+Table: {payload.table_name}
+Index: {payload.index_name} ({payload.type_desc}{', unique' if payload.is_unique else ''})
+Fragmentation: {payload.frag_pct}%
+Size: {payload.page_count:,} pages (~{approx_mb} MB)
+Fill factor: {payload.fill_factor if payload.fill_factor else 100}%
+Already-computed recommended action (Microsoft's published 5-30%=REORGANIZE / >30%=REBUILD threshold): {payload.recommended_action}{note_block}
+{precise_block}
+Return this exact JSON structure:
+{{
+  "explanation": "why an index like this, at this fragmentation level, ends up this way in practice (e.g. random-key inserts/deletes, page splits) — reference the actual numbers given, not generic text",
+  "impact": "what this specific fragmentation level actually costs in query performance right now (e.g. more physical page reads per scan, degraded read-ahead) — be concrete about the mechanism, not just 'it's slower'",
+  "action_reasoning": "why REORGANIZE vs REBUILD is the right call specifically at {payload.frag_pct}% on a {payload.page_count:,}-page index — reference the actual threshold logic",
+  "caution": "one practical thing to know before running the {payload.recommended_action} statement on THIS index (e.g. REBUILD locks/needs Enterprise for ONLINE, REORGANIZE is always online but slower/less thorough, or note if size means this could take a while)"
+}}"""
+
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=800,
+            reasoning_effort="low",
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            raw = parts[1] if len(parts) > 1 else raw
+            if raw.startswith("json"):
+                raw = raw[4:]
+        analysis = json.loads(raw.strip())
+        return {"status": "success", "analysis": analysis}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}

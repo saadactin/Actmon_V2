@@ -407,7 +407,7 @@ export default function ClickHouseDashboard() {
                     { key: 'bytes', label: 'On disk', value: num(row.total_bytes), status: STATUS.good },
                   ],
                 }))}
-                chartProps={{ emptyLabel: 'No database sizes reported', labelWidth: 130, legend: false }}
+                chartProps={{ emptyLabel: 'No database sizes reported', labelWidth: 130, legend: false, format: fmtBytes }}
                 title="Space by database"
                 icon="server"
                 subtitle="Compressed size as ClickHouse reports it"

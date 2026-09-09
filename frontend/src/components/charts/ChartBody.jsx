@@ -88,7 +88,7 @@ function FlatBody({
 }
 
 /* ── breakdown: category × segments ─────────────────────────────────────── */
-function BreakdownBody({ kind, rows, unit = '', emptyLabel, labelWidth, legend = true }) {
+function BreakdownBody({ kind, rows, unit = '', format = (v) => v, emptyLabel, labelWidth, legend = true }) {
   // Legend comes from the first row's segments — every row shares the same series.
   const legendItems = (rows[0]?.segments || []).map((s) => ({
     key: s.key,
@@ -111,6 +111,7 @@ function BreakdownBody({ kind, rows, unit = '', emptyLabel, labelWidth, legend =
             items={totals.map((t, i) => ({ ...t, color: `var(--chart-${(i % 8) + 1})` }))}
             donut={kind === 'donut'}
             unit={unit}
+            format={format}
             emptyLabel={emptyLabel}
           />
         );
@@ -120,16 +121,17 @@ function BreakdownBody({ kind, rows, unit = '', emptyLabel, labelWidth, legend =
             items={totals.map((t) => ({ ...t, color: 'var(--chart-1)' }))}
             labelWidth={labelWidth}
             unit={unit}
+            format={format}
             emptyLabel={emptyLabel}
           />
         );
       case 'stackedColumn':
-        return <ColumnChart items={rows} mode="stacked" unit={unit} emptyLabel={emptyLabel} />;
+        return <ColumnChart items={rows} mode="stacked" unit={unit} format={format} emptyLabel={emptyLabel} />;
       case 'groupedColumn':
-        return <ColumnChart items={rows} mode="grouped" unit={unit} emptyLabel={emptyLabel} />;
+        return <ColumnChart items={rows} mode="grouped" unit={unit} format={format} emptyLabel={emptyLabel} />;
       case 'stackedBar':
       default:
-        return <StackedBarList rows={rows} labelWidth={labelWidth} emptyLabel={emptyLabel} />;
+        return <StackedBarList rows={rows} labelWidth={labelWidth} format={format} emptyLabel={emptyLabel} />;
     }
   })();
 
@@ -142,7 +144,7 @@ function BreakdownBody({ kind, rows, unit = '', emptyLabel, labelWidth, legend =
       {body}
       {needsLegend && rows.length > 0 && (
         <div className="mt-3 space-y-1">
-          <Legend items={legendItems} />
+          <Legend items={legendItems} format={format} />
           {isTotalsOnly && (
             <p className="text-[10px] text-subtle">
               This form shows totals only — counts above are across all rows.

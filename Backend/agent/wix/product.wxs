@@ -15,7 +15,7 @@
 <?ifndef Url ?><?define Url = "" ?><?endif ?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
-  <Product Id="*" Name="ActMon Agent" Language="1033" Version="1.1.1.0"
+  <Product Id="*" Name="ActMon Agent" Language="1033" Version="1.1.2.0"
            Manufacturer="ActMon" UpgradeCode="A1B2C3D4-1111-2222-3333-444455556666">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
              Description="ActMon Host Monitoring Agent" Manufacturer="ActMon" />
@@ -40,9 +40,32 @@
 
     <!-- Wizard-only choices (default to the previous, always-on behavior — a
          silent/unattended msiexec /qn install, which never visits the
-         Permissions dialog, still gets exactly today's behavior). -->
+         Permissions dialog, still gets exactly today's behavior).
+         PERM_* mirror Backend/database/app/services/agent/agent_permissions.py's
+         PERMISSION_CATALOG one-for-one — keep both in sync if that ever changes.
+         Defaults here match that catalog's `default` column. -->
+    <!-- Secure="yes" is required (not just cosmetic) for every one of these:
+         it's what lets a value SET on the msiexec command line (the .bat/.ps1
+         generated installers now pass PERM_X="1"/"" there, same mechanism
+         ACCESS_TOKEN/ACTMON_URL already use below) survive from the
+         UI/immediate sequence into the deferred sequence where the actual
+         registry write below runs. Without it, a command-line override would
+         be silently ignored and the registry would always get the built-in
+         default instead. -->
     <Property Id="STARTSERVICE" Value="1" />
-    <Property Id="HOSTMONITORING" Value="1" />
+    <Property Id="PERM_HOSTMON" Value="1" Secure="yes" />
+    <Property Id="PERM_DBACCESS" Value="1" Secure="yes" />
+    <Property Id="PERM_DIAG" Value="1" Secure="yes" />
+    <Property Id="PERM_CMD" Value="1" Secure="yes" />
+    <Property Id="PERM_PROCCTRL" Value="1" Secure="yes" />
+    <Property Id="PERM_SVCCTRL" Value="1" Secure="yes" />
+    <Property Id="PERM_SELFUPDATE" Value="1" Secure="yes" />
+    <!-- No Value attribute = undefined/blank by default (WiX rejects an
+         explicit empty string) — same runtime effect: off unless checked or
+         set on the command line. -->
+    <Property Id="PERM_FILEWRITE" Secure="yes" />
+    <Property Id="PERM_FWCTRL" Secure="yes" />
+    <Property Id="PERM_REBOOT" Secure="yes" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -91,7 +114,22 @@
         <RegistryKey Root="HKLM" Key="SOFTWARE\ActMon\Agent">
           <RegistryValue Type="string" Name="Token" Value="[ACCESS_TOKEN]" KeyPath="yes" />
           <RegistryValue Type="string" Name="Url" Value="[ACTMON_URL]" />
-          <RegistryValue Type="string" Name="HostMonitoring" Value="[HOSTMONITORING]" />
+          <!-- One flat value per catalog key (actmon_agent.py's
+               _WIN_REG_PERM_NAMES) — every current install writes all ten,
+               which is exactly what lets the agent tell "an install from
+               before this feature existed" (none of these present) apart
+               from "every permission was explicitly declined" (present, all
+               empty). -->
+          <RegistryValue Type="string" Name="Perm_HostMonitoring" Value="[PERM_HOSTMON]" />
+          <RegistryValue Type="string" Name="Perm_DatabaseAccess" Value="[PERM_DBACCESS]" />
+          <RegistryValue Type="string" Name="Perm_RemoteDiagnostics" Value="[PERM_DIAG]" />
+          <RegistryValue Type="string" Name="Perm_RemoteCommand" Value="[PERM_CMD]" />
+          <RegistryValue Type="string" Name="Perm_ProcessControl" Value="[PERM_PROCCTRL]" />
+          <RegistryValue Type="string" Name="Perm_ServiceControl" Value="[PERM_SVCCTRL]" />
+          <RegistryValue Type="string" Name="Perm_SelfUpdate" Value="[PERM_SELFUPDATE]" />
+          <RegistryValue Type="string" Name="Perm_RemoteFileWrite" Value="[PERM_FILEWRITE]" />
+          <RegistryValue Type="string" Name="Perm_FirewallControl" Value="[PERM_FWCTRL]" />
+          <RegistryValue Type="string" Name="Perm_Reboot" Value="[PERM_REBOOT]" />
         </RegistryKey>
       </Component>
     </ComponentGroup>
@@ -135,7 +173,7 @@
            supplied via msiexec ACCESS_TOKEN=/ACTMON_URL= (the .bat/.ps1/
            one-liner deploy paths) or baked in at build time, these fields
            just start pre-filled and the user can skip straight past them. -->
-      <Dialog Id="PermissionsDlg" Width="370" Height="294" Title="!(loc.InstallDirDlg_Title)">
+      <Dialog Id="PermissionsDlg" Width="370" Height="460" Title="!(loc.InstallDirDlg_Title)">
         <Control Id="Title" Type="Text" X="15" Y="6" Width="250" Height="15" Transparent="yes" NoPrefix="yes"
                  Text="ActMon Agent Configuration" />
         <Control Id="Description" Type="Text" X="25" Y="23" Width="320" Height="15" Transparent="yes" NoPrefix="yes"
@@ -165,17 +203,49 @@
         <Control Id="StartServiceNote" Type="Text" X="40" Y="171" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
                  Text="Runs as LocalSystem, starts at boot, and restarts itself if it ever stops." />
 
-        <Control Id="HostMonitoringCheckBox" Type="CheckBox" X="25" Y="198" Width="320" Height="18"
-                 Property="HOSTMONITORING" CheckBoxValue="1"
-                 Text="Enable host-level monitoring (CPU, memory, disk metrics)" />
-        <Control Id="HostMonitoringNote" Type="Text" X="40" Y="215" Width="305" Height="22" Transparent="yes" NoPrefix="yes"
-                 Text="Uncheck to report database metrics only, without this host's own resource usage." />
+        <!-- Permission list — mirrors agent_permissions.PERMISSION_CATALOG one
+             for one. Defaults (which start checked) match that catalog's
+             `default` column: everything with a confirmed existing consumer
+             in the app is on, so a normal install regresses nothing already
+             shipped; the last three (off by default) had no confirmed
+             consumer, or (Reboot) are split out deliberately given their
+             blast radius — see agent_permissions.py's module docstring. -->
+        <Control Id="PermHostMonCheckBox" Type="CheckBox" X="25" Y="198" Width="320" Height="16"
+                 Property="PERM_HOSTMON" CheckBoxValue="1"
+                 Text="Host Monitoring (CPU, memory, disk)" />
+        <Control Id="PermDbAccessCheckBox" Type="CheckBox" X="25" Y="216" Width="320" Height="16"
+                 Property="PERM_DBACCESS" CheckBoxValue="1"
+                 Text="Database Access (agent-proxied DB queries &amp; maintenance)" />
+        <Control Id="PermDiagCheckBox" Type="CheckBox" X="25" Y="234" Width="320" Height="16"
+                 Property="PERM_DIAG" CheckBoxValue="1"
+                 Text="Remote Diagnostics &amp; File Read" />
+        <Control Id="PermCmdCheckBox" Type="CheckBox" X="25" Y="252" Width="320" Height="16"
+                 Property="PERM_CMD" CheckBoxValue="1"
+                 Text="Remote Command Execution" />
+        <Control Id="PermProcCtrlCheckBox" Type="CheckBox" X="25" Y="270" Width="320" Height="16"
+                 Property="PERM_PROCCTRL" CheckBoxValue="1"
+                 Text="Process Control (kill a process)" />
+        <Control Id="PermSvcCtrlCheckBox" Type="CheckBox" X="25" Y="288" Width="320" Height="16"
+                 Property="PERM_SVCCTRL" CheckBoxValue="1"
+                 Text="Service Control (start/stop/restart)" />
+        <Control Id="PermSelfUpdateCheckBox" Type="CheckBox" X="25" Y="306" Width="320" Height="16"
+                 Property="PERM_SELFUPDATE" CheckBoxValue="1"
+                 Text="Agent Self-Update" />
+        <Control Id="PermFileWriteCheckBox" Type="CheckBox" X="25" Y="324" Width="320" Height="16"
+                 Property="PERM_FILEWRITE" CheckBoxValue="1"
+                 Text="Remote File Write" />
+        <Control Id="PermFwCtrlCheckBox" Type="CheckBox" X="25" Y="342" Width="320" Height="16"
+                 Property="PERM_FWCTRL" CheckBoxValue="1"
+                 Text="Firewall Control" />
+        <Control Id="PermRebootCheckBox" Type="CheckBox" X="25" Y="360" Width="320" Height="16"
+                 Property="PERM_REBOOT" CheckBoxValue="1"
+                 Text="Remote Reboot (restarts the whole host — off by default)" />
 
-        <Control Id="BottomLine" Type="Line" X="0" Y="258" Width="370" Height="0" />
-        <Control Id="Back" Type="PushButton" X="180" Y="267" Width="56" Height="17" Text="!(loc.WixUIBack)">
+        <Control Id="BottomLine" Type="Line" X="0" Y="424" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="433" Width="56" Height="17" Text="!(loc.WixUIBack)">
           <Publish Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
         </Control>
-        <Control Id="Next" Type="PushButton" X="236" Y="267" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+        <Control Id="Next" Type="PushButton" X="236" Y="433" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
           <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
           <!-- Disabled until a Server URL is entered — the one field this
                agent genuinely cannot run without. Token is left optional
@@ -184,33 +254,25 @@
           <Condition Action="disable">ACTMON_URL = ""</Condition>
           <Condition Action="enable">ACTMON_URL &lt;&gt; ""</Condition>
         </Control>
-        <Control Id="Cancel" Type="PushButton" X="304" Y="267" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+        <Control Id="Cancel" Type="PushButton" X="304" Y="433" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
           <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
         </Control>
       </Dialog>
 
       <!-- Splice PermissionsDlg in between the standard License and Install
-           Dir dialogs — UNLESS both the Server URL and Token are already
+           Dir dialogs — ALWAYS, even when Server URL/Token are already
            supplied (baked at build time, or via msiexec ACCESS_TOKEN=/
            ACTMON_URL= command-line overrides, which is how every generated
-           install command — .bat/.ps1/one-liner — already runs it). In that
-           case there is nothing left to configure and nothing left for the
-           user to see or copy, so the wizard skips straight to InstallDirDlg
-           and takes the STARTSERVICE/HOSTMONITORING property defaults (both
-           "1") exactly as a silent /qn install already does. Order="1" is
-           checked first; Order="2" is WixUI_InstallDir's own fallback jump. -->
-      <!-- MSI fires EVERY Publish row whose condition is true for a given
-           Control+Event, in ascending Order — not just the first match — and
-           for NewDialog specifically, whichever fires LAST wins the actual
-           navigation. Order="2"'s condition must therefore explicitly exclude
-           the "already configured" case, or it always re-fires after Order="1"
-           and silently overwrites its jump — confirmed live: this is exactly
-           why PermissionsDlg kept showing even with a fully baked-in
-           token/URL, pre-filled fields and all. -->
-      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="1">LicenseAccepted = "1" AND ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; ""</Publish>
-      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="PermissionsDlg" Order="2">LicenseAccepted = "1" AND NOT (ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; "")</Publish>
-      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" Order="1">ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; ""</Publish>
-      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="PermissionsDlg" Order="2">NOT (ACCESS_TOKEN &lt;&gt; "" AND ACTMON_URL &lt;&gt; "")</Publish>
+           install command — .bat/.ps1/one-liner — runs it). Those two fields
+           simply arrive pre-filled in that case; the permission checkboxes
+           still need a real screen to be reviewed/changed on THIS machine,
+           by whoever is actually running the installer — which may not be
+           the same person who generated the link in the web wizard. Command-
+           line PERM_* overrides (when the .bat/.ps1 supplied them) still land
+           as this screen's pre-checked defaults; nothing here overrides a
+           silent /qn install, which never shows any UI at all. -->
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="PermissionsDlg">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="PermissionsDlg">1</Publish>
     </UI>
   </Product>
 </Wix>

@@ -31,6 +31,7 @@ from app.services.agent.agent_install_service import (
     deb_available,
     exe_available,
     get_agent_script,
+    granted_permissions_for_token,
     msi_available,
     rpm_available,
     svc_create_install_token,
@@ -184,15 +185,23 @@ def route_agent_ps1():
     return PlainTextResponse(get_agent_script("windows"), media_type="text/plain")
 
 
+def _permissions_list(token: str, db: Session) -> Optional[list]:
+    """The wizard's recorded choice for this token, as a list — or None
+    (unrestricted/no choice recorded), for the script builders below."""
+    raw = granted_permissions_for_token(token, db)
+    return raw.split(",") if raw is not None else None
+
+
 @router.get("/install/actmon-setup.ps1", summary="Windows one-shot exe+service setup")
-def route_setup_ps1(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64")):
-    return PlainTextResponse(build_windows_setup_ps1(token, url), media_type="text/plain")
+def route_setup_ps1(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64"),
+                     db: Session = Depends(get_db)):
+    return PlainTextResponse(build_windows_setup_ps1(token, url, _permissions_list(token, db)), media_type="text/plain")
 
 
 @router.get("/install/actmon-install.bat", summary="Double-clickable Windows installer (token baked in)")
-def route_install_bat(token: str = Query(...), url: str = Query(...)):
+def route_install_bat(token: str = Query(...), url: str = Query(...), db: Session = Depends(get_db)):
     return PlainTextResponse(
-        build_windows_install_bat(token, url),
+        build_windows_install_bat(token, url, _permissions_list(token, db)),
         media_type="application/octet-stream",
         headers={"Content-Disposition": "attachment; filename=actmon-install.bat"},
     )
@@ -229,8 +238,9 @@ def route_universal_msi(url: str = Query(...), db: Session = Depends(get_db)):
 
 
 @router.get("/install/actmon-setup.sh", summary="Linux one-shot systemd setup (deb & rpm distros)")
-def route_setup_sh(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64")):
-    return PlainTextResponse(build_linux_setup_sh(token, url), media_type="text/x-shellscript")
+def route_setup_sh(token: str = Query(...), url: str = Query(...), arch: str = Query("amd64"),
+                    db: Session = Depends(get_db)):
+    return PlainTextResponse(build_linux_setup_sh(token, url, _permissions_list(token, db)), media_type="text/x-shellscript")
 
 
 @router.get("/install/actmon-docker-setup.sh", summary="Docker one-shot build+run (real host visibility via nsenter)")

@@ -13,7 +13,7 @@ const IS_LOCAL = /^(localhost|127\.)/i.test(typeof window !== 'undefined' ? wind
 // (minimal Debian/RHEL images often don't ship sudo at all).
 function buildScript(data, url) {
   const token = data.token || 'actmon-<token>';
-  const meta = `role:host-monitoring,os:${data.os},hostMonitoring:${data.enableHostMonitoring !== false},installationSessionId:${data.sessionId || ''}`;
+  const meta = `role:host-monitoring,os:${data.os},installationSessionId:${data.sessionId || ''}`;
 
   const arch = data.arch || 'amd64';
   if (data.os === 'windows') {

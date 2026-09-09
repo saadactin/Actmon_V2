@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -20,7 +20,10 @@ import client from '@/api/client';
 
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import HostResources from './PgHostResources';
-import PatroniPanel from './PatroniPanel';
+// Lazy: PatroniPanel pulls in CodeMirror + js-yaml (a whole code-editor stack used only to edit
+// patroni.yml inside its own dialogs) — a static import would ship that to every user on every
+// tab, not just when the Replication tab's editor is actually opened.
+const PatroniPanel = lazy(() => import('./PatroniPanel'));
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
@@ -171,7 +174,7 @@ export default function PostgreSQLDashboard() {
 
   /* ─── data ─── */
   const {
-    connection = {}, health_summary = {}, databases = [], query_stats = {},
+    connection = {}, health_summary = {}, databases = [], databases_error = null, query_stats = {},
     bgwriter = {}, checkpoints = {}, shared_buffers = {},
     connections_detail = {}, replication = [], replication_slots = [],
     process_list = [], long_running_queries = [],
@@ -594,7 +597,9 @@ export default function PostgreSQLDashboard() {
               onOpen={openDbTables}
               onRowClick={openDbTables}
               emptyTitle="No databases found"
-              emptyBody="This cluster reports no non-template databases, or the monitoring role cannot see them."
+              emptyBody={databases_error
+                ? `The database list query failed: ${databases_error}`
+                : "This cluster reports no non-template databases, or the monitoring role cannot see them."}
             />
           );
         })()}
@@ -881,7 +886,7 @@ function LSNCell({ label, value, accent }) {
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED REPLICATION TAB
 ══════════════════════════════════════════════════════════════════════════ */
-function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, replication, replication_slots, health_summary }) {
+const AdvancedReplicationTab = memo(function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, replication, replication_slots, health_summary }) {
 
   // Same queryKey shape PatroniPanel's own internal usePatroniQuery('/status')
   // uses — shares its cache entry rather than firing a second request, and
@@ -920,7 +925,9 @@ function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, 
   // below), so it must render immediately regardless of this fetch's state.
   if (isLoading && !patroniDetected) return (
     <div className="space-y-5">
-      <PatroniPanel connId={connId} />
+      <Suspense fallback={null}>
+        <PatroniPanel connId={connId} />
+      </Suspense>
       <PageLoading title="Loading replication data…" illustration />
     </div>
   );
@@ -931,7 +938,9 @@ function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, 
   return (
     <div className="space-y-5">
 
-      <PatroniPanel connId={connId} />
+      <Suspense fallback={null}>
+        <PatroniPanel connId={connId} />
+      </Suspense>
 
       {/* The raw pg_stat_replication view below is the pre-Patroni fallback —
           a genuinely non-Patroni PostgreSQL cluster still needs it, but a
@@ -1253,7 +1262,7 @@ function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, 
                     {/* Lag breakdown */}
                     <div className="px-5 mb-4">
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-2">Lag Breakdown</p>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                         {[
                           { label:'Write Lag',    ms: r.write_lag_ms,  txt: r.write_lag,  bytes: r.write_byte_lag },
                           { label:'Flush Lag',    ms: r.flush_lag_ms,  txt: r.flush_lag,  bytes: r.flush_byte_lag },
@@ -1737,7 +1746,7 @@ function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, 
       )}
     </div>
   );
-}
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED QUERIES TAB
@@ -1837,7 +1846,7 @@ function AiQueryAnalysis({ res }) {
   );
 }
 
-function AdvancedQueriesTab({ connId, active: tabActive }) {
+const AdvancedQueriesTab = memo(function AdvancedQueriesTab({ connId, active: tabActive }) {
   const [view,    setView]    = React.useState('mean');
   const [searchInput, setSearchInput] = React.useState('');
   const [search,  setSearch]  = React.useState('');   // debounced — server-side search param
@@ -2232,7 +2241,7 @@ function AdvancedQueriesTab({ connId, active: tabActive }) {
       {modalQuery && <QueryAnalysisModal stmt={modalQuery} connId={connId} onClose={() => setModalQuery(null)} />}
     </div>
   );
-}
+});
 
 function QueryAnalysisModal({ stmt, connId, onClose }) {
   const s = stmt;
@@ -2333,9 +2342,10 @@ function analyzeAgo(t) {
    through the shared <TableDetailsDialog> (see AdvancedTablesTab below),
    the same component every engine dashboard uses. */
 
-function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
+const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
   const [view,          setView]          = React.useState('size');
-  const [search,        setSearch]        = React.useState('');
+  const [searchInput,   setSearchInput]   = React.useState('');
+  const [search,        setSearch]        = React.useState('');   // debounced — the actual filter key
   const [selDb,         setSelDb]         = React.useState(initialDb || '__all__');
   const [selectedTable, setSelectedTable] = React.useState(null);
 
@@ -2343,6 +2353,13 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
   React.useEffect(() => {
     if (initialDb) setSelDb(initialDb);
   }, [initialDb]);
+
+  // Same debounce shape as the Queries tab — avoids re-filtering/re-sorting the
+  // whole table list on every keystroke.
+  React.useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   // The shared ActMon Table Details dialog — same component every engine
   // dashboard opens on "Inspect", fed here via adaptPostgresTableDetails().
@@ -2362,15 +2379,19 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
   const vw  = TABLE_VIEWS.find(v => v.id === view) || TABLE_VIEWS[0];
   const dbs = d.databases || [];
 
-  let tables = [...(d.tables || [])];
-  if (selDb !== '__all__') tables = tables.filter(t => t.database === selDb);
-  if (vw.filter) tables = tables.filter(vw.filter);
-  tables = tables
-    .filter(t => !search ||
-      t.relname?.toLowerCase().includes(search.toLowerCase()) ||
-      t.schemaname?.toLowerCase().includes(search.toLowerCase()) ||
-      t.database?.toLowerCase().includes(search.toLowerCase()))
-    .sort(vw.sort);
+  const tables = useMemo(() => {
+    let rows = [...(d.tables || [])];
+    if (selDb !== '__all__') rows = rows.filter(t => t.database === selDb);
+    if (vw.filter) rows = rows.filter(vw.filter);
+    const s = search.toLowerCase();
+    return rows
+      .filter(t => !s ||
+        t.relname?.toLowerCase().includes(s) ||
+        t.schemaname?.toLowerCase().includes(s) ||
+        t.database?.toLowerCase().includes(s))
+      .sort(vw.sort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.tables, selDb, view, search]);
 
   /* 110 tables in one scroll is not a list anyone reads. Same stepper, same
      app-wide rows-per-page default and same per-list override as every other
@@ -2467,7 +2488,7 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
               )}
               <div className="relative">
                 <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter tables…"
+                <input value={searchInput} onChange={e=>setSearchInput(e.target.value)} placeholder="Filter tables…"
                   className="h-8 pl-7 pr-3 rounded-xl border border-slate-200 text-[12px] outline-none focus:border-indigo-400 bg-white w-40"/>
               </div>
               <button onClick={refetch} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center text-slate-400 hover:bg-slate-50">
@@ -2625,7 +2646,7 @@ function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
       )}
     </div>
   );
-}
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED CONFIG TAB  — pg_settings across 15 categories
@@ -2683,26 +2704,32 @@ const CTX_LABEL = {
   'backend':             'backend',
 };
 
-function AdvancedConfigTab({ detail, isLoading, refetch }) {
-  const [selGroup, setSelGroup] = React.useState('Memory');
-  const [search,   setSearch]   = React.useState('');
-  const [copied,   setCopied]   = React.useState(null);
-  const [showDesc, setShowDesc] = React.useState(true);
+const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, refetch }) {
+  const [selGroup,    setSelGroup]    = React.useState('Memory');
+  const [searchInput, setSearchInput] = React.useState('');
+  const [search,      setSearch]      = React.useState('');   // debounced — the actual filter key
+  const [copied,      setCopied]      = React.useState(null);
+  const [showDesc,    setShowDesc]    = React.useState(true);
+
+  React.useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput), 250);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const d      = detail || {};
   const groups = d.groups || {};
   const groupNames = Object.keys(groups);
-
   const searchLower = search.toLowerCase().trim();
-  const searchResults = searchLower
-    ? Object.values(groups).flat().filter(p =>
-        p.name.toLowerCase().includes(searchLower) ||
-        (p.description || '').toLowerCase().includes(searchLower) ||
-        (p.setting || '').toLowerCase().includes(searchLower) ||
-        (p.category || '').toLowerCase().includes(searchLower))
-    : null;
 
-  const params = searchResults || (groups[selGroup] || []);
+  const params = useMemo(() => {
+    if (!searchLower) return groups[selGroup] || [];
+    return Object.values(groups).flat().filter(p =>
+      p.name.toLowerCase().includes(searchLower) ||
+      (p.description || '').toLowerCase().includes(searchLower) ||
+      (p.setting || '').toLowerCase().includes(searchLower) ||
+      (p.category || '').toLowerCase().includes(searchLower));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, selGroup, searchLower]);
 
   function copyParam(name) {
     navigator.clipboard?.writeText(name);
@@ -2805,10 +2832,10 @@ function AdvancedConfigTab({ detail, isLoading, refetch }) {
         <div className="w-56 flex-shrink-0 space-y-1 sticky top-4">
           <div className="relative mb-3">
             <Search size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"/>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search all params…"
+            <input value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="Search all params…"
               className="w-full h-9 pl-7 pr-3 rounded-xl border border-slate-200 text-[12px] outline-none focus:border-indigo-400 bg-white"/>
-            {search && (
-              <button onClick={() => setSearch('')}
+            {searchInput && (
+              <button onClick={() => { setSearchInput(''); setSearch(''); }}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                 <XCircle size={12}/>
               </button>
@@ -2817,7 +2844,7 @@ function AdvancedConfigTab({ detail, isLoading, refetch }) {
 
           {searchLower && (
             <div className="px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-200 mb-2">
-              <p className="text-[10px] font-bold text-indigo-600">{searchResults?.length || 0} params match</p>
+              <p className="text-[10px] font-bold text-indigo-600">{params?.length || 0} params match</p>
             </div>
           )}
 
@@ -2827,7 +2854,7 @@ function AdvancedConfigTab({ detail, isLoading, refetch }) {
             const pendCount = gparams.filter(p => p.pending_restart).length;
             const isActive = selGroup === gn && !searchLower;
             return (
-              <button key={gn} onClick={() => { setSelGroup(gn); setSearch(''); }}
+              <button key={gn} onClick={() => { setSelGroup(gn); setSearchInput(''); setSearch(''); }}
                 className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-left transition-all
                   ${isActive ? 'bg-indigo-50 border-2 border-indigo-300 shadow-sm' : 'border-2 border-transparent hover:bg-slate-50'}`}>
                 <span className="text-[15px] flex-shrink-0">{CFG_GROUP_ICONS[gn] || '⚙️'}</span>
@@ -3024,12 +3051,12 @@ function AdvancedConfigTab({ detail, isLoading, refetch }) {
       )}
     </div>
   );
-}
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED USERS TAB
 ══════════════════════════════════════════════════════════════════════════ */
-function AdvancedUsersTab({ detail, isLoading, refetch }) {
+const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, refetch }) {
   const [activeSection, setActiveSection] = React.useState('roles');
   const d          = detail || {};
   const roles      = d.roles      || [];
@@ -3287,12 +3314,12 @@ function AdvancedUsersTab({ detail, isLoading, refetch }) {
       )}
     </div>
   );
-}
+});
 
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED STORAGE TAB
 ══════════════════════════════════════════════════════════════════════════ */
-function AdvancedStorageTab({ detail, isLoading, refetch }) {
+const AdvancedStorageTab = memo(function AdvancedStorageTab({ detail, isLoading, refetch }) {
   const [activeSection, setActiveSection] = React.useState('tables');
   const d           = detail || {};
   const dbSizes     = d.db_sizes           || [];
@@ -3643,5 +3670,5 @@ function AdvancedStorageTab({ detail, isLoading, refetch }) {
       )}
     </div>
   );
-}
+});
 

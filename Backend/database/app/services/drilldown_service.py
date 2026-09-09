@@ -9,6 +9,7 @@ Only two things vary per engine and live in TECH below:
 
 Reuses the proven PostgreSQL helpers (SSH, severity, Groq narrative, etc.).
 """
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from fastapi import HTTPException
@@ -527,20 +528,39 @@ def _mssql_sessions(conn, pid=None, limit=25):
 def _mssql_processes(conn, sort: str = "cpu") -> dict:
     """Windows host has no Linux SSH — show SQL Server's SESSIONS (persistent) as the 'processes'."""
     eng = _mssql_engine(conn)
-    cores = None
-    total_mem_kb = 0
-    with eng.connect() as c:
-        host, sqlc = _mssql_cpu_split(c)
+
+    # cpu-split, cores, total memory and the session list are 4 independent
+    # reads — they used to run one after another (the first 3 sharing one
+    # connection, then the session list on a second connection afterward).
+    # Each now gets its own connection and runs concurrently.
+    def _fetch_cpu():
+        with eng.connect() as c:
+            return _mssql_cpu_split(c)
+
+    def _fetch_cores():
         try:
-            cores = int(c.execute(text("SELECT cpu_count FROM sys.dm_os_sys_info")).scalar() or 0)
+            with eng.connect() as c:
+                return int(c.execute(text("SELECT cpu_count FROM sys.dm_os_sys_info")).scalar() or 0)
         except Exception:
-            pass
+            return None
+
+    def _fetch_total_mem_kb():
         try:
-            total_mem_kb = float(c.execute(text("SELECT cntr_value FROM sys.dm_os_performance_counters "
-                                                "WHERE RTRIM(counter_name)='Total Server Memory (KB)'")).scalar() or 0)
+            with eng.connect() as c:
+                return float(c.execute(text("SELECT cntr_value FROM sys.dm_os_performance_counters "
+                                            "WHERE RTRIM(counter_name)='Total Server Memory (KB)'")).scalar() or 0)
         except Exception:
-            pass
-    sess = _mssql_sessions(conn, limit=25)
+            return 0
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        cpu_f = pool.submit(_fetch_cpu)
+        cores_f = pool.submit(_fetch_cores)
+        mem_f = pool.submit(_fetch_total_mem_kb)
+        sess_f = pool.submit(_mssql_sessions, conn, limit=25)
+        host, sqlc = cpu_f.result()
+        cores = cores_f.result()
+        total_mem_kb = mem_f.result()
+        sess = sess_f.result()
     tot = sum(float(x.get("cpu_ms") or 0) for x in sess) or 1.0
     rows = []
     for x in sess:
@@ -617,58 +637,117 @@ def _mssql_deep_analysis(conn, pid) -> dict:
     tables = indexes = missing = parts = top_queries = []
     with eng.connect() as c:
         adb = _mssql_pick_db(c, conn, srow.get("datname"))
-        D = adb.replace("]", "]]") if adb else None
-        if D:
-            tables = _dec(_mrows(c, f"""
-                SELECT TOP 12 s.name AS schema_name, t.name AS table_name, p.rows AS row_count,
-                    CAST(SUM(a.total_pages)*8/1024.0 AS DECIMAL(12,1)) AS total_mb,
-                    CAST(SUM(CASE WHEN i.index_id NOT IN (0,1) THEN a.used_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,1)) AS index_mb
-                FROM [{D}].sys.tables t
-                JOIN [{D}].sys.schemas s ON t.schema_id = s.schema_id
-                JOIN [{D}].sys.indexes i ON t.object_id = i.object_id
-                JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                JOIN [{D}].sys.allocation_units a ON p.partition_id = a.container_id
-                WHERE i.index_id <= 1
-                GROUP BY s.name, t.name, p.rows ORDER BY total_mb DESC"""))
-            indexes = _dec(_mrows(c, f"""
-                SELECT TOP 25 OBJECT_NAME(i.object_id, DB_ID('{adb}')) AS table_name,
-                    ISNULL(i.name,'(heap)') AS index_name, i.type_desc,
-                    ISNULL(ius.user_seeks,0) AS seeks, ISNULL(ius.user_scans,0) AS scans,
-                    ISNULL(ius.user_lookups,0) AS lookups, ISNULL(ius.user_updates,0) AS updates
-                FROM [{D}].sys.indexes i
-                LEFT JOIN sys.dm_db_index_usage_stats ius
-                       ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID('{adb}')
-                WHERE i.object_id IN (SELECT object_id FROM [{D}].sys.tables)
-                ORDER BY (ISNULL(ius.user_seeks,0)+ISNULL(ius.user_scans,0)+ISNULL(ius.user_lookups,0)) DESC"""))
-            missing = _dec(_mrows(c, f"""
-                SELECT TOP 10 OBJECT_NAME(mid.object_id, mid.database_id) AS table_name,
-                    mid.equality_columns, mid.inequality_columns, mid.included_columns,
-                    CAST(migs.avg_user_impact AS DECIMAL(5,1)) AS impact, (migs.user_seeks+migs.user_scans) AS uses
-                FROM sys.dm_db_missing_index_details mid
-                JOIN sys.dm_db_missing_index_groups mig ON mid.index_handle = mig.index_handle
-                JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
-                WHERE mid.database_id = DB_ID('{adb}')
-                ORDER BY migs.avg_total_user_cost*migs.avg_user_impact*(migs.user_seeks+migs.user_scans) DESC"""))
-            parts = _dec(_mrows(c, f"""
-                SELECT t.name AS table_name, SUM(p.rows) AS row_count, MAX(p.partition_number) AS parts
-                FROM [{D}].sys.tables t
-                JOIN [{D}].sys.indexes i ON t.object_id = i.object_id AND i.index_id <= 1
-                JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                GROUP BY t.name HAVING SUM(p.rows) > 1000000 AND MAX(p.partition_number) = 1
-                ORDER BY SUM(p.rows) DESC"""))
-            top_queries = _dec(_mrows(c, f"""
-                SELECT TOP 8 qs.execution_count,
-                    qs.total_worker_time/1000 AS total_cpu_ms,
-                    CAST(qs.total_worker_time/1000.0/NULLIF(qs.execution_count,0) AS DECIMAL(12,1)) AS avg_cpu_ms,
-                    qs.total_logical_reads/NULLIF(qs.execution_count,0) AS avg_reads,
-                    SUBSTRING(t.text,1,300) AS query
-                FROM sys.dm_exec_query_stats qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t
-                WHERE t.dbid = DB_ID('{adb}')
-                  AND t.text NOT LIKE '%dm_exec%' AND t.text NOT LIKE '%dm_os%' AND t.text NOT LIKE '%dm_db%'
-                ORDER BY qs.total_worker_time DESC"""))
+    D = adb.replace("]", "]]") if adb else None
+    if D:
+        # These 5 reads all depend on `adb` (picked above) but not on each
+        # other — they used to run one after another on a single shared
+        # connection, which is exactly what made this dialog slow to load.
+        # Each now gets its own connection and runs concurrently, the same
+        # fix already applied to mssql_table_detail().
+        def _fetch_tables():
+            with eng.connect() as c2:
+                return _dec(_mrows(c2, f"""
+                    SELECT TOP 12 s.name AS schema_name, t.name AS table_name, p.rows AS row_count,
+                        CAST(SUM(a.total_pages)*8/1024.0 AS DECIMAL(12,1)) AS total_mb,
+                        CAST(SUM(CASE WHEN i.index_id NOT IN (0,1) THEN a.used_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,1)) AS index_mb
+                    FROM [{D}].sys.tables t
+                    JOIN [{D}].sys.schemas s ON t.schema_id = s.schema_id
+                    JOIN [{D}].sys.indexes i ON t.object_id = i.object_id
+                    JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+                    JOIN [{D}].sys.allocation_units a ON p.partition_id = a.container_id
+                    WHERE i.index_id <= 1
+                    GROUP BY s.name, t.name, p.rows ORDER BY total_mb DESC"""))
+
+        def _fetch_indexes():
+            with eng.connect() as c2:
+                return _dec(_mrows(c2, f"""
+                    SELECT TOP 25 OBJECT_NAME(i.object_id, DB_ID('{adb}')) AS table_name,
+                        ISNULL(i.name,'(heap)') AS index_name, i.type_desc,
+                        ISNULL(ius.user_seeks,0) AS seeks, ISNULL(ius.user_scans,0) AS scans,
+                        ISNULL(ius.user_lookups,0) AS lookups, ISNULL(ius.user_updates,0) AS updates
+                    FROM [{D}].sys.indexes i
+                    LEFT JOIN sys.dm_db_index_usage_stats ius
+                           ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID('{adb}')
+                    WHERE i.object_id IN (SELECT object_id FROM [{D}].sys.tables)
+                    ORDER BY (ISNULL(ius.user_seeks,0)+ISNULL(ius.user_scans,0)+ISNULL(ius.user_lookups,0)) DESC"""))
+
+        def _fetch_missing():
+            with eng.connect() as c2:
+                return _dec(_mrows(c2, f"""
+                    SELECT TOP 10 OBJECT_NAME(mid.object_id, mid.database_id) AS table_name,
+                        mid.equality_columns, mid.inequality_columns, mid.included_columns,
+                        CAST(migs.avg_user_impact AS DECIMAL(5,1)) AS impact, (migs.user_seeks+migs.user_scans) AS uses
+                    FROM sys.dm_db_missing_index_details mid
+                    JOIN sys.dm_db_missing_index_groups mig ON mid.index_handle = mig.index_handle
+                    JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
+                    WHERE mid.database_id = DB_ID('{adb}')
+                    ORDER BY migs.avg_total_user_cost*migs.avg_user_impact*(migs.user_seeks+migs.user_scans) DESC"""))
+
+        def _fetch_parts():
+            with eng.connect() as c2:
+                return _dec(_mrows(c2, f"""
+                    SELECT t.name AS table_name, SUM(p.rows) AS row_count, MAX(p.partition_number) AS parts
+                    FROM [{D}].sys.tables t
+                    JOIN [{D}].sys.indexes i ON t.object_id = i.object_id AND i.index_id <= 1
+                    JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+                    GROUP BY t.name HAVING SUM(p.rows) > 1000000 AND MAX(p.partition_number) = 1
+                    ORDER BY SUM(p.rows) DESC"""))
+
+        def _fetch_top_queries():
+            with eng.connect() as c2:
+                return _dec(_mrows(c2, f"""
+                    SELECT TOP 8 qs.execution_count,
+                        qs.total_worker_time/1000 AS total_cpu_ms,
+                        CAST(qs.total_worker_time/1000.0/NULLIF(qs.execution_count,0) AS DECIMAL(12,1)) AS avg_cpu_ms,
+                        qs.total_logical_reads/NULLIF(qs.execution_count,0) AS avg_reads,
+                        SUBSTRING(t.text,1,300) AS query
+                    FROM sys.dm_exec_query_stats qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t
+                    WHERE t.dbid = DB_ID('{adb}')
+                      AND t.text NOT LIKE '%dm_exec%' AND t.text NOT LIKE '%dm_os%' AND t.text NOT LIKE '%dm_db%'
+                    ORDER BY qs.total_worker_time DESC"""))
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            tables_f = pool.submit(_fetch_tables)
+            indexes_f = pool.submit(_fetch_indexes)
+            missing_f = pool.submit(_fetch_missing)
+            parts_f = pool.submit(_fetch_parts)
+            topq_f = pool.submit(_fetch_top_queries)
+            try:
+                tables = tables_f.result()
+            except Exception:
+                tables = []
+            try:
+                indexes = indexes_f.result()
+            except Exception:
+                indexes = []
+            try:
+                missing = missing_f.result()
+            except Exception:
+                missing = []
+            try:
+                parts = parts_f.result()
+            except Exception:
+                parts = []
+            try:
+                top_queries = topq_f.result()
+            except Exception:
+                top_queries = []
 
     def _cols(s):
         return [x.strip().strip("[]") for x in (s or "").split(",") if x.strip()]
+
+    def _num(v, default=0):
+        # Same guard as mssql_table_detail()'s _num(): these DMV counters are
+        # ISNULL()-guarded so they're never NULL, but a driver/ANSI-setting
+        # combination can still hand one back as a plain str — `v or default`
+        # doesn't catch that (a truthy string sails through and then fails
+        # arithmetic/`>` against an int).
+        if v is None:
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
 
     missing_ddl = []
     for m in missing:
@@ -683,10 +762,10 @@ def _mssql_deep_analysis(conn, pid) -> dict:
             missing_ddl.append({"table": tbl, "impact": m.get("impact"), "uses": m.get("uses"), "ddl": ddl})
 
     unused = [i for i in indexes
-              if (i.get("seeks", 0) + i.get("scans", 0) + i.get("lookups", 0)) == 0
-              and (i.get("updates") or 0) > 0
+              if (_num(i.get("seeks")) + _num(i.get("scans")) + _num(i.get("lookups"))) == 0
+              and _num(i.get("updates")) > 0
               and i.get("index_name") not in ("(heap)",) and i.get("type_desc") != "CLUSTERED"]
-    big_tables = [t for t in tables if (t.get("row_count") or 0) > 1000000]
+    big_tables = [t for t in tables if _num(t.get("row_count")) > 1000000]
 
     recommendations = []
     for d in missing_ddl[:5]:
@@ -726,58 +805,74 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
            "columns": [], "indexes": [], "missing_indexes": [], "stats": {}, "recommendations": [],
            "constraints": [], "foreign_keys": [], "triggers": [], "ddl": None,
            "sample_columns": [], "sample_rows": [], "sample_returned": 0, "errors": {}}
-    with eng.connect() as c:
-        out["stats"] = (_dec(_mrows(c, f"""
-            SELECT MAX(CASE WHEN i.index_id <= 1 THEN p.rows END) AS row_count,
-                CAST(SUM(a.total_pages)*8/1024.0 AS DECIMAL(12,2)) AS total_mb,
-                CAST(SUM(CASE WHEN i.index_id IN (0,1) THEN a.data_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,2)) AS data_mb,
-                CAST(SUM(CASE WHEN i.index_id NOT IN (0,1) THEN a.used_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,2)) AS index_mb,
-                MAX(p.partition_number) AS partitions
-            FROM [{D}].sys.indexes i
-            JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-            JOIN [{D}].sys.allocation_units a ON p.partition_id = a.container_id
-            WHERE i.object_id = OBJECT_ID('{obj}')""")) or [{}])[0]
+    # These 8 sections are independent read-only queries against the same
+    # table — they used to run one after another on a single connection,
+    # which is what made this dialog slow to load (each round-trip adds up,
+    # worse still over an agent-routed connection). Each gets its own
+    # connection and runs concurrently instead; a SQLAlchemy Connection isn't
+    # safe to share across threads, so reusing the outer `c` here is not an
+    # option.
+    def _fetch_stats():
+        with eng.connect() as c:
+            rows = _dec(_mrows(c, f"""
+                SELECT MAX(CASE WHEN i.index_id <= 1 THEN p.rows END) AS row_count,
+                    CAST(SUM(a.total_pages)*8/1024.0 AS DECIMAL(12,2)) AS total_mb,
+                    CAST(SUM(CASE WHEN i.index_id IN (0,1) THEN a.data_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,2)) AS data_mb,
+                    CAST(SUM(CASE WHEN i.index_id NOT IN (0,1) THEN a.used_pages ELSE 0 END)*8/1024.0 AS DECIMAL(12,2)) AS index_mb,
+                    MAX(p.partition_number) AS partitions
+                FROM [{D}].sys.indexes i
+                JOIN [{D}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+                JOIN [{D}].sys.allocation_units a ON p.partition_id = a.container_id
+                WHERE i.object_id = OBJECT_ID('{obj}')"""))
+            return rows[0] if rows else {}
 
-        out["columns"] = _dec(_mrows(c, f"""
-            SELECT c.column_id, c.name, ty.name AS data_type,
-                CASE WHEN ty.name IN ('nvarchar','nchar') AND c.max_length > 0 THEN c.max_length/2 ELSE c.max_length END AS length,
-                c.is_nullable, c.is_identity,
-                CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS is_pk,
-                dc.definition AS default_def
-            FROM [{D}].sys.columns c
-            JOIN [{D}].sys.types ty ON c.user_type_id = ty.user_type_id
-            LEFT JOIN (SELECT ic.object_id, ic.column_id FROM [{D}].sys.indexes i
-                       JOIN [{D}].sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-                       WHERE i.is_primary_key = 1) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
-            LEFT JOIN [{D}].sys.default_constraints dc ON c.default_object_id = dc.object_id
-            WHERE c.object_id = OBJECT_ID('{obj}') ORDER BY c.column_id"""))
+    def _fetch_columns():
+        with eng.connect() as c:
+            return _dec(_mrows(c, f"""
+                SELECT c.column_id, c.name, ty.name AS data_type,
+                    CASE WHEN ty.name IN ('nvarchar','nchar') AND c.max_length > 0 THEN c.max_length/2 ELSE c.max_length END AS length,
+                    c.is_nullable, c.is_identity,
+                    CASE WHEN pk.column_id IS NOT NULL THEN 1 ELSE 0 END AS is_pk,
+                    dc.definition AS default_def
+                FROM [{D}].sys.columns c
+                JOIN [{D}].sys.types ty ON c.user_type_id = ty.user_type_id
+                LEFT JOIN (SELECT ic.object_id, ic.column_id FROM [{D}].sys.indexes i
+                           JOIN [{D}].sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+                           WHERE i.is_primary_key = 1) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
+                LEFT JOIN [{D}].sys.default_constraints dc ON c.default_object_id = dc.object_id
+                WHERE c.object_id = OBJECT_ID('{obj}') ORDER BY c.column_id"""))
 
-        out["indexes"] = _dec(_mrows(c, f"""
-            SELECT i.name AS index_name, i.type_desc, i.is_unique, i.is_primary_key,
-                STUFF((SELECT ', ' + col.name FROM [{D}].sys.index_columns ic
-                       JOIN [{D}].sys.columns col ON ic.object_id = col.object_id AND ic.column_id = col.column_id
-                       WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
-                       ORDER BY ic.key_ordinal FOR XML PATH('')), 1, 2, '') AS key_columns,
-                CAST(ps.avg_fragmentation_in_percent AS DECIMAL(5,1)) AS frag_pct,
-                ISNULL(ius.user_seeks,0) AS seeks, ISNULL(ius.user_scans,0) AS scans,
-                ISNULL(ius.user_lookups,0) AS lookups, ISNULL(ius.user_updates,0) AS updates
-            FROM [{D}].sys.indexes i
-            OUTER APPLY sys.dm_db_index_physical_stats(DB_ID('{dbname}'), OBJECT_ID('{obj}'), i.index_id, NULL, 'LIMITED') ps
-            LEFT JOIN sys.dm_db_index_usage_stats ius ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID('{dbname}')
-            WHERE i.object_id = OBJECT_ID('{obj}') AND i.type > 0
-            ORDER BY i.index_id"""))
+    def _fetch_indexes():
+        with eng.connect() as c:
+            return _dec(_mrows(c, f"""
+                SELECT i.name AS index_name, i.type_desc, i.is_unique, i.is_primary_key,
+                    STUFF((SELECT ', ' + col.name FROM [{D}].sys.index_columns ic
+                           JOIN [{D}].sys.columns col ON ic.object_id = col.object_id AND ic.column_id = col.column_id
+                           WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0
+                           ORDER BY ic.key_ordinal FOR XML PATH('')), 1, 2, '') AS key_columns,
+                    CAST(ps.avg_fragmentation_in_percent AS DECIMAL(5,1)) AS frag_pct,
+                    ISNULL(ius.user_seeks,0) AS seeks, ISNULL(ius.user_scans,0) AS scans,
+                    ISNULL(ius.user_lookups,0) AS lookups, ISNULL(ius.user_updates,0) AS updates
+                FROM [{D}].sys.indexes i
+                OUTER APPLY sys.dm_db_index_physical_stats(DB_ID('{dbname}'), OBJECT_ID('{obj}'), i.index_id, NULL, 'LIMITED') ps
+                LEFT JOIN sys.dm_db_index_usage_stats ius ON ius.object_id = i.object_id AND ius.index_id = i.index_id AND ius.database_id = DB_ID('{dbname}')
+                WHERE i.object_id = OBJECT_ID('{obj}') AND i.type > 0
+                ORDER BY i.index_id"""))
 
-        out["missing_indexes"] = _dec(_mrows(c, f"""
-            SELECT mid.equality_columns, mid.inequality_columns, mid.included_columns,
-                CAST(migs.avg_user_impact AS DECIMAL(5,1)) AS impact, (migs.user_seeks+migs.user_scans) AS uses
-            FROM sys.dm_db_missing_index_details mid
-            JOIN sys.dm_db_missing_index_groups mig ON mid.index_handle = mig.index_handle
-            JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
-            WHERE mid.object_id = OBJECT_ID('{obj}') AND mid.database_id = DB_ID('{dbname}')
-            ORDER BY migs.avg_user_impact DESC"""))
+    def _fetch_missing_indexes():
+        with eng.connect() as c:
+            return _dec(_mrows(c, f"""
+                SELECT mid.equality_columns, mid.inequality_columns, mid.included_columns,
+                    CAST(migs.avg_user_impact AS DECIMAL(5,1)) AS impact, (migs.user_seeks+migs.user_scans) AS uses
+                FROM sys.dm_db_missing_index_details mid
+                JOIN sys.dm_db_missing_index_groups mig ON mid.index_handle = mig.index_handle
+                JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
+                WHERE mid.object_id = OBJECT_ID('{obj}') AND mid.database_id = DB_ID('{dbname}')
+                ORDER BY migs.avg_user_impact DESC"""))
 
-        # ── Constraints: PK/UNIQUE (key_constraints), CHECK, DEFAULT ──────────
-        try:
+    def _fetch_constraints():
+        # PK/UNIQUE (key_constraints), CHECK, DEFAULT
+        with eng.connect() as c:
             pk_uq = [dict(r) for r in c.execute(text(f"""
                 SELECT kc.name AS constraint_name, kc.type,
                     STUFF((SELECT ', ' + col.name FROM [{D}].sys.index_columns ic
@@ -803,13 +898,11 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
                 cons.append({"type": "CHECK", "name": r["constraint_name"], "columns": "", "definition": r.get("definition")})
             for r in defaults:
                 cons.append({"type": "DEFAULT", "name": r["constraint_name"], "columns": r.get("column_name") or "", "definition": r.get("definition")})
-            out["constraints"] = cons
-        except Exception as e:
-            out["errors"]["constraints"] = str(e)
+            return cons
 
-        # ── Foreign keys ───────────────────────────────────────────────────────
-        try:
-            out["foreign_keys"] = [dict(r) for r in c.execute(text(f"""
+    def _fetch_foreign_keys():
+        with eng.connect() as c:
+            return [dict(r) for r in c.execute(text(f"""
                 SELECT fk.name AS name, pc.name AS [column],
                     rs.name AS ref_schema, rt.name AS ref_table, rc.name AS ref_column,
                     fk.update_referential_action_desc AS on_update,
@@ -822,11 +915,9 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
                 JOIN [{D}].sys.schemas rs ON rt.schema_id = rs.schema_id
                 WHERE fk.parent_object_id = OBJECT_ID('{obj}')
                 ORDER BY fk.name, fkc.constraint_column_id""")).mappings().all()]
-        except Exception as e:
-            out["errors"]["foreign_keys"] = str(e)
 
-        # ── Triggers (event names joined with '/', body via OBJECT_DEFINITION) ──
-        try:
+    def _fetch_triggers():
+        with eng.connect() as c:
             trig_rows = [dict(r) for r in c.execute(text(f"""
                 SELECT t.name AS name, t.is_instead_of_trigger,
                     STUFF((SELECT '/' + te.type_desc FROM [{D}].sys.trigger_events te
@@ -836,18 +927,16 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
                     OBJECT_DEFINITION(t.object_id) AS body
                 FROM [{D}].sys.triggers t
                 WHERE t.parent_id = OBJECT_ID('{obj}') AND t.parent_class = 1""")).mappings().all()]
-            out["triggers"] = [{
+            return [{
                 "name": r["name"],
                 "timing": "INSTEAD OF" if r.get("is_instead_of_trigger") else "AFTER",
                 "event": r.get("events") or "",
                 "definer": None,
                 "body": r.get("body"),
             } for r in trig_rows]
-        except Exception as e:
-            out["errors"]["triggers"] = str(e)
 
-        # ── Sample data (TOP 100) ────────────────────────────────────────────
-        try:
+    def _fetch_sample_data():
+        with eng.connect() as c:
             res = c.execute(text(f"SELECT TOP 100 * FROM {obj}"))
             sample_cols = list(res.keys())
             raw_rows = res.mappings().all()
@@ -860,9 +949,49 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
                     else:
                         safe[k] = str(v)   # datetime/Decimal/bytes/etc. → string
                 safe_rows.append(safe)
-            out["sample_columns"] = sample_cols
-            out["sample_rows"] = safe_rows
-            out["sample_returned"] = len(safe_rows)
+            return sample_cols, safe_rows
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        stats_f = pool.submit(_fetch_stats)
+        columns_f = pool.submit(_fetch_columns)
+        indexes_f = pool.submit(_fetch_indexes)
+        missing_f = pool.submit(_fetch_missing_indexes)
+        constraints_f = pool.submit(_fetch_constraints)
+        fk_f = pool.submit(_fetch_foreign_keys)
+        triggers_f = pool.submit(_fetch_triggers)
+        sample_f = pool.submit(_fetch_sample_data)
+
+        try:
+            out["stats"] = stats_f.result()
+        except Exception as e:
+            out["errors"]["stats"] = str(e)
+        try:
+            out["columns"] = columns_f.result()
+        except Exception as e:
+            out["errors"]["columns"] = str(e)
+        try:
+            out["indexes"] = indexes_f.result()
+        except Exception as e:
+            out["errors"]["indexes"] = str(e)
+        try:
+            out["missing_indexes"] = missing_f.result()
+        except Exception as e:
+            out["errors"]["missing_indexes"] = str(e)
+        try:
+            out["constraints"] = constraints_f.result()
+        except Exception as e:
+            out["errors"]["constraints"] = str(e)
+        try:
+            out["foreign_keys"] = fk_f.result()
+        except Exception as e:
+            out["errors"]["foreign_keys"] = str(e)
+        try:
+            out["triggers"] = triggers_f.result()
+        except Exception as e:
+            out["errors"]["triggers"] = str(e)
+        try:
+            out["sample_columns"], out["sample_rows"] = sample_f.result()
+            out["sample_returned"] = len(out["sample_rows"])
         except Exception as e:
             out["errors"]["sample_data"] = str(e)
 
@@ -900,6 +1029,21 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
 
     def _cols(s):
         return [x.strip().strip("[]") for x in (s or "").split(",") if x.strip()]
+
+    def _num(v, default=0):
+        # DECIMAL/INT columns from pyodbc are usually already int/float/Decimal
+        # (and _dec() above converts any Decimal to float) — but not always: a
+        # driver/ANSI-setting combination can hand one back as a plain str, and
+        # `v or default` doesn't guard against that (a truthy string sails
+        # through and then fails '>=' against an int). Coerce for real instead
+        # of hoping the driver's type matches what the SQL CAST() asked for.
+        if v is None:
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
     for m in out["missing_indexes"]:
         cols = _cols(m.get("equality_columns")) + _cols(m.get("inequality_columns"))
         inc = _cols(m.get("included_columns"))
@@ -909,13 +1053,15 @@ def mssql_table_detail(conn_id: int, db: Session, dbname: str, schema: str, tabl
                         + ", ".join(f"[{x}]" for x in cols) + ")"
                         + (f" INCLUDE (" + ", ".join(f"[{x}]" for x in inc) + ")" if inc else "") + ";")
             out["recommendations"].append(f"Create index (≈{m.get('impact')}% faster): {m['ddl']}")
+    row_count = _num(out["stats"].get("row_count"))
     for ix in out["indexes"]:
-        if (ix.get("frag_pct") or 0) >= 30 and (out["stats"].get("row_count") or 0) > 1000:
+        if _num(ix.get("frag_pct")) >= 30 and row_count > 1000:
             out["recommendations"].append(f"Rebuild index [{ix.get('index_name')}] — {ix.get('frag_pct')}% fragmented: ALTER INDEX [{ix.get('index_name')}] ON [{schema}].[{table}] REBUILD;")
-        if (ix.get("seeks", 0) + ix.get("scans", 0) + ix.get("lookups", 0)) == 0 and (ix.get("updates") or 0) > 0 and not ix.get("is_primary_key"):
+        reads = _num(ix.get("seeks")) + _num(ix.get("scans")) + _num(ix.get("lookups"))
+        if reads == 0 and _num(ix.get("updates")) > 0 and not ix.get("is_primary_key"):
             out["recommendations"].append(f"Index [{ix.get('index_name')}] is never read but maintained on writes — consider dropping it.")
-    if (out["stats"].get("row_count") or 0) > 1000000 and (out["stats"].get("partitions") or 1) == 1:
-        out["recommendations"].append(f"[{table}] has {int(out['stats']['row_count']):,} rows and isn't partitioned — partition by a date/range key.")
+    if row_count > 1000000 and _num(out["stats"].get("partitions"), default=1) == 1:
+        out["recommendations"].append(f"[{table}] has {int(row_count):,} rows and isn't partitioned — partition by a date/range key.")
     if not out["recommendations"]:
         out["recommendations"].append("No tuning needed — indexes are used, low fragmentation, no missing indexes.")
     return out
@@ -1043,54 +1189,92 @@ def _mssql_rca(conn, resource, pid=None, target_cmd=None) -> dict:
         other = max(host - sqlc, 0)
         is_db = (sqlc >= other) if resource == "cpu" else True
 
-        active = top_queries = top_waits = missing_ix = big_tables = []
-        adb = None
-        if is_db:   # only gather DB evidence when the DATABASE is actually the cause
-            active = _mrows(c, """
-                SELECT TOP 8 r.session_id, s.login_name, DB_NAME(r.database_id) AS db_name,
-                       r.cpu_time AS cpu_ms, r.total_elapsed_time AS elapsed_ms, r.status,
-                       r.wait_type, r.wait_time, r.blocking_session_id, r.reads, r.writes, r.logical_reads,
-                       SUBSTRING(ISNULL(t.text,''),1,400) AS query
-                FROM sys.dm_exec_requests r
-                JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
-                OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-                WHERE s.is_user_process = 1 ORDER BY r.cpu_time DESC""")
-            top_queries = _mrows(c, """
-                SELECT TOP 8 DB_NAME(t.dbid) AS db_name, qs.execution_count,
-                       qs.total_worker_time/1000 AS total_cpu_ms,
-                       CAST(qs.total_worker_time/1000.0/NULLIF(qs.execution_count,0) AS DECIMAL(12,1)) AS avg_cpu_ms,
-                       CAST(qs.total_elapsed_time/1000.0/NULLIF(qs.execution_count,0) AS DECIMAL(12,1)) AS avg_elapsed_ms,
-                       qs.total_logical_reads/NULLIF(qs.execution_count,0) AS avg_logical_reads,
-                       SUBSTRING(t.text,1,400) AS query
-                FROM sys.dm_exec_query_stats qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t
-                WHERE t.text NOT LIKE '%dm_exec%' ORDER BY qs.total_worker_time DESC""")
-            top_waits = _mrows(c, """
-                SELECT TOP 6 wait_type, waiting_tasks_count, wait_time_ms
-                FROM sys.dm_os_wait_stats
-                WHERE wait_type NOT LIKE '%SLEEP%' AND wait_type NOT LIKE '%IDLE%' AND wait_time_ms > 0
-                ORDER BY wait_time_ms DESC""")
-            for grp in (active, top_queries, top_waits):
-                for row in grp:
-                    for k, v in list(row.items()):
-                        if hasattr(v, "__class__") and v.__class__.__name__ == "Decimal":
-                            row[k] = float(v)
-            adb = _mssql_pick_db(c, conn, None)
-            if adb:
-                Dn = adb.replace("]", "]]")
-                missing_ix = _dec(_mrows(c, f"""
-                    SELECT TOP 5 OBJECT_NAME(mid.object_id, mid.database_id) AS table_name,
-                        mid.equality_columns, mid.inequality_columns, CAST(migs.avg_user_impact AS DECIMAL(5,1)) AS impact
-                    FROM sys.dm_db_missing_index_details mid
-                    JOIN sys.dm_db_missing_index_groups mig ON mid.index_handle = mig.index_handle
-                    JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
-                    WHERE mid.database_id = DB_ID('{adb}')
-                    ORDER BY migs.avg_total_user_cost*migs.avg_user_impact*(migs.user_seeks+migs.user_scans) DESC"""))
-                big_tables = _dec(_mrows(c, f"""
-                    SELECT TOP 5 t.name AS table_name, SUM(p.rows) AS row_count, MAX(p.partition_number) AS parts
-                    FROM [{Dn}].sys.tables t
-                    JOIN [{Dn}].sys.indexes i ON t.object_id = i.object_id AND i.index_id <= 1
-                    JOIN [{Dn}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
-                    GROUP BY t.name HAVING SUM(p.rows) > 1000000 ORDER BY SUM(p.rows) DESC"""))
+    active = top_queries = top_waits = missing_ix = big_tables = []
+    adb = None
+    if is_db:   # only gather DB evidence when the DATABASE is actually the cause
+        # active/top_queries/top_waits/adb are 4 independent reads — they used
+        # to run one after another on the single connection opened above.
+        # Each now gets its own connection and runs concurrently.
+        def _fetch_active():
+            with eng.connect() as c2:
+                return _mrows(c2, """
+                    SELECT TOP 8 r.session_id, s.login_name, DB_NAME(r.database_id) AS db_name,
+                           r.cpu_time AS cpu_ms, r.total_elapsed_time AS elapsed_ms, r.status,
+                           r.wait_type, r.wait_time, r.blocking_session_id, r.reads, r.writes, r.logical_reads,
+                           SUBSTRING(ISNULL(t.text,''),1,400) AS query
+                    FROM sys.dm_exec_requests r
+                    JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
+                    OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+                    WHERE s.is_user_process = 1 ORDER BY r.cpu_time DESC""")
+
+        def _fetch_top_queries():
+            with eng.connect() as c2:
+                return _mrows(c2, """
+                    SELECT TOP 8 DB_NAME(t.dbid) AS db_name, qs.execution_count,
+                           qs.total_worker_time/1000 AS total_cpu_ms,
+                           CAST(qs.total_worker_time/1000.0/NULLIF(qs.execution_count,0) AS DECIMAL(12,1)) AS avg_cpu_ms,
+                           CAST(qs.total_elapsed_time/1000.0/NULLIF(qs.execution_count,0) AS DECIMAL(12,1)) AS avg_elapsed_ms,
+                           qs.total_logical_reads/NULLIF(qs.execution_count,0) AS avg_logical_reads,
+                           SUBSTRING(t.text,1,400) AS query
+                    FROM sys.dm_exec_query_stats qs CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t
+                    WHERE t.text NOT LIKE '%dm_exec%' ORDER BY qs.total_worker_time DESC""")
+
+        def _fetch_top_waits():
+            with eng.connect() as c2:
+                return _mrows(c2, """
+                    SELECT TOP 6 wait_type, waiting_tasks_count, wait_time_ms
+                    FROM sys.dm_os_wait_stats
+                    WHERE wait_type NOT LIKE '%SLEEP%' AND wait_type NOT LIKE '%IDLE%' AND wait_time_ms > 0
+                    ORDER BY wait_time_ms DESC""")
+
+        def _fetch_adb():
+            with eng.connect() as c2:
+                return _mssql_pick_db(c2, conn, None)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            active_f = pool.submit(_fetch_active)
+            tq_f = pool.submit(_fetch_top_queries)
+            tw_f = pool.submit(_fetch_top_waits)
+            adb_f = pool.submit(_fetch_adb)
+            active = active_f.result()
+            top_queries = tq_f.result()
+            top_waits = tw_f.result()
+            adb = adb_f.result()
+
+        for grp in (active, top_queries, top_waits):
+            for row in grp:
+                for k, v in list(row.items()):
+                    if hasattr(v, "__class__") and v.__class__.__name__ == "Decimal":
+                        row[k] = float(v)
+        if adb:
+            Dn = adb.replace("]", "]]")
+            # missing_ix/big_tables both depend on `adb` but not on each
+            # other — same fix, run concurrently.
+            def _fetch_missing_ix():
+                with eng.connect() as c2:
+                    return _dec(_mrows(c2, f"""
+                        SELECT TOP 5 OBJECT_NAME(mid.object_id, mid.database_id) AS table_name,
+                            mid.equality_columns, mid.inequality_columns, CAST(migs.avg_user_impact AS DECIMAL(5,1)) AS impact
+                        FROM sys.dm_db_missing_index_details mid
+                        JOIN sys.dm_db_missing_index_groups mig ON mid.index_handle = mig.index_handle
+                        JOIN sys.dm_db_missing_index_group_stats migs ON mig.index_group_handle = migs.group_handle
+                        WHERE mid.database_id = DB_ID('{adb}')
+                        ORDER BY migs.avg_total_user_cost*migs.avg_user_impact*(migs.user_seeks+migs.user_scans) DESC"""))
+
+            def _fetch_big_tables():
+                with eng.connect() as c2:
+                    return _dec(_mrows(c2, f"""
+                        SELECT TOP 5 t.name AS table_name, SUM(p.rows) AS row_count, MAX(p.partition_number) AS parts
+                        FROM [{Dn}].sys.tables t
+                        JOIN [{Dn}].sys.indexes i ON t.object_id = i.object_id AND i.index_id <= 1
+                        JOIN [{Dn}].sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+                        GROUP BY t.name HAVING SUM(p.rows) > 1000000 ORDER BY SUM(p.rows) DESC"""))
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                mi_f = pool.submit(_fetch_missing_ix)
+                bt_f = pool.submit(_fetch_big_tables)
+                missing_ix = mi_f.result()
+                big_tables = bt_f.result()
 
     # External cause → enumerate the real Windows processes instead of DB internals
     os_data = None if is_db else _mssql_os_collect(conn)

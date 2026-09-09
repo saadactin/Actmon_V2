@@ -9,7 +9,7 @@ import { StatusKey } from './status';
  * through StatusKey (swatch + icon + label), because the fixed status steps must
  * never be colour-alone; anything else gets a plain swatch.
  */
-export default function Legend({ items, showValues = true, className }) {
+export default function Legend({ items, showValues = true, className, format = (v) => v }) {
   if (!items?.length) return null;
 
   return (
@@ -18,7 +18,7 @@ export default function Legend({ items, showValues = true, className }) {
         <StatusKey
           key={item.key ?? item.label}
           status={{ ...item.status, label: item.label }}
-          count={showValues ? item.value : undefined}
+          count={showValues ? format(item.value) : undefined}
         />
       ) : (
         <span
@@ -28,7 +28,7 @@ export default function Legend({ items, showValues = true, className }) {
           <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: colorOf(item) }} />
           {item.label}
           {showValues && item.value !== undefined && (
-            <b className="text-fg tabular-nums">{item.value}</b>
+            <b className="text-fg tabular-nums">{format(item.value)}</b>
           )}
         </span>
       )))}

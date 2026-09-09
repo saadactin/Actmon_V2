@@ -899,6 +899,65 @@ Return this exact JSON structure:
         return {"status": "error", "error": str(e)}
 
 
+_MYSQL_ACCESS_TYPE_LABELS = {
+    "ALL": "Table Scan", "INDEX": "Full Index Scan", "RANGE": "Index Range Scan",
+    "REF": "Index Lookup", "EQ_REF": "Unique Index Lookup", "CONST": "Constant Lookup",
+    "SYSTEM": "System Table", "INDEX_MERGE": "Index Merge", "FULLTEXT": "Fulltext Search",
+    "REF_OR_NULL": "Index Lookup (or NULL)", "UNIQUE_SUBQUERY": "Unique Subquery",
+    "INDEX_SUBQUERY": "Index Subquery",
+}
+
+
+def _mysql_plan_node_label(t: dict) -> str:
+    at = str(t.get("access_type") or "").upper()
+    return _MYSQL_ACCESS_TYPE_LABELS.get(at, at.title() if at else "Table Access")
+
+
+def _flatten_mysql_plan(node, depth: int, out: list) -> None:
+    """MySQL's EXPLAIN FORMAT=JSON tree, same 'no fixed schema' shape
+    mysql_slow_query_analysis_service.py's _walk_plan already documents —
+    walked here into an ORDERED, DEPTH-TAGGED flat list instead (that other
+    function only needs an unordered table/flag summary, not a display
+    hierarchy). depth increases by 1 on every recursive descent — MySQL's JSON
+    doesn't cleanly separate "join sibling" from "true nesting" the way
+    Postgres's does, so this is a best-effort visual hierarchy, not a claim
+    about the optimizer's real execution order."""
+    if isinstance(node, dict):
+        t = node.get("table")
+        if isinstance(t, dict):
+            cost_info = t.get("cost_info") or {}
+            out.append({
+                "depth": depth,
+                "node_type": _mysql_plan_node_label(t),
+                "relation": t.get("table_name"),
+                "plan_rows": t.get("rows_examined_per_scan"),
+                "total_cost": _safe_float_or_none(cost_info.get("prefix_cost") or cost_info.get("read_cost")),
+                # MySQL's own analysis fields, kept for the hints below.
+                "_access_type": str(t.get("access_type") or "").upper(),
+                "_possible_keys": t.get("possible_keys") or [],
+                "_key": t.get("key"),
+                "_using_filesort": bool(t.get("using_filesort")),
+                "_using_temp": bool(t.get("using_temporary_table")),
+            })
+            for key in ("materialized_from_subquery", "attached_subqueries"):
+                if key in t:
+                    _flatten_mysql_plan(t[key], depth + 1, out)
+        for k, v in node.items():
+            if k == "table":
+                continue
+            _flatten_mysql_plan(v, depth + 1, out)
+    elif isinstance(node, list):
+        for item in node:
+            _flatten_mysql_plan(item, depth, out)
+
+
+def _safe_float_or_none(v):
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Session) -> dict:
     rec = db.query(ConnectionMaster).filter(ConnectionMaster.id == conn_id).first()
     if not rec:
@@ -909,7 +968,12 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
     url = f"mysql+pymysql://{rec.username}:{pw}@{rec.host}:{rec.port}/{resolved_db}"
     engine = db_proxy_service.engine_for(rec, lambda: create_engine(url, connect_args={"connect_timeout": 5}, poolclass=NullPool))
 
-    explain_rows, explain_error = [], None
+    # FORMAT=JSON (never executes the statement, same as plain EXPLAIN) instead
+    # of the old tabular EXPLAIN — the tabular form has no tree/nesting concept
+    # at all, so it could never feed a depth-aware table or a diagram. The JSON
+    # form gives both: a flattened, depth-tagged `nodes` list (below) for the
+    # table view, and the untouched nested tree in `raw` for the diagram view.
+    raw_plan, explain_error = None, None
     try:
         with engine.connect() as conn:
             if resolved_db:
@@ -917,10 +981,15 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
                     conn.execute(text(f"USE `{resolved_db}`"))
                 except Exception:
                     pass
-            rows = conn.execute(text(f"EXPLAIN {sql_text}")).fetchall()
-            explain_rows = [dict(r._mapping) for r in rows]
+            row = conn.execute(text(f"EXPLAIN FORMAT=JSON {sql_text.rstrip(';')}")).fetchone()
+            raw_json = row[0] if row else None
+            raw_plan = json.loads(raw_json) if isinstance(raw_json, str) else (raw_json or {})
     except Exception as e:
         explain_error = str(e)
+
+    nodes = []
+    if raw_plan:
+        _flatten_mysql_plan(raw_plan, 0, nodes)
 
     hints = []
     stats = {
@@ -933,16 +1002,15 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
         "total_rows_estimate": 0,
     }
 
-    for row in explain_rows:
-        t         = row.get("table") or row.get("Table") or "?"
-        typ       = str(row.get("type") or row.get("Type") or "").upper()
-        extra     = str(row.get("Extra") or "")
-        possible  = row.get("possible_keys") or row.get("possible_Keys")
-        key       = row.get("key") or row.get("Key")
-        rows_est  = int(row.get("rows") or row.get("Rows") or 0)
+    for n in nodes:
+        t        = n.get("relation") or "?"
+        at       = n.get("_access_type")
+        possible = n.get("_possible_keys")
+        key      = n.get("_key")
+        rows_est = int(n.get("plan_rows") or 0)
         stats["total_rows_estimate"] += rows_est
 
-        if typ == "ALL":
+        if at == "ALL":
             stats["has_full_scan"] = True
             stats["tables_scanned"].append(t)
             hints.append({
@@ -951,7 +1019,7 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
                 "text":  f"MySQL scans every row (~{rows_est:,} rows). No index is being used.",
                 "fix":   f"Add an index on the WHERE/JOIN columns for `{t}`.",
             })
-        elif typ == "INDEX":
+        elif at == "INDEX":
             stats["has_full_index_scan"] = True
             hints.append({
                 "level": "warning", "type": "FULL_INDEX_SCAN", "table": t,
@@ -960,7 +1028,7 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
                 "fix":   "Use a more selective index or add a covering index.",
             })
 
-        if "Using filesort" in extra:
+        if n.get("_using_filesort"):
             stats["has_filesort"] = True
             hints.append({
                 "level": "warning", "type": "FILESORT", "table": t,
@@ -968,7 +1036,7 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
                 "text":  "Results sorted in memory/disk after retrieval — no index covers the ORDER BY.",
                 "fix":   "Add an index that covers both WHERE and ORDER BY columns.",
             })
-        if "Using temporary" in extra:
+        if n.get("_using_temp"):
             stats["has_temp_table"] = True
             hints.append({
                 "level": "warning", "type": "TEMP_TABLE", "table": t,
@@ -984,7 +1052,7 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
                 "text":  f"Possible indexes: {possible} — but none selected. Optimizer chose full scan.",
                 "fix":   "Use FORCE INDEX or rethink query structure to make index selective.",
             })
-        if not possible and typ == "ALL":
+        if not possible and at == "ALL":
             hints.append({
                 "level": "critical", "type": "NO_INDEX_AT_ALL", "table": t,
                 "title": f"No usable index exists on `{t}`",
@@ -992,9 +1060,15 @@ def explain_and_analyze_query(conn_id: int, sql_text: str, db_name: str, db: Ses
                 "fix":   f"CREATE INDEX on the columns used in WHERE/JOIN for `{t}`.",
             })
 
+    # Strip the internal `_`-prefixed fields used only to derive hints above —
+    # the frontend table/diagram views only need the public node shape.
+    public_nodes = [{k: v for k, v in n.items() if not k.startswith("_")} for n in nodes]
+
     return {
-        "status": "success",
-        "explain_rows":  explain_rows,
+        "status":        "success",
+        "analyzed":      False,   # plain FORMAT=JSON is an estimate, never EXPLAIN ANALYZE — matches Postgres's own "analyzed" flag semantics
+        "nodes":         public_nodes,
+        "raw":           raw_plan,
         "explain_error": explain_error,
         "hints":         hints,
         "stats":         stats,
