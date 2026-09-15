@@ -58,7 +58,12 @@ $suites = @(
     # untagged spend is NEVER assigned to anyone (the guess that makes a
     # chargeback report unusable the first time it is checked), and a report's
     # header total equals the sum of the rows it contains. Pure logic.
-    @{ Name = "allocation, reports, FinOps health, metrics (no DB)"; Args = @("tests\verify_cost_governance.py") }
+    @{ Name = "allocation, reports, FinOps health, metrics (no DB)"; Args = @("tests\verify_cost_governance.py") },
+    # Cross-feature correlation. The whole point is what it does NOT say: a
+    # cost tool that claims "this change caused +40%" will be believed and will
+    # eventually be wrong, so the payload is asserted to contain no causal
+    # wording at all. Pure logic.
+    @{ Name = "cost/drift/security correlation without causation (no DB)"; Args = @("tests\verify_cost_correlation.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

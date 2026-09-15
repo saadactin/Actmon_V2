@@ -1180,6 +1180,86 @@ class CostService:
             "coverage": await repo.coverage([a.id for a in accounts]),
         }
 
+    async def get_resource_context(
+        self, resource_id: uuid.UUID, *, days: int = 90,
+    ) -> Dict[str, Any]:
+        """One resource's cost alongside its config changes and security findings.
+
+        The cross-feature view: it answers "why does this cost what it does" by
+        putting three existing datasets next to each other, and is explicit
+        that proximity in time is not causation.
+        """
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.repository.resource_repo import ResourceRepository
+        from app.services import cost_analytics, cost_correlation_service as corr
+
+        res_repo = ResourceRepository(self.db)
+        resource = await res_repo.get_by_id(resource_id)
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        end = _date.today()
+        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+
+        # Per-resource daily history is not stored yet (see cost_ingestion on
+        # why a window total must not be written as a day), so the series here
+        # is the ACCOUNT's, and is labelled as such rather than presented as
+        # this resource's own spend.
+        repo = CostFactRepository(self.db)
+        series = await repo.daily_series([resource.account_id], start, end)
+        anomalies = cost_analytics.detect_anomalies(series)
+        flagged = [
+            item
+            for bucket in (anomalies.get("by_currency") or {}).values()
+            if bucket.get("available")
+            for item in bucket.get("anomalies", [])
+        ]
+
+        # Both of these are best-effort. A missing drift history or an
+        # unavailable findings table must degrade this view to "cost only"
+        # rather than failing the request — the cost half is still useful, and
+        # an exception here would make the whole panel disappear.
+        changes: List[Any] = []
+        findings: List[Any] = []
+        try:
+            from app.repository.drift_repo import DriftRepository
+
+            changes = await DriftRepository(self.db).timeline_for_resource(
+                resource.provider_resource_id, limit=200,
+            )
+        except Exception as exc:
+            logger.debug("Drift history unavailable for %s: %s", resource_id, exc)
+        try:
+            from app.repository.security_repo import SecurityRepository
+
+            rows, _total = await SecurityRepository(self.db).list_findings(
+                account_ids=[resource.account_id], limit=200,
+            )
+            # The repository filters by account, not by resource, so narrow to
+            # this resource here rather than showing the account's whole
+            # findings list under one resource's heading.
+            findings = [
+                f for f in rows
+                if getattr(f, "provider_resource_id", None)
+                == resource.provider_resource_id
+            ]
+        except Exception as exc:
+            logger.debug("Security findings unavailable for %s: %s", resource_id, exc)
+
+        context = corr.correlate(
+            resource=resource, series=series, changes=changes,
+            findings=findings, anomalies=flagged,
+        )
+        context["series_scope"] = (
+            "Account-level daily spend. Per-resource daily history is not stored "
+            "yet, so this series is the account's, not this resource's alone."
+        )
+        context["period"] = {"start": start.isoformat(), "end": end.isoformat(),
+                             "days": days}
+        return context
+
     # ── Allocation, governance, reports, observability ───────────────────────
 
     async def get_allocation(

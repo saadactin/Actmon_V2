@@ -136,6 +136,29 @@ async def get_cost_trends(
     return await svc.get_trends(account_id, days=days, dimension=dimension)
 
 
+@router.get("/resource-context/{resource_id}")
+async def get_resource_cost_context(
+    resource_id: uuid.UUID,
+    days: int = Query(default=90, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """One resource's cost alongside its configuration changes and security
+    findings — the cross-feature view.
+
+    Every correlated item is returned under `related_observations` with
+    `relationship: temporal_proximity` and a disclaimer. Two things happening
+    near each other in time is worth a human's attention; it is not evidence
+    that one caused the other, and this endpoint never says it is.
+
+    Where a configuration change has enough billed days either side, the
+    OBSERVED spend before and after is reported. That is measured, not a
+    computed price difference — there is no AWS/Azure price-list integration to
+    compute one from.
+    """
+    return await svc.get_resource_context(resource_id, days=days)
+
+
 @router.get("/allocation/{account_id}")
 async def get_cost_allocation(
     account_id: str,
