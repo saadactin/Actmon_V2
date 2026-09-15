@@ -8,6 +8,10 @@ pymongo
 oracledb
 pydantic
 paramiko
+# Local host CPU/RAM/disk (the DB-on-same-machine-as-backend shortcut in
+# drilldown_service.py/_local_host_metrics — used by both the instant host
+# metrics endpoint and the resource-history collector)
+psutil
 psycopg2-binary
 python-dotenv
 cryptography

@@ -21,9 +21,14 @@ import client from '@/api/client';
 import HostResources from '@/pages/postgresql/PgHostResources';
 import Gauge from '@/components/gauges/Gauge';
 import TrendChart from '@/components/gauges/TrendChart';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import { MYSQL_DASHBOARD_TABS, mysqlTabRoute } from '@/config/mysqlDashboardNav';
+import KpiTile from '@/pages/_shared/engineKpi';
+import Dialog from '@/components/ui/Dialog';
+import CopyButton from '@/components/ui/CopyButton';
 import Button from '@/components/ui/Button';
 import IconButton from '@/components/ui/IconButton';
 import { Paged } from '@/components/ui/Pagination';
@@ -342,8 +347,11 @@ export default function MySQLDashboard() {
   // pages (mysqlTabRoute handles that) — everything else stays inline here.
   const activeTab = tab || 'overview';
   const setActiveTab = (t) => navigate(mysqlTabRoute(id, t));
+  const connAlerts = useConnectionAlerts(id);
   const [countdown, setCountdown]     = useState(REFRESH_INTERVAL);
   const [sparklines, setSparklines]   = useState({ conn: [], cache: [], qps: [] });
+  const [uptimeModalOpen, setUptimeModalOpen] = useState(false);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [tableSearch, setTableSearch] = useState('');
   const countRef = useRef(null);
 
@@ -594,79 +602,117 @@ export default function MySQLDashboard() {
           return (
           <div className="space-y-4">
 
-            {/* ── Row 1: KPI strip — all clickable ── */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
-              <KpiCard icon={Clock}     title="Uptime"       value={health_summary.uptime}  accent="cyan" />
-              <KpiCard icon={Server}    title="Version"      value={(health_summary.version||'').split('-')[0]} accent="blue" />
-              <ClickableKpiCard icon={Database}  title="Databases"    value={health_summary.total_databases}  accent="teal"
-                onClick={() => setActiveTab('databases')} />
-              <ClickableKpiCard icon={Layers}    title="Tables"       value={health_summary.total_tables}     accent="green"
-                onClick={() => setActiveTab('tables')} />
-              <ClickableKpiCard icon={HardDrive} title="DB Size"      value={health_summary.total_size_gb > 0.1 ? `${health_summary.total_size_gb} GB` : `${health_summary.total_size_mb || 0} MB`} accent="orange"
-                onClick={() => setActiveTab('storage')} />
-              <ClickableKpiCard icon={Activity}  title="Questions"    value={fmtNum(query_stats.Questions)}   accent="purple"
-                onClick={() => setActiveTab('queries')} />
-              <ClickableKpiCard icon={Network}   title="Conns"        value={`${health_summary.current_connections}/${health_summary.max_connections}`} accent={connPct > 80 ? 'red' : 'green'}
-                onClick={() => setActiveTab('performance')} />
-              <ClickableKpiCard icon={Cpu}       title="Slow Queries" value={fmtNum(query_stats.Slow_queries)} accent={Number(query_stats.Slow_queries) > 0 ? 'red' : 'slate'}
-                onClick={() => { setActiveTab('queries'); }} />
+            {/* ── Row 1: KPI strip — one shared card shape (circular icon badge,
+                big number, hint link) reused by every tile here; see KpiTile in
+                _shared/engineKpi.jsx for the same card used across every other
+                engine dashboard. ── */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-4">
+              {[
+                { icon: Clock,     title: 'Uptime',       value: health_summary.uptime, accent: '#06B6D4', tab: '__uptime_detail__', hint: 'Uptime details' },
+                { icon: Server,    title: 'Version',      value: (health_summary.version||'').split('-')[0], accent: '#3B82F6', tab: '__version_detail__', hint: 'Version details' },
+                { icon: Database,  title: 'Databases',    value: health_summary.total_databases, accent: '#14B8A6', tab: 'databases', hint: 'Databases' },
+                { icon: Layers,    title: 'Tables',       value: health_summary.total_tables, accent: '#22C55E', tab: 'tables', hint: 'Tables' },
+                { icon: HardDrive, title: 'DB Size',      value: health_summary.total_size_gb > 0.1 ? `${health_summary.total_size_gb} GB` : `${health_summary.total_size_mb || 0} MB`, accent: '#F97316', tab: 'storage', hint: 'Storage' },
+                { icon: Activity,  title: 'Questions',    value: fmtNum(query_stats.Questions), accent: '#8B5CF6', tab: 'queries', hint: 'Queries' },
+                { icon: Network,   title: 'Conns',        value: `${health_summary.current_connections}/${health_summary.max_connections}`, accent: connPct > 80 ? '#EF4444' : '#22C55E', tab: 'performance', hint: 'Performance' },
+                { icon: Cpu,       title: 'Slow Queries', value: fmtNum(query_stats.Slow_queries), accent: Number(query_stats.Slow_queries) > 0 ? '#EF4444' : '#64748B', tab: 'queries', hint: 'Queries' },
+              ].map(({ icon: Icon, title, value, accent, tab, hint }) => (
+                <KpiTile key={title} icon={Icon} title={title} value={value} accent={accent} hint={hint}
+                  onClick={tab ? () => {
+                    if (tab === '__uptime_detail__') { setUptimeModalOpen(true); return; }
+                    if (tab === '__version_detail__') { setVersionModalOpen(true); return; }
+                    setActiveTab(tab);
+                  } : undefined} />
+              ))}
             </div>
 
-            {/* ── Host Resources drill-down ── */}
-            <HostResources connId={id} tech="mysql" />
-
-            {/* ── Row 2: Status badges ── */}
-            <div className="flex flex-wrap gap-2">
-              <StatusBadge ok={connPct < 80}  label={`Connections ${connPct}%`} />
-              <StatusBadge ok={cachePct > 90} label={`Cache Hit ${cachePct}%`} />
-              <StatusBadge ok={true}          label={`Engine: ${health_summary.storage_engine || 'InnoDB'}`} />
-              <StatusBadge ok={!isReplica || replication.Slave_IO_Running === 'Yes'}
-                           label={`Replication: ${health_summary.replication_state || 'STANDALONE'}`} />
-              <StatusBadge ok={binlog.enabled} label={`Binlog: ${binlog.enabled ? `ON (${binlog.format || '?'})` : 'OFF'}`} />
-              {slow_query_config.slow_query_log === 'ON' && (
-                <StatusBadge ok={false} label={`Slow Log ON (>${slow_query_config.long_query_time}s)`} />
-              )}
-              {long_running_queries.length > 0 && (
-                <StatusBadge ok={false} label={`${long_running_queries.length} long-running quer${long_running_queries.length === 1 ? 'y' : 'ies'}`} />
-              )}
-              {(table_locks.contention_pct || 0) > 5 && (
-                <StatusBadge ok={false} label={`Lock Contention ${table_locks.contention_pct}%`} />
-              )}
-            </div>
-
-            {/* ── Row 3: Semi-circle gauges — click to navigate ── */}
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-              <Gauge label="Connection Pool" pct={connPct}
-                sub={`${health_summary.current_connections} / ${health_summary.max_connections} max · click to detail`}
-                onClick={() => setActiveTab('performance')}
-                colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal} />
-              <Gauge label="InnoDB Cache Hit" pct={cachePct}
-                sub="Buffer pool read efficiency · click to detail"
-                onClick={() => setActiveTab('performance')}
-                colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green} />
-              <Gauge label="Active Threads" pct={threadRunPct}
-                sub={`${threads.cached || 0} cached · click to see queries`}
-                onClick={() => setActiveTab('queries')}
-                colorFn={v => v > 50 ? C.orange : C.blue} />
-              <Gauge label="Slow Query Ratio"
-                pct={Math.min(100, slowPct * 10)}
-                sub={`${slowPct}% of ${fmtNum(query_stats.Questions)} total · click to see`}
-                onClick={() => setActiveTab('queries')}
-                colorFn={v => v > 30 ? C.red : v > 5 ? C.orange : C.green} />
-            </div>
-
-            {/* ── Row 4: Live sparklines ── */}
-            {sparklines.conn.length > 2 ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <TrendCard title="Connection Usage %" data={sparklines.conn} color={C.teal} unit="%" />
-                <TrendCard title="Cache Hit Rate %"   data={sparklines.cache} color={C.green} unit="%" />
-                <TrendCard title="Total Questions"    data={sparklines.qps}  color={C.purple} fmtVal={fmtNum} />
+            {/* Uptime KPI opens this focused popup instead of a tab switch — its
+                full story (start time, current time, last restart) fits in a
+                glance and doesn't need a whole page navigation. */}
+            <Dialog open={uptimeModalOpen} onClose={() => setUptimeModalOpen(false)}
+              title="MySQL Uptime" icon="clock" width={420}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{health_summary.uptime || '—'}</span>
+                <CopyButton text={health_summary.uptime || ''} />
               </div>
-            ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 p-4 text-center text-slate-400 text-xs">
-                Live trend charts appear after first 15-second auto-refresh
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <Row label="MySQL Start Time (Last Restart)" value={health_summary.last_restart || '—'} mono />
+                <Row label="Current Time" value={new Date().toLocaleString()} mono />
+                <Row label="Uptime" value={health_summary.uptime || '—'} mono />
               </div>
-            )}
+            </Dialog>
+
+            <Dialog open={versionModalOpen} onClose={() => setVersionModalOpen(false)}
+              title="MySQL Version" icon="server" width={480}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{(health_summary.version||'').split('-')[0] || '—'}</span>
+                <CopyButton text={health_summary.version || ''} />
+              </div>
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <Row label="Full Version String" value={health_summary.version || '—'} mono />
+                <Row label="Hostname" value={health_summary.host_name || server_vars.hostname || '—'} mono />
+                <Row label="Data Directory" value={server_vars.datadir || '—'} mono />
+              </div>
+            </Dialog>
+
+            {/* gauges + trend charts on the left, Alerts as a right rail matching
+                their combined height (CSS grid stretch). */}
+            <div className="grid gap-4 xl:grid-cols-4">
+              <div className="flex flex-col gap-4 xl:col-span-3">
+                {/* ── Row 3: Semi-circle gauges — click to navigate ── */}
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                  <Gauge label="Connection Pool" pct={connPct}
+                    sub={`${health_summary.current_connections} / ${health_summary.max_connections} max · click to detail`}
+                    onClick={() => setActiveTab('performance')}
+                    colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.teal} />
+                  <Gauge label="InnoDB Cache Hit" pct={cachePct}
+                    sub="Buffer pool read efficiency · click to detail"
+                    onClick={() => setActiveTab('performance')}
+                    colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green} />
+                  <Gauge label="Active Threads" pct={threadRunPct}
+                    sub={`${threads.cached || 0} cached · click to see queries`}
+                    onClick={() => setActiveTab('queries')}
+                    colorFn={v => v > 50 ? C.orange : C.blue} />
+                  <Gauge label="Slow Query Ratio"
+                    pct={Math.min(100, slowPct * 10)}
+                    sub={`${slowPct}% of ${fmtNum(query_stats.Questions)} total · click to see`}
+                    onClick={() => setActiveTab('queries')}
+                    colorFn={v => v > 30 ? C.red : v > 5 ? C.orange : C.green} />
+                </div>
+
+                {/* ── Host Resources drill-down ── */}
+                <HostResources connId={id} tech="mysql" />
+
+                {/* ── Row 4: Live sparklines ── */}
+                {sparklines.conn.length > 2 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <TrendCard title="Connection Usage %" data={sparklines.conn} color={C.teal} unit="%" />
+                    <TrendCard title="Cache Hit Rate %"   data={sparklines.cache} color={C.green} unit="%" />
+                    <TrendCard title="Total Questions"    data={sparklines.qps}  color={C.purple} fmtVal={fmtNum} />
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-4 text-center text-slate-400 text-xs">
+                    Live trend charts appear after first 15-second auto-refresh
+                  </div>
+                )}
+              </div>
+
+              {/* alerts for this connection only — same feed/panel Monitoring
+                  Overview uses, scoped server-side to this host via conn_id. */}
+              <RecentAlertsPanel
+                title="Alerts"
+                alerts={connAlerts.list}
+                counts={connAlerts.counts}
+                loading={connAlerts.isFetching}
+                onOpenAll={() => navigate('/alerts')}
+              />
+            </div>
 
             {/* ── Row 5: Query bar + DB sizes bar ── */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -2418,29 +2464,6 @@ function HealthBadge({ score }) {
     </div>
   );
 }
-function KpiCard({ icon: Icon, title, value, accent }) {
-  const acc = {
-    cyan:   'border-l-cyan-500',
-    teal:   'border-l-teal-500',
-    green:  'border-l-green-500',
-    blue:   'border-l-blue-500',
-    orange: 'border-l-orange-500',
-    red:    'border-l-red-500',
-    purple: 'border-l-purple-500',
-    slate:  'border-l-slate-400',
-  };
-  return (
-    <div className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent]||acc.slate} p-4 hover:shadow-md transition-all`}>
-      <div className="flex justify-between items-start">
-        <div>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
-          <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
-        </div>
-        <Icon size={20} className="text-slate-300 mt-0.5" />
-      </div>
-    </div>
-  );
-}
 function MetricKpi({ title, value, accent }) {
   const acc = {
     green: 'bg-green-50 border-green-200 text-green-700',
@@ -2660,35 +2683,6 @@ function ClickableKpi({ title, value, accent, onClick, hint }) {
         <ChevronRight size={14} className="opacity-0 group-hover:opacity-60 transition-opacity" />
       </div>
       {hint && <p className="text-[9px] opacity-50 mt-0.5">{hint}</p>}
-    </button>
-  );
-}
-
-/* ── Clickable KpiCard (top-strip variant) ── */
-function ClickableKpiCard({ icon: Icon, title, value, accent, onClick }) {
-  const acc = {
-    cyan:   'border-l-cyan-500',
-    teal:   'border-l-teal-500',
-    green:  'border-l-green-500',
-    blue:   'border-l-blue-500',
-    orange: 'border-l-orange-500',
-    red:    'border-l-red-500',
-    purple: 'border-l-purple-500',
-    slate:  'border-l-slate-400',
-  };
-  return (
-    <button onClick={onClick}
-      className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent]||acc.slate} p-4 hover:shadow-md transition-all hover:scale-[1.02] cursor-pointer w-full text-left group`}>
-      <div className="flex justify-between items-start">
-        <div>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
-          <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
-        </div>
-        <div className="flex items-center gap-1">
-          <Icon size={20} className="text-slate-300 mt-0.5" />
-          <ChevronRight size={12} className="text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </div>
-      </div>
     </button>
   );
 }

@@ -68,29 +68,27 @@ const QUICK_LINKS = {
      longer top-level entry points at all (AI now lives inside Query
      Analysis; Self-Heal's route still exists but isn't advertised here).
      Only Reports remains a genuine "sub-page that isn't a tab." */
-  mysql: [
-    { path: 'reports', label: 'Reports', icon: 'report' },
-  ],
-  postgresql: [
-    { path: 'slow-queries', label: 'Slow Queries', icon: 'trend' },
-    { path: 'error-logs', label: 'Error Logs', icon: 'logs' },
-    { path: 'index-analysis', label: 'Indexes', icon: 'layers' },
-    { path: 'reports', label: 'Reports', icon: 'report' },
-  ],
+  // Fully migrated into MYSQL_DASHBOARD_TABS (including Reports/Diagnose) —
+  // no quick-links left to duplicate the tab strip.
+  mysql: [],
+  // Fully migrated into POSTGRES_DASHBOARD_TABS (including Reports/Diagnose) —
+  // no quick-links left to duplicate the tab strip.
+  postgresql: [],
   /* Slow Queries / Error Logs / Indexes / Wait Analysis moved into the main
      tab strip (see `config/mssqlDashboardNav.js`) — Slow Queries was already
      a tab, so keeping it here too was a straight duplicate. Reports is the
      only genuine "sub-page that isn't a tab" left. */
-  mssql: [
-    { path: 'reports', label: 'Reports', icon: 'report' },
-  ],
+  // Fully migrated into MSSQL_DASHBOARD_TABS (including Reports/Diagnose) —
+  // no quick-links left to duplicate the tab strip.
+  mssql: [],
+  // Reports moved into BASE_TABS (config/oracleDashboardNav.js) — the other
+  // four are pre-existing quick-links left untouched (not part of this pass).
   oracle: [
     { path: 'live-queries', label: 'Live Queries', icon: 'activity' },
     { path: 'slow-queries', label: 'Slow SQL', icon: 'trend' },
     { path: 'error-logs', label: 'Alert Log', icon: 'logs' },
     { path: 'index-analysis', label: 'Indexes', icon: 'layers' },
     { path: 'storage-health', label: 'Storage Health', icon: 'database' },
-    { path: 'reports', label: 'Reports', icon: 'report' },
   ],
   mongodb: [
     { path: 'slow-queries', label: 'Slow Queries', icon: 'trend' },

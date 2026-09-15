@@ -37,8 +37,9 @@ const PREVIEW_HISTORY = [58, 62, 60, 66, 71, 68, 74, 70, 65, 69, 72, 62]
  * guard against saving them; there is nothing to guard against here.)
  */
 
-const INDICATOR_LABELS = { ring: 'Ring', stat: 'Stat', donut: 'Donut', minimal: 'Minimal', dial: 'Dial' };
+const INDICATOR_LABELS = { semicircle: 'Semicircle', ring: 'Ring', stat: 'Stat', donut: 'Donut', minimal: 'Minimal', dial: 'Dial' };
 const INDICATOR_HINTS = {
+  semicircle: 'A half-donut arc, flat side down (default)',
   ring: 'A filled arc around the value',
   stat: 'A big number with a trend sparkline',
   donut: 'A filled ring around the value',
@@ -75,6 +76,15 @@ function arcPath(cx, cy, r, a0, a1) {
   const p1 = polar(cx, cy, r, a1);
   const large = a1 - a0 > 180 ? 1 : 0;
   return `M ${p0.x},${p0.y} A ${r},${r} 0 ${large} 1 ${p1.x},${p1.y}`;
+}
+function SemicircleThumb({ pct, c }) {
+  const angle = 180 + (pct / 100) * 180;
+  return (
+    <svg viewBox="0 0 100 58" className="h-16 w-16">
+      <path d={arcPath(50, 50, 40, 180, 360)} stroke="var(--border)" strokeWidth="9" strokeLinecap="round" fill="none" />
+      <path d={arcPath(50, 50, 40, 180, angle)} stroke={c} strokeWidth="9" strokeLinecap="round" fill="none" />
+    </svg>
+  );
 }
 function RingThumb({ pct, c }) {
   const angle = ARC_START + (pct / 100) * ARC_SWEEP;
@@ -141,7 +151,10 @@ function MinimalThumb({ c }) {
     </svg>
   );
 }
-const THUMBS = { ring: RingThumb, donut: DonutThumb, dial: DialThumb, stat: StatThumb, minimal: MinimalThumb };
+const THUMBS = {
+  semicircle: SemicircleThumb, ring: RingThumb, donut: DonutThumb, dial: DialThumb,
+  stat: StatThumb, minimal: MinimalThumb,
+};
 
 /* No sample number here on purpose — this card is about picking a LOOK, not
    previewing real data (that's what the Live preview tile below is for).
@@ -300,7 +313,7 @@ export default function DashboardChartsSection() {
               <p className="text-[12px] font-semibold text-fg">Gauge type</p>
               <p className="text-[11px] text-subtle">Click a style to select it</p>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               {INDICATOR_STYLES.map((s) => (
                 <GaugeStyleCard
                   key={s}

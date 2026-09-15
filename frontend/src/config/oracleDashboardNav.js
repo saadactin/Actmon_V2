@@ -10,8 +10,8 @@
  * clutter it can't use.
  */
 import {
-  Activity, BarChart2, Boxes, Clock, Cpu, Gauge, HardDrive, Key, Layers, Lock,
-  Network, RotateCcw, Server, Settings, ShieldCheck, Table, TrendingUp, Users, Wrench, Zap,
+  Activity, BarChart2, Boxes, Clock, Cpu, FileText, Gauge, HardDrive, Key, Layers, Lock,
+  Network, RotateCcw, Server, Settings, ShieldCheck, Stethoscope, Table, TrendingUp, Users, Wrench, Zap,
 } from 'lucide-react';
 
 export const BASE_TABS = [
@@ -33,6 +33,12 @@ export const BASE_TABS = [
   { id: 'locks', label: 'Locks', icon: Lock },
   { id: 'sqlmonitor', label: 'SQL Monitor', icon: Gauge },
   { id: 'parameters', label: 'Parameters', icon: Settings },
+  // Former header quick-links, moved into the tab strip proper so the header
+  // shows one navigation surface instead of tabs plus a separate row of pills.
+  // (The pre-existing quick-links for live/slow/error/index/storage-health
+  // are intentionally left as header links — see config/engines.js.)
+  { id: 'reports', label: 'Reports', icon: FileText },
+  { id: 'diagnose', label: 'Diagnose', icon: Stethoscope },
 ];
 
 const RAC_TAB = { id: 'rac', label: 'RAC', icon: Server };
@@ -69,4 +75,14 @@ export function tabsForTopology(topology = {}) {
   }
 
   return tabs;
+}
+
+/** connectionId -> real route for one tab id, mirroring
+ * `postgresDashboardNav.js`'s `postgresTabRoute` — `diagnose` is the one tab
+ * that lives outside the `/oracle-dashboard` prefix entirely; every other
+ * tab id (including `reports`) is a route segment under it that equals the
+ * tab id itself. */
+export function oracleTabRoute(connectionId, tabId) {
+  if (tabId === 'diagnose') return `/diagnose/${connectionId}`;
+  return `/oracle-dashboard/${connectionId}${tabId && tabId !== 'overview' ? `/${tabId}` : ''}`;
 }

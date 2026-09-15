@@ -5,21 +5,22 @@
  *   Level 3: pg_stat_activity sessions for the chosen pid
  *   Level 4: query text + waits + blockers + EXPLAIN plan
  */
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
-  Cpu, MemoryStick, HardDrive, RefreshCw, X, ChevronRight, Database,
-  Activity, Loader, AlertTriangle, Server, Clock, GitBranch,
-  Stethoscope, Download, ShieldCheck, Wrench, CheckCircle2, ServerCog, History, Flame,
+  RefreshCw, X, ChevronRight, Database,
+  Activity, Loader, AlertTriangle, Clock, GitBranch,
+  Stethoscope, Download, ShieldCheck, Wrench, CheckCircle2, ServerCog,
 } from 'lucide-react';
 import {
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import {
   ddHostMetrics, ddProcesses, ddProcessSessions, ddSessionDetail, ddRca,
-  ddHistory, ddHistoryDetail, ddHistoryRca, pgGrantMonitor,
+  ddHistory, pgGrantMonitor,
   mssqlOsProcesses, mssqlEnableOsVisibility,
 } from '@/api/drilldown';
-import Gauge, { colorFor } from '@/components/gauges/Gauge';
+import { colorFor } from '@/components/gauges/Gauge';
+import ActivityTrendChart from '@/components/gauges/ActivityTrendChart';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 import { InlineLoading } from '@/components/ui/Loading';
 
@@ -35,6 +36,7 @@ const stateColor = (s) => {
   return 'bg-amber-100 text-amber-700';
 };
 
+
 export default function HostResources({ connId, tech = 'postgresql' }) {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -49,9 +51,31 @@ export default function HostResources({ connId, tech = 'postgresql' }) {
   }, [connId, tech]);
   useEffect(() => { load(); }, [load]);
 
-  // drill-down modal state
-  const [drill, setDrill] = useState(null); // { sortBy: 'cpu'|'mem' }
-  const [showHistory, setShowHistory] = useState(false);
+  // Logged CPU/RAM/Disk samples (the same feed the old History modal read) —
+  // shown directly as a trend chart on the Overview instead of hidden behind
+  // a modal. `historyHours` is real: changing the window re-fetches that
+  // wider/narrower range. The backend's `hours` param is a strict integer, so
+  // a sub-hour window (15 Min) still fetches the smallest whole-hour range
+  // and is then trimmed client-side to the actual requested minutes.
+  const [samples, setSamples] = useState([]);
+  const [historyHours, setHistoryHours] = useState(1);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchHistory = () => ddHistory(tech, connId, Math.max(1, Math.ceil(historyHours)))
+      .then((d) => { if (!cancelled) setSamples(d.samples || []); }).catch(() => {});
+    fetchHistory();
+    const t = setInterval(fetchHistory, 30_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [connId, tech, historyHours]);
+  const chartData = useMemo(() => {
+    const cutoff = Date.now() - historyHours * 3_600_000;
+    return samples
+      .filter((s) => new Date(s.captured_at).getTime() >= cutoff)
+      .map((s) => ({
+        t: new Date(s.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        cpu: s.cpu_pct, ram: s.ram_pct, disk: s.disk_pct,
+      }));
+  }, [samples, historyHours]);
 
   if (err) {
     return (
@@ -68,34 +92,32 @@ export default function HostResources({ connId, tech = 'postgresql' }) {
 
   return (
     <DashboardScopeProvider tech={tech}>
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Server size={16} className="text-slate-500" />
-            <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">Host Resources</h3>
-            {metrics?.load_avg && <span className="text-[11px] text-slate-400 font-semibold">· load {metrics.load_avg}{metrics.cpu_cores ? ` · ${metrics.cpu_cores} cores` : ''}</span>}
-          </div>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setShowHistory(true)}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200">
-              <History size={14} /> History
-            </button>
-            <button onClick={load} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100 hover:text-slate-700">
-              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            </button>
-          </div>
+      {/* Two independent cards side by side, not one shared wrapper — matches
+          the reference's separate "Activity Trends" / "Agents Trend" cards
+          rather than nesting both charts inside a single outer card. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card p-card">
+          <ActivityTrendChart
+            title="CPU & Memory"
+            data={chartData}
+            series={[
+              { key: 'cpu', label: 'CPU', color: '#3b82f6' },
+              { key: 'ram', label: 'Memory', color: '#f97316' },
+            ]}
+            windowValue={historyHours}
+            onWindowChange={setHistoryHours}
+          />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Gauge icon={Cpu}         label="CPU"  pct={metrics?.cpu_pct}  sub="Click → top processes" onClick={() => setDrill({ sortBy: 'cpu' })} />
-          <Gauge icon={MemoryStick} label="RAM"  pct={metrics?.ram_pct}
-            sub={metrics?.ram_used_mb != null ? `${metrics.ram_used_mb} / ${metrics.ram_total_mb} MB` : 'Click → top processes'}
-            onClick={() => setDrill({ sortBy: 'mem' })} />
-          <Gauge icon={HardDrive}   label="Disk (/)" pct={metrics?.disk_pct} sub="Root filesystem" onClick={() => setDrill({ sortBy: 'cpu' })} />
+        <div className="card p-card">
+          <ActivityTrendChart
+            title="Disk"
+            data={chartData}
+            series={[{ key: 'disk', label: 'Disk', color: '#8b5cf6' }]}
+            windowValue={historyHours}
+            onWindowChange={setHistoryHours}
+          />
         </div>
       </div>
-
-      {drill && <DrillModal connId={connId} tech={tech} sortBy={drill.sortBy} onClose={() => setDrill(null)} />}
-      {showHistory && <HistoryModal connId={connId} tech={tech} onClose={() => setShowHistory(false)} />}
     </DashboardScopeProvider>
   );
 }
@@ -242,206 +264,6 @@ function GrantBanner({ connId, onGranted }) {
   );
 }
 
-/* ─────────────── History (logged CPU/RAM over time + spike analysis) ─────────────── */
-const HISTORY_METRICS = [
-  { key: 'cpu', dataKey: 'cpu', label: 'CPU', color: '#6366f1' },
-  { key: 'ram', dataKey: 'ram', label: 'Memory', color: '#22c55e' },
-  { key: 'disk', dataKey: 'disk', label: 'Disk', color: '#f59e0b' },
-];
-
-function HistoryModal({ connId, tech, onClose }) {
-  const [hours, setHours] = useState(6);
-  const [samples, setSamples] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState('chart');   // chart | detail | rca
-  const [sel, setSel] = useState(null);
-  const [detail, setDetail] = useState(null);
-  const [rca, setRca] = useState(null);
-  const [busy, setBusy] = useState(false);
-  // 'all' overlays CPU/Memory/Disk together; picking one isolates it — a busy
-  // multi-series overlay is hard to read once the lines cross a lot.
-  const [metric, setMetric] = useState('all');
-
-  useEffect(() => {
-    setLoading(true);
-    ddHistory(tech, connId, hours).then((d) => setSamples(d.samples || [])).finally(() => setLoading(false));
-  }, [connId, tech, hours]);
-
-  const openDetail = (id) => { setSel(id); setView('detail'); setBusy(true); setDetail(null); ddHistoryDetail(tech, connId, id).then(setDetail).finally(() => setBusy(false)); };
-  const openRca = () => { setView('rca'); setBusy(true); setRca(null); ddHistoryRca(tech, connId, sel, 'cpu').then(setRca).finally(() => setBusy(false)); };
-
-  const events = samples.filter((s) => s.is_event);
-  const chartData = samples.map((s) => ({
-    t: new Date(s.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    cpu: s.cpu_pct, ram: s.ram_pct, disk: s.disk_pct,
-  }));
-  const visibleMetrics = metric === 'all' ? HISTORY_METRICS : HISTORY_METRICS.filter((m) => m.key === metric);
-
-  const crumbs = [
-    { key: 'chart', label: 'History' },
-    ...(view !== 'chart' ? [{ key: 'detail', label: `Sample #${sel}` }] : []),
-    ...(view === 'rca' ? [{ key: 'rca', label: 'RCA Report' }] : []),
-  ];
-
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex sm:items-center sm:justify-center sm:p-6" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-white w-full h-full sm:h-[90vh] sm:max-w-5xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 text-white">
-          <div className="flex items-center gap-2.5 text-sm flex-wrap">
-            <History size={20} className="text-indigo-300" />
-            {crumbs.map((c, i) => (
-              <React.Fragment key={c.key}>
-                {i > 0 && <ChevronRight size={14} className="text-white/40" />}
-                <button onClick={() => { if (c.key === 'chart') setView('chart'); else if (c.key === 'detail') setView('detail'); }}
-                  className={`font-bold ${i === crumbs.length - 1 ? 'text-white' : 'text-indigo-200 hover:text-white'}`}>{c.label}</button>
-              </React.Fragment>
-            ))}
-          </div>
-          <button onClick={onClose} className="w-9 h-9 rounded-xl flex items-center justify-center text-white/70 hover:bg-white/15"><X size={18} /></button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto bg-slate-50/60 p-5">
-          {view === 'chart' && (
-            <>
-              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                <p className="text-sm font-bold text-slate-600">Logged host utilization · click a spike below to analyse it</p>
-                <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1">
-                  {[[1, '1h'], [6, '6h'], [24, '24h']].map(([h, l]) => (
-                    <button key={h} onClick={() => setHours(h)}
-                      className={`px-3 py-1 rounded-lg text-[11px] font-bold ${hours === h ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{l}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1 mb-4 w-fit">
-                <button onClick={() => setMetric('all')}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-bold ${metric === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>All</button>
-                {HISTORY_METRICS.map((m) => (
-                  <button key={m.key} onClick={() => setMetric(m.key)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold ${metric === m.key ? 'text-white' : 'text-slate-500 hover:bg-slate-100'}`}
-                    style={metric === m.key ? { background: m.color } : undefined}>
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: m.color }} />
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-
-              {loading ? (
-                <InlineLoading label="Loading history…" />
-              ) : samples.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-slate-200 py-16 text-center">
-                  <History size={28} className="text-slate-300 mx-auto mb-3" />
-                  <p className="text-slate-500 font-bold">No samples yet</p>
-                  <p className="text-slate-400 text-sm mt-1">The collector logs a sample every minute — check back shortly.</p>
-                </div>
-              ) : (
-                <>
-                  <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-4" style={{ height: 280 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={chartData} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
-                        <defs>
-                          {HISTORY_METRICS.map((m) => (
-                            <linearGradient key={m.key} id={`${m.key}G`} x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor={m.color} stopOpacity={0.35} />
-                              <stop offset="100%" stopColor={m.color} stopOpacity={0} />
-                            </linearGradient>
-                          ))}
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-                        <XAxis dataKey="t" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                        <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#94a3b8' }} unit="%" />
-                        <Tooltip />
-                        {visibleMetrics.map((m) => (
-                          <Area key={m.key} type="monotone" dataKey={m.dataKey} name={`${m.label} %`}
-                            stroke={m.color} strokeWidth={2} fill={`url(#${m.key}G)`} />
-                        ))}
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  <div className="flex items-center gap-2 mb-2">
-                    <Flame size={15} className="text-rose-500" />
-                    <h4 className="text-sm font-black text-slate-700">High-utilization events ({events.length})</h4>
-                  </div>
-                  {events.length === 0 ? (
-                    <p className="text-sm text-slate-400 bg-white rounded-2xl border border-slate-200 p-4">No spikes captured in this window — CPU/RAM stayed within normal limits. 👍</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {events.slice().reverse().map((s) => (
-                        <button key={s.id} onClick={() => openDetail(s.id)}
-                          className="w-full text-left bg-white rounded-2xl border border-slate-200 p-4 hover:shadow-lg hover:border-rose-300 transition-all flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3">
-                            <span className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center"><Flame size={18} /></span>
-                            <div>
-                              <p className="font-bold text-slate-800 text-sm">{new Date(s.captured_at).toLocaleString()}</p>
-                              <p className="text-[11px] text-slate-400">CPU {s.cpu_pct ?? '—'}% · RAM {s.ram_pct ?? '—'}% · Disk {s.disk_pct ?? '—'}%</p>
-                            </div>
-                          </div>
-                          <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1">analyse <ChevronRight size={13} /></span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </>
-          )}
-
-          {view === 'detail' && (
-            busy ? <InlineLoading label="Loading snapshot…" />
-            : detail ? (
-              <div className="space-y-4">
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between flex-wrap gap-3">
-                  <div>
-                    <p className="text-sm font-black text-slate-800">Snapshot · {new Date(detail.captured_at).toLocaleString()}</p>
-                    <p className="text-[11px] text-slate-400">CPU {detail.cpu_pct}% · RAM {detail.ram_pct}% · Disk {detail.disk_pct}%</p>
-                  </div>
-                  <button onClick={openRca} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[12px] font-bold shadow hover:shadow-lg">
-                    <Stethoscope size={15} /> Generate RCA Report
-                  </button>
-                </div>
-                <div className="bg-white rounded-2xl border border-slate-200 p-4">
-                  <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Processes at that moment</h4>
-                  <table className="w-full text-sm">
-                    <thead className="text-[11px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">PID</th><th className="text-left">User</th><th className="text-right">CPU%</th><th className="text-right">MEM%</th><th className="text-left pl-3">Command</th></tr></thead>
-                    <tbody>
-                      {(detail.top_processes || []).map((p) => (
-                        <tr key={p.pid} className={`border-t border-slate-100 ${p.is_db ? 'bg-indigo-50/40' : ''}`}>
-                          <td className="py-1.5 font-mono text-xs">{p.pid}</td><td className="text-slate-500">{p.user}</td>
-                          <td className="text-right font-bold" style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}</td>
-                          <td className="text-right font-bold" style={{ color: colorFor(p.mem_pct) }}>{p.mem_pct}</td>
-                          <td className="pl-3 font-mono text-xs text-slate-700">{p.command}{p.is_db && <span className="ml-2 text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-600 text-white">DB</span>}</td>
-                        </tr>
-                      ))}
-                      {(detail.top_processes || []).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">No process detail stored for this sample.</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-                {(detail.active_sessions || []).length > 0 && (
-                  <div className="bg-white rounded-2xl border border-slate-200 p-4">
-                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Active queries at that moment</h4>
-                    <div className="space-y-2">
-                      {detail.active_sessions.map((s, i) => (
-                        <div key={i} className="text-xs">
-                          <div className="flex justify-between text-slate-500"><span>PID {s.pid} · {s.usename}@{s.datname}</span><span>{s.query_seconds ?? 0}s · {s.wait_event || 'no wait'}</span></div>
-                          <code className="block font-mono text-slate-700 bg-slate-50 rounded px-2 py-1 mt-0.5 line-clamp-2 break-all">{s.query}</code>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : <div className="text-slate-400 text-sm">No snapshot.</div>
-          )}
-
-          {view === 'rca' && (
-            busy ? <InlineLoading label="Building RCA…" />
-            : rca ? <RcaReport data={rca} resource="CPU" /> : <div className="text-slate-400 text-sm">No RCA.</div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function WindowsProcesses({ connId }) {
   const [state, setState] = useState('idle'); // idle | loading | data | needsEnable

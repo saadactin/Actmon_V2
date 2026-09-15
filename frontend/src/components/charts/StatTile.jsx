@@ -1,5 +1,6 @@
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
+import useCountUp from '@/hooks/useCountUp';
 
 /** 1,284 → "1,284"; 12,900 → "12.9K". Keeps a headline number short. */
 export function compact(n) {
@@ -58,27 +59,38 @@ export default function StatTile({
   label, value, sub, icon, tone = 'accent', valueTone = 'neutral', onClick, loading,
 }) {
   const Wrapper = onClick ? 'button' : 'div';
+  // Counts up from its previous value on every change (including the initial
+  // 0 → real-value load) rather than popping straight to the number — purely
+  // decorative, so it's skipped entirely for values compact() doesn't render
+  // as a plain integer (e.g. "12.9K"), which would otherwise animate through
+  // meaningless fractional intermediate states.
+  const numeric = typeof value === 'number' && Number.isFinite(value) && Math.abs(value) < 10_000;
+  const animated = useCountUp(numeric ? value : 0);
+  const displayValue = numeric ? Math.round(animated) : value;
 
   return (
     <Wrapper
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={cn(
-        'card flex flex-col gap-3.5 px-card py-card text-left',
+        'card group flex flex-col gap-3.5 px-card py-card text-left',
         loading && 'opacity-55',
         onClick && 'transition-colors hover:border-strong hover:bg-raised',
       )}
     >
       <span className="flex items-center gap-3">
-        <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full', ICON_TONES[tone] || ICON_TONES.accent)}>
+        <span className={cn(
+          'grid h-10 w-10 shrink-0 place-items-center rounded-full transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6',
+          ICON_TONES[tone] || ICON_TONES.accent,
+        )}>
           <Icon name={icon} size={18} />
         </span>
         <span className="truncate-safe min-w-0 flex-1 text-[15px] font-medium text-fg">{label}</span>
       </span>
 
       <span className="min-w-0">
-        <span className={cn('block text-[30px] leading-none font-bold', VALUE_TONES[valueTone] || VALUE_TONES.neutral)}>
-          {padded(value)}
+        <span className={cn('block text-[30px] leading-none font-bold tabular-nums', VALUE_TONES[valueTone] || VALUE_TONES.neutral)}>
+          {padded(displayValue)}
         </span>
         {sub && <span className="truncate-safe mt-2 block text-[12px] text-subtle">{sub}</span>}
       </span>

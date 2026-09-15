@@ -66,7 +66,22 @@ $tcpRows = @(netstat -ano | Where-Object { $_ -match '^\s*TCP\s' } | ForEach-Obj
 $ports = @($tcpRows | Where-Object { $_.State -eq 'LISTENING' } | Sort-Object { [int]$_.LocalPort } -Unique | ForEach-Object { [pscustomobject]@{ port=[int]$_.LocalPort; address=$_.LocalAddress; process=$pm[[int]$_.OwningProcess]; pid=[string]$_.OwningProcess } })
 Start-Sleep -Milliseconds 400
 $sw.Stop(); $el=$sw.Elapsed.TotalSeconds; if($el -le 0){$el=0.4}
-$procs = @(Get-Process | ForEach-Object { $d=[double]$_.CPU - $(if($cpu0.ContainsKey($_.Id)){$cpu0[$_.Id]}else{[double]$_.CPU}); $cp=[math]::Round(($d/$el)/$ncpu*100,1); if($cp -lt 0){$cp=0}; if($cp -gt 100){$cp=100}; $mp=$(if($totalBytes -gt 0){[math]::Round($_.WorkingSet64*100/$totalBytes,1)}else{0}); [pscustomobject]@{ pid=[string]$_.Id; user=''; cpu=$cp; mem=$mp; command=$_.ProcessName } } | Sort-Object cpu -Descending | Select-Object -First 15)
+$dbNames = @('postgres','mysqld','mariadbd','sqlservr','oracle','tnslsnr','mongod','clickhouse')
+$rawProcs = @(Get-Process | ForEach-Object { $d=[double]$_.CPU - $(if($cpu0.ContainsKey($_.Id)){$cpu0[$_.Id]}else{[double]$_.CPU}); $cp=[math]::Round(($d/$el)/$ncpu*100,1); if($cp -lt 0){$cp=0}; if($cp -gt 100){$cp=100}; $mp=$(if($totalBytes -gt 0){[math]::Round($_.WorkingSet64*100/$totalBytes,1)}else{0}); [pscustomobject]@{ pid=[string]$_.Id; cpu=$cp; mem=$mp; name=$_.ProcessName } })
+# A database engine is usually MANY OS processes sharing one name (e.g. Postgres
+# runs ~30 backend/worker processes) — group by name and sum, the same way Task
+# Manager's own grouped view ("PostgreSQL Server (30)") does, instead of leaving
+# each worker as its own near-idle row that a plain top-15-by-CPU cut would drop.
+$grouped = @($rawProcs | Group-Object name | ForEach-Object { $g=$_.Group; $rep=($g | Sort-Object cpu -Descending | Select-Object -First 1); [pscustomobject]@{ pid=$rep.pid; user=''; cpu=[math]::Round(($g | Measure-Object cpu -Sum).Sum,1); mem=[math]::Round(($g | Measure-Object mem -Sum).Sum,1); command=$_.Name } })
+$topByUsage = @($grouped | Sort-Object cpu -Descending | Select-Object -First 15)
+$topNames = @($topByUsage | ForEach-Object { $_.command })
+# Always keep a known DB engine's group in the snapshot even when it's idle and
+# wouldn't otherwise make the top 15 — an idle-but-present engine must report its
+# real near-zero number, not silently vanish from the sample (which previously
+# made per-technology CPU/Memory charts fall back to the whole host's numbers
+# every time the engine dropped out of a plain top-15-by-CPU cut).
+$dbGroups = @($grouped | Where-Object { $lname=$_.command.ToLower(); (($dbNames | Where-Object { $lname -like "*$_*" }).Count -gt 0) -and -not ($topNames -contains $_.command) })
+$procs = @($topByUsage + $dbGroups)
 $ifaces = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '127.0.0.1' } | ForEach-Object { [pscustomobject]@{ iface="$($_.InterfaceAlias)"; state='UP'; addresses=@("$($_.IPAddress)/$($_.PrefixLength)") } })
 $neigh = @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Reachable' -or $_.State -eq 'Stale' } | Select-Object -First 40 | ForEach-Object { [pscustomobject]@{ ip="$($_.IPAddress)"; mac="$($_.LinkLayerAddress)"; dev="$($_.InterfaceAlias)"; state="$($_.State)" } })
 $conn = @($tcpRows | Where-Object { $_.State -eq 'ESTABLISHED' })

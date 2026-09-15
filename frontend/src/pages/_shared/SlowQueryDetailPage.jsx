@@ -226,6 +226,12 @@ function StatCellInline({ label, value }) {
   );
 }
 
+// EXPLAIN ANALYZE genuinely re-runs the query in full — for a query whose
+// own average runtime is many seconds, that alone can take just as long,
+// before the multi-database fallback probe this endpoint also does on top.
+// The app's normal 30s default was never enough margin for that.
+const PLAN_REQUEST_TIMEOUT_MS = 60_000;
+
 /** Runs whichever engine's EXPLAIN-equivalent applies, on demand. */
 function PlanStep({ engine, id, row }) {
   const [state, setState] = useState(null); // null | {loading} | {data} | {error}
@@ -237,7 +243,7 @@ function PlanStep({ engine, id, row }) {
       if (engine.key === 'oracle') {
         const sqlId = row.query_id;
         if (!sqlId) throw new Error('No sql_id on this row.');
-        res = await client.get(engine.api.explainSqlId(id, sqlId)).then((r) => r.data);
+        res = await client.get(engine.api.explainSqlId(id, sqlId), { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
       } else if (engine.key === 'mongodb') {
         const raw = row._raw || {};
         const [database, collection] = String(raw.ns || row.database_name || '').split('.', 2);
@@ -245,13 +251,13 @@ function PlanStep({ engine, id, row }) {
           database: database || row.database_name || 'admin',
           collection: collection || raw.collection || '',
           query_filter: (() => { try { return JSON.parse(raw.query || '{}'); } catch { return {}; } })(),
-        }).then((r) => r.data);
+        }, { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
       } else {
         res = await client.post(engine.api.explainSql(id), {
           sql_text: row.query_text,
           database: row.database_name,
           db_name: row.database_name,
-        }).then((r) => r.data);
+        }, { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
       }
       if (res.status === 'error') throw new Error(res.error || 'The plan request failed.');
       setState({ data: res });

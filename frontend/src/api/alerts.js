@@ -1,8 +1,13 @@
 import client, { ensureArray } from './client';
 
-/** Live alerts, evaluated server-side from the ENABLED rules plus collector events. */
-export const listActiveAlerts = () =>
-  client.get('/alerts/active').then((r) => ensureArray(r.data));
+/**
+ * Live alerts, evaluated server-side from the ENABLED rules plus collector events.
+ * Pass connId to scope to one database connection's host(s) only (used by each
+ * engine dashboard's Overview tab) — omitted, this is every host in the estate.
+ */
+export const listActiveAlerts = (connId) =>
+  client.get('/alerts/active', { params: connId != null ? { conn_id: connId } : {} })
+    .then((r) => ensureArray(r.data));
 
 /**
  * Acknowledge alerts.

@@ -31,7 +31,7 @@ def get_db():
 
 
 class DashboardAppearanceUpdate(BaseModel):
-    indicator_style: Literal["ring", "stat", "donut", "minimal", "dial"]
+    indicator_style: Literal["semicircle", "ring", "stat", "donut", "minimal", "dial"]
     chart_style: Literal["area", "line", "bar", "barh", "spark", "pie", "donut", "scatter", "gauge", "bubble", "gantt"]
     display_mode: Literal["gauge", "graph"] = "gauge"
 
@@ -52,7 +52,7 @@ def _get_or_create_all(db: Session, user_id: int) -> DashboardAppearanceSettings
     ).first()
     if not row:
         row = DashboardAppearanceSettings(user_id=user_id, scope="all",
-                                           indicator_style="ring", chart_style="area", display_mode="gauge")
+                                           indicator_style="semicircle", chart_style="area", display_mode="gauge")
         db.add(row)
         db.commit()
         db.refresh(row)

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Database, GitBranch, HardDrive, Lock, Search, Table, TrendingUp, Users, Zap,
+  Activity, Clock, Cpu, Database, GitBranch, HardDrive, MemoryStick, Lock, Search, Server, Table, TrendingUp, Users, Zap,
 } from 'lucide-react';
 import client from '@/api/client';
 import { mssqlTableDetail } from '@/api/drilldown';
@@ -10,6 +10,8 @@ import { mssqlTableDetail } from '@/api/drilldown';
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import HostResources from '@/pages/postgresql/PgHostResources';
 import TrendChart from '@/components/gauges/TrendChart';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import ChartCard from '@/components/charts/ChartCard';
 import { bandFor, STATUS } from '@/components/charts/status';
 import Badge from '@/components/ui/Badge';
@@ -24,6 +26,7 @@ import { Paged } from '@/components/ui/Pagination';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 
 import ObjectTable from '@/pages/_shared/ObjectTable';
+import KpiTile from '@/pages/_shared/engineKpi';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptMssqlTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 import {
@@ -34,7 +37,7 @@ import {
   TABLE_COLUMNS, fmtBytes, fmtNumber, mssqlDatabaseRow, mssqlTableRow, orderColumns,
   withExtras, withHints, withoutColumns,
 } from '@/config/dbCatalog';
-import { MSSQL_DASHBOARD_TABS } from '@/config/mssqlDashboardNav';
+import { MSSQL_DASHBOARD_TABS, mssqlTabRoute } from '@/config/mssqlDashboardNav';
 
 /**
  * SQL Server dashboard.
@@ -126,10 +129,12 @@ export default function MSSQLDashboard() {
   const navigate = useNavigate();
 
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
-    navigate(`/mssql-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  const setActiveTab = (t) => navigate(mssqlTabRoute(id, t));
+  const connAlerts = useConnectionAlerts(id);
 
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
+  const [uptimeModalOpen, setUptimeModalOpen] = useState(false);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [trend, setTrend] = useState({ conn: [], cache: [], cpu: [] });
   const [tablesDb, setTablesDb] = useState('__all__');
   const [tableDetail, setTableDetail] = useState(null); // { loading, data, err, title }
@@ -350,28 +355,59 @@ export default function MSSQLDashboard() {
         {activeTab === 'overview' && (
           <div className="space-y-gutter">
             <div className="grid grid-cols-2 gap-gutter-sm sm:grid-cols-4 xl:grid-cols-8">
-              <MetricTile label="Version" icon="server" value={hs.version || '—'}
-                sub={hs.edition || undefined} />
-              <MetricTile label="Uptime" icon="clock" value={hs.uptime || '—'}
-                sub={hs.last_restart && hs.last_restart !== 'N/A' ? `since ${hs.last_restart}` : undefined} />
-              <MetricTile label="Databases" icon="database" value={hs.total_databases ?? dbItems.length}
+              <KpiTile icon={Server} title="Version" accent="#3B82F6" value={hs.version || '—'}
+                sub={hs.edition || undefined} onClick={() => setVersionModalOpen(true)} />
+              <KpiTile icon={Clock} title="Uptime" accent="#6366F1" value={hs.uptime || '—'}
+                sub={hs.last_restart && hs.last_restart !== 'N/A' ? `since ${hs.last_restart}` : undefined}
+                onClick={() => setUptimeModalOpen(true)} />
+              <KpiTile icon={Database} title="Databases" accent="#336791" value={hs.total_databases ?? dbItems.length}
                 onClick={() => setActiveTab('databases')} />
-              <MetricTile label="Active sessions" icon="users" value={hs.active_sessions ?? sessions.active ?? '—'}
+              <KpiTile icon={Users} title="Active sessions" accent="#22C55E" value={hs.active_sessions ?? sessions.active ?? '—'}
                 sub={`of ${fmtNumber(hs.max_connections)} max`} onClick={() => setActiveTab('users')} />
-              <MetricTile label="Buffer cache" icon="memory" value={cachePct ? `${cachePct}%` : '—'}
-                tone={cachePct === 0 ? 'neutral' : cachePct < 90 ? 'bad' : 'good'}
+              <KpiTile icon={MemoryStick} title="Buffer cache" value={cachePct ? `${cachePct}%` : '—'}
+                accent={cachePct === 0 ? '#64748B' : cachePct < 90 ? '#EF4444' : '#22C55E'}
                 onClick={() => setActiveTab('performance')} />
-              <MetricTile label="Host CPU" icon="cpu" value={`${cpuPct}%`}
-                tone={cpuPct > 85 ? 'bad' : cpuPct > 65 ? 'warn' : 'good'}
+              <KpiTile icon={Cpu} title="Host CPU" value={`${cpuPct}%`}
+                accent={cpuPct > 85 ? '#EF4444' : cpuPct > 65 ? '#F97316' : '#22C55E'}
                 sub={`SQL Server ${sqlCpuPct}%`} onClick={() => setActiveTab('performance')} />
-              <MetricTile label="Wait types" icon="clock" value={waitRows.length || '—'}
+              <KpiTile icon={Clock} title="Wait types" accent="#8B5CF6" value={waitRows.length || '—'}
                 onClick={() => setActiveTab('performance')} />
-              <MetricTile label="Disk footprint" icon="desktop"
+              <KpiTile icon={HardDrive} title="Disk footprint" accent="#F97316"
                 value={hs.total_size_gb > 0.1 ? `${hs.total_size_gb} GB` : `${hs.total_size_mb || 0} MB`}
                 sub="data + log" onClick={() => setActiveTab('storage')} />
             </div>
 
-            <HostResources connId={id} tech="mssql" />
+            <Dialog open={uptimeModalOpen} onClose={() => setUptimeModalOpen(false)}
+              title="SQL Server Uptime" icon="clock" width={420}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{hs.uptime || '—'}</span>
+                <CopyButton text={hs.uptime || ''} />
+              </div>
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <DefRow label="SQL Server Start Time (Last Restart)" value={hs.last_restart || '—'} mono />
+                <DefRow label="Current Time" value={new Date().toLocaleString()} mono />
+                <DefRow label="Uptime" value={hs.uptime || '—'} mono />
+              </div>
+            </Dialog>
+
+            <Dialog open={versionModalOpen} onClose={() => setVersionModalOpen(false)}
+              title="SQL Server Version" icon="server" width={480}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{hs.version || '—'}</span>
+                <CopyButton text={serverInfo.product_version || hs.version || ''} />
+              </div>
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <DefRow label="Full Product Version" value={serverInfo.product_version || hs.version || '—'} mono />
+                <DefRow label="Edition" value={serverInfo.edition || hs.edition || '—'} />
+                <DefRow label="Instance" value={serverInfo.server_name || connection.host || '—'} mono />
+              </div>
+            </Dialog>
 
             <div className="flex flex-wrap gap-2">
               <StatusPill ok={connPct < 80} label={`Connections ${connPct}%`}
@@ -438,9 +474,13 @@ export default function MSSQLDashboard() {
               )}
             </div>
 
-            {/* Utilisation as one card, so all four read against the same scale and
-                the reader can switch between meters and gauges. */}
-            <div className="grid gap-gutter xl:grid-cols-2">
+            {/* utilisation + waits charts on the left, Alerts as a right rail matching
+                their combined height (CSS grid stretch). */}
+            <div className="grid gap-gutter xl:grid-cols-4">
+              <div className="flex flex-col gap-gutter xl:col-span-3">
+                {/* Utilisation as one card, so all four read against the same scale and
+                    the reader can switch between meters and gauges. */}
+                <div className="grid gap-gutter xl:grid-cols-2">
               <ChartCard
                 cardId="mssql-utilisation"
                 family="ratio"
@@ -504,30 +544,44 @@ export default function MSSQLDashboard() {
                   },
                 }))}
               />
-            </div>
+                </div>
 
-            {/* Live trends only exist while the page is open — say so rather than
-                showing an empty chart frame. */}
-            {trend.conn.length > 2 ? (
-              <div className="grid gap-gutter md:grid-cols-3">
-                <Panel title="Connection usage" icon="network">
-                  <TrendChart data={trend.conn} series={[{ key: 'v', label: '%' }]} height={150} />
-                </Panel>
-                <Panel title="Buffer cache hit" icon="memory">
-                  <TrendChart data={trend.cache} series={[{ key: 'v', label: '%' }]} height={150} />
-                </Panel>
-                <Panel title="Host CPU" icon="cpu">
-                  <TrendChart data={trend.cpu} series={[{ key: 'v', label: '%' }]} height={150} />
-                </Panel>
+                <HostResources connId={id} tech="mssql" />
+
+                {/* Live trends only exist while the page is open — say so rather than
+                    showing an empty chart frame. */}
+                {trend.conn.length > 2 ? (
+                  <div className="grid gap-gutter md:grid-cols-3">
+                    <Panel title="Connection usage" icon="network">
+                      <TrendChart data={trend.conn} series={[{ key: 'v', label: '%' }]} height={150} />
+                    </Panel>
+                    <Panel title="Buffer cache hit" icon="memory">
+                      <TrendChart data={trend.cache} series={[{ key: 'v', label: '%' }]} height={150} />
+                    </Panel>
+                    <Panel title="Host CPU" icon="cpu">
+                      <TrendChart data={trend.cpu} series={[{ key: 'v', label: '%' }]} height={150} />
+                    </Panel>
+                  </div>
+                ) : (
+                  <Panel>
+                    <p className="text-center text-[12px] text-subtle">
+                      Live trends build up from this page — the first points appear after the
+                      next {REFRESH_INTERVAL}-second refresh.
+                    </p>
+                  </Panel>
+                )}
               </div>
-            ) : (
-              <Panel>
-                <p className="text-center text-[12px] text-subtle">
-                  Live trends build up from this page — the first points appear after the
-                  next {REFRESH_INTERVAL}-second refresh.
-                </p>
-              </Panel>
-            )}
+
+              {/* alerts for this connection only — same feed/panel Monitoring
+                  Overview uses, scoped server-side to this host via conn_id. */}
+              <RecentAlertsPanel
+                title="Alerts"
+                alerts={connAlerts.list}
+                counts={connAlerts.counts}
+                loading={connAlerts.isFetching}
+                onOpenAll={() => navigate('/alerts')}
+              />
+            </div>
 
             {blocking.length > 0 && (
               <Notice tone="danger" icon="lock"

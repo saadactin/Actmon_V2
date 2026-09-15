@@ -51,10 +51,14 @@
   --success-fg: #0b5d43;
   --warning: #b06a00;
   --warning-soft: #fdf3e2;
-  --warning-fg: #8a5200;
+  /* tertiary(lo)-600 from the ACTMON colour library — the previous #8a5200
+     read as a muddy dark brown rather than the brand's vibrant amber/gold. */
+  --warning-fg: #df900a;
   --danger: #c8323c;
   --danger-soft: #fdedee;
-  --danger-fg: #a02128;
+  /* Red-600 from the ACTMON colour library — the previous #a02128 was a dark
+     brick red, noticeably darker/duller than the library's own red family. */
+  --danger-fg: #dc2626;
   --info: #1f6fd0;
   --info-soft: #e8f1fd;
   --info-fg: #17559f;

@@ -57,6 +57,46 @@ def _sample_one(db, conn):
     cfg = dd.TECH.get(tech)
     if not cfg:
         return
+
+    # Host monitored by an ActMon agent → use the metrics the agent actually
+    # pushed. This MUST come before the local-host shortcut below: an
+    # agent-linked connection's "localhost" means the AGENT's machine, not
+    # the ActMon backend server — psutil here would silently sample the
+    # WRONG box (this exact bug shipped briefly: a Windows DB reached via its
+    # agent was reported as whatever the Linux backend's own CPU was doing).
+    #
+    # Prefer the ENGINE'S OWN process share (e.g. just mysqld, not the whole
+    # Windows box) so two engines sharing one agent host show different,
+    # technology-specific numbers — matching what Task Manager shows per
+    # process. Falls back to whole-host metrics if the agent hasn't sent a
+    # process list yet, or none of it matches this engine's process names.
+    am = dd._agent_tech_metrics(conn.id, tech, db) or dd._agent_host_metrics(conn.id, db)
+    if am:
+        with engine.begin() as c:
+            c.execute(text(
+                "INSERT INTO resource_samples (org_id, connection_id, db_type, cpu_pct, ram_pct, disk_pct, is_event, evidence) "
+                "VALUES (:o, :cid, :dbt, :cpu, :ram, :disk, false, NULL)"
+            ), {"o": getattr(conn, "org_id", 1) or 1, "cid": conn.id, "dbt": (conn.db_type or "").lower(),
+                "cpu": am.get("cpu_pct"), "ram": am.get("ram_pct"), "disk": am.get("disk_pct")})
+        return
+
+    # DB genuinely on this same machine (no agent involved) → read real host
+    # CPU/RAM/disk with psutil, the same shortcut the instant host-metrics
+    # endpoint already takes. Without this, a true-local connection has no
+    # SSH credentials to fall back on, `_ssh_connect` always raises, and this
+    # function returns before ever writing a row.
+    if dd._is_local_host(conn.host):
+        m = dd._local_host_metrics()
+        if not m:
+            return
+        with engine.begin() as c:
+            c.execute(text(
+                "INSERT INTO resource_samples (org_id, connection_id, db_type, cpu_pct, ram_pct, disk_pct, is_event, evidence) "
+                "VALUES (:o, :cid, :dbt, :cpu, :ram, :disk, false, NULL)"
+            ), {"o": getattr(conn, "org_id", 1) or 1, "cid": conn.id, "dbt": (conn.db_type or "").lower(),
+                "cpu": m.get("cpu_pct"), "ram": m.get("ram_pct"), "disk": m.get("disk_pct")})
+        return
+
     try:
         ssh = dd._ssh_connect(conn, db)   # resolves connection creds or matching OS server
     except Exception:

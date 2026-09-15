@@ -10,7 +10,7 @@
  */
 import {
   Activity, TrendingUp, Zap, Database, Table, Lock, GitBranch, Users,
-  HardDrive, Key, FileText, AlertTriangle, Search,
+  HardDrive, Key, FileText, AlertTriangle, Search, Stethoscope,
 } from 'lucide-react';
 
 /** Tab ids that render INLINE inside MySQLDashboard.jsx's own `activeTab`
@@ -45,12 +45,17 @@ export const MYSQL_DASHBOARD_TABS = [
   { id: 'binary-logs', label: 'Binary Logs', icon: FileText },
   { id: 'error-logs', label: 'Error Logs', icon: AlertTriangle },
   { id: 'slow-queries', label: 'Slow Queries', icon: Search },
+  // Former header quick-links, moved into the tab strip proper so the header
+  // shows one navigation surface instead of tabs plus a separate row of pills.
+  { id: 'reports', label: 'Reports', icon: FileText },
+  { id: 'diagnose', label: 'Diagnose', icon: Stethoscope },
 ];
 
 /** Resolves ANY tab id to the URL a click should land on, from ANY of the
  * five pages that share this strip — the one function every page's
  * `onTabChange` calls, so the routing rule lives in exactly one place. */
 export function mysqlTabRoute(connectionId, tabId) {
+  if (tabId === 'diagnose') return `/diagnose/${connectionId}`;
   const external = MYSQL_EXTERNAL_TAB_ROUTES[tabId];
   if (external) return `/mysql-dashboard/${connectionId}/${external}`;
   return `/mysql-dashboard/${connectionId}${tabId && tabId !== 'overview' ? `/${tabId}` : ''}`;

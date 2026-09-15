@@ -26,8 +26,13 @@ import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import Pagination, { Paged } from '@/components/ui/Pagination';
 import Gauge from '@/components/gauges/Gauge';
 import TrendChart from '@/components/gauges/TrendChart';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
-import { MONGODB_DASHBOARD_TABS } from '@/config/mongodbDashboardNav';
+import { MONGODB_DASHBOARD_TABS, mongodbTabRoute } from '@/config/mongodbDashboardNav';
+import KpiTile from '@/pages/_shared/engineKpi';
+import Dialog from '@/components/ui/Dialog';
+import CopyButton from '@/components/ui/CopyButton';
 
 /* ─── MongoDB palette ─── */
 const C = {
@@ -107,31 +112,6 @@ function computeHealthScore(connPct, cacheHitPct, slowOpsCount, replState) {
 }
 
 /* ─── sub-components ─── */
-function KpiCard({ icon: Icon, title, value, accent }) {
-  const accMap = {
-    green:   'border-l-green-500',
-    emerald: 'border-l-emerald-500',
-    teal:    'border-l-teal-500',
-    blue:    'border-l-blue-500',
-    orange:  'border-l-orange-500',
-    red:     'border-l-red-500',
-    purple:  'border-l-purple-500',
-    cyan:    'border-l-cyan-500',
-    yellow:  'border-l-yellow-500',
-    slate:   'border-l-slate-400',
-  };
-  return (
-    <div className={`bg-white rounded-xl border border-slate-200 border-l-4 ${accMap[accent] || accMap.slate} p-4 hover:shadow-md transition-all`}>
-      <div className="flex justify-between items-start">
-        <div>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
-          <p className="text-lg font-black text-slate-800 mt-1 truncate max-w-[120px]">{value ?? 'N/A'}</p>
-        </div>
-        <Icon size={20} className="text-slate-300 mt-0.5 flex-shrink-0" />
-      </div>
-    </div>
-  );
-}
 
 function TrendCard({ title, data, color, unit = '', fmtVal }) {
   const fmt    = fmtVal || (v => `${v}${unit}`);
@@ -392,9 +372,11 @@ export default function MongoDBDashboard() {
   const navigate = useNavigate();
   // Tab is URL-driven: /mongodb-dashboard/:id/:tab → every tab has its own route.
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
-    navigate(`/mongodb-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  const setActiveTab = (t) => navigate(mongodbTabRoute(id, t));
+  const connAlerts = useConnectionAlerts(id);
   const [countdown, setCountdown]   = useState(REFRESH_INTERVAL);
+  const [uptimeModalOpen, setUptimeModalOpen] = useState(false);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [sparklines, setSparklines] = useState({ conn: [], cache: [], ops: [] });
   const [collSearch, setCollSearch] = useState('');
   const [selDb, setSelDb]           = useState('');
@@ -659,71 +641,122 @@ export default function MongoDBDashboard() {
           return (
             <div className="space-y-4">
 
-              {/* KPI strip - all clickable */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
-                <KpiCard icon={Server}    title="Version"     value={(health_summary.version || '—').split('-')[0]} accent="green" />
-                <KpiCard icon={Clock}     title="Uptime"      value={health_summary.uptime_str || fmtUptime(health_summary.uptime_seconds)} accent="teal" />
-                <button onClick={() => setActiveTab('collections')} className="text-left hover:shadow-md transition-all rounded-xl">
-                  <KpiCard icon={Database}  title="Databases"   value={health_summary.total_databases ?? '—'} accent="blue" />
-                </button>
-                <button onClick={() => setActiveTab('collections')} className="text-left hover:shadow-md transition-all rounded-xl">
-                  <KpiCard icon={Layers}    title="Collections" value={health_summary.total_collections ?? '—'} accent="purple" />
-                </button>
-                <button onClick={() => setActiveTab('operations')} className="text-left hover:shadow-md transition-all rounded-xl">
-                  <KpiCard icon={Network}   title="Connections" value={`${connections.current ?? 0}/${(connections.current || 0) + (connections.available || 0)}`} accent={connPct > 80 ? 'red' : 'emerald'} />
-                </button>
-                <KpiCard icon={HardDrive} title="Mem (MB)"    value={memory.resident ?? '—'} accent="orange" />
-                <button onClick={() => setActiveTab('replication')} className="text-left hover:shadow-md transition-all rounded-xl">
-                  <KpiCard icon={Cpu}       title="Repl State"  value={health_summary.replication_state || 'STANDALONE'} accent={health_summary.replication_state === 'PRIMARY' ? 'green' : 'slate'} />
-                </button>
-                <button onClick={() => setActiveTab('operations')} className="text-left hover:shadow-md transition-all rounded-xl">
-                  <KpiCard icon={Activity}  title="Total Ops"   value={fmtNum(opRate)} accent="cyan" />
-                </button>
+              {/* KPI strip — one shared card shape (circular icon badge, big
+                  number, hint link) reused by every tile here; see KpiTile in
+                  _shared/engineKpi.jsx for the same card used across every
+                  other engine dashboard. */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-4">
+                {[
+                  { icon: Server,    title: 'Version',     value: (health_summary.version || '—').split('-')[0], accent: '#22C55E', tab: '__version_detail__', hint: 'Version details' },
+                  { icon: Clock,     title: 'Uptime',      value: health_summary.uptime_str || fmtUptime(health_summary.uptime_seconds), accent: '#14B8A6', tab: '__uptime_detail__', hint: 'Uptime details' },
+                  { icon: Database,  title: 'Databases',   value: health_summary.total_databases ?? '—', accent: '#3B82F6', tab: 'collections', hint: 'Collections' },
+                  { icon: Layers,    title: 'Collections', value: health_summary.total_collections ?? '—', accent: '#8B5CF6', tab: 'collections', hint: 'Collections' },
+                  { icon: Network,   title: 'Connections', value: `${connections.current ?? 0}/${(connections.current || 0) + (connections.available || 0)}`, accent: connPct > 80 ? '#EF4444' : '#10B981', tab: 'operations', hint: 'Operations' },
+                  { icon: HardDrive, title: 'Mem (MB)',    value: memory.resident ?? '—', accent: '#F97316' },
+                  { icon: Cpu,       title: 'Repl State',  value: health_summary.replication_state || 'STANDALONE', accent: health_summary.replication_state === 'PRIMARY' ? '#22C55E' : '#64748B', tab: 'replication', hint: 'Replication' },
+                  { icon: Activity,  title: 'Total Ops',   value: fmtNum(opRate), accent: '#06B6D4', tab: 'operations', hint: 'Operations' },
+                ].map(({ icon: Icon, title, value, accent, tab, hint }) => (
+                  <KpiTile key={title} icon={Icon} title={title} value={value} accent={accent} hint={hint}
+                    onClick={tab ? () => {
+                      if (tab === '__uptime_detail__') { setUptimeModalOpen(true); return; }
+                      if (tab === '__version_detail__') { setVersionModalOpen(true); return; }
+                      setActiveTab(tab);
+                    } : undefined} />
+                ))}
               </div>
 
-              {/* Host Resources drill-down */}
-              <HostResources connId={id} tech="mongodb" />
+              <Dialog open={uptimeModalOpen} onClose={() => setUptimeModalOpen(false)}
+                title="MongoDB Uptime" icon="clock" width={420}>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+                <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                  <span className="font-mono text-sm font-semibold text-fg">{health_summary.uptime_str || fmtUptime(health_summary.uptime_seconds) || '—'}</span>
+                  <CopyButton text={health_summary.uptime_str || ''} />
+                </div>
 
-              {/* 4 Gauges */}
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                <Gauge
-                  label="Connection %"
-                  pct={connPct}
-                  sub={`${connections.current ?? 0} current / ${connections.available ?? 0} available`}
-                  colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.green}
-                />
-                <Gauge
-                  label="WT Cache Used %"
-                  pct={wtCachePct}
-                  sub={`${wired_tiger.cache_used_mb ?? 0} MB / ${wired_tiger.cache_max_mb ?? 0} MB configured`}
-                  colorFn={v => v > 85 ? C.red : v > 70 ? C.orange : C.green}
-                />
-                <Gauge
-                  label="Op Rate"
-                  pct={Math.min(100, opRate > 0 ? Math.min(opRate / 10, 100) : 0)}
-                  sub={`${fmtNum(opRate)} ops · Cumulative opcounters total`}
-                  colorFn={() => C.green}
-                />
-                <Gauge
-                  label="WT Cache Hit %"
-                  pct={cacheHitPct}
-                  sub="WiredTiger cache read efficiency"
-                  colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green}
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+                <div className="rounded-xl bg-raised px-4 py-1">
+                  <Row label="MongoDB Start Time"
+                    value={health_summary.uptime_seconds ? new Date(Date.now() - health_summary.uptime_seconds * 1000).toLocaleString() : '—'} mono />
+                  <Row label="Current Time" value={new Date().toLocaleString()} mono />
+                  <Row label="Uptime" value={health_summary.uptime_str || fmtUptime(health_summary.uptime_seconds) || '—'} mono />
+                </div>
+              </Dialog>
+
+              <Dialog open={versionModalOpen} onClose={() => setVersionModalOpen(false)}
+                title="MongoDB Version" icon="server" width={480}>
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+                <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                  <span className="font-mono text-sm font-semibold text-fg">{(health_summary.version || '—').split('-')[0]}</span>
+                  <CopyButton text={health_summary.version || ''} />
+                </div>
+
+                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+                <div className="rounded-xl bg-raised px-4 py-1">
+                  <Row label="Full Version String" value={health_summary.version || '—'} mono />
+                  <Row label="Host" value={health_summary.host || connection?.host || '—'} mono />
+                  <Row label="PID" value={health_summary.pid || '—'} mono />
+                </div>
+              </Dialog>
+
+              {/* gauges + trend charts on the left, Alerts as a right rail matching
+                  their combined height (CSS grid stretch). */}
+              <div className="grid gap-4 xl:grid-cols-4">
+                <div className="flex flex-col gap-4 xl:col-span-3">
+                  {/* 4 Gauges */}
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                    <Gauge
+                      label="Connection %"
+                      pct={connPct}
+                      sub={`${connections.current ?? 0} current / ${connections.available ?? 0} available`}
+                      colorFn={v => v > 80 ? C.red : v > 60 ? C.orange : C.green}
+                    />
+                    <Gauge
+                      label="WT Cache Used %"
+                      pct={wtCachePct}
+                      sub={`${wired_tiger.cache_used_mb ?? 0} MB / ${wired_tiger.cache_max_mb ?? 0} MB configured`}
+                      colorFn={v => v > 85 ? C.red : v > 70 ? C.orange : C.green}
+                    />
+                    <Gauge
+                      label="Op Rate"
+                      pct={Math.min(100, opRate > 0 ? Math.min(opRate / 10, 100) : 0)}
+                      sub={`${fmtNum(opRate)} ops · Cumulative opcounters total`}
+                      colorFn={() => C.green}
+                    />
+                    <Gauge
+                      label="WT Cache Hit %"
+                      pct={cacheHitPct}
+                      sub="WiredTiger cache read efficiency"
+                      colorFn={v => v < 70 ? C.red : v < 85 ? C.orange : C.green}
+                    />
+                  </div>
+
+                  {/* Host Resources drill-down */}
+                  <HostResources connId={id} tech="mongodb" />
+
+                  {/* Live sparklines */}
+                  {sparklines.conn.length > 2 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <TrendCard title="Connection %"   data={sparklines.conn}  color={C.green}   unit="%" />
+                      <TrendCard title="WT Cache Hit %"  data={sparklines.cache} color={C.emerald} unit="%" />
+                      <TrendCard title="Op Rate"         data={sparklines.ops}   color={C.cyan}    fmtVal={v => `${fmtNum(v)} ops`} />
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl border border-slate-200 p-4 text-center text-slate-400 text-xs">
+                      Live trend charts appear after the first 15-second auto-refresh
+                    </div>
+                  )}
+                </div>
+
+                {/* alerts for this connection only — same feed/panel Monitoring
+                    Overview uses, scoped server-side to this host via conn_id. */}
+                <RecentAlertsPanel
+                  title="Alerts"
+                  alerts={connAlerts.list}
+                  counts={connAlerts.counts}
+                  loading={connAlerts.isFetching}
+                  onOpenAll={() => navigate('/alerts')}
                 />
               </div>
-
-              {/* Live sparklines */}
-              {sparklines.conn.length > 2 ? (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <TrendCard title="Connection %"   data={sparklines.conn}  color={C.green}   unit="%" />
-                  <TrendCard title="WT Cache Hit %"  data={sparklines.cache} color={C.emerald} unit="%" />
-                  <TrendCard title="Op Rate"         data={sparklines.ops}   color={C.cyan}    fmtVal={v => `${fmtNum(v)} ops`} />
-                </div>
-              ) : (
-                <div className="bg-white rounded-2xl border border-slate-200 p-4 text-center text-slate-400 text-xs">
-                  Live trend charts appear after the first 15-second auto-refresh
-                </div>
-              )}
 
               {/* Opcounters + DB list */}
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

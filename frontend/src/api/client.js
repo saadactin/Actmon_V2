@@ -44,7 +44,13 @@ function detailToMessage(detail) {
       })
       .join('; ');
   }
-  if (detail && typeof detail === 'object') return detail.msg || JSON.stringify(detail);
+  if (detail && typeof detail === 'object') {
+    // Some endpoints raise HTTPException(status, {"detail": "message", ...extra})
+    // to carry structured extras (e.g. blocking_reasons) alongside a readable
+    // message — prefer that message over dumping the whole object as JSON.
+    if (typeof detail.detail === 'string') return detail.detail;
+    return detail.msg || JSON.stringify(detail);
+  }
   return null;
 }
 
@@ -79,6 +85,9 @@ client.interceptors.response.use(
 
       const err = new Error(detailToMessage(data?.detail) || data?.message || `Request failed (${status})`);
       err.status = status;
+      // Structured extras (e.g. {"detail": "...", "blocking_reasons": [...]})
+      // live here so a specific page can render them, not just the message.
+      err.detail = data?.detail;
       return Promise.reject(err);
     }
     if (error.code === 'ECONNABORTED') {

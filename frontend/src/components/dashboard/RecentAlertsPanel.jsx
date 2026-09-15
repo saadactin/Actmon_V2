@@ -32,6 +32,12 @@ const SEVERITY_TEXT = {
   info: 'text-info-fg',
 };
 
+const SEVERITY_ROW = {
+  critical: 'border-danger-soft bg-danger-soft',
+  warning: 'border-warning-soft bg-warning-soft',
+  info: 'border-info-soft bg-info-soft',
+};
+
 export default function RecentAlertsPanel({
   alerts = [], counts, loading, onOpenAll, className,
   title = 'Recent Alerts', actionLabel = 'More Alerts',
@@ -131,7 +137,10 @@ function AlertRow({ alert }) {
 
   return (
     <li
-      className="flex items-center gap-2 rounded-control border border-warning-soft bg-warning-soft px-3 py-3"
+      className={cn(
+        'flex items-center gap-2 rounded-control border px-3 py-3 transition-transform duration-150 hover:translate-x-[3px]',
+        SEVERITY_ROW[sev.id] || SEVERITY_ROW.info,
+      )}
       title={alert.message || undefined}
     >
       <span className="truncate-safe min-w-0 flex-1 text-[13px] font-bold text-fg">{host}</span>

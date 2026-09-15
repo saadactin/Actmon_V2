@@ -1,45 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
 import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import ChartCard from '@/components/charts/ChartCard';
 import StatTile from '@/components/charts/StatTile';
+import Gauge from '@/components/charts/Gauge';
 import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import RankedTable from '@/components/dashboard/RankedTable';
+import RankedBarChart from '@/components/dashboard/RankedBarChart';
 import { bandFor, severityOf, STATUS } from '@/components/charts/status';
-import useDashboardData, { TOP_CPU_HOSTS } from '@/hooks/useDashboardData';
+import useDashboardData, { TOP_CPU_HOSTS, TOP_ALERT_HOSTS } from '@/hooks/useDashboardData';
+
+// ApexCharts is a large dependency used by exactly one card on this page —
+// lazy-loaded so its ~250KB (gzipped) doesn't ship inside the Dashboard
+// route's own chunk, which every user pays for on first login.
+const ApexDonut = lazy(() => import('@/components/charts/ApexDonut'));
 
 const AUTO_REFRESH_SECONDS = 30;
 
-/**
- * Each resource gets its own hue rather than a utilisation band.
- *
- * This card's job is to compare three different things side by side; three rings
- * all sitting in the same band would be indistinguishable. Series slots rather
- * than raw hex so the trio stays contrast-checked in every theme — the number
- * under each ring is what reports severity here.
- */
-const RESOURCE_COLORS = {
-  cpu: 'var(--chart-2)',
-  ram: 'var(--chart-5)',
-  disk: 'var(--chart-1)',
-};
+// The design mockup lifts every card on hover (translateY + a stronger
+// shadow) — applied here per-card via each component's own `className` prop
+// rather than added to the shared `.card` rule, which every other page in
+// the app (forms, tables, config panels) also uses and shouldn't inherit a
+// hover animation never designed for it.
+const CARD_HOVER = 'transition-[transform,box-shadow] duration-300 hover:-translate-y-[3px] hover:shadow-md';
 
 // Hoisted to module scope: these never change, so recreating them every render
 // (as inline literals) only ever produced garbage for the GC and, worse, broke
 // ChartCard's memoization (a "stable" items/rows array paired with a freshly
 // allocated tableColumns array still fails ChartCard's shallow-prop-equality
-// check). Same reasoning for `roundFormat` below — an inline arrow function is
-// a new reference every render.
+// check).
 const FLEET_HEALTH_COLUMNS = [
   { key: 'status', label: 'Status' },
   { key: 'hosts', label: 'Hosts', align: 'right' },
   { key: 'share', label: 'Share', align: 'right' },
-];
-const HOSTS_BY_OS_COLUMNS = [
-  { key: 'os', label: 'OS' },
-  { key: 'hosts', label: 'Hosts', align: 'right' },
 ];
 const ENGINE_DIST_COLUMNS = [
   { key: 'engine', label: 'Engine' },
@@ -56,17 +53,6 @@ const ENGINE_TABLE_COLUMNS = [
   { key: 'offline', label: 'Offline', align: 'right' },
   { key: 'total', label: 'Total', align: 'right' },
 ];
-const TOP_CPU_COLUMNS = [
-  { key: 'host', label: 'Host' },
-  { key: 'cpu', label: 'CPU', align: 'right' },
-  { key: 'band', label: 'Band', align: 'right' },
-];
-const RESOURCE_COLUMNS = [
-  { key: 'resource', label: 'Resource' },
-  { key: 'used', label: 'Avg used', align: 'right' },
-  { key: 'band', label: 'Band', align: 'right' },
-];
-const roundFormat = (v) => Math.round(v);
 
 /**
  * Monitoring overview.
@@ -123,12 +109,6 @@ export default function Dashboard() {
     { key: 'info', label: 'Info', value: d.alerts.info, status: severityOf('info') },
   ], [d.alerts.critical, d.alerts.warning, d.alerts.info]);
 
-  const resourceItems = useMemo(() => [
-    { key: 'cpu', label: 'CPU', value: d.resources.cpu, color: RESOURCE_COLORS.cpu },
-    { key: 'ram', label: 'RAM', value: d.resources.ram, color: RESOURCE_COLORS.ram },
-    { key: 'disk', label: 'Disk', value: d.resources.disk, color: RESOURCE_COLORS.disk },
-  ], [d.resources.cpu, d.resources.ram, d.resources.disk]);
-
   const engineRows = useMemo(() => d.perTech.map((t) => ({
     key: t.id,
     label: t.label,
@@ -166,9 +146,6 @@ export default function Dashboard() {
     },
   })), [healthItems, d.infra.total]);
 
-  const hostsByOsRows = useMemo(() => d.byOsType.map((o) => ({ key: o.key, cells: { os: o.label, hosts: o.value } })),
-    [d.byOsType]);
-
   const engineShareRows = useMemo(() => engineShare.map((e) => ({ key: e.key, cells: { engine: e.label, hosts: e.value } })),
     [engineShare]);
 
@@ -191,24 +168,9 @@ export default function Dashboard() {
     },
   })), [d.perTech]);
 
-  const topCpuRows = useMemo(() => d.topCpu.map((h) => ({
-    key: h.key,
-    cells: { host: h.label, cpu: `${Math.round(h.value)}%`, band: bandFor(h.value).label },
-  })), [d.topCpu]);
-
-  const resourceRows = useMemo(() => resourceItems.map((r) => ({
-    key: r.key,
-    cells: { resource: r.label, used: `${r.value}%`, band: bandFor(r.value).label },
-  })), [resourceItems]);
-
   /* ── chart-only props, memoized on their specific small inputs ──────────── */
 
   const fleetHealthChartProps = useMemo(() => ({
-    legend: 'below', size: 146, centerLabel: `${d.infra.total} Hosts`,
-    emptyLabel: 'No hosts registered yet', labelWidth: 64,
-  }), [d.infra.total]);
-
-  const hostsByOsChartProps = useMemo(() => ({
     legend: 'below', size: 146, centerLabel: `${d.infra.total} Hosts`,
     emptyLabel: 'No hosts registered yet', labelWidth: 64,
   }), [d.infra.total]);
@@ -227,16 +189,6 @@ export default function Dashboard() {
 
   const severityChartProps = useMemo(() => ({ emptyLabel: 'Nothing firing', labelWidth: 60, height: 205 }), []);
   const engineChartProps = useMemo(() => ({ emptyLabel: 'No database hosts discovered yet', height: 205 }), []);
-
-  const topCpuChartProps = useMemo(() => ({
-    max: 100, unit: '%', format: roundFormat,
-    emptyLabel: 'No host is reporting CPU yet',
-    // Switched to the donut form, these are independent hosts' CPU %s —
-    // summing them (PieChart's default center label) is a meaningless number,
-    // not a "total". Name what's actually being counted instead, same as the
-    // other donuts on this page.
-    centerLabel: `${cpuItems.length} Host${cpuItems.length !== 1 ? 's' : ''}`,
-  }), [cpuItems.length]);
 
   const severityDisplayItems = d.alerts.total ? severityItems : [];
 
@@ -308,6 +260,13 @@ export default function Dashboard() {
       {/* ── charts, with the alert feed running down the right ────────────── */}
       <div className="mt-gutter-lg grid gap-gutter-lg xl:grid-cols-4">
         <div className="flex flex-col gap-gutter-lg xl:col-span-3">
+          {/* how hard the fleet is working, at a glance */}
+          <div className="grid gap-gutter-lg lg:grid-cols-3">
+            <GaugeCard label="Avg. CPU Usage" value={d.resources.cpu} loading={busy} />
+            <GaugeCard label="Avg. Memory Usage" value={d.resources.ram} loading={busy} />
+            <GaugeCard label="Avg. Disk Usage" value={d.resources.disk} loading={busy} />
+          </div>
+
           {/* shape of the estate: health, engines, where it runs */}
           <div className="grid gap-gutter-lg lg:grid-cols-4">
             <ChartCard
@@ -317,24 +276,18 @@ export default function Dashboard() {
               items={healthItems}
               chartProps={fleetHealthChartProps}
               title="Fleet Health"
-              className="lg:min-h-[260px]"
+              className={cn('lg:min-h-[260px]', CARD_HOVER)}
               loading={busy}
               tableColumns={FLEET_HEALTH_COLUMNS}
               tableRows={fleetHealthRows}
             />
 
-            <ChartCard
-              cardId="hosts-by-os"
-              family="flat"
-              defaultKind="donut"
-              items={d.byOsType}
-              chartProps={hostsByOsChartProps}
-              title="Hosts by OS"
-              className="lg:min-h-[260px]"
-              loading={busy}
-              tableColumns={HOSTS_BY_OS_COLUMNS}
-              tableRows={hostsByOsRows}
-            />
+            <section className={cn('card flex flex-col px-card py-card lg:min-h-[260px]', CARD_HOVER, busy && 'opacity-70')}>
+              <h2 className="mb-2 text-center text-[17px] font-bold text-fg">Hosts by OS</h2>
+              <Suspense fallback={<div className="grid flex-1 place-items-center text-[12px] text-subtle">Loading chart…</div>}>
+                <ApexDonut items={d.byOsType} centerLabel="Hosts" height={230} />
+              </Suspense>
+            </section>
 
             <ChartCard
               cardId="engine-distribution"
@@ -343,7 +296,7 @@ export default function Dashboard() {
               items={engineShare}
               chartProps={engineDistChartProps}
               title="Engine Distribution"
-              className="lg:min-h-[260px]"
+              className={cn('lg:min-h-[260px]', CARD_HOVER)}
               loading={busy}
               tableColumns={ENGINE_DIST_COLUMNS}
               tableRows={engineShareRows}
@@ -356,7 +309,7 @@ export default function Dashboard() {
               items={distribution}
               chartProps={distributionChartProps}
               title={showCloud ? 'Cloud by Provider' : 'Hosts by Environment'}
-              className="lg:min-h-[260px]"
+              className={cn('lg:min-h-[260px]', CARD_HOVER)}
               loading={busy}
               tableColumns={distributionColumns}
               tableRows={distributionRows}
@@ -372,7 +325,7 @@ export default function Dashboard() {
               items={severityDisplayItems}
               chartProps={severityChartProps}
               title="Alerts By Severity"
-              className="lg:min-h-[316px]"
+              className={cn('lg:min-h-[316px]', CARD_HOVER)}
               loading={busy}
               action={<IconButton icon="arrow-right" label="Open alerts" size="sm" onClick={() => navigate('/alerts')} />}
               tableColumns={SEVERITY_COLUMNS}
@@ -386,39 +339,31 @@ export default function Dashboard() {
               rows={engineRows}
               chartProps={engineChartProps}
               title="Servers By Technology"
-              className="lg:min-h-[316px]"
+              className={cn('lg:min-h-[316px]', CARD_HOVER)}
               loading={busy}
               tableColumns={ENGINE_TABLE_COLUMNS}
               tableRows={engineTableRows}
             />
           </div>
 
-          {/* how hard it is working */}
+          {/* who is loudest right now: busiest hosts, most-alerting hosts */}
           <div className="grid gap-gutter-lg lg:grid-cols-2">
-            <ChartCard
-              cardId="top-cpu"
-              family="flat"
-              defaultKind="bar"
-              items={cpuItems}
-              chartProps={topCpuChartProps}
-              title="Top Hosts By CPU"
-              titleNote={`(Top ${TOP_CPU_HOSTS})`}
-              className="lg:min-h-[316px]"
-              loading={busy}
-              tableColumns={TOP_CPU_COLUMNS}
-              tableRows={topCpuRows}
+            <RankedTable
+              title="Top Alerting Hosts"
+              titleNote={`(Top ${TOP_ALERT_HOSTS})`}
+              countLabel="Alerts"
+              rows={d.alerts.topHosts}
+              className={cn('lg:min-h-[316px]', CARD_HOVER)}
+              onMore={() => navigate('/alerts')}
             />
 
-            <ChartCard
-              cardId="resource-usage"
-              family="ratio"
-              defaultKind="gauge"
-              items={resourceItems}
-              title="Average Resource Usage"
-              className="lg:min-h-[316px]"
-              loading={busy}
-              tableColumns={RESOURCE_COLUMNS}
-              tableRows={resourceRows}
+            <RankedBarChart
+              title="Top Hosts By CPU"
+              titleNote={`(Top ${TOP_CPU_HOSTS})`}
+              unit="%"
+              max={100}
+              rows={cpuItems}
+              className={cn('lg:min-h-[316px]', CARD_HOVER)}
             />
           </div>
         </div>
@@ -433,6 +378,7 @@ export default function Dashboard() {
           }}
           loading={busy}
           onOpenAll={() => navigate('/alerts')}
+          className={CARD_HOVER}
         />
       </div>
     </>
@@ -440,6 +386,17 @@ export default function Dashboard() {
 }
 
 /* ── small pieces ───────────────────────────────────────────────────────── */
+
+/** Speedometer-style resource gauge, one per card — the open half-ring form
+ * of the shared Gauge component (`sweep={180}`), animated in on mount. */
+function GaugeCard({ label, value, loading }) {
+  return (
+    <section className={cn('card flex flex-col items-center px-card py-card', CARD_HOVER, loading && 'opacity-70')}>
+      <h2 className="mb-1 text-[17px] font-bold text-fg">{label}</h2>
+      <Gauge label={label} value={value} size={220} thickness={20} sweep={180} showValue showLabel={false} animate />
+    </section>
+  );
+}
 
 function Notice({ tone, icon, title, body }) {
   const TONES = {

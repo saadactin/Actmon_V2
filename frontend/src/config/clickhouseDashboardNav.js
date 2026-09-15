@@ -9,7 +9,7 @@
  */
 import {
   Activity, Zap, FileText, TrendingUp, Server, Database, Layers, GitMerge,
-  Copy, Network, ClipboardCheck, Clipboard,
+  Copy, Network, ClipboardCheck, Clipboard, Stethoscope,
 } from 'lucide-react';
 
 export const CLICKHOUSE_DASHBOARD_TABS = [
@@ -25,8 +25,12 @@ export const CLICKHOUSE_DASHBOARD_TABS = [
   { id: 'clusters', label: 'Clusters', icon: Network },
   { id: 'sysmetrics', label: 'System Metrics', icon: ClipboardCheck },
   { id: 'settings', label: 'Settings', icon: Clipboard },
+  // No Reports page exists for ClickHouse — only Diagnose is a genuine header
+  // quick-link to migrate into the tab strip.
+  { id: 'diagnose', label: 'Diagnose', icon: Stethoscope },
 ];
 
 export function clickhouseTabRoute(connectionId, tabId) {
+  if (tabId === 'diagnose') return `/diagnose/${connectionId}`;
   return `/clickhouse-dashboard/${connectionId}${tabId && tabId !== 'overview' ? `/${tabId}` : ''}`;
 }

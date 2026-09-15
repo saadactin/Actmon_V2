@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Key, Lock, Table } from 'lucide-react';
+import { Activity, Cpu, Database, HardDrive, Key, Lock, MemoryStick, Server, Table, Users } from 'lucide-react';
 import client from '@/api/client';
 
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import HostResources from '@/pages/postgresql/PgHostResources';
 import TrendChart from '@/components/gauges/TrendChart';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import ChartCard from '@/components/charts/ChartCard';
 import { STATUS, bandFor } from '@/components/charts/status';
 import { computeInstanceHealthScore } from '@/utils/oracleHealth';
@@ -28,12 +30,13 @@ import OracleMaintenanceModule from './OracleMaintenanceModule';
 import {
   DefRow, MetricTile, Panel, SqlCell, StatCell, StateChip, StatusPill, TablePanel, UsageBar,
 } from '@/pages/_shared/enginePanels';
+import KpiTile from '@/pages/_shared/engineKpi';
 import {
   ORACLE_TABLE_HINTS, TABLESPACE_COLUMNS, TABLE_COLUMNS,
   fmtBytes, fmtNumber, oracleTableRow, orderColumns, withHints,
 } from '@/config/dbCatalog';
 import { WAIT_CLASS_TONES, explainWait, isIdleWait } from '@/config/oracleWaits';
-import { tabsForTopology } from '@/config/oracleDashboardNav';
+import { tabsForTopology, oracleTabRoute } from '@/config/oracleDashboardNav';
 import { healthBand } from '@/utils/oracleHealth';
 import OracleLiveQueries from './LiveQueries';
 
@@ -351,8 +354,8 @@ export default function OracleDashboard() {
   const navigate = useNavigate();
 
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
-    navigate(`/oracle-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  const setActiveTab = (t) => navigate(oracleTabRoute(id, t));
+  const connAlerts = useConnectionAlerts(id);
 
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
   const [trend, setTrend] = useState({ sessions: [], bufHit: [], pga: [] });
@@ -587,35 +590,33 @@ export default function OracleDashboard() {
             <OracleDeploymentBanner id={id} connection={connection} topology={topology} onSaved={() => { refetch(); topologyQ.refetch(); }} />
 
             <div className="grid grid-cols-2 gap-gutter-sm sm:grid-cols-4 xl:grid-cols-8">
-              <MetricTile label="Instance" icon="server" value={hs.instance_name || '—'}
+              <KpiTile icon={Server} title="Instance" accent="#3B82F6" value={hs.instance_name || '—'}
                 sub={hs.host_name || undefined} />
-              <MetricTile label="Database" icon="database" value={hs.db_name || '—'}
+              <KpiTile icon={Database} title="Database" accent="#336791" value={hs.db_name || '—'}
                 sub={hs.db_unique_name && hs.db_unique_name !== hs.db_name ? hs.db_unique_name : undefined} />
-              <MetricTile label="Status" icon="activity" value={hs.status || '—'}
-                tone={hs.status === 'OPEN' ? 'good' : hs.status ? 'warn' : 'neutral'}
+              <KpiTile icon={Activity} title="Status" value={hs.status || '—'}
+                accent={hs.status === 'OPEN' ? '#22C55E' : hs.status ? '#F97316' : '#64748B'}
                 sub={hs.log_mode || undefined} />
-              <MetricTile label="Sessions" icon="users"
+              <KpiTile icon={Users} title="Sessions"
                 value={`${num(hs.total_sessions)}/${num(hs.max_sessions)}`}
-                tone={sessionPct > 90 ? 'bad' : sessionPct > 75 ? 'warn' : 'good'}
+                accent={sessionPct > 90 ? '#EF4444' : sessionPct > 75 ? '#F97316' : '#22C55E'}
                 sub={`${sessionPct}% of the limit`}
                 onClick={() => setActiveTab('sessions')} />
-              <MetricTile label="Host CPU" icon="cpu" value={`${hostCpuPct}%`}
-                tone={hostCpuPct > 85 ? 'bad' : hostCpuPct > 65 ? 'warn' : 'good'}
+              <KpiTile icon={Cpu} title="Host CPU" value={`${hostCpuPct}%`}
+                accent={hostCpuPct > 85 ? '#EF4444' : hostCpuPct > 65 ? '#F97316' : '#22C55E'}
                 sub={hs.cpu_count ? `${hs.cpu_count} CPUs` : undefined}
                 onClick={() => setActiveTab('performance')} />
-              <MetricTile label="SGA" icon="memory" value={`${fmtNumber(hs.sga_mb)} MB`}
+              <KpiTile icon={MemoryStick} title="SGA" accent="#8B5CF6" value={`${fmtNumber(hs.sga_mb)} MB`}
                 sub={hs.sga_target_mb ? `target ${fmtNumber(hs.sga_target_mb)} MB` : undefined}
                 onClick={() => setActiveTab('performance')} />
-              <MetricTile label="PGA" icon="memory" value={`${fmtNumber(hs.pga_mb)} MB`}
+              <KpiTile icon={MemoryStick} title="PGA" accent="#8B5CF6" value={`${fmtNumber(hs.pga_mb)} MB`}
                 sub={hs.pga_target_mb ? `target ${fmtNumber(hs.pga_target_mb)} MB` : undefined}
                 onClick={() => setActiveTab('performance')} />
-              <MetricTile label="Database size" icon="desktop"
+              <KpiTile icon={HardDrive} title="Database size" accent="#F97316"
                 value={hs.db_size_gb ? `${hs.db_size_gb} GB` : '—'}
                 sub={tsRows.length ? `${tsRows.length} tablespaces` : undefined}
                 onClick={() => setActiveTab('tablespaces')} />
             </div>
-
-            <HostResources connId={id} tech="oracle" />
 
             <div className="flex flex-wrap gap-2">
               <StatusPill ok={hs.status === 'OPEN'} label={`Instance ${hs.status || 'unknown'}`} />
@@ -646,7 +647,11 @@ export default function OracleDashboard() {
               </Notice>
             )}
 
-            <div className="grid gap-gutter xl:grid-cols-2">
+            {/* utilisation + waits charts on the left, Alerts as a right rail matching
+                their combined height (CSS grid stretch). */}
+            <div className="grid gap-gutter xl:grid-cols-4">
+              <div className="flex flex-col gap-gutter xl:col-span-3">
+                <div className="grid gap-gutter xl:grid-cols-2">
               <ChartCard
                 cardId="oracle-utilisation"
                 family="ratio"
@@ -714,29 +719,43 @@ export default function OracleDashboard() {
                   },
                 }))}
               />
-            </div>
+                </div>
 
-            {trend.sessions.length > 2 ? (
-              <div className="grid gap-gutter md:grid-cols-3">
-                <Panel title="Active sessions" icon="users">
-                  <TrendChart data={trend.sessions} series={[{ key: 'v', label: 'sessions' }]}
-                    height={150} yDomain={['auto', 'auto']} />
-                </Panel>
-                <Panel title="Buffer cache hit" icon="memory">
-                  <TrendChart data={trend.bufHit} series={[{ key: 'v', label: '%' }]} height={150} />
-                </Panel>
-                <Panel title="PGA used" icon="memory">
-                  <TrendChart data={trend.pga} series={[{ key: 'v', label: '%' }]} height={150} />
-                </Panel>
+                <HostResources connId={id} tech="oracle" />
+
+                {trend.sessions.length > 2 ? (
+                  <div className="grid gap-gutter md:grid-cols-3">
+                    <Panel title="Active sessions" icon="users">
+                      <TrendChart data={trend.sessions} series={[{ key: 'v', label: 'sessions' }]}
+                        height={150} yDomain={['auto', 'auto']} />
+                    </Panel>
+                    <Panel title="Buffer cache hit" icon="memory">
+                      <TrendChart data={trend.bufHit} series={[{ key: 'v', label: '%' }]} height={150} />
+                    </Panel>
+                    <Panel title="PGA used" icon="memory">
+                      <TrendChart data={trend.pga} series={[{ key: 'v', label: '%' }]} height={150} />
+                    </Panel>
+                  </div>
+                ) : (
+                  <Panel>
+                    <p className="text-center text-[12px] text-subtle">
+                      Live trends build up from this page — the first points appear after the next
+                      {' '}{REFRESH_INTERVAL}-second refresh.
+                    </p>
+                  </Panel>
+                )}
               </div>
-            ) : (
-              <Panel>
-                <p className="text-center text-[12px] text-subtle">
-                  Live trends build up from this page — the first points appear after the next
-                  {' '}{REFRESH_INTERVAL}-second refresh.
-                </p>
-              </Panel>
-            )}
+
+              {/* alerts for this connection only — same feed/panel Monitoring
+                  Overview uses, scoped server-side to this host via conn_id. */}
+              <RecentAlertsPanel
+                title="Alerts"
+                alerts={connAlerts.list}
+                counts={connAlerts.counts}
+                loading={connAlerts.isFetching}
+                onOpenAll={() => navigate('/alerts')}
+              />
+            </div>
 
             <div className="grid gap-gutter xl:grid-cols-3">
               <Panel title="Instance" icon="server">

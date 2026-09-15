@@ -55,6 +55,8 @@ const REFRESH = { servers: 60_000, summary: 30_000, agents: 30_000, alerts: 15_0
 
 /** How many hosts the "busiest by CPU" card ranks. */
 export const TOP_CPU_HOSTS = 5;
+/** How many hosts the "top alerting hosts" card ranks. */
+export const TOP_ALERT_HOSTS = 5;
 
 /**
  * Every dashboard feed in one hook.
@@ -208,7 +210,20 @@ export default function useDashboardData() {
       .sort((a, b) => new Date(b.timestamp || b.created_at || 0) - new Date(a.timestamp || a.created_at || 0));
     const recentAlerts = sortedAlerts.slice(0, 8);
 
-    return { total: alerts.length, ...bySeverity, recent: recentAlerts, list: sortedAlerts };
+    // Which hosts are firing the most alerts right now — same host-name
+    // fallback chain RecentAlertsPanel's AlertRow already uses, so the two
+    // never disagree on what a given alert's host is called.
+    const byHost = {};
+    for (const a of alerts) {
+      const host = a.source || a.agent_name || a.server_name || 'Unknown host';
+      byHost[host] = (byHost[host] || 0) + 1;
+    }
+    const topAlertHosts = Object.entries(byHost)
+      .map(([label, value]) => ({ key: label, label, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, TOP_ALERT_HOSTS);
+
+    return { total: alerts.length, ...bySeverity, recent: recentAlerts, list: sortedAlerts, topHosts: topAlertHosts };
   }, [alerts]);
 
   const cloudDerived = useMemo(() => {

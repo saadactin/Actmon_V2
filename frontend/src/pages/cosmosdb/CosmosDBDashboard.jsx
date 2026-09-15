@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import {
-  Activity, AlertTriangle, Boxes, Clock, Database, FileJson, ListTree, Sparkles,
+  Activity, AlertTriangle, Boxes, Clock, Database, FileJson, ListTree, Sparkles, Stethoscope,
 } from 'lucide-react';
 
 import { errorText } from '@/api/client';
@@ -12,6 +12,8 @@ import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ChartCard from '@/components/charts/ChartCard';
 import LineChart from '@/components/charts/LineChart';
 import { STATUS } from '@/components/charts/status';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import CopyButton from '@/components/ui/CopyButton';
@@ -74,6 +76,10 @@ const TABS = [
   { id: 'slow-queries', label: 'Slow Calls', icon: Clock },
   { id: 'error-logs', label: 'Errors', icon: AlertTriangle },
   { id: 'ai', label: 'Actmon AI', icon: Sparkles },
+  // Former header quick-link, moved into the tab strip proper so the header
+  // shows one navigation surface instead of tabs plus a separate row of pills.
+  // No Reports page exists for Cosmos DB, so only Diagnose is added here.
+  { id: 'diagnose', label: 'Diagnose', icon: Stethoscope },
 ];
 
 const PAGE_SIZE = 25;
@@ -112,8 +118,11 @@ export default function CosmosDBDashboard() {
   const { toasts, push, dismiss } = useToasts();
 
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
+  const setActiveTab = (t) => {
+    if (t === 'diagnose') { navigate(`/diagnose/${id}`); return; }
     navigate(`/cosmosdb-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  };
+  const connAlerts = useConnectionAlerts(id);
 
   const [selectedDb, setSelectedDb] = useState(null);
   const [selectedContainer, setSelectedContainer] = useState(null);
@@ -502,54 +511,70 @@ export default function CosmosDBDashboard() {
             </Notice>
           )}
 
-          <div className="grid gap-gutter lg:grid-cols-2">
-            <TrendCard
-              cardId="cosmos-response"
-              title="Response time"
-              subtitle="How long each logged call took"
-              icon="clock"
-              slot={1}
-              unit=" ms"
-              points={d.responseTrend}
-              valueLabel="ms"
-            />
-            <TrendCard
-              cardId="cosmos-ru"
-              title="Request charge"
-              subtitle="Request Units billed per logged call"
-              icon="zap"
-              slot={2}
-              unit=" RU"
-              points={d.ruTrend}
-              valueLabel="RU"
-              empty="No call has reported an RU charge yet"
-            />
-            <TrendCard
-              cardId="cosmos-storage"
-              title="Storage"
-              subtitle="Sampled whenever a container was read — not a continuous series"
-              icon="database"
-              slot={3}
-              unit=" MB"
-              points={d.storageTrend}
-              valueLabel="MB"
-              empty="Open a container a few times and its size will plot here"
-            />
-            {/* A flat breakdown, not a trend: this is a count per operation, and
-                the user can flip it to a donut from the card's own picker. */}
-            <ChartCard
-              cardId="cosmos-ops"
-              family="flat"
-              title="What ActMon called"
-              subtitle="Every logged operation is a read — ActMon never writes to your data"
-              icon="list"
-              items={d.operations}
-              chartProps={{ emptyLabel: 'No calls logged yet' }}
-              tableColumns={[
-                { key: 'label', label: 'Operation' },
-                { key: 'value', label: 'Calls', align: 'right' },
-              ]}
-              tableRows={d.operations.map((op) => ({ key: op.key, cells: op }))}
+          {/* trend/breakdown charts on the left, Alerts as a right rail matching
+              their combined height (CSS grid stretch). */}
+          <div className="grid gap-gutter xl:grid-cols-4">
+            <div className="xl:col-span-3">
+              <div className="grid gap-gutter lg:grid-cols-2">
+                <TrendCard
+                  cardId="cosmos-response"
+                  title="Response time"
+                  subtitle="How long each logged call took"
+                  icon="clock"
+                  slot={1}
+                  unit=" ms"
+                  points={d.responseTrend}
+                  valueLabel="ms"
+                />
+                <TrendCard
+                  cardId="cosmos-ru"
+                  title="Request charge"
+                  subtitle="Request Units billed per logged call"
+                  icon="zap"
+                  slot={2}
+                  unit=" RU"
+                  points={d.ruTrend}
+                  valueLabel="RU"
+                  empty="No call has reported an RU charge yet"
+                />
+                <TrendCard
+                  cardId="cosmos-storage"
+                  title="Storage"
+                  subtitle="Sampled whenever a container was read — not a continuous series"
+                  icon="database"
+                  slot={3}
+                  unit=" MB"
+                  points={d.storageTrend}
+                  valueLabel="MB"
+                  empty="Open a container a few times and its size will plot here"
+                />
+                {/* A flat breakdown, not a trend: this is a count per operation, and
+                    the user can flip it to a donut from the card's own picker. */}
+                <ChartCard
+                  cardId="cosmos-ops"
+                  family="flat"
+                  title="What ActMon called"
+                  subtitle="Every logged operation is a read — ActMon never writes to your data"
+                  icon="list"
+                  items={d.operations}
+                  chartProps={{ emptyLabel: 'No calls logged yet' }}
+                  tableColumns={[
+                    { key: 'label', label: 'Operation' },
+                    { key: 'value', label: 'Calls', align: 'right' },
+                  ]}
+                  tableRows={d.operations.map((op) => ({ key: op.key, cells: op }))}
+                />
+              </div>
+            </div>
+
+            {/* alerts for this connection only — same feed/panel Monitoring
+                Overview uses, scoped server-side to this host via conn_id. */}
+            <RecentAlertsPanel
+              title="Alerts"
+              alerts={connAlerts.list}
+              counts={connAlerts.counts}
+              loading={connAlerts.isFetching}
+              onOpenAll={() => navigate('/alerts')}
             />
           </div>
 

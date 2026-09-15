@@ -260,6 +260,51 @@ def _agent_host_metrics(conn_id: int, db) -> dict | None:
     }
 
 
+def _agent_tech_metrics(conn_id: int, tech: str, db) -> dict | None:
+    """Database-technology-specific CPU/Memory from the ActMon agent's last process
+    snapshot — sums only the OS processes that belong to THIS engine (e.g. mysqld for
+    MySQL, sqlservr for MSSQL), matching Task Manager's per-process view, instead of
+    the whole host's CPU/Memory. Two engines on the same agent host (e.g. MySQL and
+    MSSQL both on ACTIN-CS-16) get their own distinct numbers this way. Disk stays
+    host-level (no per-process datadir split). Returns None only when the agent hasn't
+    reported ANY process list at all (e.g. an older agent) — callers should fall back
+    to _agent_host_metrics in that case. When a process list IS present but this
+    engine's process isn't currently in it, that means the engine is idle right now
+    (the agent only reports its top-N processes by usage, so a quiet engine regularly
+    drops out of the list) — this returns real near-zero numbers instead of None, so
+    callers do NOT fall back to whole-host metrics. Without this distinction, an idle
+    engine's chart would flicker between its own tiny real value and the unrelated
+    host total every time it drops in and out of the agent's top-N snapshot — this
+    exact bug shipped briefly and was caught by comparing the PostgreSQL trend chart
+    against Task Manager's real per-process CPU/Memory."""
+    import json
+    from app.models.os_server_model import OsServer, DatabaseInstance
+    inst = db.query(DatabaseInstance).filter(DatabaseInstance.connection_id == conn_id).first()
+    if not inst:
+        return None
+    server = db.query(OsServer).filter(
+        OsServer.id == inst.server_id, OsServer.collector == "agent").first()
+    if not server or not server.last_infra_json:
+        return None
+    try:
+        d = json.loads(server.last_infra_json)
+    except Exception:
+        return None
+    if d.get("processes") is None:
+        return None
+    cfg = TECH.get(tech)
+    procs = cfg["procs"] if cfg else ()
+    matching = [p for p in (d.get("processes") or [])
+                if _is_db_proc(str(p.get("command") or ""), procs)]
+    fs = d.get("filesystems") or []
+    return {
+        "source": "agent-proc",
+        "cpu_pct": round(sum(float(p.get("cpu") or 0) for p in matching), 1),
+        "ram_pct": round(sum(float(p.get("mem") or 0) for p in matching), 1),
+        "disk_pct": max((f.get("use_pct", 0) for f in fs), default=None),
+    }
+
+
 def _local_host_metrics() -> dict | None:
     """Host CPU/RAM/Disk of THIS machine via psutil (DB is on localhost → same box)."""
     try:
@@ -1602,7 +1647,7 @@ def history(tech: str, conn_id: int, db: Session, hours: int = 6) -> dict:
         if cli is None:
             return res
         r = cli.query(
-            "SELECT ts, host_cpu, host_memory FROM actmon.metrics_infra "
+            "SELECT ts, host_cpu, host_memory, host_disk FROM actmon.metrics_infra "
             "WHERE agent = %(a)s AND ts > now() - INTERVAL %(h)s HOUR "
             "ORDER BY ts", parameters={"a": host_agent, "h": int(hours)})
         samples = [{
@@ -1610,7 +1655,7 @@ def history(tech: str, conn_id: int, db: Session, hours: int = 6) -> dict:
             "captured_at": str(x[0]),
             "cpu_pct": float(x[1] or 0),
             "ram_pct": float(x[2] or 0),
-            "disk_pct": None,
+            "disk_pct": float(x[3] or 0),
             "is_event": False,
         } for x in r.result_rows]
         return {"samples": samples, "source": "clickhouse", "host_agent": host_agent}

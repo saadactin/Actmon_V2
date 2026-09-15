@@ -42,11 +42,18 @@ export function duration(seconds) {
   return remM ? `${h}h ${remM}m` : `${h}h`;
 }
 
-/** Absolute timestamp for tooltips / detail rows. */
+/** Absolute timestamp for tooltips / detail rows — always shown in India
+ * Standard Time regardless of the viewer's own browser/OS timezone, so a
+ * shared ops screen reads the same wall-clock time for everyone looking at
+ * it, not whatever timezone each viewer's machine happens to be set to. */
 export function fullTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts);
-  return Number.isFinite(d.getTime()) ? d.toLocaleString() : '—';
+  if (!Number.isFinite(d.getTime())) return '—';
+  return `${d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  })} IST`;
 }
 
 /** Trim a numeric value to at most 1 decimal, dropping a trailing ".0". */

@@ -200,10 +200,22 @@ def delete_rule(rule_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/active", summary="Live active alerts (evaluated from enabled rules)")
-def active_alerts(db: Session = Depends(get_db)):
+def active_alerts(conn_id: Optional[int] = Query(None), db: Session = Depends(get_db)):
     _seed_if_empty(db)
     rules = db.query(AlertRule).filter(AlertRule.enabled.is_(True)).all()
     servers = db.query(OsServer).all()
+
+    # Scope to one database connection's host(s) — same OsServer.db_instances
+    # link drill_context() already uses to go the other direction (alert source
+    # -> connection). Omitting conn_id keeps today's site-wide behaviour.
+    target_names = None
+    if conn_id is not None:
+        target_names = {
+            s.server_name for s in servers
+            if any(getattr(i, "connection_id", None) == conn_id for i in (s.db_instances or []))
+        }
+        servers = [s for s in servers if s.server_name in target_names]
+
     now = iso_utc(datetime.utcnow())
     out = []
     for s in servers:
@@ -238,6 +250,8 @@ def active_alerts(db: Session = Depends(get_db)):
               .filter(AgentNotification.is_read.is_(False))
               .order_by(desc(AgentNotification.created_at)).limit(300).all())
     for n in notifs:
+        if target_names is not None and n.agent_name not in target_names:
+            continue
         metric, label = _infer_metric(n.message or "")
         if metric not in enabled_metrics:
             continue

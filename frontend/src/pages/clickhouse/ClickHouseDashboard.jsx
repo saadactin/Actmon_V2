@@ -2,19 +2,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Activity, Clipboard, ClipboardCheck, Copy, Database, FileText, GitMerge, Layers,
-  Network, Server, TrendingUp, Zap,
+  Activity, Clipboard, ClipboardCheck, Clock, Copy, Database, FileText, GitMerge, Layers,
+  MemoryStick, Network, Server, TrendingUp, Zap,
 } from 'lucide-react';
 import client from '@/api/client';
 
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import HostResources from '@/pages/postgresql/PgHostResources';
 import TrendChart from '@/components/gauges/TrendChart';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import ChartCard from '@/components/charts/ChartCard';
 import { STATUS, bandFor } from '@/components/charts/status';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import CopyButton from '@/components/ui/CopyButton';
+import Dialog from '@/components/ui/Dialog';
 import Icon from '@/components/ui/Icon';
 import Input from '@/components/ui/Input';
 import Notice from '@/components/ui/Notice';
@@ -30,11 +33,12 @@ import {
   DefRow, MetricTile, Panel, SqlBlock, SqlCell, StatCell, StateChip, StatusPill, TablePanel,
   UsageBar,
 } from '@/pages/_shared/enginePanels';
+import KpiTile from '@/pages/_shared/engineKpi';
 import { fmtBytes, fmtNumber } from '@/config/dbCatalog';
 import {
   CH_DATABASE_COLUMNS, CH_TABLE_COLUMNS, MAX_PARTS_WARN, chDatabaseRow, chTableRow,
 } from '@/config/clickhouseCatalog';
-import { CLICKHOUSE_DASHBOARD_TABS } from '@/config/clickhouseDashboardNav';
+import { CLICKHOUSE_DASHBOARD_TABS, clickhouseTabRoute } from '@/config/clickhouseDashboardNav';
 
 /**
  * ClickHouse dashboard — twelve tabs, each backed by its own `system.*` query.
@@ -115,10 +119,12 @@ export default function ClickHouseDashboard() {
   const navigate = useNavigate();
 
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
-    navigate(`/clickhouse-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  const setActiveTab = (t) => navigate(clickhouseTabRoute(id, t));
+  const connAlerts = useConnectionAlerts(id);
 
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
+  const [uptimeModalOpen, setUptimeModalOpen] = useState(false);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [trend, setTrend] = useState({ mem: [], qps: [], parts: [] });
   const [tableDb, setTableDb] = useState('__all__');
   const [partTable, setPartTable] = useState('__all__');
@@ -314,28 +320,59 @@ export default function ClickHouseDashboard() {
         {on('overview') && (
           <div className="space-y-gutter">
             <div className="grid grid-cols-2 gap-gutter-sm sm:grid-cols-4 xl:grid-cols-8">
-              <MetricTile label="Version" icon="server" value={hs.version || '—'}
-                sub={hs.host || connection.host || undefined} />
-              <MetricTile label="Uptime" icon="clock" value={hs.uptime_str || '—'} />
-              <MetricTile label="Databases" icon="server" value={hs.total_databases ?? dbItems.length}
+              <KpiTile icon={Server} title="Version" accent="#3B82F6" value={hs.version || '—'}
+                sub={hs.host || connection.host || undefined} onClick={() => setVersionModalOpen(true)} />
+              <KpiTile icon={Clock} title="Uptime" accent="#6366F1" value={hs.uptime_str || '—'}
+                onClick={() => setUptimeModalOpen(true)} />
+              <KpiTile icon={Server} title="Databases" accent="#336791" value={hs.total_databases ?? dbItems.length}
                 onClick={() => setActiveTab('databases')} />
-              <MetricTile label="Tables" icon="database" value={hs.total_tables ?? tableItems.length}
+              <KpiTile icon={Database} title="Tables" accent="#22C55E" value={hs.total_tables ?? tableItems.length}
                 onClick={() => setActiveTab('tables')} />
-              <MetricTile label="Running queries" icon="zap" value={hs.active_queries ?? processes.length}
+              <KpiTile icon={Zap} title="Running queries" accent="#8B5CF6" value={hs.active_queries ?? processes.length}
                 onClick={() => setActiveTab('queries')} />
-              <MetricTile label="Queries/sec" icon="activity" value={hs.queries_per_second ?? '—'} />
-              <MetricTile label="Memory" icon="memory"
+              <KpiTile icon={Activity} title="Queries/sec" accent="#06B6D4" value={hs.queries_per_second ?? '—'} />
+              <KpiTile icon={MemoryStick} title="Memory"
                 value={hs.memory_usage_human || `${memPct}%`}
                 sub={hs.total_memory_human ? `of ${hs.total_memory_human}` : undefined}
-                tone={memPct > 90 ? 'bad' : memPct > 75 ? 'warn' : 'good'} />
-              <MetricTile label="Parts / partition" icon="layers" value={fmtNumber(maxParts)}
+                accent={memPct > 90 ? '#EF4444' : memPct > 75 ? '#F97316' : '#22C55E'} />
+              <KpiTile icon={Layers} title="Parts / partition" value={fmtNumber(maxParts)}
                 sub={`limit ${fmtNumber(partsThreshold)}`}
-                tone={partPct > 90 ? 'bad' : partPct > 60 ? 'warn' : 'good'}
+                accent={partPct > 90 ? '#EF4444' : partPct > 60 ? '#F97316' : '#22C55E'}
                 hint="ClickHouse stops accepting inserts into a partition once it has too many parts"
                 onClick={() => setActiveTab('partitions')} />
             </div>
 
-            <HostResources connId={id} tech="clickhouse" />
+            <Dialog open={uptimeModalOpen} onClose={() => setUptimeModalOpen(false)}
+              title="ClickHouse Uptime" icon="clock" width={420}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{hs.uptime_str || '—'}</span>
+                <CopyButton text={hs.uptime_str || ''} />
+              </div>
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <DefRow label="ClickHouse Start Time"
+                  value={hs.uptime_seconds ? new Date(Date.now() - hs.uptime_seconds * 1000).toLocaleString() : '—'} mono />
+                <DefRow label="Current Time" value={new Date().toLocaleString()} mono />
+                <DefRow label="Uptime" value={hs.uptime_str || '—'} mono />
+              </div>
+            </Dialog>
+
+            <Dialog open={versionModalOpen} onClose={() => setVersionModalOpen(false)}
+              title="ClickHouse Version" icon="server" width={480}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{hs.version || '—'}</span>
+                <CopyButton text={hs.version || ''} />
+              </div>
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <DefRow label="Full Version String" value={hs.version || '—'} mono />
+                <DefRow label="Host" value={hs.host || connection.host || '—'} mono />
+              </div>
+            </Dialog>
 
             {/* Part pressure is the finding that becomes an outage, so it is stated
                 as a consequence rather than left as a ratio. */}
@@ -369,7 +406,11 @@ export default function ClickHouseDashboard() {
                 onClick={() => setActiveTab('merges')} />
             </div>
 
-            <div className="grid gap-gutter xl:grid-cols-2">
+            {/* utilisation + database-size charts on the left, Alerts as a right rail
+                matching their combined height (CSS grid stretch). */}
+            <div className="grid gap-gutter xl:grid-cols-4">
+              <div className="flex flex-col gap-gutter xl:col-span-3">
+                <div className="grid gap-gutter xl:grid-cols-2">
               <ChartCard
                 cardId="ch-utilisation"
                 family="ratio"
@@ -428,30 +469,44 @@ export default function ClickHouseDashboard() {
                   },
                 }))}
               />
-            </div>
+                </div>
 
-            {trend.mem.length > 2 ? (
-              <div className="grid gap-gutter md:grid-cols-3">
-                <Panel title="Memory" icon="memory">
-                  <TrendChart data={trend.mem} series={[{ key: 'v', label: '%' }]} height={150} />
-                </Panel>
-                <Panel title="Queries per second" icon="activity">
-                  <TrendChart data={trend.qps} series={[{ key: 'v', label: 'q/s' }]} height={150}
-                    yDomain={['auto', 'auto']} />
-                </Panel>
-                <Panel title="Parts in the busiest partition" icon="layers">
-                  <TrendChart data={trend.parts} series={[{ key: 'v', label: 'parts' }]} height={150}
-                    yDomain={['auto', 'auto']} />
-                </Panel>
+                <HostResources connId={id} tech="clickhouse" />
+
+                {trend.mem.length > 2 ? (
+                  <div className="grid gap-gutter md:grid-cols-3">
+                    <Panel title="Memory" icon="memory">
+                      <TrendChart data={trend.mem} series={[{ key: 'v', label: '%' }]} height={150} />
+                    </Panel>
+                    <Panel title="Queries per second" icon="activity">
+                      <TrendChart data={trend.qps} series={[{ key: 'v', label: 'q/s' }]} height={150}
+                        yDomain={['auto', 'auto']} />
+                    </Panel>
+                    <Panel title="Parts in the busiest partition" icon="layers">
+                      <TrendChart data={trend.parts} series={[{ key: 'v', label: 'parts' }]} height={150}
+                        yDomain={['auto', 'auto']} />
+                    </Panel>
+                  </div>
+                ) : (
+                  <Panel>
+                    <p className="text-center text-[12px] text-subtle">
+                      Live trends build up from this page — the first points appear after the next
+                      {' '}{REFRESH_INTERVAL}-second refresh.
+                    </p>
+                  </Panel>
+                )}
               </div>
-            ) : (
-              <Panel>
-                <p className="text-center text-[12px] text-subtle">
-                  Live trends build up from this page — the first points appear after the next
-                  {' '}{REFRESH_INTERVAL}-second refresh.
-                </p>
-              </Panel>
-            )}
+
+              {/* alerts for this connection only — same feed/panel Monitoring
+                  Overview uses, scoped server-side to this host via conn_id. */}
+              <RecentAlertsPanel
+                title="Alerts"
+                alerts={connAlerts.list}
+                counts={connAlerts.counts}
+                loading={connAlerts.isFetching}
+                onOpenAll={() => navigate('/alerts')}
+              />
+            </div>
 
             <div className="grid gap-gutter xl:grid-cols-3">
               <Panel title="Server" icon="server">

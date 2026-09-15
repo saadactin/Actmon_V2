@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, memo, lazy, Suspense } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Database, Server, Activity, HardDrive, RefreshCw, Clock,
@@ -9,7 +9,7 @@ import {
   TrendingUp, Table, Search, ArrowUp, ArrowDown, Shield,
   Circle, Wifi, WifiOff, AlertCircle, Info, Radio, Copy, CheckCheck,
   ArrowRight, Crown, Signal, SignalHigh, SignalLow, SignalZero, Settings,
-  BarChart3, ExternalLink, Pencil,
+  BarChart3, ExternalLink, Pencil, Archive,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
@@ -24,6 +24,7 @@ import HostResources from './PgHostResources';
 // patroni.yml inside its own dialogs) — a static import would ship that to every user on every
 // tab, not just when the Replication tab's editor is actually opened.
 const PatroniPanel = lazy(() => import('./PatroniPanel'));
+const WalPurgePanel = lazy(() => import('./walPurge/WalPurgePanel'));
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
@@ -34,10 +35,15 @@ import {
 } from '@/config/dbCatalog';
 import Gauge from '@/components/gauges/Gauge';
 import TrendChart from '@/components/gauges/TrendChart';
+import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import { PageLoading } from '@/components/ui/Loading';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptPostgresTableDetails } from '@/pages/_shared/tableDetailsAdapters';
-import { POSTGRES_DASHBOARD_TABS } from '@/config/postgresDashboardNav';
+import { POSTGRES_DASHBOARD_TABS, postgresTabRoute } from '@/config/postgresDashboardNav';
+import KpiTile from '@/pages/_shared/engineKpi';
+import Dialog from '@/components/ui/Dialog';
+import CopyButton from '@/components/ui/CopyButton';
 
 /* ─── palette ─── */
 const C = {
@@ -77,12 +83,14 @@ export default function PostgreSQLDashboard() {
   const navigate = useNavigate();
   // Tab is URL-driven: /postgresql-dashboard/:id/:tab → every tab has its own route.
   const activeTab = tab || 'overview';
-  const setActiveTab = (t) =>
-    navigate(`/postgresql-dashboard/${id}${t && t !== 'overview' ? `/${t}` : ''}`);
+  const setActiveTab = (t) => navigate(postgresTabRoute(id, t));
+  const connAlerts = useConnectionAlerts(id);
   const [countdown, setCountdown]         = useState(REFRESH_INTERVAL);
-  const [sparklines, setSparklines]       = useState({ conn: [], cache: [], tps: [] });
+  const [sparklines, setSparklines]       = useState({ tps: [] });
   const [querySearch, setQuerySearch]     = useState('');
   const [expandedQuery, setExpandedQuery] = useState(null);
+  const [uptimeModalOpen, setUptimeModalOpen] = useState(false);
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
   const countRef = useRef(null);
 
   const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery({
@@ -139,15 +147,9 @@ export default function PostgreSQLDashboard() {
 
   useEffect(() => {
     if (!data) return;
-    const connPct  = Number(data?.health_summary?.connection_usage_pct) || 0;
-    const cachePct = Number(data?.health_summary?.cache_hit_ratio)      || 0;
-    const tps      = (Number(data?.query_stats?.xact_commit) + Number(data?.query_stats?.xact_rollback)) || 0;
-    const t        = new Date().toLocaleTimeString();
-    setSparklines(prev => ({
-      conn:  [...prev.conn.slice(-20),  { t, v: connPct  }],
-      cache: [...prev.cache.slice(-20), { t, v: cachePct }],
-      tps:   [...prev.tps.slice(-20),   { t, v: tps      }],
-    }));
+    const tps = (Number(data?.query_stats?.xact_commit) + Number(data?.query_stats?.xact_rollback)) || 0;
+    const t   = new Date().toLocaleTimeString();
+    setSparklines(prev => ({ tps: [...prev.tps.slice(-20), { t, v: tps }] }));
   }, [data]);
 
   /* ─── loading ─── */
@@ -232,11 +234,13 @@ export default function PostgreSQLDashboard() {
         {activeTab === 'overview' && (
           <div className="space-y-4">
 
-            {/* KPI strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
+            {/* KPI strip — one shared card shape (circular icon badge, big number,
+                hint link) reused by every tile here; see KpiTile in _shared/engineKpi.jsx
+                for the same card used across every other engine dashboard. */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-4">
               {[
-                { icon: Clock,     title: 'Uptime',       value: health_summary.uptime,  accent: '#6366F1', tab: 'performance', hint: 'Performance' },
-                { icon: Server,    title: 'Version',      value: (health_summary.version||'').split(' ')[1]||health_summary.version, accent: '#3B82F6', tab: 'config', hint: 'Server config' },
+                { icon: Clock,     title: 'Uptime',       value: health_summary.uptime,  accent: '#6366F1', tab: '__uptime_detail__', hint: 'Uptime details' },
+                { icon: Server,    title: 'Version',      value: (health_summary.version||'').split(' ')[1]||health_summary.version, accent: '#3B82F6', tab: '__version_detail__', hint: 'Version details' },
                 { icon: Database,  title: 'Databases',    value: health_summary.total_databases, accent: '#336791', tab: 'databases', hint: 'List databases' },
                 { icon: Layers,    title: 'Tables',       value: fmtNum(health_summary.total_tables), accent: '#22C55E', tab: 'tables', hint: 'All tables' },
                 { icon: HardDrive, title: 'DB Size',      value: health_summary.total_size || `${health_summary.total_size_mb||0} MB`, accent: '#F97316', tab: 'storage', hint: 'Storage breakdown' },
@@ -244,80 +248,115 @@ export default function PostgreSQLDashboard() {
                 { icon: Network,   title: 'Connections',  value: `${totalConns}/${maxConns}`, accent: connPct > 80 ? '#EF4444' : '#22C55E', tab: 'users', hint: 'Sessions & users' },
                 { icon: RotateCcw, title: 'Rollbacks',    value: fmtNum(rollbacks), accent: rollbacks > 0 ? '#EF4444' : '#64748B', tab: 'queries', hint: 'Query activity' },
               ].map(({ icon: Icon, title, value, accent, tab, hint }) => (
-                <button key={title} type="button" onClick={() => { if (tab === 'databases') setTablesDb('__all__'); setActiveTab(tab); }}
-                  className="group text-left bg-white rounded-xl border border-slate-200 p-4 hover:shadow-md hover:border-slate-300 hover:-translate-y-0.5 transition-all cursor-pointer"
-                  style={{ borderLeft: `3px solid ${accent}` }} title={`Open ${hint}`}>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
-                      <p className="text-[15px] font-black text-slate-800 mt-1 truncate">{value ?? 'N/A'}</p>
-                    </div>
-                    <Icon size={18} style={{ color: accent, opacity: 0.4 }} className="mt-0.5 flex-shrink-0" />
-                  </div>
-                  <p className="text-[9px] text-slate-300 group-hover:text-indigo-500 font-bold uppercase tracking-wide mt-2 flex items-center gap-0.5 transition-colors">
-                    {hint} <ChevronRight size={10} />
-                  </p>
-                </button>
+                <KpiTile key={title} icon={Icon} title={title} value={value} accent={accent} hint={hint}
+                  onClick={() => {
+                    if (tab === '__uptime_detail__') { setUptimeModalOpen(true); return; }
+                    if (tab === '__version_detail__') { setVersionModalOpen(true); return; }
+                    if (tab === 'databases') setTablesDb('__all__');
+                    setActiveTab(tab);
+                  }} />
               ))}
             </div>
 
-            {/* status badges */}
-            <div className="flex flex-wrap gap-2">
-              <SBadge ok={connPct < 80}   label={`Connections ${connPct}%`} onClick={()=>setActiveTab('users')} />
-              <SBadge ok={cachePct > 90}  label={`Cache Hit ${cachePct}%`} onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }} />
-              <SBadge ok={rollbackPct < 5} label={`Rollback Rate ${rollbackPct}%`} onClick={()=>setActiveTab('queries')} />
-              <SBadge ok={replication.length === 0 || replication.every(r => !r.state || r.state === 'streaming' || r.state === 'catchup')}
-                label={`Replication: ${replication.length === 0 ? 'STANDALONE' : `${replication.length} replica(s)`}`}
-                onClick={()=>setActiveTab('replication')} />
-              {long_running_queries.length > 0 && (
-                <SBadge ok={false} label={`${long_running_queries.length} long-running quer${long_running_queries.length===1?'y':'ies'}`} onClick={()=>setActiveTab('queries')} />
-              )}
-              {blocking_queries.length > 0 && (
-                <SBadge ok={false} label={`${blocking_queries.length} blocking lock(s)`} onClick={()=>setActiveTab('locks')} />
-              )}
-              {health_summary.autovacuum_enabled === false && (
-                <SBadge ok={false} label="Autovacuum DISABLED" onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }} />
-              )}
-            </div>
-
-            {/* Host resources — click a gauge to drill: processes → queries → why */}
-            <HostResources connId={id} tech="postgresql" />
-
-            {/* gauges */}
-            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-              <Gauge label="Connection Pool"  pct={connPct}
-                sub={`${totalConns} / ${maxConns} max`}
-                onClick={()=>setActiveTab('users')}
-                colorFn={v => v>80 ? C.red : v>60 ? C.orange : C.pg} />
-              <Gauge label="Buffer Cache Hit" pct={cachePct}
-                sub="Shared buffers efficiency"
-                onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }}
-                colorFn={v => v<70 ? C.red : v<85 ? C.orange : C.green} />
-              <Gauge label="Active Sessions"
-                pct={Math.min(100,Math.round((activeSess/Math.max(maxConns,1))*100))}
-                sub={`${activeSess} active · ${totalConns} total · ${maxConns} max`}
-                onClick={()=>setActiveTab('locks')}
-                colorFn={v => v>50 ? C.orange : C.indigo} />
-              <Gauge label="Rollback Rate"
-                pct={Math.min(100,rollbackPct*10)}
-                sub={`${rollbackPct}% · ${fmtNum(rollbacks)} rollbacks / ${fmtNum(commits+rollbacks)} total`}
-                onClick={()=>setActiveTab('queries')}
-                colorFn={v => v>30 ? C.red : v>5 ? C.orange : C.green} />
-            </div>
-
-            {/* sparklines */}
-            {sparklines.conn.length > 2 ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <TrendCard title="Connection Usage %" data={sparklines.conn}  color={C.pg}     unit="%" />
-                <TrendCard title="Buffer Cache Hit %" data={sparklines.cache} color={C.green}  unit="%" />
-                <TrendCard title="Transactions/sample" data={sparklines.tps}  color={C.indigo} fmtVal={fmtNum} />
+            {/* Uptime KPI opens this focused popup instead of navigating away —
+                it's the one tile whose full story (start time, current time, last
+                restart) fits in a glance and doesn't need a whole tab switch. */}
+            <Dialog open={uptimeModalOpen} onClose={() => setUptimeModalOpen(false)}
+              title="PostgreSQL Uptime" icon="clock" width={420}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">{health_summary.uptime || '—'}</span>
+                <CopyButton text={health_summary.uptime || ''} />
               </div>
-            ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center text-slate-400 text-xs">
-                <Activity size={20} className="mx-auto mb-2 text-slate-300" />
-                Live trend charts appear after first 15-second auto-refresh
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <Row label="PostgreSQL Start Time" value={health_summary.pg_postmaster_start_time || health_summary.last_restart || '—'} mono />
+                <Row label="Current Time" value={new Date().toLocaleString()} mono />
+                <Row label="Uptime" value={health_summary.uptime || '—'} mono />
+                <Row label="Last Restart" value={health_summary.last_restart || health_summary.pg_postmaster_start_time || '—'} mono />
               </div>
-            )}
+            </Dialog>
+
+            {/* Version KPI opens this popup instead of navigating to Server Config —
+                the full version string (edition, platform, compiler) is the whole
+                story here and doesn't need a tab switch to see. */}
+            <Dialog open={versionModalOpen} onClose={() => setVersionModalOpen(false)}
+              title="PostgreSQL Version" icon="server" width={480}>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Main value</p>
+              <div className="mb-4 flex items-center justify-between rounded-xl bg-raised px-4 py-3">
+                <span className="font-mono text-sm font-semibold text-fg">
+                  {(health_summary.version||'').split(' ')[1]||health_summary.version||'—'}
+                </span>
+                <CopyButton text={health_summary.version || ''} />
+              </div>
+
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-muted">Details</p>
+              <div className="rounded-xl bg-raised px-4 py-1">
+                <Row label="Full Version String" value={health_summary.version || '—'} mono />
+                <Row label="Hostname" value={health_summary.host_name || server_vars.hostname || '—'} mono />
+                <Row label="Data Directory" value={server_vars.data_directory || '—'} mono />
+              </div>
+            </Dialog>
+
+            {/* Host resources, gauges + trend charts on the left, Alerts as a right
+                rail matching their combined height (CSS grid stretch) — same
+                proportions as the Figma reference's gauge-row + trend-row beside a
+                full-height Alerts panel, and the same xl:grid-cols-4 + col-span-3
+                split the main Monitoring Overview page already uses for its own
+                alert rail. Host Resources sits INSIDE this constrained column
+                (not full page width above it) so its gauge cards size the same
+                as every other gauge card, not 25% oversized. */}
+            <div className="grid gap-4 xl:grid-cols-4">
+              <div className="flex flex-col gap-4 xl:col-span-3">
+                {/* gauges */}
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+                  <Gauge label="Connection Pool"  pct={connPct}
+                    sub={`${totalConns} / ${maxConns} max`}
+                    onClick={()=>setActiveTab('users')}
+                    colorFn={v => v>80 ? C.red : v>60 ? C.orange : C.pg} />
+                  <Gauge label="Buffer Cache Hit" pct={cachePct}
+                    sub="Shared buffers efficiency"
+                    onClick={()=>{ setTablesDb('__all__'); setActiveTab('tables'); }}
+                    colorFn={v => v<70 ? C.red : v<85 ? C.orange : C.green} />
+                  <Gauge label="Active Sessions"
+                    pct={Math.min(100,Math.round((activeSess/Math.max(maxConns,1))*100))}
+                    sub={`${activeSess} active · ${totalConns} total · ${maxConns} max`}
+                    onClick={()=>setActiveTab('locks')}
+                    colorFn={v => v>50 ? C.orange : C.indigo} />
+                  <Gauge label="Rollback Rate"
+                    pct={rollbackPct}
+                    sub={`${rollbackPct}% · ${fmtNum(rollbacks)} rollbacks / ${fmtNum(commits+rollbacks)} total`}
+                    onClick={()=>setActiveTab('queries')}
+                    colorFn={v => v>25 ? C.red : v>5 ? C.orange : C.green} />
+                </div>
+
+
+                {/* Host resources — click a button to drill: processes → queries → why */}
+                <HostResources connId={id} tech="postgresql" />
+
+                {/* Transactions/sample sits on its own — a raw count, not a
+                    0-100% value, so it doesn't share the Activity Trends axis. */}
+                {sparklines.tps.length > 2 ? (
+                  <TrendCard title="Transactions/sample" data={sparklines.tps} color={C.indigo} fmtVal={fmtNum} />
+                ) : (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-5 text-center text-slate-400 text-xs">
+                    <Activity size={20} className="mx-auto mb-2 text-slate-300" />
+                    Live trend charts appear after first 15-second auto-refresh
+                  </div>
+                )}
+              </div>
+
+              {/* alerts for this connection only — same feed/panel Monitoring
+                  Overview uses, scoped server-side to this host via conn_id. */}
+              <RecentAlertsPanel
+                title="Alerts"
+                alerts={connAlerts.list}
+                counts={connAlerts.counts}
+                loading={connAlerts.isFetching}
+                onOpenAll={() => navigate('/alerts')}
+              />
+            </div>
 
             {/* charts */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -715,6 +754,13 @@ export default function PostgreSQLDashboard() {
         {/* ══ CONFIG ══ */}
         {activeTab === 'config' && (
           <AdvancedConfigTab detail={configDetail} isLoading={configLoading} refetch={refetchConfig} />
+        )}
+
+        {/* ══ MAINTENANCE ══ */}
+        {activeTab === 'maintenance' && (
+          <Suspense fallback={<PageLoading title="Loading Maintenance…" illustration />}>
+            <MaintenanceTab connId={id} />
+          </Suspense>
         )}
 
       </div>
@@ -2703,6 +2749,44 @@ const CTX_LABEL = {
   'superuser-backend':   'su-backend',
   'backend':             'backend',
 };
+
+/** Maintenance — a landing grid of maintenance actions (currently just Purge
+ * WAL Archive; more can be added the same way later) with the chosen action
+ * swapping in via ?section=, same tab route, so Back/refresh stay on
+ * Maintenance instead of losing the tab. Its own top-level dashboard tab
+ * (not nested under Config) to match how Oracle's Maintenance module works. */
+function MaintenanceTab({ connId }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const section = searchParams.get('section');
+
+  if (section === 'wal-purge') {
+    return (
+      <WalPurgePanel connId={connId} onBack={() => {
+        const next = new URLSearchParams(searchParams); next.delete('section'); setSearchParams(next);
+      }} />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <h2 className="text-[16px] font-black text-fg">Maintenance</h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <button type="button"
+          onClick={() => { const next = new URLSearchParams(searchParams); next.set('section', 'wal-purge'); setSearchParams(next); }}
+          className="group flex items-center gap-3 rounded-control border border-border bg-surface p-4 text-left transition-all hover:shadow-md hover:-translate-y-0.5">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full"
+            style={{ background: 'color-mix(in srgb, #F97316 16%, transparent)' }}>
+            <Archive size={18} style={{ color: '#F97316' }} />
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-bold text-fg">Purge WAL Archive</span>
+            <span className="block truncate text-[11px] text-subtle">Scheduled cleanup via pg_archivecleanup</span>
+          </span>
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, refetch }) {
   const [selGroup,    setSelGroup]    = React.useState('Memory');

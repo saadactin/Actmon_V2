@@ -1,9 +1,8 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
-import Button from '@/components/ui/Button';
 import { engineMeta, engineQuickLinks } from '@/config/engines';
 
 /**
@@ -37,7 +36,6 @@ export default function EngineDashboardHeader({
 }) {
   const engine = engineMeta(tech);
   const links = engineQuickLinks(tech, connectionId);
-  const navigate = useNavigate();
 
   const target = [
     connection?.name || engine.name,
@@ -70,15 +68,6 @@ export default function EngineDashboardHeader({
         actions={(
           <div className="flex flex-wrap items-center justify-end gap-2">
             {health}
-
-            {/* Available regardless of health state (Healthy/Warning/Error/
-                Offline/Down) — the Diagnosis page itself decides what's
-                relevant to show for the current status. */}
-            {connectionId && (
-              <Button variant="subtle" size="sm" icon="diagnose" onClick={() => navigate(`/diagnose/${connectionId}`)}>
-                Diagnose
-              </Button>
-            )}
 
             {/* sub-pages that aren't tabs */}
             <div className="hidden items-center gap-1 xl:flex">

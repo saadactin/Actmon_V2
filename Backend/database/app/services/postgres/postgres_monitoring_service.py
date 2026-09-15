@@ -484,16 +484,27 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
     # Wall-clock cost becomes "slowest single section", not "sum of every
     # section" — this was previously ~35 sequential round-trips.
 
-    def _fetch_uptime():
+    def _fetch_uptime_and_start():
+        """One round trip for uptime + the raw start time it's derived from, instead of
+        two separate queries against the same pg_postmaster_start_time() — those used to
+        run as independent parallel calls and could disagree (one succeeding live while
+        the other hit "unknown"), which is exactly backwards since the uptime value is
+        MATH on the start time, not an independent fact."""
         try:
-            uptime_raw = _val(
+            row = _rows(
                 engine,
-                "SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) "
-                "AS uptime FROM pg_postmaster_start_time()"
+                "SELECT pg_postmaster_start_time() AS start_time, "
+                "date_trunc('second', current_timestamp - pg_postmaster_start_time()) AS uptime"
             )
-            return str(uptime_raw) if uptime_raw is not None else "unknown"
+            r = row[0] if row else {}
+            start = r.get("start_time")
+            uptime = r.get("uptime")
+            return (
+                str(uptime) if uptime is not None else "unknown",
+                str(start) if start is not None else "unknown",
+            )
         except Exception:
-            return "unknown"
+            return "unknown", "unknown"
 
     def _fetch_connections():
         connections_by_state = {}
@@ -948,12 +959,6 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             pass
         return 0, 0
 
-    def _fetch_postmaster_start():
-        try:
-            return str(_val(engine, "SELECT pg_postmaster_start_time()"))
-        except Exception:
-            return "unknown"
-
     def _fetch_autovacuum():
         try:
             val = _val(engine, "SHOW autovacuum")
@@ -962,7 +967,7 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             return True
 
     with ThreadPoolExecutor(max_workers=20) as pool:
-        f_uptime = pool.submit(_fetch_uptime)
+        f_uptime = pool.submit(_fetch_uptime_and_start)
         f_connections = pool.submit(_fetch_connections)
         f_max_conn = pool.submit(_fetch_max_connections)
         f_cache_hit = pool.submit(_fetch_cache_hit)
@@ -983,10 +988,9 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
         f_users_activity = pool.submit(_fetch_users_activity)
         f_scan_totals = pool.submit(_fetch_scan_totals)
         f_temp_files = pool.submit(_fetch_temp_files)
-        f_postmaster_start = pool.submit(_fetch_postmaster_start)
         f_autovacuum = pool.submit(_fetch_autovacuum)
 
-        uptime_str = f_uptime.result()
+        uptime_str, pg_postmaster_start_time = f_uptime.result()
         connections_by_state, total_connections = f_connections.result()
         max_connections = f_max_conn.result()
         cache_hit_pct, blks_hit, blks_read = f_cache_hit.result()
@@ -1007,7 +1011,6 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
         users_activity = f_users_activity.result()
         total_seq_scan, total_idx_scan, n_tup_ins, n_tup_upd, n_tup_del = f_scan_totals.result()
         temp_files, temp_bytes = f_temp_files.result()
-        pg_postmaster_start_time = f_postmaster_start.result()
         autovacuum_enabled = f_autovacuum.result()
 
     memory["cache_hit_pct"] = cache_hit_pct
@@ -3303,8 +3306,21 @@ def svc_explain_analyze(conn_id: int, payload: PgExplainRequest, db: Session):
     def _run_explain(conn, analyze: bool):
         opts = "ANALYZE, BUFFERS, FORMAT JSON" if analyze else "FORMAT JSON"
         if analyze:
-            conn.execute(text("SET LOCAL statement_timeout = '6s'"))
-        row = conn.execute(text(f"EXPLAIN ({opts}) {sql_clean}")).fetchone()
+            # The timeout and the EXPLAIN must be sent as ONE statement, not
+            # two separate conn.execute() calls: for an agent-routed
+            # connection each conn.execute() is its own agent round trip
+            # that gets committed immediately on return (see
+            # db_proxy_service._AgentConnection.execute / the agent's
+            # _dbquery), so a `SET LOCAL` sent as call #1 was already
+            # expired by the time EXPLAIN ANALYZE arrived as call #2 —
+            # meaning the "6s cap" never actually applied there, and a slow
+            # query re-ran to completion with no timeout at all. Psycopg2
+            # runs a `;`-joined string as one committed unit either way, so
+            # combining them here makes the cap take effect on both direct
+            # and agent-routed connections.
+            row = conn.execute(text(f"SET LOCAL statement_timeout = '6s'; EXPLAIN ({opts}) {sql_clean}")).fetchone()
+        else:
+            row = conn.execute(text(f"EXPLAIN ({opts}) {sql_clean}")).fetchone()
         return row[0]
 
     def _try_explain(eng, with_analyze: bool) -> bool:

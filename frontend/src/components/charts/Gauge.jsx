@@ -1,5 +1,9 @@
+import { useEffect, useRef, useState } from 'react';
+import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import { bandFor } from './status';
+
+const easeOutCubic = (t) => 1 - (1 - t) ** 3;
 
 /**
  * Ring for a 0–100% ratio — the gauge alternative to a Meter.
@@ -31,6 +35,15 @@ export default function Gauge({
   thickness = 17,
   sweep = 360,
   showValue = true,
+  /** Draws the fill arc in from empty (with a moving cap dot) on mount,
+   * instead of rendering it already at its final position. Opt-in — every
+   * existing caller keeps today's instant render. */
+  animate = false,
+  /** Repeats `label` under the percentage. Turn off when a card header
+   * already shows the same title right above the ring — on by default so
+   * every existing caller (which relies on the ring reading on its own,
+   * with no title anywhere nearby) keeps its label. */
+  showLabel = true,
 }) {
   const pct = Number.isFinite(value) ? Math.min(Math.max(value, 0), 100) : 0;
   const hasData = Number.isFinite(value) && value > 0;
@@ -41,11 +54,65 @@ export default function Gauge({
   const cx = size / 2;
   const cy = size / 2;
   const closed = sweep >= 360;
-  const START = closed ? -90 : 135; // closed rings start at 12 o'clock
+  // Closed rings start at 12 o'clock. An open arc is centered so its GAP sits
+  // at the bottom (6 o'clock) — for sweep=180 that puts the two ends exactly
+  // at 9 and 3 o'clock with the arc bulging over the top, the classic
+  // speedometer dial shape.
+  const START = closed ? -90 : 90 + (360 - sweep) / 2;
   const span = closed ? 359.999 : sweep;
 
   const track = describeArc(cx, cy, r, START, START + span);
   const fill = describeArc(cx, cy, r, START, START + (span * pct) / 100);
+  const fullArc = describeArc(cx, cy, r, START, START + span);
+
+  const arcRef = useRef(null);
+  const capRef = useRef(null);
+  // Only the very first render draws in from empty — a later value change
+  // (this card polls every 30-60s) eases from its CURRENT position to the
+  // new one instead, so a routine refresh doesn't retract the arc to zero
+  // and redraw it from scratch every tick.
+  const prevPctRef = useRef(animate ? 0 : pct);
+  const [readoutPct, setReadoutPct] = useState(animate ? 0 : pct);
+
+  useEffect(() => {
+    if (!animate) { setReadoutPct(pct); return undefined; }
+    const el = arcRef.current;
+    if (!el) return undefined;
+    const len = el.getTotalLength();
+    el.style.strokeDasharray = String(len);
+
+    const from = prevPctRef.current;
+    const reduceMotion = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion || from === pct) {
+      el.style.strokeDashoffset = String(len * (1 - pct / 100));
+      setReadoutPct(pct);
+      prevPctRef.current = pct;
+      return undefined;
+    }
+
+    let raf;
+    let start = null;
+    const duration = from === 0 ? 1100 : 700;
+    function frame(ts) {
+      if (start === null) start = ts;
+      const p = Math.min(1, (ts - start) / duration);
+      const eased = easeOutCubic(p);
+      const current = from + (pct - from) * eased;
+      const offset = len * (1 - current / 100);
+      el.style.strokeDashoffset = String(offset);
+      setReadoutPct(current);
+      if (capRef.current) {
+        const pt = el.getPointAtLength(Math.max(0, Math.min(len, len - offset)));
+        capRef.current.setAttribute('cx', pt.x);
+        capRef.current.setAttribute('cy', pt.y);
+      }
+      if (p < 1) { raf = requestAnimationFrame(frame); } else { setReadoutPct(pct); prevPctRef.current = pct; }
+    }
+    raf = requestAnimationFrame(frame);
+    return () => { if (raf) cancelAnimationFrame(raf); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animate, pct]);
 
   return (
     <div className="flex flex-col items-center">
@@ -62,7 +129,18 @@ export default function Gauge({
           className="absolute top-0 left-0"
         >
           <path d={track} fill="none" strokeWidth={thickness} stroke="var(--chart-track)" />
-          {pct > 0 && (
+          {pct > 0 && animate && (
+            <path
+              ref={arcRef}
+              d={fullArc}
+              fill="none"
+              stroke={tint}
+              strokeWidth={thickness}
+              strokeLinecap="round"
+              style={{ transition: 'stroke var(--dur-normal) var(--ease)' }}
+            />
+          )}
+          {pct > 0 && !animate && (
             <path
               d={fill}
               fill="none"
@@ -72,18 +150,21 @@ export default function Gauge({
               style={{ transition: 'stroke var(--dur-normal) var(--ease)' }}
             />
           )}
+          {pct > 0 && animate && <circle ref={capRef} r={thickness / 4} fill={tint} />}
         </svg>
 
         <div className="absolute inset-0 grid place-items-center px-4 text-center">
           {showValue ? (
             <span>
-              <span className="block text-[19px] leading-none font-bold text-fg">
-                {hasData ? `${Math.round(pct)}%` : '—'}
+              <span className={cn('block font-bold text-fg tabular-nums', showLabel ? 'text-[19px] leading-none' : 'text-[28px] leading-none')}>
+                {hasData ? `${Math.round(animate ? readoutPct : pct)}%` : '—'}
               </span>
-              <span className="mt-1 flex items-center justify-center gap-1 text-[10px] font-semibold text-muted">
-                {icon && <Icon name={icon} size={10} />}
-                {label}
-              </span>
+              {showLabel && (
+                <span className="mt-1 flex items-center justify-center gap-1 text-[10px] font-semibold text-muted">
+                  {icon && <Icon name={icon} size={10} />}
+                  {label}
+                </span>
+              )}
             </span>
           ) : (
             <span className="flex items-center gap-1 text-[13px] font-semibold text-muted">

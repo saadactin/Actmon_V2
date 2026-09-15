@@ -33,6 +33,9 @@ from app.models.agent_model import (                              # noqa: F401
 )
 from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
 from app.models.oracle_topology_model import OracleTopologyLink           # noqa: F401
+from app.models.postgres_wal_purge_model import (                        # noqa: F401
+    PostgresWalPurgeConfig, PostgresWalPurgeHistory,
+)
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
@@ -89,6 +92,7 @@ from app.routes.oracle.oracle_maintenance_routes import router as oracle_mainten
 from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
 from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
+from app.routes.postgres.postgres_wal_purge_routes import router as postgres_wal_purge_router
 from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
 from app.routes.smtp.smtp_config_routes import router as smtp_config_router
 from app.routes.notifications.notification_routes import router as notification_router
@@ -188,6 +192,11 @@ async def lifespan(app_instance):
     # MOVE/REBUILD) — never runs anything that wasn't explicitly approved.
     from app.services.oracle.oracle_maintenance_job_runner import start_oracle_maintenance_job_runner
     start_oracle_maintenance_job_runner()
+    # Purge WAL Archive: detects a scheduled trigger that never fired (agent/
+    # host unreachable), rechecks host scheduler-entry liveness, and reaps any
+    # run orphaned by a backend restart. Never purges anything itself.
+    from app.services.postgres.postgres_wal_purge_scheduler import start_wal_purge_watchdog
+    start_wal_purge_watchdog()
     yield
     # Graceful shutdown
     from app.services.agent.agent_collector_service import stop_agent_collector
@@ -202,6 +211,8 @@ async def lifespan(app_instance):
     stop_os_server_refresh_scheduler()
     from app.services.oracle.oracle_maintenance_job_runner import stop_oracle_maintenance_job_runner
     stop_oracle_maintenance_job_runner()
+    from app.services.postgres.postgres_wal_purge_scheduler import stop_wal_purge_watchdog
+    stop_wal_purge_watchdog()
     # These 4 report-email schedulers were started above but never stopped —
     # harmless in a normal single-shutdown process exit, but on any in-process
     # lifespan re-entry (a reload, or a test harness starting the app twice)
@@ -270,6 +281,7 @@ app.include_router(oracle_maintenance_router)
 app.include_router(oracle_report_email_router)
 app.include_router(mysql_report_email_router)
 app.include_router(postgres_report_email_router)
+app.include_router(postgres_wal_purge_router)
 app.include_router(mssql_report_email_router)
 app.include_router(smtp_config_router)
 app.include_router(monitoring_settings_router)

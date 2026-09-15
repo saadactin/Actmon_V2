@@ -10,7 +10,7 @@
  * two genuine "not a tab" sub-pages.
  */
 import {
-  Activity, AlertTriangle, Clock, Database, GitBranch, HardDrive, Key, Layers, Lock, Search, Table, TrendingUp, Users, Zap,
+  Activity, AlertTriangle, Clock, Database, FileText, GitBranch, HardDrive, Key, Layers, Lock, Search, Stethoscope, Table, TrendingUp, Users, Zap,
 } from 'lucide-react';
 
 export const MSSQL_DASHBOARD_TABS = [
@@ -28,8 +28,13 @@ export const MSSQL_DASHBOARD_TABS = [
   { id: 'wait-analysis',  label: 'Wait Analysis', icon: Clock },
   { id: 'index-analysis', label: 'Indexes',       icon: Key },
   { id: 'fragmentation',  label: 'Fragmentation', icon: Layers },
+  // Former header quick-links, moved into the tab strip proper so the header
+  // shows one navigation surface instead of tabs plus a separate row of pills.
+  { id: 'reports',        label: 'Reports',       icon: FileText },
+  { id: 'diagnose',       label: 'Diagnose',      icon: Stethoscope },
 ];
 
 export function mssqlTabRoute(connectionId, tabId) {
+  if (tabId === 'diagnose') return `/diagnose/${connectionId}`;
   return `/mssql-dashboard/${connectionId}${tabId && tabId !== 'overview' ? `/${tabId}` : ''}`;
 }

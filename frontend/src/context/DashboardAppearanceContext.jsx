@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import client from '@/api/client';
 
-export const INDICATOR_STYLES = ['ring', 'stat', 'donut', 'minimal', 'dial'];
+export const INDICATOR_STYLES = ['semicircle', 'ring', 'stat', 'donut', 'minimal', 'dial'];
 export const CHART_STYLES = ['area', 'line', 'bar', 'barh', 'spark', 'pie', 'donut', 'scatter', 'gauge', 'bubble', 'gantt'];
 export const DISPLAY_MODES = ['gauge', 'graph'];
 
@@ -17,7 +17,7 @@ export const SCOPES = [
   { key: 'cosmosdb',   label: 'Azure Cosmos DB' },
 ];
 
-const DEFAULTS = { indicator_style: 'ring', chart_style: 'area', display_mode: 'gauge' };
+const DEFAULTS = { indicator_style: 'semicircle', chart_style: 'area', display_mode: 'gauge' };
 
 /* Ambient "which dashboard am I on" scope — each engine dashboard page wraps
    itself in <DashboardScopeProvider tech="mysql">, so every <Gauge>/<TrendChart>
