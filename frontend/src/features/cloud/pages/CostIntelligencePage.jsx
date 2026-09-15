@@ -54,7 +54,7 @@ import {
 import {
   AnomalyList, BudgetPanel, ChangeAnalysisPanel, ForecastPanel, TopCostDrivers,
 } from '../components/cost/CostPanels';
-import { PanelHeading } from '../components/cost/CostPrimitives';
+import { InsufficientHistory, PanelHeading } from '../components/cost/CostPrimitives';
 import { groupByCurrency, isMissing } from '../utils/costFormat';
 
 /** Date presets. Exact dates are always shown alongside — "last 30 days" on its
@@ -140,11 +140,37 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
   const quality_ = quality.data;
   const dates = rangeDates(days);
 
+  /**
+   * The daily series, and where it came from.
+   *
+   * Stored facts are preferred — they reach further back than a provider will
+   * answer in one call, and they are what the forecast and anomaly engines
+   * read. But the live billing API already returns a 30-day daily trend, and
+   * until a scan has ingested any history the stored table is empty. Falling
+   * back to the live trend is the difference between a working chart and a
+   * blank panel on day one; the source is labelled either way, so the two are
+   * never confused.
+   */
+  const trendSource = useMemo(() => {
+    const stored = history.data?.series || [];
+    if (stored.length) {
+      return { series: stored, source: 'cloud_cost_facts', live: false };
+    }
+    const live = (a?.trends || [])
+      .filter((p) => !isMissing(p.cost))
+      .map((p) => ({
+        date: p.date,
+        amount: p.cost,
+        currency: a?.trend_currency || a?.currency || null,
+      }));
+    return { series: live, source: 'billing_api', live: true };
+  }, [history.data, a]);
+
   // One trend chart per currency — stacking USD on INR would draw a shape
   // whose height is a meaningless number.
   const historyByCurrency = useMemo(
-    () => groupByCurrency(history.data?.series || []),
-    [history.data],
+    () => groupByCurrency(trendSource.series),
+    [trendSource],
   );
 
   const anomaliesForCurrency = useCallback(
@@ -314,12 +340,25 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
       {/* ── Overview ────────────────────────────────────────────────────── */}
       {tab === 'overview' && (
         <div className="space-y-4">
+          {/* The headline comes from the live billing API, which this service
+              always queries over a fixed 30-day window. It is therefore
+              labelled 30 days regardless of the range picker above — showing a
+              30-day figure under a "last 90 days" heading would be a wrong
+              number, not a rounding. The range drives the trend, forecast,
+              anomalies and history panels, which CAN answer other windows. */}
           <SpendHeadline
             totals={totals}
-            period={{ ...dates, days }}
+            period={{ ...rangeDates(30), days: 30 }}
             source={a?.cost_source}
             onWhy={() => setShowDiagnostics(true)}
           />
+          {days !== 30 && (
+            <p className="-mt-2 text-[11px] text-subtle">
+              The headline total is a fixed 30-day billing-API window. The{' '}
+              {days}-day range you selected applies to the trend, forecast,
+              anomalies and history below.
+            </p>
+          )}
 
           {accountView === 'ALL' && <ProviderSpendCards byService={a?.by_service} />}
 
@@ -338,8 +377,15 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <CloudSection
               title="Spend trend"
-              description="Daily billed spend from stored history"
+              description={trendSource.live
+                ? 'Daily billed spend, live from the provider billing API'
+                : 'Daily billed spend from stored history'}
               className="xl:col-span-2"
+              action={(
+                <Badge tone={trendSource.live ? 'info' : 'success'} size="xs">
+                  {trendSource.live ? 'Live billing API' : 'Stored history'}
+                </Badge>
+              )}
             >
               {historyByCurrency.length ? (
                 historyByCurrency.map(({ currency, items }) => (
@@ -411,17 +457,77 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
 
       {/* ── Trends ─────────────────────────────────────────────────────── */}
       {tab === 'trends' && (
-        <CloudSection
-          title="What changed"
-          description="Associated cost movement between this period and the one before it"
-        >
-          <ChangeAnalysisPanel
-            change={trends.data?.change}
-            period={trends.data?.period}
-            comparisonPeriod={trends.data?.comparison_period}
-            onWhy={() => setShowDiagnostics(true)}
-          />
-        </CloudSection>
+        <div className="space-y-4">
+          <CloudSection
+            title="Spend over time"
+            description={trendSource.live
+              ? 'Live from the provider billing API'
+              : 'From stored billing history'}
+            action={(
+              <Badge tone={trendSource.live ? 'info' : 'success'} size="xs">
+                {trendSource.live ? 'Live billing API' : 'Stored history'}
+              </Badge>
+            )}
+          >
+            {historyByCurrency.length ? (
+              historyByCurrency.map(({ currency, items }) => (
+                <div key={currency} className="mb-4 last:mb-0">
+                  {historyByCurrency.length > 1 && (
+                    <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                      {currency}
+                    </p>
+                  )}
+                  <CostTrendChart
+                    series={items}
+                    currency={currency}
+                    anomalies={anomaliesForCurrency(currency)}
+                    height={300}
+                    onWhy={() => setShowDiagnostics(true)}
+                  />
+                </div>
+              ))
+            ) : (
+              <CostTrendChart series={[]} height={300} onWhy={() => setShowDiagnostics(true)} />
+            )}
+          </CloudSection>
+
+          <CloudSection
+            title="What changed"
+            description="Associated cost movement between this period and the one before it"
+          >
+            {/* Change analysis compares two stored periods, so it genuinely
+                cannot run off the live 30-day window — it says so rather than
+                rendering an empty waterfall. */}
+            {trends.data?.change?.available ? (
+              <ChangeAnalysisPanel
+                change={trends.data.change}
+                period={trends.data.period}
+                comparisonPeriod={trends.data.comparison_period}
+                onWhy={() => setShowDiagnostics(true)}
+              />
+            ) : (
+              <InsufficientHistory
+                available={coverage.data?.days_covered ?? 0}
+                required={days * 2}
+                reason={`Comparing this ${days}-day period against the ${days} days before it needs both periods in stored history. Billing history is collected on each discovery scan, or you can backfill it now.`}
+                onBackfill={accountView !== 'ALL' ? () => startBackfill.mutate(180) : undefined}
+              />
+            )}
+          </CloudSection>
+
+          <CloudSection
+            title="Cost by service"
+            description="Current period, from the provider billing API"
+          >
+            <CostBreakdownBars
+              rows={serviceRows}
+              currency={primaryCurrency}
+              dimension="service"
+              onSelect={(name) => setParam({ service: name })}
+              onWhy={() => setShowDiagnostics(true)}
+            />
+          </CloudSection>
+        </div>
       )}
 
       {/* ── Forecast ───────────────────────────────────────────────────── */}
