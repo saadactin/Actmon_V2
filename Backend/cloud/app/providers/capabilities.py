@@ -118,7 +118,12 @@ AWS = ProviderCostCapabilities(
     daily_trend=True,     # get_daily_costs, DAILY granularity, Total metric
     daily_service=True,   # get_cost_report groups DIMENSION SERVICE
     daily_region=False,
-    usage_type=False,
+    # TRUE for AWS alone: get_cost_report groups by SERVICE *and* USAGE_TYPE,
+    # so its daily rows genuinely carry a usage type ("BoxUsage:t3.micro",
+    # "TimedStorage-ByteHrs"). This is the closest thing to a resource-shaped
+    # dimension AWS offers without a CUR pipeline, and it is the one dimension
+    # AWS has that Azure and OCI do not.
+    usage_type=True,
     tags=False,
     forecast_api=False,
     budget_api=False,
@@ -140,10 +145,6 @@ AWS = ProviderCostCapabilities(
             "carry no region. Region IS available on the 30-day aggregate breakdown. "
             "Adding REGION to the daily GroupBy would enable this, at the cost of a "
             "larger, slower Cost Explorer response."
-        ),
-        "usage_type": (
-            "Cost Explorer supports a USAGE_TYPE dimension, but no query in this "
-            "integration requests it, so no usage-type data exists to filter on."
         ),
         "tags": (
             "Cost-allocation tags must be activated in the AWS Billing console before "

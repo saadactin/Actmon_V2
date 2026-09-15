@@ -105,6 +105,16 @@ def normalize_report_rows(
         region = row.get("region")
         currency = row.get("currency")
 
+        # AWS's daily report groups by SERVICE *and* USAGE_TYPE, and carries the
+        # usage type in `resource_type` (e.g. "BoxUsage:t3.micro",
+        # "TimedStorage-ByteHrs"). Dropping it on the floor would discard the
+        # only resource-shaped dimension AWS offers without a CUR pipeline —
+        # and would silently merge every usage type of a service into one fact,
+        # so re-ingesting the same day would collapse rows that the provider
+        # reports separately. OCI and Azure supply neither key, so both read
+        # None for them, which is the honest value.
+        usage_type = row.get("usage_type") or row.get("resource_type")
+
         facts.append({
             "id": uuid.uuid4(),
             "account_id": account.id,
@@ -115,7 +125,7 @@ def normalize_report_rows(
             "resource_id": None,
             "resource_name": None,
             "resource_type": None,
-            "usage_type": None,
+            "usage_type": usage_type,
             "cost_component": _normalize_cost_component(provider, service),
             "resource_group": None,
             "compartment": None,
@@ -136,7 +146,7 @@ def normalize_report_rows(
                 service=service,
                 region=region,
                 resource_id=None,
-                usage_type=None,
+                usage_type=usage_type,
                 currency=currency,
             ),
         })

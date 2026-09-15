@@ -85,6 +85,18 @@ aws_daily = inspect.getsource(AWSProvider.get_cost_report)
 check("AWS daily query really groups by SERVICE", '"Key": "SERVICE"' in aws_daily)
 check("AWS daily query really does NOT group by REGION -> daily_region=False is honest",
       '"Key": "REGION"' not in aws_daily)
+# This pair is the one that caught a real drift: the registry claimed AWS had
+# no usage type while the query had been grouping by USAGE_TYPE all along, so
+# ingestion was discarding a dimension the provider was actually returning.
+check("AWS daily query DOES group by USAGE_TYPE",
+      '"Key": "USAGE_TYPE"' in aws_daily)
+check("...and the registry agrees (usage_type=True)", caps.AWS.usage_type is True)
+azure_ut = inspect.getsource(AzureProvider.get_cost_report)
+check("Azure daily query does NOT request a Meter -> usage_type=False is honest",
+      '"Meter"' not in azure_ut and caps.AZURE.usage_type is False)
+oci_ut = inspect.getsource(OCIProvider.get_cost_report)
+check("OCI daily query does NOT request a SKU -> usage_type=False is honest",
+      'skuPartNumber' not in oci_ut and caps.OCI.usage_type is False)
 
 azure_daily = inspect.getsource(AzureProvider.get_cost_report)
 check("Azure daily query really groups by ResourceLocation -> daily_region=True",
@@ -107,8 +119,10 @@ print("\n9. Nothing claims a provider API that is not wired up")
 for c in (caps.AWS, caps.AZURE, caps.OCI):
     check(f"{c.provider} forecast_api == False (run-rate only)", c.forecast_api is False)
     check(f"{c.provider} budget_api == False", c.budget_api is False)
-    check(f"{c.provider} usage_type == False (no query requests it)",
-          c.usage_type is False)
+    # usage_type is deliberately NOT asserted uniformly: AWS alone requests
+    # USAGE_TYPE, so a blanket "all False" here is what let the registry drift
+    # away from the query in the first place. Section 6 checks each provider
+    # against its own source instead.
     check(f"{c.provider} tags == False (no query requests them)", c.tags is False)
 
 print("\n10. Every unavailable dimension owes a reason -- no silent False")
