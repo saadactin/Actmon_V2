@@ -26,11 +26,24 @@ from app.models.cost_fact import (
 
 logger = logging.getLogger("cloud_svc.cost.facts")
 
-# Postgres caps a statement at 65535 bound parameters. Each fact row binds ~20
-# columns, so 2000 rows/statement leaves comfortable headroom. OCI alone
-# returns ~11k rows for a 7-day per-resource window, so chunking is not
-# theoretical.
-_CHUNK = 2000
+# The bind-parameter ceiling, and why this is computed rather than guessed.
+#
+# A fixed _CHUNK = 2000 shipped and broke a real 180-day AWS backfill with
+# "the number of query arguments cannot exceed 32767". The comment justifying
+# it said "~20 columns, so 2000 rows leaves comfortable headroom" — but 2000
+# rows x 24 columns is 48,000 parameters, well past the limit. The arithmetic
+# was never done, and the row width had since grown.
+#
+# asyncpg's ceiling is 32767 (int16), NOT Postgres' 65535. Deriving the chunk
+# from the actual number of columns in the batch means adding a column can
+# never silently re-break this.
+_MAX_BIND_PARAMS = 32767
+_SAFETY = 0.8   # headroom for any driver-side extras
+
+
+def _chunk_size(row: Dict[str, Any]) -> int:
+    columns = max(1, len(row))
+    return max(1, int(_MAX_BIND_PARAMS * _SAFETY) // columns)
 
 # How long a fact must sit unchanged, across at least two reads, before it is
 # called STABLE. Three days is past the window in which all three providers do
@@ -74,8 +87,9 @@ class CostFactRepository:
         inserted = updated = 0
         now = datetime.now(timezone.utc)
 
-        for start in range(0, len(rows), _CHUNK):
-            chunk = list(rows[start:start + _CHUNK])
+        chunk_size = _chunk_size(rows[0])
+        for start in range(0, len(rows), chunk_size):
+            chunk = list(rows[start:start + chunk_size])
             stmt = pg_insert(CloudCostFact).values(chunk)
             amount_changed = CloudCostFact.amount.is_distinct_from(stmt.excluded.amount)
 

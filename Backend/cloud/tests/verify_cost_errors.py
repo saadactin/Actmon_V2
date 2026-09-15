@@ -186,7 +186,32 @@ check("category == unknown", err.category == ce.UNKNOWN, err.category)
 check("raw error preserved for debugging",
       "Something nobody has seen before" in err.message)
 
-print("\n16. Structured status beats a status-shaped number in prose")
+print("\n16. A SQL bind placeholder past $429 must NOT read as rate limiting")
+# This shipped: a 180-day AWS backfill hit asyncpg's 32767 bind-parameter
+# ceiling, and the exception carried the offending INSERT whose placeholders
+# ran past $429. The old bare "429" substring matched, so a local database bug
+# was reported as "the provider is rate limiting you; this resolves on its
+# own." It did not resolve on its own.
+sql_err = Exception(
+    "(sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) the number of query "
+    "arguments cannot exceed 32767 [SQL: INSERT INTO cloud_cost_facts (id, ...) "
+    "VALUES ($1, $2, ... $428, $429, $430, ...)]"
+)
+err = ce.classify(sql_err)
+check("not classified as rate_limited", err.category != ce.RATE_LIMITED, err.category)
+check("no invented Retry-After", err.retry_after_seconds is None)
+check("not presented as self-resolving",
+      "resolves on its own" not in err.message)
+
+print("\n17. Genuine HTTP-429 phrasings still classify")
+for msg in ("(429) Too many requests",
+            "HTTP 429 returned by the service",
+            "http/429 rate exceeded"):
+    check(f"{msg[:30]!r} -> rate_limited",
+          ce.classify(Exception(msg)).category == ce.RATE_LIMITED,
+          ce.classify(Exception(msg)).category)
+
+print("\n18. Structured status beats a status-shaped number in prose")
 # A message merely MENTIONING 403 must not be read as a denial when the
 # structured status says otherwise.
 err = ce.classify(AzureError(
@@ -194,11 +219,11 @@ err = ce.classify(AzureError(
 check("'403 rows' in prose does not become a permission error",
       err.category != ce.PERMISSION, err.category)
 
-print("\n17. Back-compatible tuple form still works")
+print("\n19. Back-compatible tuple form still works")
 cat, msg = ce.categorize(AzureError("Too many requests", status_code=429), provider="AZURE")
 check("categorize returns (category, message)", cat == ce.RATE_LIMITED and isinstance(msg, str))
 
-print("\n18. to_dict is JSON-shaped for the API envelope")
+print("\n20. to_dict is JSON-shaped for the API envelope")
 d = ce.classify(throttled, provider="AZURE").to_dict()
 check("has every envelope key",
       set(d) == {"category", "message", "retry_after_seconds", "http_status",
