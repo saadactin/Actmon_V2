@@ -145,3 +145,41 @@ export const getAccountDiagnostic = async (accountId) => {
   const { data } = await cloudAxios.get(`/cloud-accounts/${accountId}/diagnostic`);
   return data;
 };
+
+// ── Allocation, governance & reports ─────────────────────────────────────────
+
+export const getCostAllocation = async (accountId, dimension = 'environment') => {
+  const { data } = await cloudAxios.get(`/cost/allocation/${accountId}`, {
+    params: { dimension },
+  });
+  return data;
+};
+
+export const getCostGovernance = async (accountId) => {
+  const { data } = await cloudAxios.get(`/cost/governance/${accountId}`);
+  return data;
+};
+
+export const getReportTypes = async (accountId) => {
+  const { data } = await cloudAxios.get(`/cost/reports/${accountId}`);
+  return data;
+};
+
+export const getExecutiveReport = async (accountId, days = 30) => {
+  const { data } = await cloudAxios.get(`/cost/reports/executive/${accountId}`, {
+    params: { days },
+  });
+  return data;
+};
+
+export const getCostMetrics = async () => {
+  const { data } = await cloudAxios.get('/cost/metrics');
+  return data;
+};
+
+export const setRecommendationState = async (fingerprint, payload) => {
+  const { data } = await cloudAxios.post(
+    `/cost/recommendations/${fingerprint}/state`, payload,
+  );
+  return data;
+};

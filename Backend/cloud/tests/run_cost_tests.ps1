@@ -53,7 +53,12 @@ $suites = @(
     # counted but never valued; and the fingerprint survives re-derivation, so
     # a user's dismissal keeps applying after the next discovery scan instead
     # of the same finding nagging forever.
-    @{ Name = "recommendations: priority, savings honesty, lifecycle"; Args = @("tests\verify_cost_recommendations.py") }
+    @{ Name = "recommendations: priority, savings honesty, lifecycle"; Args = @("tests\verify_cost_recommendations.py") },
+    # Allocation, reports and observability. Two assertions carry the weight:
+    # untagged spend is NEVER assigned to anyone (the guess that makes a
+    # chargeback report unusable the first time it is checked), and a report's
+    # header total equals the sum of the rows it contains. Pure logic.
+    @{ Name = "allocation, reports, FinOps health, metrics (no DB)"; Args = @("tests\verify_cost_governance.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

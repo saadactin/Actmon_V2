@@ -29,14 +29,15 @@ import Button from '@/components/ui/Button';
 import { PageLoading } from '@/components/ui/Loading';
 import {
   Activity, AlertTriangle, BarChart3, Gauge, LayoutDashboard, PiggyBank,
-  Receipt, Target, TrendingUp,
+  Receipt, Table2 as Tags, Target, TrendingUp,
 } from 'lucide-react';
 
 import { useCloudScope } from '../hooks/useCloudScope';
 import {
   useBudgetStatus, useCostAnalytics, useCostAnomalies, useCostBackfillStatus,
   useCostCapabilities, useCostCoverage, useCostForecast, useCostHistory,
-  useCostQuality, useCostTrends, useStartBackfill,
+  useCostAllocation, useCostGovernance, useCostQuality, useCostTrends,
+  useStartBackfill,
 } from '../hooks/useCost';
 
 import { CostExplorerPanel } from '../components/CostExplorerPanel';
@@ -55,6 +56,7 @@ import {
   AnomalyList, BudgetPanel, ChangeAnalysisPanel, ForecastPanel, TopCostDrivers,
 } from '../components/cost/CostPanels';
 import CostRecommendations from '../components/cost/CostRecommendations';
+import CostAllocation, { FinOpsHealth } from '../components/cost/CostAllocation';
 import { InsufficientHistory, PanelHeading } from '../components/cost/CostPrimitives';
 import { groupByCurrency, isMissing } from '../utils/costFormat';
 
@@ -134,6 +136,9 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
   const budgets = useBudgetStatus(accountView !== 'ALL' ? accountView : undefined);
   const backfill = useCostBackfillStatus(accountView !== 'ALL' ? accountView : null);
   const startBackfill = useStartBackfill(accountView);
+  const allocationDimension = params.get('dim') || 'environment';
+  const allocation = useCostAllocation(accountView, allocationDimension);
+  const governance = useCostGovernance(accountView);
 
   const a = analytics.data;
   const totals = a?.totals_by_currency;
@@ -246,6 +251,7 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
       icon: PiggyBank,
       count: a?.optimizations?.length || undefined,
     },
+    { id: 'allocation', label: 'Allocation', icon: Tags },
     { id: 'budgets', label: 'Budgets', icon: Target },
     { id: 'reports', label: 'Reports', icon: Receipt },
     { id: 'diagnostics', label: 'Diagnostics', icon: Gauge },
@@ -568,6 +574,18 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
           savingsSummary={a?.savings_summary}
           savingsByCategory={a?.savings_by_category}
         />
+      )}
+
+      {/* ── Allocation ─────────────────────────────────────────────────── */}
+      {tab === 'allocation' && (
+        <div className="space-y-4">
+          <CostAllocation
+            data={allocation.data}
+            dimension={allocationDimension}
+            onDimension={(d) => setParam({ dim: d })}
+          />
+          <FinOpsHealth governance={governance.data} />
+        </div>
       )}
 
       {/* ── Budgets ────────────────────────────────────────────────────── */}

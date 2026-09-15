@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.pricing import oci_pricing
 from app.providers import capabilities as provider_caps
 from app.repository.resource_repo import ResourceRepository
-from app.services import cost_errors, cost_money
+from app.services import cost_errors, cost_metrics, cost_money
 
 logger = logging.getLogger("cloud_svc.cost")
 
@@ -208,12 +208,31 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None
     entry = cache.get(key)
     fresh = _cache_get(cache, key)
     if fresh is not None:
+        cost_metrics.record(getattr(account, "provider", None) if account else None,
+                            "cache_hits")
         return fresh
+
+    provider_name = getattr(account, "provider", None) if account else None
+    cost_metrics.record(provider_name, "cache_misses")
 
     exc: Exception | None = None
     for attempt in range(_TRANSIENT_ATTEMPTS):
+        started = time.monotonic()
         try:
-            value = await fetch()
+            # Serialise throttle-prone providers (Azure). Three subscriptions
+            # refreshing concurrently is exactly the burst that produces a 429
+            # and then costs all three a retry; queuing them succeeds instead.
+            async with cost_metrics.provider_slot(provider_name or ""):
+                cost_metrics.record(provider_name, "billing_api_calls")
+                value = await fetch()
+            elapsed = time.monotonic() - started
+            cost_metrics.observe_duration(provider_name, "billing_api_seconds", elapsed)
+            cost_metrics.structured_log(
+                provider=provider_name,
+                account_id=str(account.id) if account else None,
+                operation=label, duration_seconds=elapsed, status="ok",
+                record_count=(len(value) if hasattr(value, "__len__") else None),
+            )
             now = time.time()
             cache[key] = (now, value, False, now)
             if account is not None:
@@ -232,6 +251,16 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None
 
     if exc is not None:
         logger.warning("%s failed for %s: %s", label, key, exc)
+        classified = cost_errors.classify(exc, provider=provider_name)
+        cost_metrics.record(provider_name, "billing_api_errors")
+        if classified.category == cost_errors.RATE_LIMITED:
+            cost_metrics.record(provider_name, "billing_api_429")
+        cost_metrics.structured_log(
+            provider=provider_name,
+            account_id=str(account.id) if account else None,
+            operation=label, status="failed",
+            error_category=classified.category,
+        )
         if account is not None:
             _record_error(account, exc)
         stale = entry[1] if entry else None
@@ -1149,6 +1178,171 @@ class CostService:
             "account_id": str(account_id),
             "job": job.to_dict() if job else None,
             "coverage": await repo.coverage([a.id for a in accounts]),
+        }
+
+    # ── Allocation, governance, reports, observability ───────────────────────
+
+    async def get_allocation(
+        self, account_id: uuid.UUID | str, *, dimension: str = "environment",
+        days: int = RESOURCE_DECORATION_DAYS,
+    ) -> Dict[str, Any]:
+        """Spend attributed to a business dimension, plus tag coverage.
+
+        Depends on per-resource cost, so an AWS-only scope genuinely cannot be
+        allocated. That is reported as `supported: false` with the provider's
+        reason rather than as an empty breakdown, which would read as "nothing
+        is tagged" when the truth is "we cannot see what anything costs".
+        """
+        from app.repository.resource_repo import ResourceRepository
+        from app.services import cost_allocation_service as alloc
+
+        accounts = await self._accounts_in_scope(account_id)
+        caps = get_cost_capabilities(accounts)
+        supported = bool(caps["effective"].get("resource"))
+
+        res_repo = ResourceRepository(self.db)
+        resources: List[Any] = []
+        cost_map: Dict[str, Dict[str, Any]] = {}
+        for acc in accounts:
+            resources.extend(await res_repo.list_by_account(acc.id))
+            if provider_caps.for_provider(acc.provider) and \
+                    provider_caps.for_provider(acc.provider).resource:
+                cost_map.update(peek_costs_by_resource(acc))
+                ensure_costs_by_resource_warm(acc)
+
+        try:
+            allocation = alloc.allocate(resources, cost_map, dimension=dimension)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        return {
+            "account_id": str(account_id),
+            "supported": supported,
+            "unsupported_reason": (
+                None if supported else caps["blocked_by"].get("resource")
+            ),
+            "allocation": allocation,
+            "tag_coverage": alloc.tag_coverage(resources),
+            "dimensions_available": sorted(alloc.DIMENSIONS),
+            "source": "billing_api + inventory tags",
+        }
+
+    async def get_governance(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """Governance gaps and the FinOps health score.
+
+        The health score is returned alongside spend-free governance findings
+        and is explicitly labelled a maturity measure — it must never be read
+        as a cost.
+        """
+        from app.repository.resource_repo import ResourceRepository
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.models.cost_budget import CloudCostBudget
+        from sqlalchemy import func, select as _select
+        from app.services import cost_allocation_service as alloc
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+
+        res_repo = ResourceRepository(self.db)
+        resources: List[Any] = []
+        for acc in accounts:
+            resources.extend(await res_repo.list_by_account(acc.id))
+
+        fact_repo = CostFactRepository(self.db)
+        coverage = await fact_repo.coverage(ids)
+        tags = alloc.tag_coverage(resources)
+
+        budget_count = (await self.db.execute(
+            _select(func.count()).select_from(CloudCostBudget).where(
+                CloudCostBudget.enabled.is_(True)
+            )
+        )).scalar() or 0
+
+        cost_map: Dict[str, Dict[str, Any]] = {}
+        for acc in accounts:
+            cost_map.update(peek_costs_by_resource(acc))
+        allocation = alloc.allocate(resources, cost_map, dimension="owner")
+        money_coverage = None
+        cov_values = [v for v in allocation["coverage_percent_by_currency"].values()
+                      if v is not None]
+        if cov_values:
+            money_coverage = round(sum(cov_values) / len(cov_values), 2)
+
+        priced = allocation["priced_resource_count"]
+        unpriced = allocation["unpriced_resource_count"]
+        unpriced_ratio = (
+            unpriced / (priced + unpriced) if (priced + unpriced) else None
+        )
+
+        return {
+            "account_id": str(account_id),
+            "governance": alloc.governance_findings(resources),
+            "finops_health": alloc.finops_health(
+                tag_coverage_percent=tags["overall_coverage_percent"],
+                allocation_coverage_percent=money_coverage,
+                days_of_history=coverage["days_covered"],
+                budget_count=budget_count,
+                accounts_in_scope=len(accounts),
+                anomaly_monitoring_ready=coverage["days_covered"] >= 30,
+                unpriced_resource_ratio=unpriced_ratio,
+            ),
+            "data_coverage": {
+                "historical_days": coverage["days_covered"],
+                "billing_facts": coverage["records"],
+                "resource_attribution_percent": (
+                    round((1 - unpriced_ratio) * 100, 2)
+                    if unpriced_ratio is not None else None
+                ),
+                "tag_allocation_percent": tags["overall_coverage_percent"],
+                "forecast_ready": coverage["days_covered"] >= 14,
+            },
+        }
+
+    async def get_report_types(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """Report types, each marked available or blocked with the reason."""
+        from app.services import cost_report_service as reports
+
+        accounts = await self._accounts_in_scope(account_id)
+        return {
+            "account_id": str(account_id),
+            "types": reports.available_types(get_cost_capabilities(accounts)),
+            "csv_columns": list(reports.CSV_COLUMNS),
+        }
+
+    async def get_executive_report(
+        self, account_id: uuid.UUID | str, *, days: int = 30,
+    ) -> Dict[str, Any]:
+        """The one-page executive summary, assembled from the same figures the
+        rest of the page shows — never recomputed differently."""
+        from app.services import cost_report_service as reports
+
+        analytics = await self.get_cost_analytics(account_id)
+        trends = await self.get_trends(account_id, days=days)
+        forecast = await self.get_forecast(account_id)
+        anomalies = await self.get_anomalies(account_id)
+
+        currency = (analytics.get("totals_by_currency") or {}).get("currency")
+        mom = ((trends.get("month_over_month") or {}).get("by_currency") or {})
+        change = (mom.get(currency) or {}).get("change") if currency else None
+
+        allocation = None
+        try:
+            allocation = (await self.get_allocation(account_id))["allocation"]
+        except HTTPException:
+            allocation = None
+
+        return {
+            "account_id": str(account_id),
+            "summary": reports.executive_summary(
+                totals=analytics.get("totals_by_currency") or {},
+                change=change,
+                top_drivers=analytics.get("by_service") or [],
+                savings=analytics.get("savings_summary"),
+                anomaly_count=anomalies.get("total", 0),
+                forecast=forecast,
+                quality=analytics.get("quality"),
+                allocation=allocation,
+            ),
         }
 
     # ── Analytics over stored history ────────────────────────────────────────

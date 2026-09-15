@@ -3,7 +3,8 @@ import {
   createBudget, deleteBudget, getAlertPolicies, getBudgetStatus, getBudgets,
   getCostAnalytics, getCostAnomalies, getCostBackfillStatus, getCostCapabilities,
   getCostCoverage, getCostForecast, getCostHistory, getCostQuality, getCostReport,
-  getCostSummary, getCostTrends, startCostBackfill, updateBudget,
+  getCostAllocation, getCostGovernance, getCostMetrics, getCostSummary,
+  getCostTrends, getExecutiveReport, getReportTypes, startCostBackfill, updateBudget,
 } from '../api/cost.api';
 
 export const useCostSummary = (accountId) => useQuery({
@@ -160,3 +161,42 @@ export const useDeleteBudget = (accountId) => {
     onSuccess: () => budgetKeys(qc, accountId),
   });
 };
+
+// ── Allocation, governance & reports ─────────────────────────────────────────
+
+export const useCostAllocation = (accountId, dimension = 'environment') => useQuery({
+  queryKey: ['costAllocation', accountId, dimension],
+  queryFn: () => (accountId ? getCostAllocation(accountId, dimension) : Promise.resolve(null)),
+  enabled: !!accountId,
+  staleTime: 5 * 60_000,
+});
+
+export const useCostGovernance = (accountId) => useQuery({
+  queryKey: ['costGovernance', accountId],
+  queryFn: () => (accountId ? getCostGovernance(accountId) : Promise.resolve(null)),
+  enabled: !!accountId,
+  staleTime: 5 * 60_000,
+});
+
+export const useReportTypes = (accountId) => useQuery({
+  queryKey: ['costReportTypes', accountId],
+  queryFn: () => (accountId ? getReportTypes(accountId) : Promise.resolve(null)),
+  enabled: !!accountId,
+  staleTime: 30 * 60_000,
+});
+
+// Opt-in: the executive report fans out across analytics, trends, forecast and
+// anomalies, so it is fetched only when its tab is actually open.
+export const useExecutiveReport = (accountId, days, enabled) => useQuery({
+  queryKey: ['costExecutiveReport', accountId, days],
+  queryFn: () => (accountId ? getExecutiveReport(accountId, days) : Promise.resolve(null)),
+  enabled: !!accountId && enabled,
+  staleTime: 5 * 60_000,
+});
+
+export const useCostMetrics = (enabled = false) => useQuery({
+  queryKey: ['costMetrics'],
+  queryFn: getCostMetrics,
+  enabled,
+  refetchInterval: enabled ? 30_000 : false,
+});

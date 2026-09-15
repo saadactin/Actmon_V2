@@ -136,6 +136,82 @@ async def get_cost_trends(
     return await svc.get_trends(account_id, days=days, dimension=dimension)
 
 
+@router.get("/allocation/{account_id}")
+async def get_cost_allocation(
+    account_id: str,
+    dimension: str = Query(default="environment"),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Spend attributed to a business dimension, from resource tags.
+
+    Requires per-resource cost, so an AWS-only scope reports
+    `supported: false` with the reason rather than an empty breakdown — the
+    difference between "nothing is tagged" and "we cannot see what anything
+    costs" matters, and only one of them is the user's to fix.
+
+    Untagged spend is never assigned to anyone; it goes to an explicit
+    unallocated bucket.
+    """
+    return await svc.get_allocation(account_id, dimension=dimension)
+
+
+@router.get("/governance/{account_id}")
+async def get_cost_governance(
+    account_id: str,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Governance gaps, data coverage and the FinOps health score.
+
+    The health score measures how the estate is MANAGED and is deliberately
+    independent of what it costs — a cheap ungoverned account should not look
+    healthy, and an expensive well-run one should not look sick.
+    """
+    return await svc.get_governance(account_id)
+
+
+@router.get("/reports/{account_id}")
+async def get_cost_report_types(
+    account_id: str,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """The report catalogue, each entry marked available or blocked with why."""
+    return await svc.get_report_types(account_id)
+
+
+@router.get("/reports/executive/{account_id}")
+async def get_executive_report(
+    account_id: str,
+    days: int = Query(default=30, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_EXPORT)),
+):
+    """The one-page executive report.
+
+    Gated on `cost:export` rather than `cost:view`: this is a packaged artefact
+    built to leave the building, which is the distinction that permission
+    exists to draw.
+    """
+    return await svc.get_executive_report(account_id, days=days)
+
+
+@router.get("/metrics")
+async def get_cost_metrics(
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Per-provider billing-API counters for this worker.
+
+    In-process and reset on restart — a diagnostic, not a billing record.
+    Rates return null rather than 0 when their denominator is zero, because
+    "0% errors" out of zero calls is a claim about nothing.
+    """
+    from app.services import cost_metrics
+
+    return cost_metrics.snapshot()
+
+
 @router.get("/coverage/{account_id}")
 async def get_cost_coverage(
     account_id: str,
