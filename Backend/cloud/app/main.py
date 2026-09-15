@@ -43,6 +43,9 @@ from app.models.event_admin import (                  # noqa: F401
 from app.models.cost_fact import (                     # noqa: F401
     CloudCostBackfillJob, CloudCostFact,
 )
+from app.models.cost_recommendation import (            # noqa: F401
+    CloudCostRecommendationDecision,
+)
 from app.models.cost_budget import (                   # noqa: F401
     CloudCostAlertPolicy, CloudCostBudget, CloudCostBudgetNotification,
 )

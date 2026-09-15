@@ -296,6 +296,70 @@ async def delete_policy(
     await db.commit()
 
 
+@router.post("/recommendations/{fingerprint}/state")
+async def set_recommendation_state(
+    fingerprint: str,
+    state: str = Body(..., embed=True),
+    reason: Optional[str] = Body(default=None, embed=True),
+    account_id: Optional[uuid.UUID] = Body(default=None, embed=True),
+    snapshot: Optional[Dict[str, Any]] = Body(default=None, embed=True),
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.COST_MANAGE_RECOMMENDATIONS)),
+):
+    """Record a decision about one recommendation.
+
+    Requires `cost:manage_recommendations` for the same reason suppressing a
+    security finding is administrator-only: dismissing an optimization makes a
+    real, priced saving stop being counted, and the total everyone else reads
+    changes as a result.
+
+    DISMISSED requires a reason. A dismissal with no explanation is
+    indistinguishable from someone clearing a list they did not read, and the
+    next person to look has no way to tell which happened.
+
+    This never modifies a cloud resource. The platform is advisory.
+    """
+    from app.models.cost_recommendation import SETTABLE_STATES, STATE_DISMISSED
+    from app.repository.cost_reco_repo import CostRecommendationRepository
+
+    if state not in SETTABLE_STATES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"state must be one of {', '.join(SETTABLE_STATES)}. "
+                "NEW is the absence of a decision and cannot be set."
+            ),
+        )
+    if state == STATE_DISMISSED and not (reason or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="A reason is required when dismissing a recommendation.",
+        )
+
+    row = await CostRecommendationRepository(db).set_state(
+        fingerprint=fingerprint,
+        account_id=account_id,
+        state=state,
+        reason=reason,
+        actor=principal.name or principal.role,
+        snapshot=snapshot,
+    )
+    return row.to_dict()
+
+
+@router.get("/recommendations/decisions/{account_id}")
+async def list_recommendation_decisions(
+    account_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """The decision history for an account — who decided what, and why."""
+    from app.repository.cost_reco_repo import CostRecommendationRepository
+
+    rows = await CostRecommendationRepository(db).list_for_account(account_id)
+    return {"decisions": [r.to_dict() for r in rows], "count": len(rows)}
+
+
 @router.post("/alert-policies/evaluate")
 async def evaluate_policies(
     dry_run: bool = Query(default=False),

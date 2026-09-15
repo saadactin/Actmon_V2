@@ -1776,6 +1776,22 @@ class CostService:
         ]
         potential_savings = round(sum(known_savings), 2) if known_savings else None
 
+        # ── Structure, score and lifecycle for the findings above ────────────
+        # The rules stay where they are; this adds category, confidence,
+        # actionability, a published priority score and any human decision,
+        # joined back by a fingerprint that survives re-derivation.
+        from app.repository.cost_reco_repo import CostRecommendationRepository
+        from app.services import cost_recommendation_service as reco
+
+        decisions = await CostRecommendationRepository(self.db).decisions_for(
+            [a.id for a in accounts]
+        )
+        optimizations = reco.enrich(
+            optimizations, account_id=account_id, decisions=decisions,
+        )
+        savings_breakdown = reco.savings_summary(optimizations)
+        savings_by_category = reco.by_category(optimizations)
+
         stopped_instances = await build_stopped_instances(resources, accounts)
 
         # Real reasons for any account that failed above — one bad account in an
@@ -1797,6 +1813,10 @@ class CostService:
             "trends": trends,
             "trend_currency": trend_currency,
             "optimizations": optimizations,
+            # Split by how well each saving is known (85) and grouped by
+            # currency (86) — never one combined number.
+            "savings_summary": savings_breakdown,
+            "savings_by_category": savings_by_category,
             "stopped_instances": stopped_instances,
             "total_monthly_cost": total_monthly_cost,
             "total_resources": len(resources),

@@ -54,6 +54,7 @@ import {
 import {
   AnomalyList, BudgetPanel, ChangeAnalysisPanel, ForecastPanel, TopCostDrivers,
 } from '../components/cost/CostPanels';
+import CostRecommendations from '../components/cost/CostRecommendations';
 import { InsufficientHistory, PanelHeading } from '../components/cost/CostPrimitives';
 import { groupByCurrency, isMissing } from '../utils/costFormat';
 
@@ -562,50 +563,11 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
 
       {/* ── Recommendations ────────────────────────────────────────────── */}
       {tab === 'recommendations' && (
-        <CloudSection
-          title="Optimization opportunities"
-          description="Savings are priced from provider list rates; where they cannot be priced they show NA"
-        >
-          {(a?.optimizations || []).length ? (
-            <ul className="space-y-2">
-              {a.optimizations.map((opt) => (
-                <li key={opt.id}>
-                  <button
-                    type="button"
-                    onClick={() => setActiveOpt(opt)}
-                    className="flex w-full items-start gap-3 rounded-card border border-border bg-surface p-3 text-left transition-colors hover:bg-sunken"
-                  >
-                    <Badge
-                      tone={opt.severity === 'CRITICAL' || opt.severity === 'HIGH'
-                        ? 'danger' : opt.severity === 'MEDIUM' ? 'warning' : 'info'}
-                      size="xs"
-                    >
-                      {opt.severity}
-                    </Badge>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-semibold text-fg">{opt.rule}</span>
-                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-muted">
-                        {opt.description}
-                      </span>
-                    </span>
-                    <span className="shrink-0 text-right">
-                      <span className="block text-[13px] font-bold tabular-nums text-fg">
-                        {isMissing(opt.potential_savings)
-                          ? 'NA'
-                          : `${opt.savings_currency || ''} ${opt.potential_savings}`}
-                      </span>
-                      <span className="block text-[10.5px] text-subtle">per month</span>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[12px] text-muted">
-              No optimization opportunities found in the current inventory.
-            </p>
-          )}
-        </CloudSection>
+        <CostRecommendations
+          recommendations={a?.optimizations}
+          savingsSummary={a?.savings_summary}
+          savingsByCategory={a?.savings_by_category}
+        />
       )}
 
       {/* ── Budgets ────────────────────────────────────────────────────── */}

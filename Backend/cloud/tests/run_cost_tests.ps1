@@ -47,7 +47,13 @@ $suites = @(
     # re-announces 75% forever or -- far worse -- stays silent exactly when
     # spend crosses 100%. Both cases are pinned. Alerts are raised through the
     # EXISTING cloud_alerts table and notification bridge, never a second one.
-    @{ Name = "budgets + alert policies: dedupe, escalation, RBAC"; Args = @("tests\verify_cost_budgets.py") }
+    @{ Name = "budgets + alert policies: dedupe, escalation, RBAC"; Args = @("tests\verify_cost_budgets.py") },
+    # The recommendations engine. Two things carry the weight: savings in
+    # different currencies are never summed and an unpriceable opportunity is
+    # counted but never valued; and the fingerprint survives re-derivation, so
+    # a user's dismissal keeps applying after the next discovery scan instead
+    # of the same finding nagging forever.
+    @{ Name = "recommendations: priority, savings honesty, lifecycle"; Args = @("tests\verify_cost_recommendations.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'
