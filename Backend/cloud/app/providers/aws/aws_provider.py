@@ -98,17 +98,23 @@ class AWSProvider(BaseCloudProvider):
             logger.warning("AWS Cost Explorer query failed: %s", exc)
             raise
 
-    async def get_cost_report(self, days: int = 30) -> List[Dict[str, Any]]:
+    async def get_cost_report(self, days: int = 30, start_date=None, end_date=None) -> List[Dict[str, Any]]:
         """Real day-by-day, per-service spend from AWS Cost Explorer, for an
-        arbitrary lookback window (up to CE's ~14-month retention)."""
+        arbitrary lookback window (up to CE's ~14-month retention).
+
+        `start_date`/`end_date` request an explicit historical range instead of
+        a lookback from today. Backfill needs that: driving history in windows
+        using only `days` would mean each successive call re-fetched everything
+        the previous one already had.
+        """
         import asyncio
         from datetime import date, timedelta
 
         def _fetch():
             ce = self.auth.get_client("ce", region="us-east-1", slow_api=True)
             today = date.today()
-            start = (today - timedelta(days=days)).isoformat()
-            end = today.isoformat()
+            start = (start_date or (today - timedelta(days=days))).isoformat()
+            end = (end_date or today).isoformat()
             rows: List[Dict[str, Any]] = []
             next_token = None
             while True:

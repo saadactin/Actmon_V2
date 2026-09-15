@@ -1039,6 +1039,118 @@ class CostService:
             },
         }
 
+    # ── Persisted history (cloud_cost_facts) ─────────────────────────────────
+
+    async def get_history(
+        self, account_id: uuid.UUID | str, *, days: int = 90,
+        group_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Stored billing history for this scope.
+
+        Always reports `coverage` alongside the series, because a 90-day chart
+        drawn from 6 days of stored facts is not a 90-day chart, and the caller
+        has no way to tell from the series alone.
+        """
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo = CostFactRepository(self.db)
+
+        end = _date.today()
+        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+
+        series = await repo.daily_series(ids, start, end)
+        payload: Dict[str, Any] = {
+            "account_id": str(account_id),
+            "period": {"start": start.isoformat(), "end": end.isoformat(),
+                       "days": days, "timezone": "UTC"},
+            "series": series,
+            "coverage": await repo.coverage(ids),
+            "monthly": await repo.monthly_totals(ids),
+            "source": "cloud_cost_facts",
+        }
+        if group_by:
+            try:
+                payload["grouped"] = await repo.totals_by(ids, start, end, group_by)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            payload["group_by"] = group_by
+        return payload
+
+    async def get_coverage(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """What history exists, and what that does and does not support."""
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        accounts = await self._accounts_in_scope(account_id)
+        repo = CostFactRepository(self.db)
+        coverage = await repo.coverage([a.id for a in accounts])
+
+        days = coverage["days_covered"]
+        # Thresholds are stated rather than hidden so a caller can see WHY a
+        # feature is withheld. Forecasting a month from under two weeks of
+        # history, or calling a day anomalous against three samples, produces
+        # confident nonsense.
+        coverage["supports"] = {
+            "daily_trend": days >= 2,
+            "run_rate_forecast": days >= 14,
+            "anomaly_baseline": days >= 30,
+            "month_over_month": days >= 60,
+        }
+        coverage["account_id"] = str(account_id)
+        coverage["accounts_in_scope"] = len(accounts)
+        return coverage
+
+    async def start_backfill(self, account_id: uuid.UUID, days: int) -> Dict[str, Any]:
+        """Kick off a historical backfill and return its job immediately.
+
+        The work runs detached: a 365-day walk across a throttled provider
+        outlives any sane HTTP timeout, and holding the request open would just
+        make the browser give up while the work continued anyway.
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.services import cost_ingestion
+
+        accounts = await self._accounts_in_scope(account_id)
+        account = accounts[0]
+        job = await CostFactRepository(self.db).create_job(account.id, days)
+
+        async def _run():
+            # Its own session: the request's session closes when the response
+            # is returned, and reusing it from a detached task would fail.
+            async with AsyncSessionLocal() as db:
+                try:
+                    await cost_ingestion.run_backfill(db, account, days, job_id=job.id)
+                except Exception as exc:
+                    logger.exception("Backfill crashed for %s", account.account_name)
+                    err = cost_errors.classify(exc, provider=account.provider)
+                    await CostFactRepository(db).update_job(
+                        job.id, status="FAILED",
+                        finished_at=datetime.now(timezone.utc),
+                        error_category=err.category, error_message=err.message[:2000],
+                    )
+
+        task = asyncio.create_task(_run())
+        _warm_tasks.add(task)
+        task.add_done_callback(_warm_tasks.discard)
+
+        return {**job.to_dict(), "started": True}
+
+    async def get_backfill_status(self, account_id: uuid.UUID) -> Dict[str, Any]:
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        accounts = await self._accounts_in_scope(account_id)
+        repo = CostFactRepository(self.db)
+        job = await repo.latest_job(accounts[0].id)
+        return {
+            "account_id": str(account_id),
+            "job": job.to_dict() if job else None,
+            "coverage": await repo.coverage([a.id for a in accounts]),
+        }
+
     async def get_cost_summary(self, account_id: uuid.UUID) -> Dict[str, Any]:
         from app.repository.cloud_account_repo import CloudAccountRepository
 

@@ -29,7 +29,14 @@ $suites = @(
     # HTTP surface: the capability and quality endpoints, freshness per
     # dataset, and the RBAC now declared on every cost route. Creates and
     # removes its own accounts; asserts the count is restored.
-    @{ Name = "HTTP API + capabilities + freshness + RBAC"; Args = @("tests\verify_cost_api.py") }
+    @{ Name = "HTTP API + capabilities + freshness + RBAC"; Args = @("tests\verify_cost_api.py") },
+    # Persistence. The load-bearing assertion is that re-ingesting a window
+    # CORRECTS history rather than doubling it -- forecasts, anomaly baselines
+    # and budget burn are all only as good as that. Also pins why the
+    # idempotency key is a hash (NULL != NULL in SQL, so a composite UNIQUE
+    # over nullable dimensions does not dedupe) and that `final` is never
+    # asserted, since no provider here reports finality.
+    @{ Name = "persistence: idempotent ingestion, finality, coverage"; Args = @("tests\verify_cost_ingestion.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

@@ -40,6 +40,9 @@ from app.models.event_admin import (                  # noqa: F401
     CloudEventSettings,
     CloudEventSyncState,
 )
+from app.models.cost_fact import (                     # noqa: F401
+    CloudCostBackfillJob, CloudCostFact,
+)
 
 
 @asynccontextmanager

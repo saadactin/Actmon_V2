@@ -328,9 +328,16 @@ class OCIProvider(BaseCloudProvider):
             logger.warning("OCI per-resource cost query failed: %s", exc)
             raise
 
-    async def get_cost_report(self, days: int = 30) -> List[Dict[str, Any]]:
+    async def get_cost_report(self, days: int = 30, start_date=None, end_date=None) -> List[Dict[str, Any]]:
         """Real day-by-day, per-service spend from the OCI Usage API, for an
-        arbitrary lookback window."""
+        arbitrary lookback window.
+
+        `start_date`/`end_date` request an explicit historical range instead of
+        a lookback from today, so a backfill can walk history in windows
+        without each call re-fetching what the previous one already had. The
+        93-day DAILY cap still applies and is still handled by
+        _summarize_usages_windowed's own splitting.
+        """
         import asyncio
         from datetime import date, timedelta
 
@@ -339,8 +346,10 @@ class OCIProvider(BaseCloudProvider):
 
             usage_client = oci.usage_api.UsageapiClient(self.auth.get_config())
             today = date.today()
+            window_end = end_date or today
+            window_start = start_date or (today - timedelta(days=days))
             usage_items = self._summarize_usages_windowed(
-                usage_client, self.auth.tenancy_ocid, today - timedelta(days=days), today,
+                usage_client, self.auth.tenancy_ocid, window_start, window_end,
                 granularity="DAILY", query_type="COST",
                 group_by=["service", "region"],
             )

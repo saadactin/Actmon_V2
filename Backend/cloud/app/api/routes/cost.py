@@ -60,6 +60,70 @@ async def get_cost_quality(
     return await svc.get_quality(account_id)
 
 
+@router.get("/history/{account_id}")
+async def get_cost_history(
+    account_id: str,
+    days: int = Query(default=90, ge=1, le=365),
+    group_by: Optional[str] = Query(
+        default=None,
+        description="service | region | provider | resource_type | cost_component | compartment",
+    ),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Persisted billing history from `cloud_cost_facts`.
+
+    Distinct from /report, which queries the provider live. This answers from
+    stored facts, so it can reach past what the provider will return in one
+    call and is fast enough to drive trends. Totals are grouped per currency
+    and never summed across them.
+    """
+    return await svc.get_history(account_id, days=days, group_by=group_by)
+
+
+@router.get("/coverage/{account_id}")
+async def get_cost_coverage(
+    account_id: str,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """How much billing history actually exists for this scope.
+
+    The gate for everything downstream: forecasting on four days of data
+    produces a confident straight line that means nothing, so callers check
+    coverage first and say "insufficient history" rather than guessing.
+    """
+    return await svc.get_coverage(account_id)
+
+
+@router.post("/backfill/{account_id}")
+async def start_cost_backfill(
+    account_id: uuid.UUID,
+    days: int = Query(default=90, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_ADMIN)),
+):
+    """Walk this account's billing history and persist it.
+
+    Administrator-only: a 365-day backfill issues a long series of billing
+    queries against a rate-limited API, so it is not something any viewer
+    should be able to trigger repeatedly.
+
+    Returns immediately with a job id; poll /backfill/status for progress.
+    """
+    return await svc.start_backfill(account_id, days)
+
+
+@router.get("/backfill/status/{account_id}")
+async def get_cost_backfill_status(
+    account_id: uuid.UUID,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Progress of the most recent backfill for this account."""
+    return await svc.get_backfill_status(account_id)
+
+
 @router.get("/{account_id}", response_model=CostSummaryResponse)
 async def get_cost_summary(
     account_id: uuid.UUID,
