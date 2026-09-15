@@ -41,7 +41,13 @@ $suites = @(
     # producing confident nonsense: every calculation stays inside one
     # currency, too little history returns NA rather than a number, and
     # change analysis reports association and never claims cause. Pure logic.
-    @{ Name = "analytics: forecast, anomalies, change, MoM, calendar (no DB)"; Args = @("tests\verify_cost_analytics.py") }
+    @{ Name = "analytics: forecast, anomalies, change, MoM, calendar (no DB)"; Args = @("tests\verify_cost_analytics.py") },
+    # Budgets and cost alert policies. The load-bearing half is dedupe: a
+    # budget is re-evaluated every cycle, so getting it wrong either
+    # re-announces 75% forever or -- far worse -- stays silent exactly when
+    # spend crosses 100%. Both cases are pinned. Alerts are raised through the
+    # EXISTING cloud_alerts table and notification bridge, never a second one.
+    @{ Name = "budgets + alert policies: dedupe, escalation, RBAC"; Args = @("tests\verify_cost_budgets.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

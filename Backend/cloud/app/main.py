@@ -43,6 +43,9 @@ from app.models.event_admin import (                  # noqa: F401
 from app.models.cost_fact import (                     # noqa: F401
     CloudCostBackfillJob, CloudCostFact,
 )
+from app.models.cost_budget import (                   # noqa: F401
+    CloudCostAlertPolicy, CloudCostBudget, CloudCostBudgetNotification,
+)
 
 
 @asynccontextmanager
@@ -261,6 +264,7 @@ from app.api.routes.cloud_accounts import router as accounts_router
 from app.api.routes.discovery import router as discovery_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.cost import router as cost_router
+from app.api.routes.cost_budgets import router as cost_budgets_router
 from app.api.routes.security import router as security_router
 from app.api.routes.cost_estimate import router as cost_estimate_router
 from app.api.routes.topology import router as topology_router
@@ -274,7 +278,15 @@ from app.api.routes.events import router as events_router
 from app.api.routes.security_center import router as security_center_router
 
 # Standard API routes under /api/v1/
-for router in [accounts_router, discovery_router, resources_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router, events_router, security_center_router]:
+#
+# ORDER MATTERS for the two cost routers. cost_router owns
+# `/cloud/cost/{account_id}`, a single-segment parameterized path that matches
+# ANY one segment — including the literal "budgets". Registered first, it
+# swallows /cloud/cost/budgets and tries to parse "budgets" as a UUID, so the
+# whole budgets surface 422s. cost_budgets_router therefore goes first, and its
+# literal paths win. (Routes like /cloud/cost/capabilities/{id} are unaffected:
+# two segments never collide with a one-segment route.)
+for router in [accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router, events_router, security_center_router]:
     app.include_router(router, prefix="/api/v1")
 
 
