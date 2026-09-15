@@ -11,7 +11,9 @@ from app.services.alerting_service import AlertingService
 from app.services.cloud_account_service import CloudAccountService
 from app.services.discovery_service import DiscoveryService
 from app.services.drift_service import DriftService
+from app.services.event_service import EventService
 from app.services.resource_service import ResourceService
+from app.services.topology_service import TopologyService
 from app.services.cost_service import CostService
 
 
@@ -37,3 +39,11 @@ async def get_alerting_service(db: AsyncSession = Depends(get_db)) -> AlertingSe
 
 async def get_drift_service(db: AsyncSession = Depends(get_db)) -> DriftService:
     return DriftService(db)
+
+
+async def get_event_service(db: AsyncSession = Depends(get_db)) -> EventService:
+    return EventService(db)
+
+
+async def get_topology_service(db: AsyncSession = Depends(get_db)) -> TopologyService:
+    return TopologyService(db)
