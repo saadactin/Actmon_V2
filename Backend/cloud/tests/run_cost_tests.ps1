@@ -36,7 +36,12 @@ $suites = @(
     # idempotency key is a hash (NULL != NULL in SQL, so a composite UNIQUE
     # over nullable dimensions does not dedupe) and that `final` is never
     # asserted, since no provider here reports finality.
-    @{ Name = "persistence: idempotent ingestion, finality, coverage"; Args = @("tests\verify_cost_ingestion.py") }
+    @{ Name = "persistence: idempotent ingestion, finality, coverage"; Args = @("tests\verify_cost_ingestion.py") },
+    # Analytics over stored history. Pins the three rules that stop these
+    # producing confident nonsense: every calculation stays inside one
+    # currency, too little history returns NA rather than a number, and
+    # change analysis reports association and never claims cause. Pure logic.
+    @{ Name = "analytics: forecast, anomalies, change, MoM, calendar (no DB)"; Args = @("tests\verify_cost_analytics.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

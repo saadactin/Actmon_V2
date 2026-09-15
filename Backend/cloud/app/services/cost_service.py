@@ -1151,6 +1151,114 @@ class CostService:
             "coverage": await repo.coverage([a.id for a in accounts]),
         }
 
+    # ── Analytics over stored history ────────────────────────────────────────
+
+    async def _history_series(self, account_ids, days: int):
+        """The daily series backing every analytic below."""
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        end = _date.today()
+        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+        repo = CostFactRepository(self.db)
+        return repo, start, end, await repo.daily_series(account_ids, start, end)
+
+    async def get_forecast(
+        self, account_id: uuid.UUID | str, *, days: int = 90,
+    ) -> Dict[str, Any]:
+        """Run-rate projection per currency, with its confidence and basis.
+
+        Never a model, and labelled as such everywhere it surfaces. Returns NA
+        with a reason when there is too little history rather than projecting a
+        straight line through noise.
+        """
+        from app.services import cost_analytics
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo, start, end, series = await self._history_series(ids, days)
+        result = cost_analytics.forecast(series)
+        result["account_id"] = str(account_id)
+        result["coverage"] = await repo.coverage(ids)
+        result["source"] = "cloud_cost_facts"
+        return result
+
+    async def get_anomalies(
+        self, account_id: uuid.UUID | str, *, days: int = 90,
+        percent_threshold: float = None, min_absolute: float = None,
+    ) -> Dict[str, Any]:
+        """Days whose spend departs from their own trailing baseline."""
+        from app.services import cost_analytics
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo, start, end, series = await self._history_series(ids, days)
+
+        kwargs = {}
+        if percent_threshold is not None:
+            kwargs["percent_threshold"] = percent_threshold
+        if min_absolute is not None:
+            kwargs["min_absolute"] = min_absolute
+
+        result = cost_analytics.detect_anomalies(series, **kwargs)
+        result["account_id"] = str(account_id)
+        result["coverage"] = await repo.coverage(ids)
+        result["source"] = "cloud_cost_facts"
+        return result
+
+    async def get_trends(
+        self, account_id: uuid.UUID | str, *, days: int = 30,
+        dimension: str = "service",
+    ) -> Dict[str, Any]:
+        """Change analysis, month-over-month and the spend calendar.
+
+        The comparison period is the SAME LENGTH immediately before the current
+        one — comparing 30 days against a 14-day remainder would manufacture a
+        decline that never happened.
+        """
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.services import cost_analytics
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo = CostFactRepository(self.db)
+
+        days = max(1, min(days, MAX_REPORT_DAYS))
+        end = _date.today()
+        start = end - _timedelta(days=days)
+        prior_start = start - _timedelta(days=days)
+
+        current = await repo.totals_by(ids, start, end, dimension, limit=500)
+        previous = await repo.totals_by(ids, prior_start, start, dimension, limit=500)
+        series = await repo.daily_series(ids, start, end)
+
+        forecast_result = cost_analytics.forecast(
+            await repo.daily_series(ids, end - _timedelta(days=90), end)
+        )
+        anomalies = cost_analytics.detect_anomalies(
+            await repo.daily_series(ids, end - _timedelta(days=90), end)
+        )
+
+        return {
+            "account_id": str(account_id),
+            "period": {"start": start.isoformat(), "end": end.isoformat(),
+                       "days": days, "timezone": "UTC"},
+            "comparison_period": {"start": prior_start.isoformat(),
+                                  "end": start.isoformat(), "days": days},
+            "change": cost_analytics.change_analysis(
+                current, previous, dimension=dimension
+            ),
+            "month_over_month": cost_analytics.month_over_month(
+                await repo.monthly_totals(ids), forecast_result=forecast_result
+            ),
+            "calendar": cost_analytics.spend_calendar(series, anomalies=anomalies),
+            "coverage": await repo.coverage(ids),
+            "source": "cloud_cost_facts",
+        }
+
     async def get_cost_summary(self, account_id: uuid.UUID) -> Dict[str, Any]:
         from app.repository.cloud_account_repo import CloudAccountRepository
 

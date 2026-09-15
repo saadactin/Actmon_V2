@@ -81,6 +81,61 @@ async def get_cost_history(
     return await svc.get_history(account_id, days=days, group_by=group_by)
 
 
+@router.get("/forecast/{account_id}")
+async def get_cost_forecast(
+    account_id: str,
+    days: int = Query(default=90, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Run-rate projection per currency.
+
+    This is arithmetic, not a model: mean observed daily spend multiplied by
+    days ahead, labelled `run_rate_projection` in the payload. Returns NA with
+    a reason when history is too short, rather than projecting a confident
+    straight line through a handful of days.
+    """
+    return await svc.get_forecast(account_id, days=days)
+
+
+@router.get("/anomalies/{account_id}")
+async def get_cost_anomalies(
+    account_id: str,
+    days: int = Query(default=90, ge=1, le=365),
+    percent_threshold: Optional[float] = Query(default=None, ge=0),
+    min_absolute: Optional[float] = Query(default=None, ge=0),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Days whose spend departs from their own trailing baseline.
+
+    A day must clear BOTH a percentage and an absolute bar, because either
+    alone is noise: percentage alone fires on 1 -> 2, absolute alone fires on
+    ordinary variance in a large account.
+    """
+    return await svc.get_anomalies(
+        account_id, days=days,
+        percent_threshold=percent_threshold, min_absolute=min_absolute,
+    )
+
+
+@router.get("/trends/{account_id}")
+async def get_cost_trends(
+    account_id: str,
+    days: int = Query(default=30, ge=1, le=365),
+    dimension: str = Query(default="service"),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Change analysis (the waterfall), month-over-month, and the spend calendar.
+
+    The `change` block reports which dimensions moved and by how much. It is
+    explicitly labelled as associated change, not cause — billing data can show
+    that figures moved together, never that one produced the other.
+    """
+    return await svc.get_trends(account_id, days=days, dimension=dimension)
+
+
 @router.get("/coverage/{account_id}")
 async def get_cost_coverage(
     account_id: str,
