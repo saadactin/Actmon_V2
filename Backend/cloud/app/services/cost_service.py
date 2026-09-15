@@ -11,13 +11,16 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.pricing import oci_pricing
+from app.providers import capabilities as provider_caps
 from app.repository.resource_repo import ResourceRepository
+from app.services import cost_errors, cost_money
 
 logger = logging.getLogger("cloud_svc.cost")
 
@@ -115,13 +118,42 @@ _cost_report_cache: Dict[Tuple[str, int], Tuple[float, List[Dict[str, Any]], boo
 MAX_REPORT_DAYS = 365
 
 
+# Cache entries are (stored_at, rows, errored[, last_good_at]). The fourth
+# element is read by index rather than unpacked, so an older 3-tuple written
+# before this field existed still works.
 def _cache_get(cache: dict, key) -> Any:
     cached = cache.get(key)
     if not cached:
         return None
-    stored_at, rows, errored = cached
+    stored_at, rows, errored = cached[0], cached[1], cached[2]
     ttl = _FAILURE_TTL_SECONDS if errored else _REAL_COST_TTL_SECONDS
     return rows if time.time() - stored_at < ttl else None
+
+
+def _cache_meta(cache: dict, key) -> Dict[str, Any]:
+    """When this cache slot was written, whether it is currently serving a
+    stale value after a failure, and when it last held a genuinely good one.
+
+    This is what lets the UI say "Rs.4.52M, last refreshed 8 minutes ago,
+    provider currently rate limited" instead of presenting a stale number as
+    though it were live — the distinction the freshness panel is built on.
+    """
+    cached = cache.get(key)
+    if not cached:
+        return {"cached": False, "retrieved_at": None, "age_seconds": None,
+                "stale": False, "last_good_at": None}
+    stored_at, errored = cached[0], cached[2]
+    last_good = cached[3] if len(cached) > 3 else (None if errored else stored_at)
+    now = time.time()
+    return {
+        "cached": True,
+        "retrieved_at": stored_at,
+        "age_seconds": int(now - stored_at),
+        # Stale = the last attempt failed and we are serving an older value.
+        "stale": bool(errored),
+        "last_good_at": last_good,
+        "last_good_age_seconds": (int(now - last_good) if last_good else None),
+    }
 
 
 # A dropped TLS handshake or reset connection says nothing about the request —
@@ -156,7 +188,7 @@ def _is_transient(exc: Exception) -> bool:
     return any(m in low for m in _TRANSIENT_MARKERS)
 
 
-async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=None):
+async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None):
     """Cache-with-stale-while-error around one slow billing-API call.
 
     Providers raise on failure (they used to swallow it and return empty, which
@@ -182,9 +214,10 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=N
     for attempt in range(_TRANSIENT_ATTEMPTS):
         try:
             value = await fetch()
-            cache[key] = (time.time(), value, False)
-            if account_id is not None:
-                _cost_error_reason.pop(str(account_id), None)
+            now = time.time()
+            cache[key] = (now, value, False, now)
+            if account is not None:
+                _cost_error_reason.pop(str(account.id), None)
             return value
         except Exception as err:
             exc = err
@@ -199,15 +232,18 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account_id=N
 
     if exc is not None:
         logger.warning("%s failed for %s: %s", label, key, exc)
-        if account_id is not None:
-            category, message = _categorize_error(exc)
-            _cost_error_reason[str(account_id)] = {"category": category, "message": message}
+        if account is not None:
+            _record_error(account, exc)
         stale = entry[1] if entry else None
+        # Preserve when the data was last genuinely good across the failure, so
+        # a stale value can be labelled with its real age rather than the age of
+        # the failed attempt that re-stamped it.
+        prior_good = (entry[3] if entry and len(entry) > 3 else None)
         if stale:
             # Serve the previous real numbers rather than a misleading NA.
-            cache[key] = (time.time(), stale, True)
+            cache[key] = (time.time(), stale, True, prior_good or entry[0])
             return stale
-        cache[key] = (time.time(), empty, True)
+        cache[key] = (time.time(), empty, True, prior_good)
         return empty
 
     # Unreachable: the loop either returns a value or records an exception.
@@ -344,36 +380,154 @@ def _require_provider(account):
 _cost_error_reason: Dict[str, Dict[str, str]] = {}
 
 
-def _categorize_error(exc: Exception) -> Tuple[str, str]:
-    if isinstance(exc, ProviderUnavailableError):
-        return "credentials", str(exc)
-    msg = str(exc)
-    low = msg.lower()
-    if any(k in msg for k in (
-        "AuthorizationFailed", "AccessDenied", "Forbidden", "NotAuthorizedOrNotFound",
-        "UnauthorizedOperation", "AuthorizationError",
-    )) or " 403" in msg or msg.startswith("403"):
-        return "permission", (
-            "The account's credentials don't have permission to read billing data "
-            f"from the provider's API. Raw error: {msg[:400]}"
-        )
-    if any(k in low for k in (
-        "expired", "invalidclienttokenid", "signaturedoesnotmatch",
-        "invalid_client", "invalid_grant", "unauthorized_client",
-    )):
-        return "credentials", f"The account's credentials appear to be invalid or expired. Raw error: {msg[:400]}"
-    if any(k in low for k in (
-        "timeout", "timed out", "connection", "network", "resolve host",
-        "unreachable", "connectionerror", "max retries exceeded",
-    )):
-        return "network", f"A network error occurred while contacting the provider's billing API. Raw error: {msg[:400]}"
-    return "unknown", f"An unexpected error occurred while fetching billing data. Raw error: {msg[:400]}"
+def _categorize_error(exc: Exception, provider: Optional[str] = None) -> Tuple[str, str]:
+    """(category, message) for a failed billing call.
+
+    The classification itself now lives in app.services.cost_errors, which
+    recognizes four categories this function never could — rate_limited most
+    importantly. An Azure HTTP 429 fell through every branch of the old
+    implementation and landed in its final `return "unknown"`, so a throttled
+    subscription reported "an unexpected error occurred" when the true answer
+    was "wait 32 seconds". Kept as a thin wrapper because the tuple shape is
+    what the diagnostics payload is built from.
+    """
+    return cost_errors.categorize(exc, provider=provider)
 
 
-def get_cost_diagnostic(account_id) -> Optional[Dict[str, str]]:
+def _record_error(account, exc: Exception) -> None:
+    """Remember why this account's billing call failed, in full.
+
+    Stores the classified error rather than just (category, message) so the
+    diagnostics popup can show the things that make a diagnostic actionable:
+    how long to wait for a 429, the exact IAM permission to grant for a 403,
+    the HTTP status, and whether waiting will help at all.
+    """
+    err = cost_errors.classify(exc, provider=getattr(account, "provider", None))
+    payload = err.to_dict()
+    payload["required_permission"] = (
+        cost_errors.required_permission(getattr(account, "provider", None))
+        if err.category == cost_errors.PERMISSION else None
+    )
+    payload["explanation"] = cost_errors.describe(err.category)
+    payload["occurred_at"] = time.time()
+    _cost_error_reason[str(account.id)] = payload
+
+
+def get_cost_diagnostic(account_id) -> Optional[Dict[str, Any]]:
     """The last known reason this account's cost data isn't available, or None
     if the last attempt succeeded (or none has been made yet)."""
     return _cost_error_reason.get(str(account_id))
+
+
+def _iso(epoch: Optional[float]) -> Optional[str]:
+    """Epoch seconds as a UTC ISO-8601 string, or None. Never 'now' as a
+    fallback — an unknown timestamp must stay unknown."""
+    if not epoch:
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def get_cost_freshness(account) -> Dict[str, Any]:
+    """Per-dataset ages for one account.
+
+    Billing, per-resource cost and inventory are refreshed on independent
+    schedules and are NOT synchronized — reporting one timestamp for all three
+    would be a convenient lie. Each dataset reports its own age, and whether
+    it is currently serving a stale value after a failed refresh.
+    """
+    aid = str(account.id)
+    billing = _cache_meta(_real_cost_cache, aid)
+    daily = _cache_meta(_daily_cost_cache, aid)
+    by_resource = _cache_meta(
+        _real_cost_by_resource_cache, (aid, RESOURCE_DECORATION_DAYS)
+    )
+    return {
+        "billing": {**billing, "retrieved_at": _iso(billing["retrieved_at"]),
+                    "last_good_at": _iso(billing["last_good_at"])},
+        "daily_trend": {**daily, "retrieved_at": _iso(daily["retrieved_at"]),
+                        "last_good_at": _iso(daily["last_good_at"])},
+        "resource_cost": {**by_resource,
+                          "retrieved_at": _iso(by_resource["retrieved_at"]),
+                          "last_good_at": _iso(by_resource["last_good_at"])},
+        "inventory": {
+            "retrieved_at": (account.last_discovery.isoformat()
+                             if getattr(account, "last_discovery", None) else None),
+        },
+    }
+
+
+def get_cost_capabilities(accounts) -> Dict[str, Any]:
+    """What the providers in scope can and cannot answer about cost.
+
+    Returns both the per-provider detail and the intersection, because a
+    multi-provider view may only offer a dimension every provider in it can
+    supply — otherwise a filter silently drops one cloud's spend and the total
+    quietly shrinks.
+    """
+    providers = []
+    for a in accounts:
+        cap = provider_caps.for_provider(a.provider)
+        name = cap.provider if cap else str(a.provider)
+        if name not in providers:
+            providers.append(name)
+
+    per_provider = {}
+    for a in accounts:
+        cap = provider_caps.for_provider(a.provider)
+        if cap is not None:
+            per_provider[cap.provider] = cap.to_dict()
+
+    effective = provider_caps.intersect([a.provider for a in accounts])
+    return {
+        "providers": providers,
+        "per_provider": per_provider,
+        # What the CURRENT scope may offer. A dimension False here must be
+        # rendered disabled with a reason, never as a zero.
+        "effective": effective,
+        "blocked_by": {
+            dim: provider_caps.unsupported_in_scope([a.provider for a in accounts], dim)
+            for dim, available in effective.items() if not available
+        },
+    }
+
+
+def assess_cost_quality(accounts) -> Dict[str, Any]:
+    """The page-level data-quality badge, derived from what actually happened.
+
+    Deliberately conservative: any account whose billing call failed drags the
+    whole scope below GOOD, because a total assembled from some accounts is not
+    a total. A capability limit (AWS resource cost) is LIMITED, not a failure —
+    nothing is broken, the question just cannot be answered here.
+    """
+    errors, terminal = [], False
+    for a in accounts:
+        reason = get_cost_diagnostic(a.id)
+        if reason:
+            errors.append({"account_id": str(a.id), "account_name": a.account_name,
+                           "provider": a.provider, **reason})
+            terminal = terminal or bool(reason.get("terminal"))
+
+    effective = provider_caps.intersect([a.provider for a in accounts])
+    limited_dimensions = [d for d, available in effective.items() if not available]
+
+    if errors and len(errors) == len(accounts):
+        quality, status = "unavailable", "failed"
+    elif errors:
+        quality, status = "partial", "partial"
+    elif limited_dimensions:
+        quality, status = "limited", "complete"
+    else:
+        quality, status = "good", "complete"
+
+    return {
+        "quality": quality,
+        "status": status,
+        "accounts_in_scope": len(accounts),
+        "accounts_failing": len(errors),
+        "errors": errors,
+        "needs_human_action": terminal,
+        "limited_dimensions": limited_dimensions,
+    }
 
 
 async def fetch_real_costs(account) -> List[Dict[str, Any]]:
@@ -390,7 +544,7 @@ async def fetch_real_costs(account) -> List[Dict[str, Any]]:
 
     return await _cached_fetch(
         _real_cost_cache, str(account.id), "Billing API query", _fetch, [],
-        account_id=account.id,
+        account=account,
     )
 
 
@@ -405,7 +559,7 @@ async def fetch_daily_costs(account) -> List[Dict[str, Any]]:
 
     return await _cached_fetch(
         _daily_cost_cache, str(account.id), "Daily cost query", _fetch, [],
-        account_id=account.id,
+        account=account,
     )
 
 
@@ -423,27 +577,55 @@ async def fetch_cost_report(account, days: int) -> List[Dict[str, Any]]:
 
     return await _cached_fetch(
         _cost_report_cache, (str(account.id), days), "Cost report query", _fetch, [],
-        account_id=account.id,
+        account=account,
     )
 
 
 async def fetch_real_costs_by_resource(account, days: int = 30) -> Dict[str, Dict[str, Any]]:
     """Real spend over `days` keyed by provider resource ID, when the provider
     supports resource-level cost grouping (OCI + Azure). Returns {} when
-    unsupported or the query fails — callers show NA, never a guess."""
+    unsupported or the query fails — callers show NA, never a guess.
+
+    An empty result is ambiguous on its own, and the two meanings need
+    different words in the UI: AWS will NEVER answer this (Cost Explorer has
+    no per-resource dimension; that needs a CUR pipeline), whereas an empty
+    OCI result means the query failed or the account really has no billed
+    resources. So the unsupported case is recorded as such rather than left to
+    look like a failure — `get_cost_diagnostic` then reports category
+    'unsupported', which is terminal and must not show a "retrying" spinner.
+    """
     days = max(1, min(days, MAX_REPORT_DAYS))
+
+    caps = provider_caps.for_provider(account.provider)
+    if caps is not None and not caps.resource:
+        # Short-circuit before spending a provider round trip on a question
+        # this integration cannot answer. Deliberately NOT recorded in
+        # _cost_error_reason: that map is per-ACCOUNT, and an unsupported
+        # dimension is not a broken account — writing it there would make the
+        # diagnostics popup claim AWS billing is failing when its service-level
+        # cost is working perfectly. The "why" is carried by the capability
+        # registry instead, which is per-dimension and always available.
+        logger.debug(
+            "Skipping per-resource cost for %s: %s", account.provider,
+            caps.reason("resource"),
+        )
+        return {}
 
     async def _fetch():
         provider = _require_provider(account)
         if not hasattr(provider, "get_cost_by_resource"):
-            return {}
+            raise cost_errors.NotSupportedError(
+                f"{account.provider} per-resource billing is not implemented by "
+                "this provider adapter.",
+                provider=account.provider, dimension="resource",
+            )
         return await provider.get_cost_by_resource(days) or {}
 
     # Keyed by (account, days): the 30-day map that decorates the Resources page
     # must not be evicted by a 365-day report query.
     return await _cached_fetch(
         _real_cost_by_resource_cache, (str(account.id), days),
-        "Per-resource billing query", _fetch, {}, account_id=account.id,
+        "Per-resource billing query", _fetch, {}, account=account,
     )
 
 
@@ -801,6 +983,61 @@ async def estimate_costs(account_id: uuid.UUID, db: AsyncSession) -> Dict[str, A
 class CostService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def _accounts_in_scope(self, account_id: uuid.UUID | str) -> List[Any]:
+        """The accounts a request covers — every account for "ALL", else one.
+
+        Shared by the capability and quality endpoints so their idea of "the
+        current scope" cannot drift from what the cost payloads actually
+        aggregated.
+        """
+        from app.repository.cloud_account_repo import CloudAccountRepository
+
+        repo = CloudAccountRepository(self.db)
+        if account_id == "ALL":
+            return await repo.list_all()
+        try:
+            aid = uuid.UUID(str(account_id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid account ID")
+        acc = await repo.get_by_id(aid)
+        if not acc:
+            raise HTTPException(status_code=404, detail="Account not found")
+        return [acc]
+
+    async def get_capabilities(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """What cost questions this scope can answer. Never touches a provider
+        API — capabilities are a property of the integration, not of whether a
+        given request happened to succeed, so this always answers instantly."""
+        accounts = await self._accounts_in_scope(account_id)
+        payload = get_cost_capabilities(accounts)
+        payload["account_id"] = str(account_id)
+        payload["accounts_in_scope"] = len(accounts)
+        return payload
+
+    async def get_quality(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """Data quality and per-dataset freshness for this scope.
+
+        Reads only cached state, so the badge renders without waiting on a
+        billing round trip. A scope whose cost has never been fetched reports
+        quality GOOD with null freshness rather than inventing a problem — the
+        absence of an error is not evidence of one.
+        """
+        accounts = await self._accounts_in_scope(account_id)
+        assessment = assess_cost_quality(accounts)
+        return {
+            "account_id": str(account_id),
+            **assessment,
+            "capabilities": get_cost_capabilities(accounts),
+            "freshness": {
+                str(a.id): {
+                    "account_name": a.account_name,
+                    "provider": a.provider,
+                    **get_cost_freshness(a),
+                }
+                for a in accounts
+            },
+        }
 
     async def get_cost_summary(self, account_id: uuid.UUID) -> Dict[str, Any]:
         from app.repository.cloud_account_repo import CloudAccountRepository
@@ -1358,6 +1595,33 @@ class CostService:
             # background. Lets the UI say "still refreshing" instead of
             # presenting a stale/NA figure as final.
             "partial": partial,
+
+            # ── Contract fields ──────────────────────────────────────────────
+            # Added so a caller can tell a complete answer from a partial one,
+            # a real zero from an unavailable value, and live data from a stale
+            # fallback, WITHOUT inspecting the numbers and guessing.
+            #
+            # `totals_by_currency` is the honest multi-cloud total: when an ALL
+            # view spans USD and INR there is no single number, and the old
+            # `total_monthly_cost`/`currency` pair could only answer NA. The
+            # per-currency breakdown keeps the real figures visible instead.
+            "totals_by_currency": cost_money.total(
+                (r.get("monthly_cost"), r.get("currency")) for r in by_service
+            ).to_dict(),
+            "capabilities": get_cost_capabilities(accounts),
+            "quality": assess_cost_quality(accounts),
+            "freshness": {
+                str(a.id): {"account_name": a.account_name, "provider": a.provider,
+                            **get_cost_freshness(a)}
+                for a in accounts
+            },
+            # A window is only as authoritative as its worst account: the
+            # deadline firing means some of this is cached, so it is PARTIAL,
+            # never COMPLETE.
+            "data_status": (
+                "partial" if partial or cost_diagnostics
+                else ("complete" if real_found else "no_data")
+            ),
         }
 
     async def get_cost_report(
