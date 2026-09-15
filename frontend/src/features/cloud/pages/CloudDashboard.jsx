@@ -20,7 +20,7 @@ import CloudSection from '../components/CloudSection';
 import Tabs from '@/components/ui/Tabs';
 import { PageLoading } from '@/components/ui/Loading';
 import { ResourcesPage } from './ResourcesPage';
-import { CostPage } from './CostPage';
+import CostIntelligencePage from './CostIntelligencePage';
 import SecurityCenterPage from './SecurityCenterPage';
 import { CloudTopologyPage } from './CloudTopologyPage';
 import { ConfigDriftPage } from './ConfigDriftPage';
@@ -418,7 +418,9 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
       ))}
 
       {tab === 'resources' && <ResourcesPage embedded accountId={routeAccountId} />}
-      {tab === 'cost' && <CostPage embedded accountId={routeAccountId} />}
+      {tab === 'cost' && (
+        <CostIntelligencePage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
       {/* Keyed on the account so switching accounts resets the tab, filters and
           any open finding rather than carrying another account's triage across. */}
       {tab === 'security' && (
