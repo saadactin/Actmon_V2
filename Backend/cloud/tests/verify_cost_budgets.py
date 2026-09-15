@@ -75,9 +75,35 @@ async def seed_facts(db, account, amounts_by_day, currency="INR"):
     await db.commit()
 
 
+async def purge_fixtures():
+    """Remove any zz-test-* accounts left by an earlier crashed run.
+
+    Cleanup at the END of a test only runs if the test gets there. Two earlier
+    runs of this suite died mid-way — one on a unique-constraint collision, one
+    on a route conflict — and each left a fake ORACLE account behind in the
+    developer's real account list, where it then failed to authenticate and
+    dragged the whole estate's cost quality down to "partial". Purging on the
+    way IN makes the suite self-healing rather than leaving residue that has to
+    be noticed and cleared by hand.
+    """
+    async with AsyncSessionLocal() as db:
+        stale = (await db.execute(
+            select(CloudAccount).where(CloudAccount.account_name.like("zz-test-%"))
+        )).scalars().all()
+        for acc in stale:
+            await db.delete(acc)
+        if stale:
+            await db.commit()
+        return len(stale)
+
+
 async def main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    purged = await purge_fixtures()
+    if purged:
+        print(f"  (purged {purged} leftover fixture account(s) from an earlier run)")
 
     async with AsyncSessionLocal() as db:
         # Counted EXCLUDING this suite's own alert type. Counting everything
