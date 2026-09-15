@@ -74,6 +74,40 @@ class CloudAlert(Base):
     # Anything rule-specific worth keeping without a schema change.
     context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # ── Link back to what caused it (§47) ────────────────────────────────────
+    # An alert is a notification decision ABOUT a finding; the finding is the
+    # statement of what is wrong. Keeping the link is what lets the UI go
+    # Alert → Finding → Evidence → Topology → Remediation, and what stops the
+    # two from drifting into separate stories about the same resource.
+    #
+    # `finding_fingerprint` rather than a foreign key to the findings row: the
+    # fingerprint survives a resource being re-created, and an alert must not be
+    # cascade-deleted just because its finding row was replaced.
+    finding_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True)
+    policy_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    policy_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+
+    # Who acted, not just when. An audit trail that records the time but not the
+    # actor answers half the question.
+    acknowledged_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    resolution_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Severity escalation (§35). An alert that goes MEDIUM → CRITICAL must show
+    # that it changed; silently overwriting the column would hide it.
+    previous_severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    severity_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
+    # Notification cooldown state (§34). Without `last_notified_at` there is no
+    # way to implement "at most once an hour", and a condition seen on every
+    # scan would notify on every scan.
+    last_notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    notification_count: Mapped[int] = mapped_column(default=0)
+    notification_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
     )
@@ -121,4 +155,19 @@ class CloudAlert(Base):
             "resource_name": self.resource_name,
             "resource_type": self.resource_type,
             "context": self.context,
+            # Link to the canonical finding, and the policy that decided this
+            # was worth an alert.
+            "finding_fingerprint": self.finding_fingerprint,
+            "policy_id": str(self.policy_id) if self.policy_id else None,
+            "policy_name": self.policy_name,
+            "acknowledged_by": self.acknowledged_by,
+            "resolved_by": self.resolved_by,
+            "resolution_reason": self.resolution_reason,
+            "previous_severity": self.previous_severity,
+            "severity_changed_at": (self.severity_changed_at.isoformat()
+                                    if self.severity_changed_at else None),
+            "last_notified_at": (self.last_notified_at.isoformat()
+                                 if self.last_notified_at else None),
+            "notification_count": self.notification_count,
+            "notification_status": self.notification_status,
         }

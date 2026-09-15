@@ -41,6 +41,11 @@ azure-mgmt-containerservice>=30.0.0
 azure-mgmt-costmanagement>=4.0.1
 azure-mgmt-subscription>=3.1.1
 azure-mgmt-monitor>=6.0.0
+# Role assignments and role definitions, for the identity review. Without it
+# the Security Center reports Azure identity as NotSupported rather than
+# reading the 280 assignments it can actually see — see
+# app/providers/azure/azure_rbac.py.
+azure-mgmt-authorization>=4.0.0
 
 # OCI
 oci>=2.126.0

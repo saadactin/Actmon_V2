@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   GitCompareArrows, ShieldAlert, DollarSign, Share2, Activity, Tag, Settings2,
   ArrowUpRight, ArrowDownRight, Unlock, Lock, PlusCircle, MinusCircle, PencilLine,
-  Bell, ExternalLink, Clock,
+  Bell, ExternalLink, Clock, ScrollText,
 } from 'lucide-react';
 import {
   useDriftChanges, useDriftSummary, useDriftFacets, useInventoryHistory, useResourceDrift,
@@ -11,6 +12,7 @@ import {
 import CloudPageHeader from '../components/CloudPageHeader';
 import CloudSection from '../components/CloudSection';
 import CloudFilterBar from '../components/CloudFilterBar';
+import RelatedEventsPanel from '../components/RelatedEventsPanel';
 import Table, { EmptyState } from '@/components/ui/Table';
 import Pagination from '@/components/ui/Pagination';
 import Badge from '@/components/ui/Badge';
@@ -147,10 +149,13 @@ const DayBars = ({ days }) => {
 /** One resource's full timeline, opened from a row. This is the
     "what changed on this resource over time" view, alongside the state that
     change left behind: current status and any alert still open against it. */
-const ResourceTimelineDrawer = ({ resourceId, open, onClose }) => {
+const ResourceTimelineDrawer = ({ resourceId, open, onClose, accountId }) => {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useResourceDrift(open ? resourceId : null);
   const resource = data?.resource;
+  // The newest recorded change is what "who did this?" is asking about, so the
+  // event lookup is centred on that detection time rather than on now.
+  const latestChange = data?.changes?.[0];
 
   return (
     <Drawer
@@ -204,6 +209,28 @@ const ResourceTimelineDrawer = ({ resourceId, open, onClose }) => {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* ── Who did it ──────────────────────────────────────────────────
+              The other half of the drift question. Drift records that a field
+              moved; the audit trail records the API call that moved it, the
+              principal behind it and where they called from. Cross-linked here
+              rather than left as a separate hunt on another tab. */}
+          {resource?.provider_resource_id && (
+            <div className="rounded-card border border-border bg-surface p-3">
+              <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+                <ScrollText size={12} className="text-accent-text" />
+                Who changed this
+              </p>
+              <RelatedEventsPanel
+                accountId={accountId || resource.account_id}
+                resourceId={resource.provider_resource_id}
+                resourceName={resource.resource_name}
+                around={latestChange?.detected_at || resource.updated_at}
+                hours={72}
+                compact
+              />
             </div>
           )}
 
@@ -451,6 +478,58 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
   );
 };
 
+/**
+ * "Who did this?" for one change-log row.
+ *
+ * Opened from a drift row rather than from the resource, and scoped to that
+ * row's detection time, so it answers the question the row actually raised
+ * instead of showing the resource's entire event history. This is the
+ * Configuration Drift -> Event Log workflow: open a drift finding, see the
+ * actor, the exact API operation, the timestamp and the source.
+ */
+const DriftEventsDrawer = ({ change, accountId, onClose }) => (
+  <Drawer
+    open={!!change}
+    onClose={onClose}
+    title={change ? `Who changed ${change.resource_name || change.provider_resource_id}?` : ''}
+    subtitle={change
+      ? `${change.field_path || change.change_type} · detected ${relativeTime(change.detected_at)}`
+      : undefined}
+    width={560}
+  >
+    {change && (
+      <div className="space-y-4">
+        <div className="rounded-card border border-border bg-sunken p-3">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-subtle">
+            The change
+          </p>
+          <p className="mt-1 break-words text-[12.5px] text-fg">{change.summary}</p>
+          {change.field_path && change.old_value !== null && !change.value_vanished && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <ValueChip value={change.old_value} muted />
+              <span className="text-subtle">-&gt;</span>
+              <ValueChip value={change.new_value} />
+            </p>
+          )}
+          <p className="mt-1.5 text-[10.5px] text-subtle">
+            Detected by the discovery scan at {new Date(change.detected_at).toLocaleString()}.
+            The change itself happened at some point before that, so the audit
+            trail is searched backwards from here.
+          </p>
+        </div>
+
+        <RelatedEventsPanel
+          accountId={accountId || change.account_id}
+          resourceId={change.provider_resource_id}
+          resourceName={change.resource_name}
+          around={change.detected_at}
+          hours={72}
+        />
+      </div>
+    )}
+  </Drawer>
+);
+
 /** Month buckets as a bar strip. Same minimal treatment as DayBars. */
 const MonthBars = ({ months, field, tone }) => {
   const max = Math.max(...months.map((m) => m[field] || 0), 1);
@@ -486,18 +565,37 @@ const MonthBars = ({ months, field, tone }) => {
  * has never been able to answer.
  */
 export const ConfigDriftPage = ({ embedded = false, accountId }) => {
+  // Topology hands off a resource by query parameter ("View configuration
+  // drift" on a resource). It is seeded into the search box rather than a
+  // hidden filter, so the narrowing is visible and can be cleared normally.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const handoffResource = searchParams.get('resource') || searchParams.get('resourceName') || '';
+
   const [days, setDays] = useState('30');
   const [impact, setImpact] = useState('');
   const [changeType, setChangeType] = useState('');
   const [severity, setSeverity] = useState('');
   const [resourceType, setResourceType] = useState('');
   const [direction, setDirection] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(handoffResource);
   const [page, setPage] = useState(1);
   const [openResourceId, setOpenResourceId] = useState(null);
+  // The change whose "who did this?" drawer is open, if any.
+  const [eventsForChange, setEventsForChange] = useState(null);
   // 'log' = field-level diffs since drift capture began.
   // 'history' = creation dates, which reach back before this tab existed.
   const [view, setView] = useState('log');
+
+  // Consumed once — leaving the parameter in the URL would refill the search
+  // box every time the user cleared it.
+  useEffect(() => {
+    if (!handoffResource) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('resource');
+    next.delete('resourceName');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const numericDays = Number(days);
   const {
@@ -535,6 +633,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
     { key: 'from', label: 'From' },
     { key: 'to', label: 'To' },
     { key: 'impact', label: 'Impact', width: '190px' },
+    { key: 'who', label: 'Who', width: '86px' },
   ];
 
   const tableRows = rows.map((c) => {
@@ -602,6 +701,19 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
               </span>
             )
             : <ValueChip value={c.new_value} />,
+        // The cross-link to the audit trail. Drift can say a field moved but
+        // never who moved it; this hands that question to the Event Log,
+        // pre-scoped to this resource and this detection time.
+        who: (
+          <button
+            type="button"
+            onClick={(ev) => { ev.stopPropagation(); setEventsForChange(c); }}
+            title="Find the control-plane events that could account for this change"
+            className="inline-flex items-center gap-1 rounded-control border border-border px-1.5 py-0.5 text-[10.5px] font-semibold text-muted transition-colors hover:border-accent hover:text-accent-text"
+          >
+            <ScrollText size={10} /> Who?
+          </button>
+        ),
         impact: (
           <div className="flex flex-wrap items-center gap-1">
             {(c.impact || []).map((p) => {
@@ -968,6 +1080,17 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
         resourceId={openResourceId}
         open={!!openResourceId}
         onClose={() => setOpenResourceId(null)}
+        accountId={accountId}
+      />
+
+      {/* Opened from a change-log row's "Who did this?" action. Scoped to that
+          one change's resource AND its detection time, so it answers the
+          specific question the row raised rather than showing the resource's
+          whole event history. */}
+      <DriftEventsDrawer
+        change={eventsForChange}
+        accountId={accountId}
+        onClose={() => setEventsForChange(null)}
       />
     </>
   );

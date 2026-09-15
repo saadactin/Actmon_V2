@@ -1,6 +1,7 @@
 """Azure Cloud Provider — implements BaseCloudProvider."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -16,6 +17,19 @@ class AzureProvider(BaseCloudProvider):
     def __init__(self, credentials: Dict[str, Any]) -> None:
         self.auth = AzureAuth(credentials)
         self.scanner = AzureScanner(self.auth)
+        # Cost Management enforces a tight per-subscription rate limit, and
+        # get_cost_analytics()/prewarm_cost_cache() fire get_cost_data(),
+        # get_daily_costs(), and get_cost_by_resource() for this same
+        # subscription concurrently via asyncio.gather. Without this lock all
+        # three land on the API in the same instant, at least one gets 429'd,
+        # and its retry/backoff (Cost Management's quota window is minutes,
+        # not seconds) blows well past the page's analytics deadline — which
+        # is what "cost sometimes just shows NA" actually was. Serializing
+        # them turns a self-inflicted throttle into 2-4 sequential calls, each
+        # of which is normally a few seconds. One lock per AzureProvider
+        # instance is correct because instances are cached per-account (see
+        # cost_service._provider_cache), i.e. per-subscription.
+        self._cm_lock = asyncio.Lock()
 
     async def authenticate(self) -> bool:
         return await self.auth.validate()
@@ -132,10 +146,27 @@ class AzureProvider(BaseCloudProvider):
                     "Azure cost query truncated over %s..%s — splitting to stay complete",
                     start_dt.date(), end_dt.date(),
                 )
-                return (
-                    self._cm_query(cm, scope, granularity, groupings, start_dt, mid, depth + 1)
-                    + self._cm_query(cm, scope, granularity, groupings, mid, end_dt, depth + 1)
-                )
+                # Each half is tried independently: if one half exhausts its own
+                # retries (e.g. it lands in a 429 window the other half didn't),
+                # letting that exception propagate used to discard the OTHER
+                # half's rows too — a single throttled sub-window turned a
+                # 95%-successful query into a total failure, which is exactly
+                # what showed up as the whole account's cost going NA. Losing
+                # one narrow sub-window is an undercount; losing everything
+                # collected so far is not an acceptable trade for it.
+                combined: List[Dict[str, Any]] = []
+                for sub_start, sub_end in ((start_dt, mid), (mid, end_dt)):
+                    try:
+                        combined += self._cm_query(
+                            cm, scope, granularity, groupings, sub_start, sub_end, depth + 1
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Azure cost query window %s..%s failed after retries — costs "
+                            "for that sub-window are missing from the total (not the "
+                            "whole account): %s", sub_start.date(), sub_end.date(), exc,
+                        )
+                return combined
             logger.warning(
                 "Azure cost query still truncated at %s..%s after max split depth — "
                 "reported totals may be incomplete.", start_dt.date(), end_dt.date(),
@@ -178,7 +209,8 @@ class AzureProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(query_pool(), _fetch)
+            async with self._cm_lock:
+                return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("Azure Cost Management query failed: %s", exc)
             raise
@@ -235,7 +267,8 @@ class AzureProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(query_pool(), _fetch)
+            async with self._cm_lock:
+                return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("Azure per-resource cost query failed: %s", exc)
             raise
@@ -278,7 +311,8 @@ class AzureProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(query_pool(), _fetch)
+            async with self._cm_lock:
+                return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("Azure Cost Management report query failed: %s", exc)
             raise
@@ -321,7 +355,8 @@ class AzureProvider(BaseCloudProvider):
 
         loop = asyncio.get_event_loop()
         try:
-            return await loop.run_in_executor(query_pool(), _fetch)
+            async with self._cm_lock:
+                return await loop.run_in_executor(query_pool(), _fetch)
         except Exception as exc:
             logger.warning("Azure daily cost query failed: %s", exc)
             raise

@@ -7,7 +7,7 @@ import { getCostEstimate } from '../api/cost.api';
 import {
   Cloud, Server, DollarSign, Activity, Shield, ShieldAlert, ShieldCheck, ArrowRight,
   Clock, Layers, Globe, Sparkles, LayoutDashboard, ClipboardCheck, Bell, Share2,
-  GitCompareArrows,
+  GitCompareArrows, ScrollText,
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -21,11 +21,10 @@ import Tabs from '@/components/ui/Tabs';
 import { PageLoading } from '@/components/ui/Loading';
 import { ResourcesPage } from './ResourcesPage';
 import { CostPage } from './CostPage';
-import { SecurityPosturePage } from './SecurityPosturePage';
+import SecurityCenterPage from './SecurityCenterPage';
 import { CloudTopologyPage } from './CloudTopologyPage';
-import { CompliancePage } from './CompliancePage';
-import { AlertsPage } from './AlertsPage';
 import { ConfigDriftPage } from './ConfigDriftPage';
+import { EventLogPage } from './EventLogPage';
 
 // Provider brand colours are pinned (external identity), same rationale as
 // CloudProviderSelector — never tokenized.
@@ -77,13 +76,21 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'resources', label: 'Resources', icon: Server },
   { id: 'cost', label: 'Cost', icon: DollarSign },
-  { id: 'security', label: 'Security', icon: ShieldAlert },
+  // One tab replaces the former Security, Compliance and Alerts trio. They were
+  // three independent evaluations of the same estate with nothing enforcing
+  // that they agreed — and on live data they did not: 3 of AWS's 20 MEDIUM
+  // compliance violations came from a rule firing on the wrong provider, and
+  // none of the 82 CRITICAL AWS findings had ever produced an alert. The
+  // Security Center's own tabs are all views over one canonical finding set.
+  { id: 'security', label: 'Security Center', icon: ShieldAlert },
   { id: 'topology', label: 'Topology', icon: Share2 },
-  { id: 'compliance', label: 'Compliance', icon: ClipboardCheck },
-  { id: 'alerts', label: 'Alerts', icon: Bell },
   // Beside Alerts on purpose: an alert says a condition is true now, drift says
   // what changed to make it true.
   { id: 'drift', label: 'Config Drift', icon: GitCompareArrows },
+  // And beside Config Drift for the same reason one step further: drift says
+  // WHAT changed, the event log says WHO changed it, from where, how, and what
+  // the provider answered. The two link to each other in both directions.
+  { id: 'events', label: 'Event Log', icon: ScrollText },
 ];
 
 /**
@@ -412,14 +419,27 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
 
       {tab === 'resources' && <ResourcesPage embedded accountId={routeAccountId} />}
       {tab === 'cost' && <CostPage embedded accountId={routeAccountId} />}
-      {tab === 'security' && <SecurityPosturePage embedded accountId={routeAccountId} />}
+      {/* Keyed on the account so switching accounts resets the tab, filters and
+          any open finding rather than carrying another account's triage across. */}
+      {tab === 'security' && (
+        <SecurityCenterPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
       {tab === 'topology' && <CloudTopologyPage embedded accountId={routeAccountId} />}
-      {tab === 'compliance' && <CompliancePage embedded accountId={routeAccountId} />}
-      {tab === 'alerts' && <AlertsPage embedded accountId={routeAccountId} />}
+      {/* The old Compliance and Alerts tab ids still resolve, so a bookmarked
+          URL lands somewhere sensible instead of on an empty page. */}
+      {(tab === 'compliance' || tab === 'alerts') && (
+        <SecurityCenterPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
       {/* Keyed on the account so switching accounts resets the window/filter
           state instead of carrying another account's drill-down across. */}
       {tab === 'drift' && (
         <ConfigDriftPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
+      {/* Keyed on the account for the same reason as drift: the window, the
+          filter set and the open event are all account-scoped, and carrying
+          another account's investigation across would be actively misleading. */}
+      {tab === 'events' && (
+        <EventLogPage key={routeAccountId} embedded accountId={routeAccountId} />
       )}
     </>
   );

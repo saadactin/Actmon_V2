@@ -224,9 +224,85 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             _warm_tasks.add(warm_task)
             warm_task.add_done_callback(_warm_tasks.discard)
 
+            # Also fire-and-forget: pull this account's audit events now, so
+            # the Event Log has the control-plane activity that explains the
+            # inventory this scan just recorded. Not awaited — an audit API
+            # that is throttled or unreachable must not delay a completed scan,
+            # and collect_account never raises for a provider failure (it
+            # records the failure in cloud_event_sync_state instead).
+            from app.services.event_collector import schedule_after_discovery
+
+            schedule_after_discovery(account_id)
+
             await account_repo.update_last_discovery(account_id)
             await disco_repo.complete_job(job_id, count)
             await db.commit()
+
+            # The topology is derived from the inventory this scan just
+            # rewrote, so any cached graph for it is now wrong. The cache
+            # would also notice on the next request via its fingerprint, but
+            # dropping it here is what makes section 70's "invalidate when a
+            # discovery scan completes" an explicit step rather than a lucky
+            # consequence of a comparison.
+            from app.services.topology_service import invalidate_cache
+
+            invalidate_cache(str(account_id))
+
+            # ── Security assessment ──────────────────────────────────────────
+            # Run here rather than on page load. Two reasons: the API then
+            # serves persisted findings instead of re-running ~48 rules over
+            # every resource on every request, and findings only accumulate
+            # history — first_detected_at, detection_count, "is this new since
+            # Tuesday" — if something evaluates them on a schedule rather than
+            # when someone happens to look.
+            #
+            # `sweep_complete` is threaded through because it decides whether
+            # findings and their alerts may be RESOLVED. On an incomplete sweep
+            # an absent finding may only mean its resource failed to enumerate,
+            # and closing it would tell the user a problem was fixed when it was
+            # not. Same guard as the inventory prune.
+            #
+            # Its own session and swallowed, like the alert check above: a
+            # security-assessment failure must not turn a successful scan into a
+            # failed one.
+            try:
+                async with AsyncSessionLocal() as sec_db:
+                    from app.services.security_center_service import (
+                        SecurityCenterService,
+                    )
+
+                    svc = SecurityCenterService(sec_db)
+                    # Identity grants first, so the assessment that follows sees
+                    # them. Azure only; AWS and OCI keep identity data in the
+                    # inventory this scan just refreshed.
+                    try:
+                        await svc.collect_identity(account_id, account=account)
+                    except Exception as ident_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Identity collection failed for job=%s: %s",
+                            job_id, ident_exc,
+                        )
+                    result = await svc.assess(
+                        account_id,
+                        triggered_by=f"discovery:{job_id}",
+                        sweep_complete=not failures,
+                        failed_scopes=len(failures or ()),
+                        discovery_scan_id=job_id,
+                    )
+                    logger.info(
+                        "Security assessment for job=%s: outcome=%s score=%s "
+                        "findings(new=%s resolved=%s) alerts(new=%s resolved=%s)",
+                        job_id, result["outcome"], result["score"].get("score"),
+                        result["findings"].get("new"),
+                        result["findings"].get("resolved"),
+                        result["alerts"].get("created"),
+                        result["alerts"].get("resolved"),
+                    )
+            except Exception as sec_exc:  # noqa: BLE001
+                logger.warning(
+                    "Security assessment failed for job=%s: %s",
+                    job_id, sec_exc, exc_info=True,
+                )
 
             logger.info(
                 "Discovery complete: job=%s account=%s resources=%d",

@@ -24,6 +24,22 @@ from app.models.resource import CloudResource       # noqa: F401
 from app.models.discovery_job import DiscoveryJob   # noqa: F401
 from app.models.alert import CloudAlert             # noqa: F401
 from app.models.drift import CloudResourceChange    # noqa: F401
+from app.models.topology_snapshot import CloudTopologySnapshot  # noqa: F401
+from app.models.cloud_event import CloudEvent         # noqa: F401
+# Registered so create_all builds them. Without the import the tables simply
+# never exist, and the first findings write fails at runtime instead of at boot.
+from app.models.security_finding import (              # noqa: F401
+    CloudAlertPolicy, CloudSecurityAssessment, CloudSecurityFinding,
+)
+from app.models.identity_grant import (                # noqa: F401
+    CloudIdentityCollectionState, CloudIdentityGrant,
+)
+from app.models.event_admin import (                  # noqa: F401
+    CloudEventAccessLog,
+    CloudEventSavedQuery,
+    CloudEventSettings,
+    CloudEventSyncState,
+)
 
 
 @asynccontextmanager
@@ -82,6 +98,57 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # never block startup on this housekeeping
         _log.warning("Could not reconcile cloud_resource_changes columns: %s", exc)
 
+    # cloud_alerts predates the Security Center, so its link back to the
+    # canonical finding, the policy that fired it, and the notification-cooldown
+    # state are added here. `IF NOT EXISTS` keeps it idempotent on every boot.
+    #
+    # Historical alerts keep NULL in finding_fingerprint, which is correct and
+    # is what the UI reads to label them "created before findings were linked"
+    # rather than pretending they point at something.
+    try:
+        async with engine.begin() as conn:
+            for ddl in (
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "finding_fingerprint VARCHAR(64)",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS policy_id UUID",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS policy_name VARCHAR(256)",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "acknowledged_by VARCHAR(256)",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS resolved_by VARCHAR(256)",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS resolution_reason TEXT",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "previous_severity VARCHAR(20)",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "severity_changed_at TIMESTAMPTZ",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "last_notified_at TIMESTAMPTZ",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "notification_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "notification_status VARCHAR(40)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_alerts_finding "
+                "ON cloud_alerts (finding_fingerprint)",
+            ):
+                await conn.execute(_text(ddl))
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not reconcile cloud_alerts columns: %s", exc)
+
+    # Seed the built-in alert policies. Without this the policy table is empty
+    # on a fresh install and no security finding can ever produce an alert —
+    # which was the entire pre-Security-Center behaviour and is not a state
+    # worth being able to reach by accident.
+    try:
+        from app.core.database import AsyncSessionLocal as _Session
+        from app.repository.security_repo import SecurityRepository as _SecRepo
+
+        async with _Session() as _db:
+            created = await _SecRepo(_db).seed_default_policies()
+            await _db.commit()
+            if created:
+                _log.info("Seeded %d built-in security alert policy/policies.", created)
+    except Exception as exc:  # never block startup
+        _log.warning("Could not seed default alert policies: %s", exc)
+
     try:
         async with engine.begin() as conn:
             result = await conn.execute(_text(
@@ -98,7 +165,69 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # never block startup on this housekeeping
         _log.warning("Could not release orphaned discovery jobs: %s", exc)
 
+    # ── Make cloud_events append-only, in the database ────────────────────────
+    # The application already has no code path that updates or deletes an audit
+    # event, but "we don't do that" is a convention and an audit trail needs a
+    # guarantee. This trigger is the guarantee: UPDATE is always refused, and
+    # DELETE is refused unless the caller has declared itself the retention
+    # pruner for that transaction (EventRepository.prune_older_than issues
+    # `SET LOCAL actmon.allow_event_prune = 'on'`).
+    #
+    # `current_setting(..., true)` returns NULL rather than raising when the
+    # setting was never set, which is what makes the check safe on a connection
+    # that has never pruned. And because it is SET LOCAL, the permission cannot
+    # outlive its transaction onto the next request sharing that pooled
+    # connection.
+    # The DDL itself lives in app/events/schema.py so this startup path and the
+    # test suite install the identical trigger — when it was inline here, the
+    # tests created their own tables, never got the trigger, and "proved"
+    # immutability that nothing was actually enforcing.
+    try:
+        from app.events.schema import ensure_append_only
+
+        async with engine.begin() as conn:
+            await ensure_append_only(conn)
+            _log.info("cloud_events append-only trigger is in place.")
+    except Exception as exc:
+        # Never block startup: without the trigger the feature still works and
+        # the application still never writes an update. But say so loudly —
+        # the guarantee is weaker than it was designed to be, and that is worth
+        # someone noticing.
+        _log.warning(
+            "Could not install the cloud_events append-only trigger (%s). Audit "
+            "events remain append-only by application convention, but the database "
+            "will not enforce it.", exc,
+        )
+
+    # ── Background audit-event collection ────────────────────────────────────
+    # Started here rather than on first request so a service nobody has opened
+    # the Event Log on is still collecting — an audit trail with gaps for the
+    # hours nobody was looking is not an audit trail. Interval and on/off live
+    # in cloud_event_settings and are re-read each cycle.
+    collector_task = None
+    if os.getenv("EVENT_COLLECTOR_ENABLED", "true").strip().lower() not in (
+        "false", "0", "no", "off",
+    ):
+        from app.services.event_collector import collector_loop
+
+        collector_task = asyncio.create_task(collector_loop())
+        _log.info("Cloud audit-event collector started.")
+    else:
+        _log.info(
+            "Cloud audit-event collector is disabled (EVENT_COLLECTOR_ENABLED=false). "
+            "Events can still be collected on demand from the Event Log."
+        )
+
     yield
+
+    if collector_task is not None:
+        collector_task.cancel()
+        try:
+            await collector_task
+        except BaseException:
+            # Cancellation is the expected outcome here; anything else has
+            # already been logged inside the loop.
+            pass
 
     await engine.dispose()
 
@@ -135,9 +264,14 @@ from app.api.routes.topology import router as topology_router
 from app.api.routes.compliance import router as compliance_router
 from app.api.routes.alerts import router as alerts_router
 from app.api.routes.drift import router as drift_router
+from app.api.routes.events import router as events_router
+# The unified Security Center. The three older routers (security, compliance,
+# alerts) stay mounted unchanged as the compatibility surface for the existing
+# pages; nothing new should be added to them.
+from app.api.routes.security_center import router as security_center_router
 
 # Standard API routes under /api/v1/
-for router in [accounts_router, discovery_router, resources_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router]:
+for router in [accounts_router, discovery_router, resources_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router, events_router, security_center_router]:
     app.include_router(router, prefix="/api/v1")
 
 
