@@ -87,3 +87,58 @@ class DiscoveryService:
         if not job:
             return None
         return DiscoveryStatusResponse.model_validate(job)
+
+    async def latest_for_account(self, account_id: uuid.UUID) -> dict:
+        """The last run, the last SUCCESSFUL run, and what that run changed.
+
+        The change counts come from the drift log, joined on the job id that
+        wrote them — they are not recomputed here and not estimated. A run that
+        predates drift capture has no rows, which is reported as "not recorded"
+        rather than as three zeros: a sweep that genuinely changed nothing and a
+        sweep nobody was recording look identical in a count, and only one of
+        them means the estate was stable.
+        """
+        latest = await self.disco_repo.get_latest_for_account(account_id)
+        last_ok = await self.disco_repo.get_latest_for_account(
+            account_id, status="COMPLETED"
+        )
+
+        def describe(job) -> dict | None:
+            if job is None:
+                return None
+            duration_ms = None
+            if job.started_at and job.completed_at:
+                duration_ms = int(
+                    (job.completed_at - job.started_at).total_seconds() * 1000
+                )
+            return {
+                "id": str(job.id),
+                "status": job.status,
+                "resources_found": job.resources_found,
+                "error_detail": job.error_detail,
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "completed_at": (
+                    job.completed_at.isoformat() if job.completed_at else None
+                ),
+                "duration_ms": duration_ms,
+            }
+
+        changes = None
+        if last_ok is not None:
+            counted = await self.disco_repo.change_counts_for_job(last_ok.id)
+            # None, not {}, when the run recorded nothing at all — see above.
+            changes = counted or None
+
+        return {
+            "account_id": str(account_id),
+            "latest": describe(latest),
+            "last_successful": describe(last_ok),
+            # True when the most recent attempt failed but an older one
+            # succeeded: the inventory is real, it is just older than it looks.
+            "last_attempt_failed": bool(
+                latest is not None
+                and latest.status == "FAILED"
+                and (last_ok is None or last_ok.id != latest.id)
+            ),
+            "changes": changes,
+        }

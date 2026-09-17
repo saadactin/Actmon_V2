@@ -22,6 +22,27 @@ async def trigger_discovery_all(
     return await svc.trigger_scan_all()
 
 
+@router.get("/latest/{account_id}")
+async def get_latest_discovery(
+    account_id: uuid.UUID,
+    svc: DiscoveryService = Depends(get_discovery_service),
+):
+    """The most recent discovery run for an account, and the last that succeeded.
+
+    Exists because the only way to read a job before this was by its id, which
+    the Overview does not have — it has an account. Polling `/status/{job_id}`
+    can only describe a run the browser itself started, so a page loaded after
+    a scan finished, or in another tab, had nothing to show but the account's
+    `last_discovery` timestamp.
+
+    Both jobs are returned because they answer different questions. The latest
+    says what happened last; the last successful one says how old the inventory
+    actually is. When a scan fails, those are different runs, and reporting
+    only the first makes a failed refresh look like a fresh inventory.
+    """
+    return await svc.latest_for_account(account_id)
+
+
 @router.post("/{account_id}", response_model=DiscoveryTriggerResponse, status_code=202)
 async def trigger_discovery(
     account_id: uuid.UUID,

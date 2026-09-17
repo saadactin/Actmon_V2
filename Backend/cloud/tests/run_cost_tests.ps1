@@ -29,7 +29,41 @@ $suites = @(
     # HTTP surface: the capability and quality endpoints, freshness per
     # dataset, and the RBAC now declared on every cost route. Creates and
     # removes its own accounts; asserts the count is restored.
-    @{ Name = "HTTP API + capabilities + freshness + RBAC"; Args = @("tests\verify_cost_api.py") }
+    @{ Name = "HTTP API + capabilities + freshness + RBAC"; Args = @("tests\verify_cost_api.py") },
+    # Persistence. The load-bearing assertion is that re-ingesting a window
+    # CORRECTS history rather than doubling it -- forecasts, anomaly baselines
+    # and budget burn are all only as good as that. Also pins why the
+    # idempotency key is a hash (NULL != NULL in SQL, so a composite UNIQUE
+    # over nullable dimensions does not dedupe) and that `final` is never
+    # asserted, since no provider here reports finality.
+    @{ Name = "persistence: idempotent ingestion, finality, coverage"; Args = @("tests\verify_cost_ingestion.py") },
+    # Analytics over stored history. Pins the three rules that stop these
+    # producing confident nonsense: every calculation stays inside one
+    # currency, too little history returns NA rather than a number, and
+    # change analysis reports association and never claims cause. Pure logic.
+    @{ Name = "analytics: forecast, anomalies, change, MoM, calendar (no DB)"; Args = @("tests\verify_cost_analytics.py") },
+    # Budgets and cost alert policies. The load-bearing half is dedupe: a
+    # budget is re-evaluated every cycle, so getting it wrong either
+    # re-announces 75% forever or -- far worse -- stays silent exactly when
+    # spend crosses 100%. Both cases are pinned. Alerts are raised through the
+    # EXISTING cloud_alerts table and notification bridge, never a second one.
+    @{ Name = "budgets + alert policies: dedupe, escalation, RBAC"; Args = @("tests\verify_cost_budgets.py") },
+    # The recommendations engine. Two things carry the weight: savings in
+    # different currencies are never summed and an unpriceable opportunity is
+    # counted but never valued; and the fingerprint survives re-derivation, so
+    # a user's dismissal keeps applying after the next discovery scan instead
+    # of the same finding nagging forever.
+    @{ Name = "recommendations: priority, savings honesty, lifecycle"; Args = @("tests\verify_cost_recommendations.py") },
+    # Allocation, reports and observability. Two assertions carry the weight:
+    # untagged spend is NEVER assigned to anyone (the guess that makes a
+    # chargeback report unusable the first time it is checked), and a report's
+    # header total equals the sum of the rows it contains. Pure logic.
+    @{ Name = "allocation, reports, FinOps health, metrics (no DB)"; Args = @("tests\verify_cost_governance.py") },
+    # Cross-feature correlation. The whole point is what it does NOT say: a
+    # cost tool that claims "this change caused +40%" will be believed and will
+    # eventually be wrong, so the payload is asserted to contain no causal
+    # wording at all. Pure logic.
+    @{ Name = "cost/drift/security correlation without causation (no DB)"; Args = @("tests\verify_cost_correlation.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

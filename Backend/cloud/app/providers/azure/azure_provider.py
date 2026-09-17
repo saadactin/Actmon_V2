@@ -273,9 +273,15 @@ class AzureProvider(BaseCloudProvider):
             logger.warning("Azure per-resource cost query failed: %s", exc)
             raise
 
-    async def get_cost_report(self, days: int = 30) -> List[Dict[str, Any]]:
+    async def get_cost_report(self, days: int = 30, start_date=None, end_date=None) -> List[Dict[str, Any]]:
         """Real day-by-day, per-service spend from Azure Cost Management, for
-        an arbitrary lookback window."""
+        an arbitrary lookback window.
+
+        `start_date`/`end_date` request an explicit historical range instead of
+        a lookback from today, so a backfill can walk history in windows
+        without each call re-fetching what the previous one already had. The
+        one-year span limit still applies and is still enforced.
+        """
         import asyncio
         from datetime import datetime, timedelta
 
@@ -283,9 +289,15 @@ class AzureProvider(BaseCloudProvider):
             from azure.mgmt.costmanagement import CostManagementClient
 
             cm = CostManagementClient(self.auth.get_credential())
-            end_dt = datetime.utcnow()
+            end_dt = (datetime.combine(end_date, datetime.min.time())
+                      if end_date else datetime.utcnow())
             # See get_cost_by_resource — Cost Management rejects >1 year spans.
-            start_dt = end_dt - timedelta(days=min(days, 364))
+            if start_date is not None:
+                start_dt = datetime.combine(start_date, datetime.min.time())
+                if (end_dt - start_dt).days > 364:
+                    start_dt = end_dt - timedelta(days=364)
+            else:
+                start_dt = end_dt - timedelta(days=min(days, 364))
             scope = f"/subscriptions/{self.auth.subscription_id}"
             rows = self._cm_query(
                 cm, scope, "Daily", ["ServiceName", "ResourceLocation"], start_dt, end_dt

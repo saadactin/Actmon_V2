@@ -1,5 +1,6 @@
 import {
-  X, KeyRound, ShieldAlert, WifiOff, Info, AlertTriangle, Loader2, HelpCircle, CheckCircle2,
+  X, KeyRound, ShieldAlert, WifiOff, Info, AlertTriangle, Loader2, HelpCircle,
+  CheckCircle2, Clock, CloudOff,
 } from 'lucide-react';
 
 const CATEGORY_META = {
@@ -12,7 +13,17 @@ const CATEGORY_META = {
   scanning: { label: 'Scan In Progress', Icon: Loader2, tone: 'bg-info-soft text-info-fg' },
   failed: { label: 'Scan Failed', Icon: AlertTriangle, tone: 'bg-danger-soft text-danger-fg' },
   ok: { label: 'Scan Succeeded', Icon: CheckCircle2, tone: 'bg-success-soft text-success-fg' },
-  unsupported: { label: 'Not Supported Yet', Icon: Info, tone: 'bg-accent-soft text-accent-text' },
+  unsupported: { label: 'Not Supported', Icon: Info, tone: 'bg-accent-soft text-accent-text' },
+
+  // Categories the cost error classifier emits. Without these the modal fell
+  // back to `unknown`, so a throttled Azure subscription — correctly classified
+  // as rate_limited by the backend — still rendered as "Unknown Error" with
+  // advice to check the logs, when the true answer was "wait 32 seconds".
+  rate_limited: { label: 'Rate Limited', Icon: Clock, tone: 'bg-warning-soft text-warning-fg' },
+  timeout: { label: 'Timed Out', Icon: Clock, tone: 'bg-warning-soft text-warning-fg' },
+  provider_unavailable: { label: 'Provider Unavailable', Icon: CloudOff, tone: 'bg-info-soft text-info-fg' },
+  invalid_request: { label: 'Invalid Query', Icon: AlertTriangle, tone: 'bg-danger-soft text-danger-fg' },
+  partial: { label: 'Partial Data', Icon: AlertTriangle, tone: 'bg-warning-soft text-warning-fg' },
 };
 
 const SUGGESTED_FIX = {
@@ -24,7 +35,12 @@ const SUGGESTED_FIX = {
   never_scanned: 'Click "Scan All Accounts" or "Refresh" to run discovery for this account.',
   scanning: 'Wait for the current scan to finish, then refresh this page.',
   failed: 'See the error detail below for what the scanner hit. Fix the underlying cause (usually credentials or permissions), then re-run the scan.',
-  unsupported: 'Nothing to fix on your side — this resource type has no metrics mapping in the product yet.',
+  unsupported: 'Nothing is broken and nothing to fix — this billing integration cannot produce this value at all. The reason above says what would be required to change that.',
+  rate_limited: 'Nothing to fix — the provider is throttling billing queries and this clears on its own. The next refresh retries automatically; the last good figures stay on screen in the meantime.',
+  timeout: 'The provider did not respond in time. Large windows (180–365 days) are the usual cause; the refresh continues in the background, so reload in a moment.',
+  provider_unavailable: 'This is a server-side error on the provider, not a problem with your account or credentials. It is usually transient.',
+  invalid_request: 'This is a defect in the query this product sent, not a problem with your account. It needs a code fix — please report it with the raw error below.',
+  partial: 'Some sub-queries succeeded and others did not, so the totals shown are incomplete. They are labelled PARTIAL rather than presented as final.',
 };
 
 export const DiagnosticModal = ({ title, items, onClose }) => (
@@ -66,6 +82,36 @@ export const DiagnosticModal = ({ title, items, onClose }) => (
                 </div>
                 <div className="p-4 space-y-3">
                   <p className="text-sm text-fg leading-relaxed">{item.message}</p>
+
+                  {/* The facts that make a diagnostic actionable rather than
+                      merely descriptive: how long to wait, and the exact
+                      permission string to paste into an IAM policy. */}
+                  {(item.http_status || item.retry_after_seconds != null
+                    || item.required_permission) && (
+                    <dl className="grid grid-cols-1 gap-1.5 rounded-control border border-border bg-sunken p-3 text-xs sm:grid-cols-2">
+                      {item.http_status && (
+                        <div className="flex gap-2">
+                          <dt className="font-semibold text-muted">HTTP</dt>
+                          <dd className="font-mono text-fg">{item.http_status}</dd>
+                        </div>
+                      )}
+                      {item.retry_after_seconds != null && (
+                        <div className="flex gap-2">
+                          <dt className="font-semibold text-muted">Retry after</dt>
+                          <dd className="text-fg">{item.retry_after_seconds}s</dd>
+                        </div>
+                      )}
+                      {item.required_permission && (
+                        <div className="flex flex-col gap-1 sm:col-span-2">
+                          <dt className="font-semibold text-muted">Permission required</dt>
+                          <dd className="break-all rounded bg-surface px-2 py-1 font-mono text-[11px] text-fg">
+                            {item.required_permission}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+
                   {fix && (
                     <div className="bg-info-soft rounded-control p-3">
                       <div className="text-[11px] font-bold text-info-fg uppercase tracking-wider mb-1">

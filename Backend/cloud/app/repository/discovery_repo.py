@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.discovery_job import DiscoveryJob
@@ -65,14 +65,37 @@ class DiscoveryRepository:
     async def get_by_id(self, job_id: uuid.UUID) -> Optional[DiscoveryJob]:
         return await self.db.get(DiscoveryJob, job_id)
 
-    async def get_latest_for_account(self, account_id: uuid.UUID) -> Optional[DiscoveryJob]:
+    async def get_latest_for_account(
+        self, account_id: uuid.UUID, status: Optional[str] = None
+    ) -> Optional[DiscoveryJob]:
+        """The account's most recent job, optionally the most recent in one
+        state. `status="COMPLETED"` answers "how old is the inventory really",
+        which is a different question from "what happened last" whenever the
+        last attempt failed."""
+        stmt = select(DiscoveryJob).where(DiscoveryJob.account_id == account_id)
+        if status:
+            stmt = stmt.where(DiscoveryJob.status == status)
         result = await self.db.execute(
-            select(DiscoveryJob)
-            .where(DiscoveryJob.account_id == account_id)
-            .order_by(DiscoveryJob.started_at.desc())
-            .limit(1)
+            stmt.order_by(DiscoveryJob.started_at.desc()).limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def change_counts_for_job(self, job_id: uuid.UUID) -> dict:
+        """What one sweep changed, counted from the drift log it wrote.
+
+        Read from `cloud_resource_changes` rather than recomputed: the drift
+        engine already decided what counts as a change, and a second opinion
+        here would eventually disagree with the Config Drift page about the
+        same sweep.
+        """
+        from app.models.drift import CloudResourceChange
+
+        rows = (await self.db.execute(
+            select(CloudResourceChange.change_type, func.count())
+            .where(CloudResourceChange.job_id == job_id)
+            .group_by(CloudResourceChange.change_type)
+        )).all()
+        return {str(change_type): int(count) for change_type, count in rows}
 
     async def get_active_for_account(self, account_id: uuid.UUID) -> Optional[DiscoveryJob]:
         """The account's currently PENDING/RUNNING job, if any. Used to avoid

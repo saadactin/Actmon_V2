@@ -49,6 +49,13 @@ class MoneyTotal:
     skipped_no_amount: int = 0
     skipped_no_currency: int = 0
 
+    # Why there was nothing to total, when the caller knows and this object
+    # cannot. Summing an empty list looks identical whether the provider was
+    # asked and answered "nothing", was throttled, or was never reached — and
+    # those are three different facts that need three different sentences. The
+    # caller holds the diagnostic; see `with_reason`.
+    unavailable_reason: Optional[str] = None
+
     @property
     def currencies(self) -> List[str]:
         return sorted(self.by_currency)
@@ -78,17 +85,45 @@ class MoneyTotal:
             return None
         return next(iter(self.by_currency))
 
+    def with_reason(self, reason: Optional[str]) -> "MoneyTotal":
+        """A copy carrying the caller's explanation for an empty total.
+
+        Only meaningful when empty — a total that exists needs no excuse.
+        """
+        if not reason or not self.is_empty:
+            return self
+        return MoneyTotal(
+            by_currency=dict(self.by_currency),
+            counted=self.counted,
+            skipped_no_amount=self.skipped_no_amount,
+            skipped_no_currency=self.skipped_no_currency,
+            unavailable_reason=reason,
+        )
+
     def na_reason(self) -> Optional[str]:
         """Why there is no single total, or None when there is one."""
         if len(self.by_currency) == 1:
             return None
         if self.is_empty:
+            # The caller's diagnosis wins: it knows whether the provider was
+            # throttled, refused us, or genuinely had nothing.
+            if self.unavailable_reason:
+                return self.unavailable_reason
             if self.skipped_no_amount:
                 return (
                     f"No amount was available to total. {self.skipped_no_amount} "
                     "record(s) carried no cost value from the provider."
                 )
-            return "The provider returned no billing records for this scope."
+            # Deliberately a statement about THIS SUM, not about the provider.
+            # The previous wording — "the provider returned no billing records"
+            # — asserted a cause this object cannot observe, and on a
+            # rate-limited Azure subscription it reported a throttled query as
+            # an account with no spend.
+            return (
+                "No billing records were counted for this scope. This can mean "
+                "the provider reported no spend, or that the billing data could "
+                "not be retrieved — see the cost diagnostics for this account."
+            )
         return (
             "Multiple billing currencies detected: "
             + ", ".join(self.currencies)
@@ -106,6 +141,9 @@ class MoneyTotal:
                        if self.single_amount is not None else None),
             "currency": self.single_currency,
             "na_reason": self.na_reason(),
+            # Whether the reason is a diagnosis from the caller or this
+            # object's own fallback, so the UI can link to the diagnostic.
+            "reason_is_diagnostic": bool(self.unavailable_reason),
             "counted": self.counted,
             "skipped_no_amount": self.skipped_no_amount,
             "skipped_no_currency": self.skipped_no_currency,

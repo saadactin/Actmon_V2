@@ -22,7 +22,16 @@ async def get_security_posture(
     account_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Run security posture scan against stored resources for an account."""
+    """DEPRECATED — superseded by GET /cloud/security-center/{account_id}.
+
+    This is the original rule engine. It scores independently of the Security
+    Center's canonical assessment and the two do not agree: on live data this
+    returned 0/F for accounts the canonical model scored 35/F and 52/F. Nothing
+    in the frontend calls it as of 2026-09-16.
+
+    Left mounted because this service cannot prove what else calls it. Do not
+    wire new callers to it; use the Security Center.
+    """
     return await run_security_scan(account_id, db)
 
 

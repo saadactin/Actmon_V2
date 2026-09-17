@@ -89,6 +89,7 @@ class ResourceRepository:
                     resource.cost_monthly = r.get("cost_monthly")
                     resource.tags = clean_json(r.get("tags"))
                     resource.raw_data = clean_json(r.get("raw_data"))
+                    _apply_normalization(resource)
             else:
                 # Insert. The primary key is generated here rather than left to
                 # the column default, which only fires at INSERT time - the
@@ -108,6 +109,7 @@ class ResourceRepository:
                     tags=clean_json(r.get("tags")),
                     raw_data=clean_json(r.get("raw_data")),
                 )
+                _apply_normalization(obj)
                 self.db.add(obj)
                 if drift_repo is not None:
                     await drift_repo.record(
@@ -126,6 +128,20 @@ class ResourceRepository:
 
         await self.db.flush()
         return count
+
+    async def mark_seen(
+        self, account_id: uuid.UUID, provider_resource_ids: List[str]
+    ) -> int:
+        """Record that a sweep observed these resources.
+
+        Delegates to resource_normalizer so the "do not disturb updated_at"
+        rule lives in one place. Freshness is "when did we last look", which is
+        a different question from "when did it last change" - and conflating
+        them reports every stable resource as stale inventory.
+        """
+        from app.services.resource_normalizer import mark_seen as _mark_seen
+
+        return await _mark_seen(self.db, account_id, provider_resource_ids)
 
     async def list_by_account(self, account_id: uuid.UUID) -> List[CloudResource]:
         result = await self.db.execute(
@@ -211,3 +227,15 @@ class ResourceRepository:
         await self.db.flush()
         return result.rowcount or 0
 
+
+def _apply_normalization(resource: CloudResource) -> None:
+    """Refresh the normalized projections from the row's own fields.
+
+    Imported lazily because resource_normalizer imports the cost service, and
+    the cost service imports this repository - a module-level import here would
+    close that cycle at startup.
+    """
+    from app.services.resource_normalizer import normalized_values
+
+    for key, value in normalized_values(resource).items():
+        setattr(resource, key, value)

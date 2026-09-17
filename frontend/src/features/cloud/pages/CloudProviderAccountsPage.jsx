@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, LayoutGrid, List } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
-import { useAllResources } from '../hooks/useResources';
+import { useAccountResourceCounts } from '../hooks/useResources';
 import { useCloudStore } from '../state/cloudStore';
 import { PROVIDER_META } from '../components/CloudProviderSelector';
 import { CloudAccountList } from '../components/CloudAccountList';
@@ -40,15 +40,16 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
   const meta = PROVIDER_META[providerKey] || { label: providerKey, color: '#64748b', bg: '#f1f5f9', logo: '☁️' };
 
   const { data: accounts } = useCloudAccounts();
-  const { data: allResources } = useAllResources();
+  const { data: counts } = useAccountResourceCounts();
   const [search, setSearch] = useState('');
   const [envFilter, setEnvFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState(null);
   const [view, setView] = useState('list');
 
   const providerAccounts = (accounts || []).filter((a) => providerKeyOf(a.provider) === providerKey);
-  const providerAccountIds = new Set(providerAccounts.map((a) => a.id));
-  const totalResources = (allResources || []).filter((r) => providerAccountIds.has(r.account_id)).length;
+  const totalResources = providerAccounts.reduce(
+    (sum, a) => sum + (counts?.byAccount?.[a.id] || 0), 0,
+  );
   const onlineCount = providerAccounts.filter((a) => bucketOf(a) === 'online').length;
   const warningCount = providerAccounts.filter((a) => bucketOf(a) === 'warning').length;
   const offlineCount = providerAccounts.filter((a) => bucketOf(a) === 'offline').length;

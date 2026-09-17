@@ -60,6 +60,224 @@ async def get_cost_quality(
     return await svc.get_quality(account_id)
 
 
+@router.get("/history/{account_id}")
+async def get_cost_history(
+    account_id: str,
+    days: int = Query(default=90, ge=1, le=365),
+    group_by: Optional[str] = Query(
+        default=None,
+        description="service | region | provider | resource_type | cost_component | compartment",
+    ),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Persisted billing history from `cloud_cost_facts`.
+
+    Distinct from /report, which queries the provider live. This answers from
+    stored facts, so it can reach past what the provider will return in one
+    call and is fast enough to drive trends. Totals are grouped per currency
+    and never summed across them.
+    """
+    return await svc.get_history(account_id, days=days, group_by=group_by)
+
+
+@router.get("/forecast/{account_id}")
+async def get_cost_forecast(
+    account_id: str,
+    days: int = Query(default=90, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Run-rate projection per currency.
+
+    This is arithmetic, not a model: mean observed daily spend multiplied by
+    days ahead, labelled `run_rate_projection` in the payload. Returns NA with
+    a reason when history is too short, rather than projecting a confident
+    straight line through a handful of days.
+    """
+    return await svc.get_forecast(account_id, days=days)
+
+
+@router.get("/anomalies/{account_id}")
+async def get_cost_anomalies(
+    account_id: str,
+    days: int = Query(default=90, ge=1, le=365),
+    percent_threshold: Optional[float] = Query(default=None, ge=0),
+    min_absolute: Optional[float] = Query(default=None, ge=0),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Days whose spend departs from their own trailing baseline.
+
+    A day must clear BOTH a percentage and an absolute bar, because either
+    alone is noise: percentage alone fires on 1 -> 2, absolute alone fires on
+    ordinary variance in a large account.
+    """
+    return await svc.get_anomalies(
+        account_id, days=days,
+        percent_threshold=percent_threshold, min_absolute=min_absolute,
+    )
+
+
+@router.get("/trends/{account_id}")
+async def get_cost_trends(
+    account_id: str,
+    days: int = Query(default=30, ge=1, le=365),
+    dimension: str = Query(default="service"),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Change analysis (the waterfall), month-over-month, and the spend calendar.
+
+    The `change` block reports which dimensions moved and by how much. It is
+    explicitly labelled as associated change, not cause — billing data can show
+    that figures moved together, never that one produced the other.
+    """
+    return await svc.get_trends(account_id, days=days, dimension=dimension)
+
+
+@router.get("/resource-context/{resource_id}")
+async def get_resource_cost_context(
+    resource_id: uuid.UUID,
+    days: int = Query(default=90, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """One resource's cost alongside its configuration changes and security
+    findings — the cross-feature view.
+
+    Every correlated item is returned under `related_observations` with
+    `relationship: temporal_proximity` and a disclaimer. Two things happening
+    near each other in time is worth a human's attention; it is not evidence
+    that one caused the other, and this endpoint never says it is.
+
+    Where a configuration change has enough billed days either side, the
+    OBSERVED spend before and after is reported. That is measured, not a
+    computed price difference — there is no AWS/Azure price-list integration to
+    compute one from.
+    """
+    return await svc.get_resource_context(resource_id, days=days)
+
+
+@router.get("/allocation/{account_id}")
+async def get_cost_allocation(
+    account_id: str,
+    dimension: str = Query(default="environment"),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Spend attributed to a business dimension, from resource tags.
+
+    Requires per-resource cost, so an AWS-only scope reports
+    `supported: false` with the reason rather than an empty breakdown — the
+    difference between "nothing is tagged" and "we cannot see what anything
+    costs" matters, and only one of them is the user's to fix.
+
+    Untagged spend is never assigned to anyone; it goes to an explicit
+    unallocated bucket.
+    """
+    return await svc.get_allocation(account_id, dimension=dimension)
+
+
+@router.get("/governance/{account_id}")
+async def get_cost_governance(
+    account_id: str,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Governance gaps, data coverage and the FinOps health score.
+
+    The health score measures how the estate is MANAGED and is deliberately
+    independent of what it costs — a cheap ungoverned account should not look
+    healthy, and an expensive well-run one should not look sick.
+    """
+    return await svc.get_governance(account_id)
+
+
+@router.get("/reports/{account_id}")
+async def get_cost_report_types(
+    account_id: str,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """The report catalogue, each entry marked available or blocked with why."""
+    return await svc.get_report_types(account_id)
+
+
+@router.get("/reports/executive/{account_id}")
+async def get_executive_report(
+    account_id: str,
+    days: int = Query(default=30, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_EXPORT)),
+):
+    """The one-page executive report.
+
+    Gated on `cost:export` rather than `cost:view`: this is a packaged artefact
+    built to leave the building, which is the distinction that permission
+    exists to draw.
+    """
+    return await svc.get_executive_report(account_id, days=days)
+
+
+@router.get("/metrics")
+async def get_cost_metrics(
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Per-provider billing-API counters for this worker.
+
+    In-process and reset on restart — a diagnostic, not a billing record.
+    Rates return null rather than 0 when their denominator is zero, because
+    "0% errors" out of zero calls is a claim about nothing.
+    """
+    from app.services import cost_metrics
+
+    return cost_metrics.snapshot()
+
+
+@router.get("/coverage/{account_id}")
+async def get_cost_coverage(
+    account_id: str,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """How much billing history actually exists for this scope.
+
+    The gate for everything downstream: forecasting on four days of data
+    produces a confident straight line that means nothing, so callers check
+    coverage first and say "insufficient history" rather than guessing.
+    """
+    return await svc.get_coverage(account_id)
+
+
+@router.post("/backfill/{account_id}")
+async def start_cost_backfill(
+    account_id: uuid.UUID,
+    days: int = Query(default=90, ge=1, le=365),
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_ADMIN)),
+):
+    """Walk this account's billing history and persist it.
+
+    Administrator-only: a 365-day backfill issues a long series of billing
+    queries against a rate-limited API, so it is not something any viewer
+    should be able to trigger repeatedly.
+
+    Returns immediately with a job id; poll /backfill/status for progress.
+    """
+    return await svc.start_backfill(account_id, days)
+
+
+@router.get("/backfill/status/{account_id}")
+async def get_cost_backfill_status(
+    account_id: uuid.UUID,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
+):
+    """Progress of the most recent backfill for this account."""
+    return await svc.get_backfill_status(account_id)
+
+
 @router.get("/{account_id}", response_model=CostSummaryResponse)
 async def get_cost_summary(
     account_id: uuid.UUID,

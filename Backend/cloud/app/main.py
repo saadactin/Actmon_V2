@@ -40,6 +40,18 @@ from app.models.event_admin import (                  # noqa: F401
     CloudEventSettings,
     CloudEventSyncState,
 )
+from app.models.cost_fact import (                     # noqa: F401
+    CloudCostBackfillJob, CloudCostFact,
+)
+from app.models.cost_recommendation import (            # noqa: F401
+    CloudCostRecommendationDecision,
+)
+from app.models.cost_budget import (                   # noqa: F401
+    CloudCostAlertPolicy, CloudCostBudget, CloudCostBudgetNotification,
+)
+from app.models.resource_cost import CloudResourceCost   # noqa: F401
+from app.models.resource_view import SavedResourceView   # noqa: F401
+from app.models.resource_action import CloudResourceAction  # noqa: F401
 
 
 @asynccontextmanager
@@ -97,6 +109,78 @@ async def lifespan(app: FastAPI):
             ))
     except Exception as exc:  # never block startup on this housekeeping
         _log.warning("Could not reconcile cloud_resource_changes columns: %s", exc)
+
+    # cloud_resources predates the Resources workspace, so the normalized
+    # projections it filters, sorts and facets on are added here. They are a
+    # cache of app/services/resource_model.py's output, not a second source of
+    # truth: resource_normalizer.py recomputes them after every discovery
+    # sweep, and the backfill below fills them in for rows that predate this.
+    #
+    # last_seen_at is the important one. Freshness cannot be read off
+    # updated_at, which SQLAlchemy only moves when a field actually changes -
+    # a resource nobody has touched would report as stale inventory forever.
+    try:
+        async with engine.begin() as conn:
+            for ddl in (
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS normalized_status VARCHAR(20)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS status_reason TEXT",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS normalized_type VARCHAR(32)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS environment VARCHAR(128)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS owner VARCHAR(256)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS attachment_state VARCHAR(20)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS resource_group VARCHAR(255)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS compartment VARCHAR(255)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS availability_zone VARCHAR(100)",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS is_default BOOLEAN",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS tag_count INTEGER",
+                # Indexes for the query shapes the workspace actually issues.
+                # Every composite leads with account_id because no query in the
+                # product reads resources without a scope.
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_type "
+                "ON cloud_resources (account_id, resource_type)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_region "
+                "ON cloud_resources (account_id, region_or_zone)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_nstatus "
+                "ON cloud_resources (account_id, normalized_status)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_ntype "
+                "ON cloud_resources (account_id, normalized_type)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_name "
+                "ON cloud_resources (account_id, resource_name)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_seen "
+                "ON cloud_resources (account_id, last_seen_at)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_updated_at "
+                "ON cloud_resources (updated_at)",
+                # The findings join behind the risk column and the risk sort.
+                "CREATE INDEX IF NOT EXISTS ix_findings_resource_status "
+                "ON cloud_security_findings (resource_id, status)",
+            ):
+                await conn.execute(_text(ddl))
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not reconcile cloud_resources columns: %s", exc)
+
+    # Backfill the normalized projections for rows that predate them. Bounded:
+    # it only touches rows where normalized_status IS NULL, so it does real
+    # work exactly once and is a no-op on every subsequent boot.
+    try:
+        from app.core.database import AsyncSessionLocal as _Session
+        from app.services import resource_normalizer as _rn
+
+        async with _Session() as session:
+            pending = await _rn.accounts_needing_backfill(session)
+            filled = 0
+            for account_id in pending:
+                filled += await _rn.renormalize_account(
+                    session, account_id, only_missing=True
+                )
+            if filled:
+                await session.commit()
+                _log.info(
+                    "Normalized %d resource row(s) across %d account(s) that "
+                    "predated the resource projection columns.", filled, len(pending),
+                )
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not backfill resource normalization: %s", exc)
 
     # cloud_alerts predates the Security Center, so its link back to the
     # canonical finding, the policy that fired it, and the notification-cooldown
@@ -258,6 +342,7 @@ from app.api.routes.cloud_accounts import router as accounts_router
 from app.api.routes.discovery import router as discovery_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.cost import router as cost_router
+from app.api.routes.cost_budgets import router as cost_budgets_router
 from app.api.routes.security import router as security_router
 from app.api.routes.cost_estimate import router as cost_estimate_router
 from app.api.routes.topology import router as topology_router
@@ -266,12 +351,28 @@ from app.api.routes.alerts import router as alerts_router
 from app.api.routes.drift import router as drift_router
 from app.api.routes.events import router as events_router
 # The unified Security Center. The three older routers (security, compliance,
-# alerts) stay mounted unchanged as the compatibility surface for the existing
-# pages; nothing new should be added to them.
+# alerts) stay mounted unchanged; nothing new should be added to them.
+#
+# As of 2026-09-16 the pages they were the compatibility surface FOR are gone
+# (SecurityPosturePage, CompliancePage, the cloud AlertsPage), and no part of
+# the frontend calls GET /cloud/security/{id} any more — posture is read from
+# /cloud/security-center/{id} alone, because the two engines scored the same
+# account differently. The routers are left mounted rather than deleted because
+# this service cannot prove what else calls them; deleting them is a separate,
+# deliberate decision. Two endpoints on the security router are still genuinely
+# used and are NOT superseded: /{id}/exposure and /{id}/iam-review.
 from app.api.routes.security_center import router as security_center_router
 
 # Standard API routes under /api/v1/
-for router in [accounts_router, discovery_router, resources_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router, events_router, security_center_router]:
+#
+# ORDER MATTERS for the two cost routers. cost_router owns
+# `/cloud/cost/{account_id}`, a single-segment parameterized path that matches
+# ANY one segment — including the literal "budgets". Registered first, it
+# swallows /cloud/cost/budgets and tries to parse "budgets" as a UUID, so the
+# whole budgets surface 422s. cost_budgets_router therefore goes first, and its
+# literal paths win. (Routes like /cloud/cost/capabilities/{id} are unaffected:
+# two segments never collide with a one-segment route.)
+for router in [accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router, events_router, security_center_router]:
     app.include_router(router, prefix="/api/v1")
 
 

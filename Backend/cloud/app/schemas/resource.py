@@ -16,6 +16,13 @@ class CloudResourceResponse(BaseModel):
     resource_name: str
     region_or_zone: str
     status: Optional[str] = None
+    # The provider's own word is `status`; this is what we make of it. Both
+    # travel, because the detail page was tinting the raw value on a guess --
+    # anything it did not recognise as running went red, which painted every
+    # Azure resource reporting "Succeeded" as failed. Additive, so the legacy
+    # array consumers (topology, drift, the account dashboard) are unaffected.
+    normalized_status: Optional[str] = None
+    status_reason: Optional[str] = None
     ip_address: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
     metadata_: Optional[Dict[str, Any]] = None

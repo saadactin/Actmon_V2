@@ -4,7 +4,7 @@ import { useCloudAccounts, useDeleteCloudAccount } from '../hooks/useCloudAccoun
 import { useCloudScope } from '../hooks/useCloudScope';
 import { useCloudStore } from '../state/cloudStore';
 import { useTriggerDiscovery } from '../hooks/useDiscovery';
-import { useAllResources } from '../hooks/useResources';
+import { useAccountResourceCounts } from '../hooks/useResources';
 import { formatDate } from '../utils/formatters';
 import { providerKeyOf, slugForProvider } from '../utils/providerScope';
 import { accountLocation } from '../utils/regions';
@@ -76,7 +76,7 @@ export const CloudAccountList = ({
   view = 'list',
 }) => {
   const { isLoading } = useCloudAccounts();
-  const { data: allResources } = useAllResources();
+  const { data: counts } = useAccountResourceCounts();
   const { mutate: deleteAccount } = useDeleteCloudAccount();
   const { mutate: triggerScan } = useTriggerDiscovery();
   const { selectedAccountId, setSelectedAccountId, activeDiscoveryJobs } = useCloudStore();
@@ -101,7 +101,9 @@ export const CloudAccountList = ({
     && (!q || acc.account_name.toLowerCase().includes(q))
   ));
 
-  const resourceCountOf = (accountId) => (allResources || []).filter((r) => r.account_id === accountId).length;
+  // null, not 0, while the counts are still loading — an account whose count we
+  // have not fetched yet has not been shown to be empty.
+  const resourceCountOf = (accountId) => counts?.byAccount?.[accountId] ?? null;
   const isScanningRow = (accountId) => !!activeDiscoveryJobs?.[accountId];
 
   if (isLoading) {
@@ -191,7 +193,7 @@ export const CloudAccountList = ({
                   </p>
                   {accountLocation(acc).text}
                 </div>
-                <div><p className="text-[10px] uppercase tracking-wide text-subtle">Resources</p>{resourceCountOf(acc.id)}</div>
+                <div><p className="text-[10px] uppercase tracking-wide text-subtle">Resources</p>{resourceCountOf(acc.id) ?? "—"}</div>
                 <div><p className="text-[10px] uppercase tracking-wide text-subtle">Last Scan</p>{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</div>
               </div>
               <div className="flex justify-end border-t border-border pt-2">{rowActions(acc)}</div>
@@ -255,7 +257,7 @@ export const CloudAccountList = ({
             </Badge>
           </span>
         ),
-        resources: <span className={cn(CELL_TEXT, 'tabular-nums')} style={CELL_TEXT_STYLE}>{resourceCountOf(acc.id)}</span>,
+        resources: <span className={cn(CELL_TEXT, 'tabular-nums')} style={CELL_TEXT_STYLE}>{resourceCountOf(acc.id) ?? "—"}</span>,
         lastScan: (
           <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</span>
         ),

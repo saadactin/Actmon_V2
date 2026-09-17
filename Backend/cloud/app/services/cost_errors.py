@@ -196,10 +196,18 @@ def classify(exc: Exception, *, provider: Optional[str] = None) -> CostError:
     #    code when there is one -- this is the case the old classifier dropped
     #    into `unknown`, and a throttled response body mentioning "connection"
     #    must not be allowed to steal it.
+    # NOTE the absence of a bare "429" substring test. It was there, and it
+    # misclassified a real failure: an asyncpg "number of query arguments
+    # cannot exceed 32767" error carried the offending INSERT in its message,
+    # whose bind placeholders ran past $429 — so the substring matched and a
+    # local database bug was reported to the user as "the provider is rate
+    # limiting you, this resolves on its own". It did not resolve on its own.
+    # 429 is now recognized only via the structured status code or a phrasing
+    # that cannot occur inside a SQL statement.
     if status == 429 or _has(
-        low, "too many requests", "429", "throttl", "rate limit", "ratelimit",
+        low, "too many requests", "throttl", "rate limit", "ratelimit",
         "requestlimitexceeded", "toomanyrequests", "slowdown",
-    ):
+    ) or re.search(r"(?:\(|\bhttp[ /]?)429\b", low):
         wait = _retry_after(exc)
         detail = (
             f"The provider is rate limiting billing queries. It asked us to wait "

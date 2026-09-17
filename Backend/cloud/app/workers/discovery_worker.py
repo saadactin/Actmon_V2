@@ -137,6 +137,10 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                     f"existing resources were kept rather than pruned. First failure: "
                     f"{failures[0]}",
                 )
+                # A partial sweep could not prune, but it DID observe what it
+                # enumerated. Those rows are fresh; the ones it never reached
+                # keep their old timestamp and correctly read as stale.
+                await resource_repo.mark_seen(account_id, list(seen_ids))
                 # The change log gets a narrower version of the same caution. A
                 # scope that fails to enumerate produces MISSING data, not wrong
                 # data — whatever this sweep did report, it genuinely read from
@@ -163,6 +167,9 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                     removed = await resource_repo.delete_stale(
                         account_id, list(seen_ids), drift_job_id=drift_job_id
                     )
+                    # Everything this sweep enumerated was observed just now,
+                    # whether or not any of its fields moved.
+                    await resource_repo.mark_seen(account_id, list(seen_ids))
                     await db.commit()
                 count = len(seen_ids)
                 logger.info("Discovery job=%s pruned %d stale resources", job_id, removed)
@@ -223,6 +230,41 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             warm_task = asyncio.create_task(prewarm_cost_cache(account))
             _warm_tasks.add(warm_task)
             warm_task.add_done_callback(_warm_tasks.discard)
+
+            # Persist the recent billing window into cloud_cost_facts.
+            #
+            # Without this the fact table stays empty forever, and everything
+            # built on stored history — the trend, forecast, anomalies,
+            # month-over-month, budgets — reports "needs more history" in
+            # perpetuity with no way for a user to get out of that state.
+            # Ingestion is idempotent, so running it on every scan re-reads and
+            # CORRECTS the last 30 days rather than duplicating them; that
+            # repeated re-reading is also what eventually earns a fact its
+            # STABLE finality.
+            #
+            # Its own session, because this runs detached and the caller's
+            # session closes when the job completes.
+            async def _ingest_costs():
+                from app.core.database import AsyncSessionLocal as _Session
+                from app.services.cost_ingestion import ingest_recent
+
+                try:
+                    async with _Session() as _db:
+                        outcome = await ingest_recent(_db, account, days=30)
+                    if outcome.get("ok"):
+                        logger.info(
+                            "Cost ingestion for %s: %d fact(s) written, %d corrected",
+                            account.account_name, outcome.get("inserted", 0),
+                            outcome.get("updated", 0),
+                        )
+                except Exception as exc:  # never fail a completed scan on this
+                    logger.warning(
+                        "Cost ingestion failed for %s: %s", account.account_name, exc,
+                    )
+
+            ingest_task = asyncio.create_task(_ingest_costs())
+            _warm_tasks.add(ingest_task)
+            ingest_task.add_done_callback(_warm_tasks.discard)
 
             # Also fire-and-forget: pull this account's audit events now, so
             # the Event Log has the control-plane activity that explains the

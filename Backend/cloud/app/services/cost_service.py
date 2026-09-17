@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.pricing import oci_pricing
 from app.providers import capabilities as provider_caps
 from app.repository.resource_repo import ResourceRepository
-from app.services import cost_errors, cost_money
+from app.services import cost_errors, cost_metrics, cost_money
 
 logger = logging.getLogger("cloud_svc.cost")
 
@@ -208,12 +208,31 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None
     entry = cache.get(key)
     fresh = _cache_get(cache, key)
     if fresh is not None:
+        cost_metrics.record(getattr(account, "provider", None) if account else None,
+                            "cache_hits")
         return fresh
+
+    provider_name = getattr(account, "provider", None) if account else None
+    cost_metrics.record(provider_name, "cache_misses")
 
     exc: Exception | None = None
     for attempt in range(_TRANSIENT_ATTEMPTS):
+        started = time.monotonic()
         try:
-            value = await fetch()
+            # Serialise throttle-prone providers (Azure). Three subscriptions
+            # refreshing concurrently is exactly the burst that produces a 429
+            # and then costs all three a retry; queuing them succeeds instead.
+            async with cost_metrics.provider_slot(provider_name or ""):
+                cost_metrics.record(provider_name, "billing_api_calls")
+                value = await fetch()
+            elapsed = time.monotonic() - started
+            cost_metrics.observe_duration(provider_name, "billing_api_seconds", elapsed)
+            cost_metrics.structured_log(
+                provider=provider_name,
+                account_id=str(account.id) if account else None,
+                operation=label, duration_seconds=elapsed, status="ok",
+                record_count=(len(value) if hasattr(value, "__len__") else None),
+            )
             now = time.time()
             cache[key] = (now, value, False, now)
             if account is not None:
@@ -232,6 +251,16 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None
 
     if exc is not None:
         logger.warning("%s failed for %s: %s", label, key, exc)
+        classified = cost_errors.classify(exc, provider=provider_name)
+        cost_metrics.record(provider_name, "billing_api_errors")
+        if classified.category == cost_errors.RATE_LIMITED:
+            cost_metrics.record(provider_name, "billing_api_429")
+        cost_metrics.structured_log(
+            provider=provider_name,
+            account_id=str(account.id) if account else None,
+            operation=label, status="failed",
+            error_category=classified.category,
+        )
         if account is not None:
             _record_error(account, exc)
         stale = entry[1] if entry else None
@@ -417,6 +446,60 @@ def get_cost_diagnostic(account_id) -> Optional[Dict[str, Any]]:
     """The last known reason this account's cost data isn't available, or None
     if the last attempt succeeded (or none has been made yet)."""
     return _cost_error_reason.get(str(account_id))
+
+
+#: Diagnostic category -> what it means for a total that came back empty.
+#: Phrased as what happened to the QUERY, because that is what is known. Only
+#: the last entry is a statement about the account's actual spend.
+_EMPTY_TOTAL_REASON: Dict[str, str] = {
+    "rate_limited": (
+        "The provider is rate limiting billing queries for this account, so no "
+        "spend could be read. This is not a spend of zero — stored history for "
+        "this account is unaffected and still shown below."
+    ),
+    "permission": (
+        "The stored credentials are missing the permission needed to read "
+        "billing for this account, so its spend is unknown — not zero."
+    ),
+    "authentication": (
+        "The provider rejected the stored credentials for this account, so no "
+        "billing could be read."
+    ),
+    "network": (
+        "The billing endpoint could not be reached, so no spend could be read "
+        "for this account."
+    ),
+    "unsupported": (
+        "This provider integration cannot report billing for this account."
+    ),
+    "provider_error": (
+        "The provider returned an error for the billing query, so no spend "
+        "could be read for this account."
+    ),
+}
+
+
+def _diagnostic_summary(diagnostics: List[Dict[str, Any]]) -> Optional[str]:
+    """One sentence explaining an empty total, from the diagnostics collected.
+
+    Returns None when nothing went wrong, so an account that genuinely has no
+    spend is not handed an excuse it does not need.
+    """
+    if not diagnostics:
+        return None
+    categories = [d.get("category") for d in diagnostics if d.get("category")]
+    if not categories:
+        return None
+    # One bad account in an ALL view is enough to make the total unsafe to
+    # read as complete, and naming it beats a generic apology.
+    known = [c for c in categories if c in _EMPTY_TOTAL_REASON]
+    if not known:
+        return None
+    primary = known[0]
+    text = _EMPTY_TOTAL_REASON[primary]
+    if len(diagnostics) > 1:
+        text += f" ({len(diagnostics)} accounts in this scope reported a problem.)"
+    return text
 
 
 def _iso(epoch: Optional[float]) -> Optional[str]:
@@ -1039,6 +1122,471 @@ class CostService:
             },
         }
 
+    # ── Persisted history (cloud_cost_facts) ─────────────────────────────────
+
+    async def get_history(
+        self, account_id: uuid.UUID | str, *, days: int = 90,
+        group_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Stored billing history for this scope.
+
+        Always reports `coverage` alongside the series, because a 90-day chart
+        drawn from 6 days of stored facts is not a 90-day chart, and the caller
+        has no way to tell from the series alone.
+        """
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo = CostFactRepository(self.db)
+
+        end = _date.today()
+        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+
+        series = await repo.daily_series(ids, start, end)
+        payload: Dict[str, Any] = {
+            "account_id": str(account_id),
+            "period": {"start": start.isoformat(), "end": end.isoformat(),
+                       "days": days, "timezone": "UTC"},
+            "series": series,
+            "coverage": await repo.coverage(ids),
+            "monthly": await repo.monthly_totals(ids),
+            "source": "cloud_cost_facts",
+        }
+        if group_by:
+            try:
+                payload["grouped"] = await repo.totals_by(ids, start, end, group_by)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            payload["group_by"] = group_by
+        return payload
+
+    async def get_coverage(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """What history exists, and what that does and does not support."""
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        accounts = await self._accounts_in_scope(account_id)
+        repo = CostFactRepository(self.db)
+        coverage = await repo.coverage([a.id for a in accounts])
+
+        days = coverage["days_covered"]
+        # Thresholds are stated rather than hidden so a caller can see WHY a
+        # feature is withheld. Forecasting a month from under two weeks of
+        # history, or calling a day anomalous against three samples, produces
+        # confident nonsense.
+        coverage["supports"] = {
+            "daily_trend": days >= 2,
+            "run_rate_forecast": days >= 14,
+            "anomaly_baseline": days >= 30,
+            "month_over_month": days >= 60,
+        }
+        coverage["account_id"] = str(account_id)
+        coverage["accounts_in_scope"] = len(accounts)
+        return coverage
+
+    async def start_backfill(self, account_id: uuid.UUID, days: int) -> Dict[str, Any]:
+        """Kick off a historical backfill and return its job immediately.
+
+        The work runs detached: a 365-day walk across a throttled provider
+        outlives any sane HTTP timeout, and holding the request open would just
+        make the browser give up while the work continued anyway.
+        """
+        from app.core.database import AsyncSessionLocal
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.services import cost_ingestion
+
+        accounts = await self._accounts_in_scope(account_id)
+        account = accounts[0]
+        job = await CostFactRepository(self.db).create_job(account.id, days)
+
+        async def _run():
+            # Its own session: the request's session closes when the response
+            # is returned, and reusing it from a detached task would fail.
+            async with AsyncSessionLocal() as db:
+                try:
+                    await cost_ingestion.run_backfill(db, account, days, job_id=job.id)
+                except Exception as exc:
+                    logger.exception("Backfill crashed for %s", account.account_name)
+                    err = cost_errors.classify(exc, provider=account.provider)
+                    await CostFactRepository(db).update_job(
+                        job.id, status="FAILED",
+                        finished_at=datetime.now(timezone.utc),
+                        error_category=err.category, error_message=err.message[:2000],
+                    )
+
+        task = asyncio.create_task(_run())
+        _warm_tasks.add(task)
+        task.add_done_callback(_warm_tasks.discard)
+
+        return {**job.to_dict(), "started": True}
+
+    async def get_backfill_status(self, account_id: uuid.UUID) -> Dict[str, Any]:
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        accounts = await self._accounts_in_scope(account_id)
+        repo = CostFactRepository(self.db)
+        job = await repo.latest_job(accounts[0].id)
+        return {
+            "account_id": str(account_id),
+            "job": job.to_dict() if job else None,
+            "coverage": await repo.coverage([a.id for a in accounts]),
+        }
+
+    async def get_resource_context(
+        self, resource_id: uuid.UUID, *, days: int = 90,
+    ) -> Dict[str, Any]:
+        """One resource's cost alongside its config changes and security findings.
+
+        The cross-feature view: it answers "why does this cost what it does" by
+        putting three existing datasets next to each other, and is explicit
+        that proximity in time is not causation.
+        """
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.repository.resource_repo import ResourceRepository
+        from app.services import cost_analytics, cost_correlation_service as corr
+
+        res_repo = ResourceRepository(self.db)
+        resource = await res_repo.get_by_id(resource_id)
+        if resource is None:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        end = _date.today()
+        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+
+        # Per-resource daily history is not stored yet (see cost_ingestion on
+        # why a window total must not be written as a day), so the series here
+        # is the ACCOUNT's, and is labelled as such rather than presented as
+        # this resource's own spend.
+        repo = CostFactRepository(self.db)
+        series = await repo.daily_series([resource.account_id], start, end)
+        anomalies = cost_analytics.detect_anomalies(series)
+        flagged = [
+            item
+            for bucket in (anomalies.get("by_currency") or {}).values()
+            if bucket.get("available")
+            for item in bucket.get("anomalies", [])
+        ]
+
+        # Both of these are best-effort. A missing drift history or an
+        # unavailable findings table must degrade this view to "cost only"
+        # rather than failing the request — the cost half is still useful, and
+        # an exception here would make the whole panel disappear.
+        changes: List[Any] = []
+        findings: List[Any] = []
+        try:
+            from app.repository.drift_repo import DriftRepository
+
+            changes = await DriftRepository(self.db).timeline_for_resource(
+                resource.provider_resource_id, limit=200,
+            )
+        except Exception as exc:
+            logger.debug("Drift history unavailable for %s: %s", resource_id, exc)
+        try:
+            from app.repository.security_repo import SecurityRepository
+
+            rows, _total = await SecurityRepository(self.db).list_findings(
+                account_ids=[resource.account_id], limit=200,
+            )
+            # The repository filters by account, not by resource, so narrow to
+            # this resource here rather than showing the account's whole
+            # findings list under one resource's heading.
+            findings = [
+                f for f in rows
+                if getattr(f, "provider_resource_id", None)
+                == resource.provider_resource_id
+            ]
+        except Exception as exc:
+            logger.debug("Security findings unavailable for %s: %s", resource_id, exc)
+
+        context = corr.correlate(
+            resource=resource, series=series, changes=changes,
+            findings=findings, anomalies=flagged,
+        )
+        context["series_scope"] = (
+            "Account-level daily spend. Per-resource daily history is not stored "
+            "yet, so this series is the account's, not this resource's alone."
+        )
+        context["period"] = {"start": start.isoformat(), "end": end.isoformat(),
+                             "days": days}
+        return context
+
+    # ── Allocation, governance, reports, observability ───────────────────────
+
+    async def get_allocation(
+        self, account_id: uuid.UUID | str, *, dimension: str = "environment",
+        days: int = RESOURCE_DECORATION_DAYS,
+    ) -> Dict[str, Any]:
+        """Spend attributed to a business dimension, plus tag coverage.
+
+        Depends on per-resource cost, so an AWS-only scope genuinely cannot be
+        allocated. That is reported as `supported: false` with the provider's
+        reason rather than as an empty breakdown, which would read as "nothing
+        is tagged" when the truth is "we cannot see what anything costs".
+        """
+        from app.repository.resource_repo import ResourceRepository
+        from app.services import cost_allocation_service as alloc
+
+        accounts = await self._accounts_in_scope(account_id)
+        caps = get_cost_capabilities(accounts)
+        supported = bool(caps["effective"].get("resource"))
+
+        res_repo = ResourceRepository(self.db)
+        resources: List[Any] = []
+        cost_map: Dict[str, Dict[str, Any]] = {}
+        for acc in accounts:
+            resources.extend(await res_repo.list_by_account(acc.id))
+            if provider_caps.for_provider(acc.provider) and \
+                    provider_caps.for_provider(acc.provider).resource:
+                cost_map.update(peek_costs_by_resource(acc))
+                ensure_costs_by_resource_warm(acc)
+
+        try:
+            allocation = alloc.allocate(resources, cost_map, dimension=dimension)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        return {
+            "account_id": str(account_id),
+            "supported": supported,
+            "unsupported_reason": (
+                None if supported else caps["blocked_by"].get("resource")
+            ),
+            "allocation": allocation,
+            "tag_coverage": alloc.tag_coverage(resources),
+            "dimensions_available": sorted(alloc.DIMENSIONS),
+            "source": "billing_api + inventory tags",
+        }
+
+    async def get_governance(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """Governance gaps and the FinOps health score.
+
+        The health score is returned alongside spend-free governance findings
+        and is explicitly labelled a maturity measure — it must never be read
+        as a cost.
+        """
+        from app.repository.resource_repo import ResourceRepository
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.models.cost_budget import CloudCostBudget
+        from sqlalchemy import func, select as _select
+        from app.services import cost_allocation_service as alloc
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+
+        res_repo = ResourceRepository(self.db)
+        resources: List[Any] = []
+        for acc in accounts:
+            resources.extend(await res_repo.list_by_account(acc.id))
+
+        fact_repo = CostFactRepository(self.db)
+        coverage = await fact_repo.coverage(ids)
+        tags = alloc.tag_coverage(resources)
+
+        budget_count = (await self.db.execute(
+            _select(func.count()).select_from(CloudCostBudget).where(
+                CloudCostBudget.enabled.is_(True)
+            )
+        )).scalar() or 0
+
+        cost_map: Dict[str, Dict[str, Any]] = {}
+        for acc in accounts:
+            cost_map.update(peek_costs_by_resource(acc))
+        allocation = alloc.allocate(resources, cost_map, dimension="owner")
+        money_coverage = None
+        cov_values = [v for v in allocation["coverage_percent_by_currency"].values()
+                      if v is not None]
+        if cov_values:
+            money_coverage = round(sum(cov_values) / len(cov_values), 2)
+
+        priced = allocation["priced_resource_count"]
+        unpriced = allocation["unpriced_resource_count"]
+        unpriced_ratio = (
+            unpriced / (priced + unpriced) if (priced + unpriced) else None
+        )
+
+        return {
+            "account_id": str(account_id),
+            "governance": alloc.governance_findings(resources),
+            "finops_health": alloc.finops_health(
+                tag_coverage_percent=tags["overall_coverage_percent"],
+                allocation_coverage_percent=money_coverage,
+                days_of_history=coverage["days_covered"],
+                budget_count=budget_count,
+                accounts_in_scope=len(accounts),
+                anomaly_monitoring_ready=coverage["days_covered"] >= 30,
+                unpriced_resource_ratio=unpriced_ratio,
+            ),
+            "data_coverage": {
+                "historical_days": coverage["days_covered"],
+                "billing_facts": coverage["records"],
+                "resource_attribution_percent": (
+                    round((1 - unpriced_ratio) * 100, 2)
+                    if unpriced_ratio is not None else None
+                ),
+                "tag_allocation_percent": tags["overall_coverage_percent"],
+                "forecast_ready": coverage["days_covered"] >= 14,
+            },
+        }
+
+    async def get_report_types(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """Report types, each marked available or blocked with the reason."""
+        from app.services import cost_report_service as reports
+
+        accounts = await self._accounts_in_scope(account_id)
+        return {
+            "account_id": str(account_id),
+            "types": reports.available_types(get_cost_capabilities(accounts)),
+            "csv_columns": list(reports.CSV_COLUMNS),
+        }
+
+    async def get_executive_report(
+        self, account_id: uuid.UUID | str, *, days: int = 30,
+    ) -> Dict[str, Any]:
+        """The one-page executive summary, assembled from the same figures the
+        rest of the page shows — never recomputed differently."""
+        from app.services import cost_report_service as reports
+
+        analytics = await self.get_cost_analytics(account_id)
+        trends = await self.get_trends(account_id, days=days)
+        forecast = await self.get_forecast(account_id)
+        anomalies = await self.get_anomalies(account_id)
+
+        currency = (analytics.get("totals_by_currency") or {}).get("currency")
+        mom = ((trends.get("month_over_month") or {}).get("by_currency") or {})
+        change = (mom.get(currency) or {}).get("change") if currency else None
+
+        allocation = None
+        try:
+            allocation = (await self.get_allocation(account_id))["allocation"]
+        except HTTPException:
+            allocation = None
+
+        return {
+            "account_id": str(account_id),
+            "summary": reports.executive_summary(
+                totals=analytics.get("totals_by_currency") or {},
+                change=change,
+                top_drivers=analytics.get("by_service") or [],
+                savings=analytics.get("savings_summary"),
+                anomaly_count=anomalies.get("total", 0),
+                forecast=forecast,
+                quality=analytics.get("quality"),
+                allocation=allocation,
+            ),
+        }
+
+    # ── Analytics over stored history ────────────────────────────────────────
+
+    async def _history_series(self, account_ids, days: int):
+        """The daily series backing every analytic below."""
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+
+        end = _date.today()
+        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+        repo = CostFactRepository(self.db)
+        return repo, start, end, await repo.daily_series(account_ids, start, end)
+
+    async def get_forecast(
+        self, account_id: uuid.UUID | str, *, days: int = 90,
+    ) -> Dict[str, Any]:
+        """Run-rate projection per currency, with its confidence and basis.
+
+        Never a model, and labelled as such everywhere it surfaces. Returns NA
+        with a reason when there is too little history rather than projecting a
+        straight line through noise.
+        """
+        from app.services import cost_analytics
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo, start, end, series = await self._history_series(ids, days)
+        result = cost_analytics.forecast(series)
+        result["account_id"] = str(account_id)
+        result["coverage"] = await repo.coverage(ids)
+        result["source"] = "cloud_cost_facts"
+        return result
+
+    async def get_anomalies(
+        self, account_id: uuid.UUID | str, *, days: int = 90,
+        percent_threshold: float = None, min_absolute: float = None,
+    ) -> Dict[str, Any]:
+        """Days whose spend departs from their own trailing baseline."""
+        from app.services import cost_analytics
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo, start, end, series = await self._history_series(ids, days)
+
+        kwargs = {}
+        if percent_threshold is not None:
+            kwargs["percent_threshold"] = percent_threshold
+        if min_absolute is not None:
+            kwargs["min_absolute"] = min_absolute
+
+        result = cost_analytics.detect_anomalies(series, **kwargs)
+        result["account_id"] = str(account_id)
+        result["coverage"] = await repo.coverage(ids)
+        result["source"] = "cloud_cost_facts"
+        return result
+
+    async def get_trends(
+        self, account_id: uuid.UUID | str, *, days: int = 30,
+        dimension: str = "service",
+    ) -> Dict[str, Any]:
+        """Change analysis, month-over-month and the spend calendar.
+
+        The comparison period is the SAME LENGTH immediately before the current
+        one — comparing 30 days against a 14-day remainder would manufacture a
+        decline that never happened.
+        """
+        from datetime import date as _date, timedelta as _timedelta
+
+        from app.repository.cost_fact_repo import CostFactRepository
+        from app.services import cost_analytics
+
+        accounts = await self._accounts_in_scope(account_id)
+        ids = [a.id for a in accounts]
+        repo = CostFactRepository(self.db)
+
+        days = max(1, min(days, MAX_REPORT_DAYS))
+        end = _date.today()
+        start = end - _timedelta(days=days)
+        prior_start = start - _timedelta(days=days)
+
+        current = await repo.totals_by(ids, start, end, dimension, limit=500)
+        previous = await repo.totals_by(ids, prior_start, start, dimension, limit=500)
+        series = await repo.daily_series(ids, start, end)
+
+        forecast_result = cost_analytics.forecast(
+            await repo.daily_series(ids, end - _timedelta(days=90), end)
+        )
+        anomalies = cost_analytics.detect_anomalies(
+            await repo.daily_series(ids, end - _timedelta(days=90), end)
+        )
+
+        return {
+            "account_id": str(account_id),
+            "period": {"start": start.isoformat(), "end": end.isoformat(),
+                       "days": days, "timezone": "UTC"},
+            "comparison_period": {"start": prior_start.isoformat(),
+                                  "end": start.isoformat(), "days": days},
+            "change": cost_analytics.change_analysis(
+                current, previous, dimension=dimension
+            ),
+            "month_over_month": cost_analytics.month_over_month(
+                await repo.monthly_totals(ids), forecast_result=forecast_result
+            ),
+            "calendar": cost_analytics.spend_calendar(series, anomalies=anomalies),
+            "coverage": await repo.coverage(ids),
+            "source": "cloud_cost_facts",
+        }
+
     async def get_cost_summary(self, account_id: uuid.UUID) -> Dict[str, Any]:
         from app.repository.cloud_account_repo import CloudAccountRepository
 
@@ -1556,6 +2104,22 @@ class CostService:
         ]
         potential_savings = round(sum(known_savings), 2) if known_savings else None
 
+        # ── Structure, score and lifecycle for the findings above ────────────
+        # The rules stay where they are; this adds category, confidence,
+        # actionability, a published priority score and any human decision,
+        # joined back by a fingerprint that survives re-derivation.
+        from app.repository.cost_reco_repo import CostRecommendationRepository
+        from app.services import cost_recommendation_service as reco
+
+        decisions = await CostRecommendationRepository(self.db).decisions_for(
+            [a.id for a in accounts]
+        )
+        optimizations = reco.enrich(
+            optimizations, account_id=account_id, decisions=decisions,
+        )
+        savings_breakdown = reco.savings_summary(optimizations)
+        savings_by_category = reco.by_category(optimizations)
+
         stopped_instances = await build_stopped_instances(resources, accounts)
 
         # Real reasons for any account that failed above — one bad account in an
@@ -1577,6 +2141,10 @@ class CostService:
             "trends": trends,
             "trend_currency": trend_currency,
             "optimizations": optimizations,
+            # Split by how well each saving is known (85) and grouped by
+            # currency (86) — never one combined number.
+            "savings_summary": savings_breakdown,
+            "savings_by_category": savings_by_category,
             "stopped_instances": stopped_instances,
             "total_monthly_cost": total_monthly_cost,
             "total_resources": len(resources),
@@ -1605,9 +2173,14 @@ class CostService:
             # view spans USD and INR there is no single number, and the old
             # `total_monthly_cost`/`currency` pair could only answer NA. The
             # per-currency breakdown keeps the real figures visible instead.
+            # When the sum is empty, the reason is taken from the diagnostic
+            # this request already collected rather than guessed. An Azure
+            # subscription being rate-limited used to render as "the provider
+            # returned no billing records", which reads as "this account has no
+            # spend" — while its stored history held a real 12.6 lakh.
             "totals_by_currency": cost_money.total(
                 (r.get("monthly_cost"), r.get("currency")) for r in by_service
-            ).to_dict(),
+            ).with_reason(_diagnostic_summary(cost_diagnostics)).to_dict(),
             "capabilities": get_cost_capabilities(accounts),
             "quality": assess_cost_quality(accounts),
             "freshness": {
