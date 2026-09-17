@@ -12,6 +12,7 @@ import {
 import { DiagnosticModal } from '../components/DiagnosticModal';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { slugForProvider } from '../utils/providerScope';
+import { rawStatusTone, statusMeta } from '../utils/resourceModel';
 import CloudPageHeader from '../components/CloudPageHeader';
 import CloudSection from '../components/CloudSection';
 import Badge from '@/components/ui/Badge';
@@ -45,14 +46,20 @@ function getMeta(type) {
   return TYPE_META[type] || { icon: Cloud, label: type };
 }
 
-/** Maps a resource/metric status string to the app's fixed status-tone scale. */
-function statusTone(status) {
-  if (!status) return 'neutral';
-  const s = status.toLowerCase();
-  if (['running', 'active', 'available'].includes(s)) return 'success';
-  if (['pending', 'starting'].includes(s)) return 'warning';
-  return 'danger';
-}
+/**
+ * Status tone comes from the shared model, keyed on the NORMALIZED status the
+ * backend computed — not from matching provider words here.
+ *
+ * The version this replaces treated anything it did not recognise as running or
+ * pending as a failure, so every Azure resource reporting "Succeeded" (ARM's
+ * word for "finished building") rendered red, as did every resource whose state
+ * the provider never reported at all. Unknown is not failed, and it is not
+ * healthy either; only the backend has the resource type and config needed to
+ * tell those apart, so it decides and this renders what it decided.
+ */
+const statusToneOf = (normalized, raw) => (
+  normalized ? statusMeta(normalized).tone : rawStatusTone(raw)
+);
 
 function fmt(val) {
   if (val === null || val === undefined) return '—';
@@ -71,11 +78,19 @@ function bytes(b) {
 }
 
 /* ─── sub-components ────────────────────────────────────────────────── */
-function StatusBadge({ status }) {
+function StatusBadge({ status, normalized, reason }) {
   return (
-    <Badge tone={statusTone(status)} size="xs" className="uppercase tracking-wide">
+    <Badge
+      tone={statusToneOf(normalized, status)}
+      size="xs"
+      className="uppercase tracking-wide"
+      title={reason || (normalized && status ? `Normalized: ${statusMeta(normalized).label}` : undefined)}
+    >
       <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {status || 'NA'}
+      {/* The provider's own word where there is one — that is the evidence.
+          The tone carries our reading of it, and "Not reported" is said in
+          words rather than left as a bare NA. */}
+      {status || (normalized ? statusMeta(normalized).label : 'Not reported')}
     </Badge>
   );
 }
@@ -672,7 +687,11 @@ export const ResourceDetailPage = () => {
         onBack={goBack}
         actions={(
           <div className="flex items-center gap-2">
-            <StatusBadge status={resource.status} />
+            <StatusBadge
+              status={resource.status}
+              normalized={resource.normalized_status}
+              reason={resource.status_reason}
+            />
             <Badge tone="outline" size="sm">{typeMeta.label}</Badge>
           </div>
         )}

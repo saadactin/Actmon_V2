@@ -162,8 +162,7 @@ export const NON_SECURITY_CATEGORIES = new Set(['Performance', 'Cost']);
 
 // ── Grade ───────────────────────────────────────────────────────────────────
 // Grade colour is a computed data value, like the score itself, so it stays a
-// direct hex scale rather than a chrome token — the same call the old
-// SecurityPosturePage made.
+// direct hex scale rather than a chrome token.
 export const GRADE_COLOR = {
   A: '#22c55e',
   B: '#10b981',

@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Plus, Server, Settings } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
-import { useAllResources } from '../hooks/useResources';
+import { useAccountResourceCounts } from '../hooks/useResources';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -22,18 +22,25 @@ const providerKeyOf = (p) => (p === 'Oracle' ? 'OCI' : p);
 export default function CloudProviderChooser() {
   const navigate = useNavigate();
   const { data: accounts } = useCloudAccounts();
-  const { data: allResources } = useAllResources();
+  // Counted in the database, not by downloading the estate to measure it.
+  const { data: counts } = useAccountResourceCounts();
   const { canHere } = usePermissions();
 
   const providerStats = PROVIDERS.map((p) => {
     const provAccounts = (accounts || []).filter((a) => providerKeyOf(a.provider) === p.key);
-    const provAccountIds = new Set(provAccounts.map((a) => a.id));
-    const provResources = (allResources || []).filter((r) => provAccountIds.has(r.account_id));
-    return { ...p, accountCount: provAccounts.length, resourceCount: provResources.length };
+    return {
+      ...p,
+      accountCount: provAccounts.length,
+      // Keyed on the canonical provider key, so an account stored as "Oracle"
+      // still lands in the OCI tile.
+      resourceCount: provAccounts.reduce(
+        (sum, a) => sum + (counts?.byAccount?.[a.id] || 0), 0,
+      ),
+    };
   });
 
   const totalAccounts = accounts?.length || 0;
-  const totalResources = allResources?.length || 0;
+  const totalResources = counts?.total ?? 0;
 
   return (
     <>

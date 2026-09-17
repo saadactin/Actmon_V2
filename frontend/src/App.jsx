@@ -44,6 +44,7 @@ const CloudAccountsPage = lazy(() => import('@/features/cloud/pages/CloudAccount
 const CloudProviderAccountsPage = lazy(() => import('@/features/cloud/pages/CloudProviderAccountsPage'));
 const CloudDashboard = lazy(() => import('@/features/cloud/pages/CloudDashboard').then((m) => ({ default: m.CloudDashboard })));
 const CloudResourceDetailPage = lazy(() => import('@/features/cloud/pages/ResourceDetailPage').then((m) => ({ default: m.ResourceDetailPage })));
+const CloudResourcesPage = lazy(() => import('@/features/cloud/pages/ResourcesPage').then((m) => ({ default: m.ResourcesPage })));
 
 // Infrastructure — ported verbatim from the existing module. All three routes
 // share one host abstraction (os_servers): the overview/grid, a per-host
@@ -203,6 +204,12 @@ export default function App() {
         <Route path="/cloud" element={<CloudShell />}>
           <Route index element={<CloudProviderChooser />} />
           <Route path="accounts" element={<CloudAccountsPage />} />
+          {/* The cross-account inventory. Several places already linked here —
+              the event drawer sends you to /cloud/resources?q=… — but the route
+              did not exist, so those links fell through to the provider
+              chooser. Declared before /resources/:resourceId so the literal
+              wins over the id parameter. */}
+          <Route path="resources" element={<CloudResourcesPage />} />
           <Route path="resources/:resourceId" element={<CloudResourceDetailPage />} />
           <Route path="resources/:resourceId/:tab" element={<CloudResourceDetailPage />} />
 

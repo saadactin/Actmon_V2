@@ -448,6 +448,60 @@ def get_cost_diagnostic(account_id) -> Optional[Dict[str, Any]]:
     return _cost_error_reason.get(str(account_id))
 
 
+#: Diagnostic category -> what it means for a total that came back empty.
+#: Phrased as what happened to the QUERY, because that is what is known. Only
+#: the last entry is a statement about the account's actual spend.
+_EMPTY_TOTAL_REASON: Dict[str, str] = {
+    "rate_limited": (
+        "The provider is rate limiting billing queries for this account, so no "
+        "spend could be read. This is not a spend of zero — stored history for "
+        "this account is unaffected and still shown below."
+    ),
+    "permission": (
+        "The stored credentials are missing the permission needed to read "
+        "billing for this account, so its spend is unknown — not zero."
+    ),
+    "authentication": (
+        "The provider rejected the stored credentials for this account, so no "
+        "billing could be read."
+    ),
+    "network": (
+        "The billing endpoint could not be reached, so no spend could be read "
+        "for this account."
+    ),
+    "unsupported": (
+        "This provider integration cannot report billing for this account."
+    ),
+    "provider_error": (
+        "The provider returned an error for the billing query, so no spend "
+        "could be read for this account."
+    ),
+}
+
+
+def _diagnostic_summary(diagnostics: List[Dict[str, Any]]) -> Optional[str]:
+    """One sentence explaining an empty total, from the diagnostics collected.
+
+    Returns None when nothing went wrong, so an account that genuinely has no
+    spend is not handed an excuse it does not need.
+    """
+    if not diagnostics:
+        return None
+    categories = [d.get("category") for d in diagnostics if d.get("category")]
+    if not categories:
+        return None
+    # One bad account in an ALL view is enough to make the total unsafe to
+    # read as complete, and naming it beats a generic apology.
+    known = [c for c in categories if c in _EMPTY_TOTAL_REASON]
+    if not known:
+        return None
+    primary = known[0]
+    text = _EMPTY_TOTAL_REASON[primary]
+    if len(diagnostics) > 1:
+        text += f" ({len(diagnostics)} accounts in this scope reported a problem.)"
+    return text
+
+
 def _iso(epoch: Optional[float]) -> Optional[str]:
     """Epoch seconds as a UTC ISO-8601 string, or None. Never 'now' as a
     fallback — an unknown timestamp must stay unknown."""
@@ -2119,9 +2173,14 @@ class CostService:
             # view spans USD and INR there is no single number, and the old
             # `total_monthly_cost`/`currency` pair could only answer NA. The
             # per-currency breakdown keeps the real figures visible instead.
+            # When the sum is empty, the reason is taken from the diagnostic
+            # this request already collected rather than guessed. An Azure
+            # subscription being rate-limited used to render as "the provider
+            # returned no billing records", which reads as "this account has no
+            # spend" — while its stored history held a real 12.6 lakh.
             "totals_by_currency": cost_money.total(
                 (r.get("monthly_cost"), r.get("currency")) for r in by_service
-            ).to_dict(),
+            ).with_reason(_diagnostic_summary(cost_diagnostics)).to_dict(),
             "capabilities": get_cost_capabilities(accounts),
             "quality": assess_cost_quality(accounts),
             "freshness": {

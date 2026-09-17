@@ -131,6 +131,24 @@ COST_MANAGE_ALERTS = "cost:manage_alerts"
 COST_MANAGE_RECOMMENDATIONS = "cost:manage_recommendations"
 COST_ADMIN = "cost:admin"
 
+# ---- Resources -------------------------------------------------------------
+# The inventory is the least sensitive of these surfaces and the most widely
+# used, so RESOURCE_VIEW sits with the other viewer permissions. The raw
+# provider payload does not: it carries connection strings, instance metadata
+# and policy documents that the normalized columns deliberately summarise, so
+# it follows the same rule the Event Log set and needs the analyst role.
+#
+# RESOURCE_ACTION exists and is granted to nobody but an administrator, even
+# though no provider adapter can currently execute one. Declaring it now means
+# the first write path to land arrives already gated, rather than shipping
+# ungated and being retrofitted.
+RESOURCE_VIEW = "resources:view"
+RESOURCE_VIEW_RAW = "resources:view_raw"
+RESOURCE_EXPORT = "resources:export"
+RESOURCE_DISCOVER = "resources:discover"
+RESOURCE_ACTION = "resources:action"
+RESOURCE_ADMIN = "resources:admin"
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "security_analyst"
 ROLE_ADMIN = "administrator"
@@ -144,7 +162,7 @@ ROLE_AUDIT_ADMIN = "audit_admin"
 # A viewer gets the structured event — every field needed to answer who/what/
 # when/where — and the payload needs the analyst role.
 ROLE_PERMISSIONS = {
-    ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW},
+    ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW, RESOURCE_VIEW},
     ROLE_ANALYST: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY,
         TOPOLOGY_VIEW, TOPOLOGY_VIEW_RAW, TOPOLOGY_EXPORT,
@@ -155,6 +173,10 @@ ROLE_PERMISSIONS = {
         # Can pull the itemized ledger out of the product, but cannot change
         # budgets, alert thresholds, or dismiss an optimization.
         COST_VIEW, COST_EXPORT,
+        # Can pull the inventory out of the product and read the raw
+        # provider payload while investigating; cannot trigger discovery
+        # against a rate-limited provider API.
+        RESOURCE_VIEW, RESOURCE_VIEW_RAW, RESOURCE_EXPORT,
     },
     ROLE_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -163,6 +185,8 @@ ROLE_PERMISSIONS = {
         SECURITY_SUPPRESS, SECURITY_MANAGE_POLICIES,
         COST_VIEW, COST_EXPORT, COST_MANAGE_BUDGETS, COST_MANAGE_ALERTS,
         COST_MANAGE_RECOMMENDATIONS, COST_ADMIN,
+        RESOURCE_VIEW, RESOURCE_VIEW_RAW, RESOURCE_EXPORT,
+        RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
     },
     ROLE_AUDIT_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -172,6 +196,8 @@ ROLE_PERMISSIONS = {
         SECURITY_SUPPRESS, SECURITY_MANAGE_POLICIES,
         COST_VIEW, COST_EXPORT, COST_MANAGE_BUDGETS, COST_MANAGE_ALERTS,
         COST_MANAGE_RECOMMENDATIONS, COST_ADMIN,
+        RESOURCE_VIEW, RESOURCE_VIEW_RAW, RESOURCE_EXPORT,
+        RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
     },
 }
 

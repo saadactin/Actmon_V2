@@ -12,6 +12,9 @@ from app.services.cloud_account_service import CloudAccountService
 from app.services.discovery_service import DiscoveryService
 from app.services.drift_service import DriftService
 from app.services.event_service import EventService
+from app.services.resource_action_service import ResourceActionService
+from app.services.resource_query_service import ResourceQueryService
+from app.services.resource_view_service import ResourceViewService
 from app.services.resource_service import ResourceService
 from app.services.topology_service import TopologyService
 from app.services.cost_service import CostService
@@ -27,6 +30,24 @@ async def get_discovery_service(db: AsyncSession = Depends(get_db)) -> Discovery
 
 async def get_resource_service(db: AsyncSession = Depends(get_db)) -> ResourceService:
     return ResourceService(db)
+
+
+async def get_resource_query_service(
+    db: AsyncSession = Depends(get_db),
+) -> ResourceQueryService:
+    return ResourceQueryService(db)
+
+
+async def get_resource_view_service(
+    db: AsyncSession = Depends(get_db),
+) -> ResourceViewService:
+    return ResourceViewService(db)
+
+
+async def get_resource_action_service(
+    db: AsyncSession = Depends(get_db),
+) -> ResourceActionService:
+    return ResourceActionService(db)
 
 
 async def get_cost_service(db: AsyncSession = Depends(get_db)) -> CostService:

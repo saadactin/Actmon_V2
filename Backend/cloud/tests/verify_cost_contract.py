@@ -75,6 +75,36 @@ check("real zero total is 0.0, not None", zero.single_amount == 0.0,
 check("real zero is not 'empty'", zero.is_empty is False)
 check("real zero has no na_reason", zero.na_reason() is None)
 
+print("\n4b. An empty total does not invent a cause")
+# The regression this guards: an Azure subscription being rate-limited (HTTP
+# 429) rendered as "the provider returned no billing records for this scope",
+# which reads as an account with no spend. Its stored history held Rs 12.6 lakh
+# at the time. An empty sum cannot tell why it is empty, so it must not say.
+empty = money.total([])
+check("an empty total is NA, not zero", empty.single_amount is None)
+check("...and does not claim the provider answered",
+      "returned no billing records" not in (empty.na_reason() or ""),
+      (empty.na_reason() or "")[:60])
+check("...but does say records were not counted",
+      "not counted" in (empty.na_reason() or "").lower()
+      or "no billing records were counted" in (empty.na_reason() or "").lower(),
+      (empty.na_reason() or "")[:80])
+check("...and points at the diagnostics",
+      "diagnostic" in (empty.na_reason() or "").lower())
+check("the fallback is flagged as NOT a diagnosis",
+      empty.to_dict()["reason_is_diagnostic"] is False)
+
+throttled = empty.with_reason("The provider is rate limiting billing queries.")
+check("a caller's diagnosis replaces the fallback",
+      throttled.na_reason() == "The provider is rate limiting billing queries.")
+check("...and is flagged as a real diagnosis",
+      throttled.to_dict()["reason_is_diagnostic"] is True)
+check("the original total is unchanged", empty.unavailable_reason is None)
+
+priced = money.total([(10.0, "INR")]).with_reason("ignored")
+check("a total that exists never carries an excuse", priced.na_reason() is None)
+check("...and keeps its amount", priced.single_amount == 10.0)
+
 print("\n5. Missing currency keeps the money visible in an UNKNOWN bucket")
 nocur = money.total([(10.0, None), (5.0, "")])
 check("amount not discarded", nocur.by_currency.get(money.UNKNOWN_CURRENCY) == 15.0,

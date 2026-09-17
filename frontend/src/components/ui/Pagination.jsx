@@ -58,6 +58,9 @@ export default function Pagination({
   className,
   /** What the rows are, for the count line: "of 134 tables". */
   unit = 'rows',
+  /** Override the size choices. A server-paged list must not offer 'All' —
+      the API caps a page at 250 rows, so the option would simply fail. */
+  pageSizes = PAGE_SIZES,
 }) {
   const all = pageSize === 'all' || !Number(pageSize);
   const size = all ? total : Number(pageSize);
@@ -90,7 +93,7 @@ export default function Pagination({
           <Select
             value={String(pageSize)}
             onChange={onPageSize}
-            options={PAGE_SIZES}
+            options={pageSizes}
             width="auto"
             size="sm"
           />

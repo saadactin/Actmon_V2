@@ -137,6 +137,10 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                     f"existing resources were kept rather than pruned. First failure: "
                     f"{failures[0]}",
                 )
+                # A partial sweep could not prune, but it DID observe what it
+                # enumerated. Those rows are fresh; the ones it never reached
+                # keep their old timestamp and correctly read as stale.
+                await resource_repo.mark_seen(account_id, list(seen_ids))
                 # The change log gets a narrower version of the same caution. A
                 # scope that fails to enumerate produces MISSING data, not wrong
                 # data — whatever this sweep did report, it genuinely read from
@@ -163,6 +167,9 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                     removed = await resource_repo.delete_stale(
                         account_id, list(seen_ids), drift_job_id=drift_job_id
                     )
+                    # Everything this sweep enumerated was observed just now,
+                    # whether or not any of its fields moved.
+                    await resource_repo.mark_seen(account_id, list(seen_ids))
                     await db.commit()
                 count = len(seen_ids)
                 logger.info("Discovery job=%s pruned %d stale resources", job_id, removed)

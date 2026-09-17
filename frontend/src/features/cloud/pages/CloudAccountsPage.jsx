@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CloudAccountList } from '../components/CloudAccountList';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
-import { useAllResources } from '../hooks/useResources';
+import { useAccountResourceCounts } from '../hooks/useResources';
 import { providerKeyOf } from '../utils/providerScope';
 import { useCloudStore } from '../state/cloudStore';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -27,11 +27,11 @@ export const CloudAccountsPage = () => {
   const setDrawerOpen = useCloudStore((state) => state.setAddAccountDrawerOpen);
   const { canHere } = usePermissions();
   const { data: accounts } = useCloudAccounts();
-  const { data: allResources } = useAllResources();
+  const { data: counts } = useAccountResourceCounts();
   const [search, setSearch] = useState('');
 
   const totalAccounts = accounts?.length || 0;
-  const totalResources = allResources?.length || 0;
+  const totalResources = counts?.total ?? 0;
   const providerCounts = PROVIDER_KPI.map((p) => ({
     ...p,
     count: (accounts || []).filter((a) => providerKeyOf(a.provider) === p.key).length,
