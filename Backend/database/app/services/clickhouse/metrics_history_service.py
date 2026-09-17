@@ -49,14 +49,33 @@ _tables_ready = set()
 
 
 def get_client():
-    """Fresh ClickHouse client via the shared actmon_logs config, or None (cooldown)."""
+    """Fresh ClickHouse client, reusing actmon_logs' config (host/port/user/
+    password/enabled flag) but NOT actmon_logs.core.get_client() itself — that
+    function shares its cooldown with actmon_logs_service.py's independent
+    10-second metric-logger thread. That thread has its own real, recurring
+    failure (unrelated to this pipeline), and because its retry interval
+    matches its own cooldown almost exactly, it can stay in an
+    always-just-failed state indefinitely — which, when this function
+    delegated to it, dragged this ENTIRELY SEPARATE pipeline down with it
+    even though ClickHouse itself was always reachable. Building the client
+    directly here means this pipeline's health can never be poisoned by that
+    other subsystem's problems again, in either direction."""
     global _next_retry
     if time.monotonic() < _next_retry:
         return None
     try:
         from actmon_logs import core as logs_core
-        return logs_core.get_client()
-    except Exception:  # noqa: BLE001
+        if not logs_core.logs_enabled():
+            return None
+        import clickhouse_connect
+        cfg = logs_core.CONFIG
+        return clickhouse_connect.get_client(
+            host=cfg["host"], port=cfg["port"],
+            username=cfg["username"], password=cfg["password"],
+            connect_timeout=2, send_receive_timeout=6, query_retries=1,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[metrics_history] get_client failed: {e!r}")
         _next_retry = time.monotonic() + _COOLDOWN
         return None
 
@@ -114,8 +133,16 @@ def ensure_table(cli, table):
         _tables_ready.add(table)
         return True
     except Exception as e:  # noqa: BLE001
+        # A schema/DDL problem on THIS table is not the same as "ClickHouse is
+        # unreachable" — calling mark_down() here used to flip the shared
+        # is_up()/cooldown flag on any single table's issue, making EVERY
+        # OTHER caller (including totally unrelated collectors) see a false
+        # "ClickHouse down" for the next 15s, repeatedly, for as long as this
+        # one table kept failing. Only get_client() actually failing to
+        # connect should set that shared flag; a table-specific DDL failure
+        # just fails that table.
+        print(f"[metrics_history] schema ({table}) failed: {e!r}")
         logger.debug("[metrics_history] schema (%s): %s", table, e)
-        mark_down()
         return False
 
 
@@ -143,7 +170,6 @@ def flush_sample(agent_name, sample):
         cli.insert("%s.%s" % (CH_DB, table), [row], column_names=COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] insert (%s): %s", table, e)
-        mark_down()
 
 
 # ── Transactional telemetry tables (top SQL, wait events) ─────────────────────
@@ -154,7 +180,45 @@ TOPSQL_COLUMNS = ["ts", "agent", "sql_id", "sql_text", "executions",
                   "avg_elapsed_ms", "cpu_time_ms", "buffer_gets", "total_ms", "max_ms"]
 WAIT_COLUMNS = ["ts", "agent", "event_name", "wait_class", "time_waited_ms", "avg_ms", "count"]
 
+# Raw cumulative counters from postgres_perf_samples (the Performance tab /
+# Processes tab's PG-side 7-day buffer) — same 26 columns, same order, as
+# postgres_perf_collector.py's _COLUMNS. Stored verbatim (never a computed
+# rate) so a future rate-formula change never requires re-collecting history,
+# exactly like the PG-side table's own "store raw, derive on read" design —
+# the read side re-runs the SAME _rate_row() math postgres_perf_history_service.py
+# already has, just against two rows from here instead of from PG once a
+# query window reaches past the PG table's 7-day retention.
+POSTGRES_PERF_COLUMNS = [
+    "ts", "agent", "conn_id",
+    "xact_commit", "xact_rollback", "blks_read", "blks_hit",
+    "tup_fetched", "tup_inserted", "tup_updated", "tup_deleted", "numbackends",
+    "buffers_alloc", "buffers_clean", "buffers_backend", "maxwritten_clean",
+    "buffers_checkpoint", "checkpoints_timed", "checkpoints_req",
+    "checkpoint_write_time", "checkpoint_sync_time",
+    "wal_bytes", "wal_records", "wal_fpi", "wal_write", "wal_sync",
+    "wal_write_time", "wal_sync_time", "archived_count", "failed_count",
+]
+
 _EXTRA_DDL = {
+    "postgres_perf_samples": f"""
+        CREATE TABLE IF NOT EXISTS {CH_DB}.postgres_perf_samples (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32,
+            xact_commit Nullable(Int64), xact_rollback Nullable(Int64),
+            blks_read Nullable(Int64), blks_hit Nullable(Int64),
+            tup_fetched Nullable(Int64), tup_inserted Nullable(Int64),
+            tup_updated Nullable(Int64), tup_deleted Nullable(Int64),
+            numbackends Nullable(Int32),
+            buffers_alloc Nullable(Int64), buffers_clean Nullable(Int64),
+            buffers_backend Nullable(Int64), maxwritten_clean Nullable(Int64),
+            buffers_checkpoint Nullable(Int64),
+            checkpoints_timed Nullable(Int64), checkpoints_req Nullable(Int64),
+            checkpoint_write_time Nullable(Float64), checkpoint_sync_time Nullable(Float64),
+            wal_bytes Nullable(Float64), wal_records Nullable(Int64), wal_fpi Nullable(Int64),
+            wal_write Nullable(Int64), wal_sync Nullable(Int64),
+            wal_write_time Nullable(Float64), wal_sync_time Nullable(Float64),
+            archived_count Nullable(Int64), failed_count Nullable(Int64)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL {TTL_DAYS} DAY""",
     "top_sql": f"""
         CREATE TABLE IF NOT EXISTS {CH_DB}.top_sql (
             ts DateTime, agent LowCardinality(String), sql_id String, sql_text String,
@@ -184,9 +248,59 @@ def _ensure_extra(cli, table):
         _tables_ready.add(table)
         return True
     except Exception as e:  # noqa: BLE001
+        # Same reasoning as ensure_table() above — a table-specific DDL
+        # failure must not flip the shared "ClickHouse unreachable" flag.
+        print(f"[metrics_history] schema ({table}) failed: {e!r}")
         logger.debug("[metrics_history] schema (%s): %s", table, e)
-        mark_down()
         return False
+
+
+def flush_postgres_perf(rows):
+    """rows: list of dicts matching POSTGRES_PERF_COLUMNS (a NULL-safe subset
+    is fine — missing keys insert as NULL). One row per connection per
+    collector tick (postgres_perf_collector.py, every 60s)."""
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None:
+        print("[metrics_history] flush_postgres_perf: get_client() returned None (ClickHouse unreachable or in cooldown)")
+        return
+    if not _ensure_extra(cli, "postgres_perf_samples"):
+        print("[metrics_history] flush_postgres_perf: _ensure_extra failed for postgres_perf_samples")
+        return
+    try:
+        import datetime
+        data = [[r.get(c) if c != "ts" else (r.get("ts") or datetime.datetime.now())
+                 for c in POSTGRES_PERF_COLUMNS] for r in rows]
+        cli.insert(f"{CH_DB}.postgres_perf_samples", data, column_names=POSTGRES_PERF_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        # No mark_down() — an insert failure here is specific to this one
+        # table, not evidence the connection itself is down.
+        print(f"[metrics_history] flush_postgres_perf: insert failed: {e!r}")
+        logger.debug("[metrics_history] flush_postgres_perf: %s", e)
+
+
+def query_postgres_perf(conn_id, minutes=None, since=None, until=None, limit=5000):
+    """Raw counter rows for one connection, OLDEST first (unlike the other
+    query_* functions here) — this is consumed as a rate-derivation input
+    series (two adjacent rows diffed), the same shape
+    postgres_perf_history_service._fetch_samples() already returns from PG,
+    not a newest-first event list for direct display."""
+    cli = get_client()
+    if cli is None:
+        return []
+    try:
+        where, params = _window_where(conn_id, minutes, since, until)
+        cols = POSTGRES_PERF_COLUMNS[3:]  # everything but ts/agent/conn_id
+        res = cli.query(
+            "SELECT toTimeZone(ts,'UTC') AS ts, " + ", ".join(cols) +
+            f" FROM {CH_DB}.postgres_perf_samples WHERE " + " AND ".join(where) +
+            " ORDER BY ts ASC LIMIT %(lim)s", parameters={**params, "lim": int(limit)})
+        out_cols = ["captured_at"] + cols
+        return [dict(zip(out_cols, [r[0]] + list(r[1:]))) for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_postgres_perf: %s", e)
+        return []
 
 
 # ── MySQL historical EVENT/snapshot tables (Reports architecture) ─────────────
@@ -276,7 +390,6 @@ def _ensure_mysql_table(cli, table):
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] schema (%s): %s", table, e)
-        mark_down()
         return False
 
 
@@ -295,7 +408,6 @@ def flush_mysql_slow_queries(rows):
         cli.insert(f"{CH_DB}.actmon_mysql_slow_queries", data, column_names=MYSQL_SLOWQ_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_slow_queries: %s", e)
-        mark_down()
 
 
 def flush_mysql_error_logs(rows):
@@ -310,7 +422,6 @@ def flush_mysql_error_logs(rows):
         cli.insert(f"{CH_DB}.actmon_mysql_error_logs", data, column_names=MYSQL_ERRLOG_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_error_logs: %s", e)
-        mark_down()
 
 
 def flush_mysql_binlog_snapshot(row):
@@ -323,7 +434,6 @@ def flush_mysql_binlog_snapshot(row):
         cli.insert(f"{CH_DB}.actmon_mysql_binlog_history", data, column_names=MYSQL_BINLOG_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_binlog_snapshot: %s", e)
-        mark_down()
 
 
 def flush_mysql_replication_snapshot(row):
@@ -339,7 +449,6 @@ def flush_mysql_replication_snapshot(row):
         cli.insert(f"{CH_DB}.actmon_mysql_replication_history", data, column_names=MYSQL_REPL_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_mysql_replication_snapshot: %s", e)
-        mark_down()
 
 
 def _window_where(conn_id, minutes=None, since=None, until=None):
@@ -376,7 +485,6 @@ def query_mysql_slow_queries(conn_id, minutes=None, since=None, until=None, limi
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_mysql_slow_queries: %s", e)
-        mark_down()
         return []
 
 
@@ -394,7 +502,6 @@ def query_mysql_error_logs(conn_id, minutes=None, since=None, until=None, limit=
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_mysql_error_logs: %s", e)
-        mark_down()
         return []
 
 
@@ -414,7 +521,6 @@ def query_mysql_binlog_history(conn_id, minutes=None, since=None, until=None, li
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_mysql_binlog_history: %s", e)
-        mark_down()
         return []
 
 
@@ -436,7 +542,6 @@ def query_mysql_replication_history(conn_id, minutes=None, since=None, until=Non
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_mysql_replication_history: %s", e)
-        mark_down()
         return []
 
 
@@ -493,24 +598,43 @@ def flush_batch(items):
             v = sample.get(f, 0) or 0
             row.append(int(v) if f in INT_FIELDS else float(v))
         grouped.setdefault(table, []).append(row)
-    try:
-        for table, rows in grouped.items():
-            if not ensure_table(cli, table):
-                return False
-            cli.insert("%s.%s" % (CH_DB, table), rows, column_names=COLUMNS)
-        if extra_topsql:
-            if not _ensure_extra(cli, "top_sql"):
-                return False
-            cli.insert(f"{CH_DB}.top_sql", extra_topsql, column_names=TOPSQL_COLUMNS)
-        if extra_waits:
-            if not _ensure_extra(cli, "wait_events"):
-                return False
-            cli.insert(f"{CH_DB}.wait_events", extra_waits, column_names=WAIT_COLUMNS)
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[metrics_history] flush_batch: %s", e)
-        mark_down()
-        return False
+
+    # One bad/incompatible table used to poison the WHOLE batch forever: any
+    # single exception anywhere aborted the entire function, and the caller
+    # requeues everything on any failure — so a genuine, permanent schema
+    # conflict on just one table (e.g. metrics_db_unclassified) blocked every
+    # OTHER table's data too, on every retry, indefinitely. Each target is now
+    # isolated in its own try/except so one broken table can't starve the
+    # rest, and the real exception is printed (debug-level logging alone
+    # never surfaces in production) instead of vanishing silently.
+    all_ok = True
+
+    def _insert_group(label, ensure_fn, ensure_args, insert_fn):
+        # Deliberately no mark_down() here either — an insert failing on ONE
+        # table (bad row, schema conflict) is not "ClickHouse is unreachable"
+        # for every other table and every other caller in the process.
+        nonlocal all_ok
+        try:
+            if not ensure_fn(*ensure_args):
+                print(f"[metrics_history] flush_batch: schema not ready for {label}")
+                all_ok = False
+                return
+            insert_fn()
+        except Exception as e:  # noqa: BLE001
+            print(f"[metrics_history] flush_batch: insert failed for {label}: {e!r}")
+            logger.debug("[metrics_history] flush_batch (%s): %s", label, e)
+            all_ok = False
+
+    for table, rows in grouped.items():
+        _insert_group(table, ensure_table, (cli, table),
+                      lambda t=table, r=rows: cli.insert("%s.%s" % (CH_DB, t), r, column_names=COLUMNS))
+    if extra_topsql:
+        _insert_group("top_sql", _ensure_extra, (cli, "top_sql"),
+                      lambda: cli.insert(f"{CH_DB}.top_sql", extra_topsql, column_names=TOPSQL_COLUMNS))
+    if extra_waits:
+        _insert_group("wait_events", _ensure_extra, (cli, "wait_events"),
+                      lambda: cli.insert(f"{CH_DB}.wait_events", extra_waits, column_names=WAIT_COLUMNS))
+    return all_ok
 
 
 def history(agent_name=None, minutes=60, kind=None, tech=None, conn_id=None):
@@ -541,7 +665,6 @@ def history(agent_name=None, minutes=60, kind=None, tech=None, conn_id=None):
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] history: %s", e)
-        mark_down()
         return []
 
 
@@ -596,7 +719,6 @@ def history_bucketed(agent_name=None, minutes=60, bucket_seconds=60, kind=None, 
         ]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] history_bucketed: %s", e)
-        mark_down()
         return []
 
 
@@ -728,7 +850,6 @@ def _ensure_oracle_table(cli, table):
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] schema (%s): %s", table, e)
-        mark_down()
         return False
 
 
@@ -747,7 +868,6 @@ def flush_oracle_rac_nodes(rows):
         cli.insert(f"{CH_DB}.actmon_oracle_rac_nodes", data, column_names=ORACLE_RAC_NODE_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_rac_nodes: %s", e)
-        mark_down()
 
 
 def flush_oracle_services(rows):
@@ -762,7 +882,6 @@ def flush_oracle_services(rows):
         cli.insert(f"{CH_DB}.actmon_oracle_services", data, column_names=ORACLE_SERVICE_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_services: %s", e)
-        mark_down()
 
 
 def flush_oracle_dataguard_snapshot(row):
@@ -778,7 +897,6 @@ def flush_oracle_dataguard_snapshot(row):
         cli.insert(f"{CH_DB}.actmon_oracle_dataguard_history", data, column_names=ORACLE_DATAGUARD_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_dataguard_snapshot: %s", e)
-        mark_down()
 
 
 def flush_oracle_asm(rows):
@@ -794,7 +912,6 @@ def flush_oracle_asm(rows):
         cli.insert(f"{CH_DB}.actmon_oracle_asm_history", data, column_names=ORACLE_ASM_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_asm: %s", e)
-        mark_down()
 
 
 def flush_oracle_storage(rows):
@@ -812,7 +929,6 @@ def flush_oracle_storage(rows):
         cli.insert(f"{CH_DB}.actmon_oracle_storage_history", data, column_names=ORACLE_STORAGE_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_storage: %s", e)
-        mark_down()
 
 
 def query_oracle_storage(conn_id, metric_type=None, minutes=None, since=None, until=None, limit=5000):
@@ -834,7 +950,6 @@ def query_oracle_storage(conn_id, metric_type=None, minutes=None, since=None, un
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_storage: %s", e)
-        mark_down()
         return []
 
 
@@ -852,7 +967,6 @@ def flush_oracle_rac_eviction_event(row):
         cli.insert(f"{CH_DB}.actmon_oracle_rac_eviction_events", data, column_names=ORACLE_RAC_EVICTION_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_rac_eviction_event: %s", e)
-        mark_down()
 
 
 def query_oracle_rac_eviction_events(conn_id, minutes=None, since=None, until=None, limit=200):
@@ -870,7 +984,6 @@ def query_oracle_rac_eviction_events(conn_id, minutes=None, since=None, until=No
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_rac_eviction_events: %s", e)
-        mark_down()
         return []
 
 
@@ -888,7 +1001,6 @@ def flush_oracle_role_transition(row):
         cli.insert(f"{CH_DB}.actmon_oracle_role_transitions", data, column_names=ORACLE_ROLE_TRANSITION_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_role_transition: %s", e)
-        mark_down()
 
 
 def query_oracle_rac_nodes(conn_id, minutes=None, since=None, until=None, limit=5000):
@@ -907,7 +1019,6 @@ def query_oracle_rac_nodes(conn_id, minutes=None, since=None, until=None, limit=
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_rac_nodes: %s", e)
-        mark_down()
         return []
 
 
@@ -925,7 +1036,6 @@ def query_oracle_services(conn_id, minutes=None, since=None, until=None, limit=5
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_services: %s", e)
-        mark_down()
         return []
 
 
@@ -949,7 +1059,6 @@ def query_oracle_dataguard_history(conn_id, minutes=None, since=None, until=None
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_dataguard_history: %s", e)
-        mark_down()
         return []
 
 
@@ -969,7 +1078,6 @@ def query_oracle_asm(conn_id, minutes=None, since=None, until=None, limit=1000):
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_asm: %s", e)
-        mark_down()
         return []
 
 
@@ -987,7 +1095,6 @@ def query_oracle_role_transitions(conn_id, minutes=None, since=None, until=None,
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_oracle_role_transitions: %s", e)
-        mark_down()
         return []
 
 
@@ -1043,7 +1150,6 @@ def _ensure_postgres_patroni_table(cli, table):
         return True
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] schema (%s): %s", table, e)
-        mark_down()
         return False
 
 
@@ -1061,7 +1167,6 @@ def flush_postgres_patroni_members(rows):
         cli.insert(f"{CH_DB}.actmon_postgres_patroni_members", data, column_names=POSTGRES_PATRONI_MEMBER_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_postgres_patroni_members: %s", e)
-        mark_down()
 
 
 def flush_postgres_patroni_transition(row):
@@ -1077,7 +1182,6 @@ def flush_postgres_patroni_transition(row):
         cli.insert(f"{CH_DB}.actmon_postgres_patroni_transitions", data, column_names=POSTGRES_PATRONI_TRANSITION_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_postgres_patroni_transition: %s", e)
-        mark_down()
 
 
 def query_postgres_patroni_members(conn_id, minutes=None, since=None, until=None, limit=5000):
@@ -1095,7 +1199,6 @@ def query_postgres_patroni_members(conn_id, minutes=None, since=None, until=None
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_postgres_patroni_members: %s", e)
-        mark_down()
         return []
 
 
@@ -1113,5 +1216,4 @@ def query_postgres_patroni_transitions(conn_id, minutes=None, since=None, until=
         return [dict(zip(cols, [str(r[0])] + list(r[1:]))) for r in res.result_rows]
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] query_postgres_patroni_transitions: %s", e)
-        mark_down()
         return []

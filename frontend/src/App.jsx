@@ -81,6 +81,7 @@ const MySQLReportsPage = lazy(() => import('@/pages/mysql/MySQLReportsPage'));
 const PostgreSQLDashboard = lazy(() => import('@/pages/postgresql/PostgreSQLDashboard'));
 const PgErrorLogs = lazy(() => import('@/pages/postgresql/ErrorLogs'));
 const PgIndexAnalysis = lazy(() => import('@/pages/postgresql/IndexAnalysis'));
+const PgProcessDetail = lazy(() => import('@/pages/postgresql/ProcessDetailPage'));
 const PgReportsPage = lazy(() => import('@/pages/postgresql/PostgreSQLReportsPage'));
 
 // Oracle. Sixteen tabs, each backed by its own endpoint and enabled only while its
@@ -317,6 +318,7 @@ export default function App() {
         <Route path="/postgresql-dashboard/:id/error-logs" element={<PgErrorLogs />} />
         <Route path="/postgresql-dashboard/:id/index-analysis" element={<PgIndexAnalysis />} />
         <Route path="/postgresql-dashboard/:id/reports" element={<PgReportsPage />} />
+        <Route path="/postgresql-dashboard/:id/performance/:processId" element={<PgProcessDetail />} />
         <Route path="/postgresql-dashboard/:id/:tab" element={<PostgreSQLDashboard />} />
 
         {/* Oracle. Named sub-pages before :tab, as with the other engines. Live

@@ -6,6 +6,7 @@ All business logic lives in app/services/postgres/postgres_monitoring_service.py
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -43,6 +44,16 @@ from app.services.postgres.postgres_monitoring_service import (
     svc_pg_query_analytics,
     svc_pg_database_health,
     svc_pg_storage_objects,
+)
+from app.services.postgres.postgres_perf_history_service import (
+    svc_pg_perf_overview,
+    svc_pg_perf_history,
+)
+from app.services.postgres.postgres_process_service import (
+    svc_pg_processes_list,
+    svc_pg_process_detail,
+    svc_pg_process_ask_stream,
+    ProcessAskRequest,
 )
 
 router = APIRouter(prefix="/api/v1/connections/postgresql", tags=["PostgreSQL Monitoring"])
@@ -272,3 +283,42 @@ def route_pg_database_health(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/pg-storage-objects")
 def route_pg_storage_objects(conn_id: int, db: Session = Depends(get_db)):
     return svc_pg_storage_objects(conn_id, db)
+
+
+# ── 25. Performance overview (redesigned Performance tab) ────────────────────
+@router.get("/{conn_id}/performance/overview")
+def route_pg_perf_overview(conn_id: int, db: Session = Depends(get_db)):
+    return svc_pg_perf_overview(conn_id, db)
+
+
+# ── 26. Performance trend history ─────────────────────────────────────────────
+@router.get("/{conn_id}/performance/history")
+def route_pg_perf_history(conn_id: int, range: str = "1h", db: Session = Depends(get_db)):
+    return svc_pg_perf_history(conn_id, db, range)
+
+
+# ── 27. Processes list ─────────────────────────────────────────────────────────
+@router.get("/{conn_id}/processes/list")
+def route_pg_processes_list(conn_id: int, db: Session = Depends(get_db)):
+    return svc_pg_processes_list(conn_id, db)
+
+
+# ── 28. Process detail ─────────────────────────────────────────────────────────
+@router.get("/{conn_id}/processes/{process_id}")
+def route_pg_process_detail(conn_id: int, process_id: str, db: Session = Depends(get_db)):
+    return svc_pg_process_detail(conn_id, db, process_id)
+
+
+# ── 29. Process AI chat (streamed, same SSE protocol as /chatbot/chat/stream) ──
+@router.post("/{conn_id}/processes/{process_id}/ask")
+def route_pg_process_ask(
+    conn_id: int,
+    process_id: str,
+    payload: ProcessAskRequest,
+    db: Session = Depends(get_db),
+):
+    def gen():
+        yield from svc_pg_process_ask_stream(conn_id, db, process_id, payload.question, payload.history, payload.language)
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*",
+    })

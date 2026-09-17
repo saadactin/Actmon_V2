@@ -161,6 +161,10 @@ async def lifespan(app_instance):
     # Start PostgreSQL resource history collector (logs CPU/RAM/Disk + spike evidence)
     from app.services.postgres.postgres_resource_collector import start_resource_collector
     start_resource_collector()
+    # Start PostgreSQL performance-counter history collector (feeds the
+    # redesigned Performance tab's trend charts — see postgres_perf_collector.py)
+    from app.services.postgres.postgres_perf_collector import start_perf_collector
+    start_perf_collector()
     # Start Digital Experience external-check scheduler (Website/Ping/DNS/TCP/UDP)
     from app.services.digital_experience.external_check_service import start_external_check_scheduler
     start_external_check_scheduler()

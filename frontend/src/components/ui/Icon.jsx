@@ -1,7 +1,7 @@
 import {
   Activity, AlertTriangle, Archive, ArrowLeft, ArrowRight, Ban, Bell, BellRing, Bookmark, Box, Boxes, Brain,
   Building2, Calendar, ChartBar, ChartBarStacked, ChartColumn, ChartColumnStacked, ChartLine, ChartPie,
-  Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsLeft, ChevronsRight,
   Circle, CircleDot, Clock, Cloud, Command, Copy, Cpu, Database, Donut, Download, ExternalLink, Eye, EyeOff, FileEdit, FileText, Folder,
   ChartNoAxesCombined, CodeXml, Bot, UserCog, LayoutGrid,
   Filter, Gauge, GitBranch, Globe, HardDrive, History, IdCard, Info, KeyRound, Layers, LayoutDashboard, LifeBuoy, Link2,
@@ -143,6 +143,7 @@ export const ICONS = {
 
   /* chevrons */
   'chevron-down': ChevronDown,
+  'chevron-up': ChevronUp,
   'chevron-left': ChevronLeft,
   'chevron-right': ChevronRight,
   'chevrons-left': ChevronsLeft,

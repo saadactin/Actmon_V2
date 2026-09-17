@@ -105,8 +105,16 @@ def ensure_schema():
         _schema_ready = True
         return True
     except Exception as e:
+        # A schema/DDL problem on this ONE table is not "ClickHouse is
+        # unreachable" — calling mark_down() here used to set the SAME
+        # shared cooldown get_client() checks, poisoning every other
+        # caller in the process (including the newer metrics_history_service
+        # pipeline, which delegates to this same get_client()) for 10s on
+        # every single failure. Since this loop also retries every 10s (see
+        # actmon_logs_service.start_metric_logger), one bad tick could keep
+        # the whole thing perpetually "just inside cooldown" forever. Only
+        # get_client() actually failing to connect should set that flag.
         warnings.warn(f"[actmon_logs] schema error: {e}")
-        mark_down()
         return False
 
 

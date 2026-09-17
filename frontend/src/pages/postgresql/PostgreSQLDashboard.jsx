@@ -25,6 +25,7 @@ import HostResources from './PgHostResources';
 // tab, not just when the Replication tab's editor is actually opened.
 const PatroniPanel = lazy(() => import('./PatroniPanel'));
 const WalPurgePanel = lazy(() => import('./walPurge/WalPurgePanel'));
+const PerformanceTab = lazy(() => import('./PerformanceTab'));
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
@@ -517,82 +518,9 @@ export default function PostgreSQLDashboard() {
 
         {/* ══ PERFORMANCE ══ */}
         {activeTab === 'performance' && (
-          <div className="space-y-5">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                ['Cache Hit',          `${cachePct}%`,                          cachePct<90?'red':'green', 'bg-green-50 border-green-200 text-green-700'],
-                ['Checkpoints (timed)', fmtNum(checkpoints.checkpoints_timed), 'blue',   'bg-blue-50 border-blue-200 text-blue-700'],
-                ['Checkpoints (req)',   fmtNum(checkpoints.checkpoints_req),   (checkpoints.checkpoints_req>10?'orange':'green'), (checkpoints.checkpoints_req>10?'bg-orange-50 border-orange-200 text-orange-700':'bg-green-50 border-green-200 text-green-700')],
-                ['BGWriter Buffers',    fmtNum(bgwriter.buffers_clean),        'purple',  'bg-purple-50 border-purple-200 text-purple-700'],
-              ].map(([t,v,,cls])=>(
-                <div key={t} className={`rounded-xl border p-4 ${cls}`}>
-                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{t}</p>
-                  <p className="text-2xl font-black mt-1">{v}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-              <Panel title="BGWriter Statistics" icon={<Cpu size={15} className="text-slate-400"/>}>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    ['Buffers Clean',      fmtNum(bgwriter.buffers_clean),      'Buffers written by bgwriter'],
-                    ['Maxwritten Clean',   fmtNum(bgwriter.maxwritten_clean),   'Bgwriter stop events'],
-                    ['Buffers Backend',    fmtNum(bgwriter.buffers_backend),    'Backends writing directly'],
-                    ['Buffers Alloc',      fmtNum(bgwriter.buffers_alloc),      'Buffers allocated'],
-                    ['Buffers Checkpoint', fmtNum(bgwriter.buffers_checkpoint), 'Written at checkpoint'],
-                    ['Stats Reset',        bgwriter.stats_reset?bgwriter.stats_reset.slice(0,16):'—', 'Last statistics reset'],
-                  ].map(([label,value,desc])=>(
-                    <div key={label} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                      <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1">{label}</p>
-                      <p className="text-lg font-black text-slate-800">{value}</p>
-                      <p className="text-[10px] text-slate-400 mt-1">{desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </Panel>
-
-              <Panel title="Checkpoint Statistics" icon={<Activity size={15} className="text-slate-400"/>}>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    ['Timed',           fmtNum(checkpoints.checkpoints_timed),   'Scheduled checkpoints'],
-                    ['Requested',       fmtNum(checkpoints.checkpoints_req),     'Forced checkpoints'],
-                    ['Write Time',      `${checkpoints.checkpoint_write_time||0}ms`, 'Dirty buffer write time'],
-                    ['Sync Time',       `${checkpoints.checkpoint_sync_time||0}ms`,  'Disk sync time'],
-                    ['Buffers Written', fmtNum(checkpoints.buffers_checkpoint),  'At checkpoint'],
-                    ['Completion Tgt',  server_vars.checkpoint_completion_target||'—', 'Target ratio'],
-                  ].map(([label,value,desc])=>(
-                    <div key={label} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                      <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1">{label}</p>
-                      <p className="text-lg font-black text-slate-800">{value}</p>
-                      <p className="text-[10px] text-slate-400 mt-1">{desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </Panel>
-            </div>
-
-            <Panel title="I/O & Transaction Performance">
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={[
-                  { name:'Blks Read',    v: Number(query_stats.blks_read)    ||0 },
-                  { name:'Blks Hit',     v: Number(query_stats.blks_hit)     ||0 },
-                  { name:'Tup Fetched',  v: Number(query_stats.tup_fetched)  ||0 },
-                  { name:'Tup Inserted', v: Number(query_stats.tup_inserted) ||0 },
-                  { name:'Tup Updated',  v: Number(query_stats.tup_updated)  ||0 },
-                  { name:'Tup Deleted',  v: Number(query_stats.tup_deleted)  ||0 },
-                ]}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize:10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize:10 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={v=>fmtNum(v)} />
-                  <Bar dataKey="v" radius={[6,6,0,0]}>
-                    {[C.pg,C.green,C.indigo,C.orange,C.yellow,C.red].map((fill,i)=><Cell key={i} fill={fill}/>)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </Panel>
-          </div>
+          <Suspense fallback={<PageLoading title="Loading performance metrics…" illustration={false} />}>
+            <PerformanceTab connId={id} />
+          </Suspense>
         )}
 
         {/* ══ QUERIES ══ */}

@@ -689,7 +689,7 @@ function renderChart(type, data, xKey, series, compact, yDomain, uid, xLabel, yL
         <XAxis dataKey={xKey} {...sharedAxis} label={xAxisLabel} />
         {!compact && <YAxis domain={yDomain} {...sharedAxis} width={yLabel ? 46 : 36} tickFormatter={fmtAxisNum} label={yAxisLabel} />}
         {!compact && <Tooltip />}
-        {series.map((s) => <Bar key={s.key} dataKey={s.key} fill={s.color} radius={[2, 2, 0, 0]} />)}
+        {series.map((s) => <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} radius={[2, 2, 0, 0]} />)}
       </BarChart>
     );
   }
@@ -742,7 +742,7 @@ function renderChart(type, data, xKey, series, compact, yDomain, uid, xLabel, yL
         <YAxis domain={yDomain} {...sharedAxis} width={yLabel ? 46 : 36} tickFormatter={fmtAxisNum} label={yAxisLabel} />
         <Tooltip />
         {series.map((s, idx) => (
-          <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={2}
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2}
             strokeDasharray={idx > 0 ? '5 4' : undefined} dot={false}
             label={seriesLabel(s, bestLabelIndex(idx, series, data), data.length)} />
         ))}
@@ -765,7 +765,7 @@ function renderChart(type, data, xKey, series, compact, yDomain, uid, xLabel, yL
       {!compact && <YAxis domain={yDomain} {...sharedAxis} width={yLabel ? 46 : 36} tickFormatter={fmtAxisNum} label={yAxisLabel} />}
       {!compact && <Tooltip />}
       {series.map((s) => (
-        <Area key={s.key} type="monotone" dataKey={s.key} stroke={s.color} fill={`url(#grad-${uid}-${s.key})`} strokeWidth={2} />
+        <Area key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} fill={`url(#grad-${uid}-${s.key})`} strokeWidth={2} />
       ))}
     </AreaChart>
   );
