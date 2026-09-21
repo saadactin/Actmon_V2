@@ -31,7 +31,6 @@ from app.models.agent_model import (                              # noqa: F401
     Agent, AgentMetric, AgentTopSQL,
     AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
 )
-from app.models.oracle_report_schedule_model import OracleReportSchedule  # noqa: F401
 from app.models.oracle_topology_model import OracleTopologyLink           # noqa: F401
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
@@ -84,7 +83,6 @@ from app.routes.mysql.mysql_binlog_routes import router as mysql_binlog_router
 from app.routes.mysql.mysql_report_routes import router as mysql_report_router
 
 from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
-from app.routes.oracle.oracle_report_email_routes import router as oracle_report_email_router
 from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
 from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
@@ -157,9 +155,14 @@ async def lifespan(app_instance):
     # Start Digital Experience external-check scheduler (Website/Ping/DNS/TCP/UDP)
     from app.services.digital_experience.external_check_service import start_external_check_scheduler
     start_external_check_scheduler()
-    # Start Oracle report email scheduler
-    from app.services.oracle.oracle_report_email_service import start_oracle_report_scheduler
-    start_oracle_report_scheduler()
+    # NOTE: there is deliberately no Oracle report email scheduler.
+    # It was removed on 2026-09-17 at the owner's request, after it sent the
+    # same daily report repeatedly: four schedules sat with next_run_at in the
+    # past, the send succeeded every tick, and the write that advances
+    # next_run_at failed because the shared session had already been aborted by
+    # an unrelated query against alert_rules (a column that does not exist in
+    # this database). The service, its routes and its model are gone; the
+    # oracle_report_schedules table is left in place so no data is lost.
     # Start MySQL report email scheduler
     from app.services.mysql.mysql_report_email_service import start_mysql_report_scheduler
     start_mysql_report_scheduler()
@@ -245,7 +248,6 @@ app.include_router(db_diagnose_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
-app.include_router(oracle_report_email_router)
 app.include_router(mysql_report_email_router)
 app.include_router(postgres_report_email_router)
 app.include_router(mssql_report_email_router)

@@ -573,7 +573,12 @@ export function ReportShell({
               className="flex h-8 items-center gap-1.5 rounded-control border border-border px-3 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg">
               <RefreshCw size={13} /> Refresh
             </button>
-            {canHere('execute') && (
+            {/* Emailing is offered only by engines that declare a
+                `reportPrefix` — the API prefix the modal posts to. Oracle no
+                longer does: its report-email service was removed, so the
+                button would open a form whose Send and Schedule both 404. An
+                engine opts in by having the endpoints, not by default. */}
+            {canHere('execute') && engine.reportPrefix && (
               <button onClick={openEmailModal} disabled={capturingPdf}
                 className="flex h-8 items-center gap-1.5 rounded-control border border-border px-3 text-[12px] font-semibold text-fg transition-colors hover:bg-sunken disabled:opacity-60">
                 {capturingPdf

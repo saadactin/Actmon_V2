@@ -27,7 +27,7 @@ export default function IamAccessReviewPanel({ accountId }) {
   if (isError || !data) {
     return (
       <CloudSection>
-        <EmptyState icon="alert-triangle" title="IAM review unavailable"
+        <EmptyState icon="alert" title="IAM review unavailable"
           body="Could not compute the IAM access review for this account." />
       </CloudSection>
     );

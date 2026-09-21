@@ -2,8 +2,8 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
 import CopyButton from '@/components/ui/CopyButton';
-import cn from '@/lib/cn';
 import { formatDateTime, relativeTime } from '../../utils/resourceModel';
+import AccountRefreshControl from './AccountRefreshControl';
 import { FreshnessBadge, Kpi, Panel, PanelEmpty } from './OverviewPrimitives';
 
 /**
@@ -16,10 +16,16 @@ import { FreshnessBadge, Kpi, Panel, PanelEmpty } from './OverviewPrimitives';
  * providers, and people navigate by these identifiers.
  */
 
+// Region is deliberately absent. Discovery scans every region an account can
+// reach, so a single "Region: ap-south-1" here described the region the
+// credentials were configured in and nothing about where the resources are —
+// on an account with 227 resources across several regions it was simply wrong,
+// and it invited the reasonable conclusion that only one region was scanned.
+// Where resources actually live is answered by the region distribution panel
+// further down, which counts them.
 const IDENTITY = {
   OCI: [
     ['Tenancy', (a) => a.tenant_id || a.tenant_or_region],
-    ['Region', (a) => a.region],
   ],
   Azure: [
     ['Subscription', (a) => a.subscription_id || a.account_identifier],
@@ -27,20 +33,14 @@ const IDENTITY = {
   ],
   AWS: [
     ['Account', (a) => a.account_identifier || a.aws_account_id],
-    ['Region', (a) => a.region || a.tenant_or_region],
   ],
 };
 
-export function AccountIdentity({
-  account, freshness, discovery, onRunDiscovery, discovering,
-}) {
+export function AccountIdentity({ account, accountId, freshness }) {
   const provider = account?.provider === 'Oracle' ? 'OCI' : account?.provider;
   const rows = (IDENTITY[provider] || IDENTITY.AWS)
     .map(([label, get]) => [label, get(account || {})])
     .filter(([, value]) => value);
-
-  const lastOk = discovery?.last_successful;
-  const failed = discovery?.last_attempt_failed;
 
   return (
     <div className="card flex flex-wrap items-start justify-between gap-4 px-4 py-3">
@@ -75,29 +75,12 @@ export function AccountIdentity({
         </dl>
       </div>
 
-      <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <Button
-          variant="secondary"
-          size="sm"
-          icon="refresh"
-          loading={discovering}
-          onClick={onRunDiscovery}
-        >
-          {discovering ? 'Discovering…' : 'Run Discovery'}
-        </Button>
-        <div className="text-right text-[11px] leading-snug">
-          {failed ? (
-            <span className="font-semibold text-danger">Last scan failed</span>
-          ) : null}
-          <div className="text-muted">
-            {lastOk?.completed_at
-              ? `Last scan ${relativeTime(lastOk.completed_at)}`
-              : account?.last_discovery
-                ? `Last scan ${relativeTime(account.last_discovery)}`
-                : 'Never scanned'}
-          </div>
-        </div>
-      </div>
+      {/* Refresh, not "Run Discovery". A refresh runs the same provider sweep
+          discovery does and then the rest — cost, security, events — so
+          offering both here would be two buttons where the second is a subset
+          of the first. Discovery on its own is still reachable from the
+          Discovery panel lower down, where it is the panel's own action. */}
+      <AccountRefreshControl account={account} accountId={accountId} />
     </div>
   );
 }
@@ -125,7 +108,6 @@ export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, 
     <Panel
       title="Discovery"
       icon="refresh"
-      subtitle="Inventory collection for this account"
       loading={isLoading}
       error={error}
       dense

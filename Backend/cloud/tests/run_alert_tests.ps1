@@ -12,7 +12,12 @@ $suites = @(
     @{ Name = "lifecycle, dedupe, auto-resolve"; Args = @("tests\verify_alert_persistence.py", "--phase", "write") },
     # Separate process on purpose: this is what proves alerts outlive a restart.
     @{ Name = "survives a process restart"; Args = @("tests\verify_alert_persistence.py", "--phase", "read") },
-    @{ Name = "HTTP API + response shape"; Args = @("tests\verify_alert_api.py") }
+    @{ Name = "HTTP API + response shape"; Args = @("tests\verify_alert_api.py") },
+    # The rule engine: catalog/evaluator parity, validation, the UNKNOWN-is-not-
+    # zero rule, fingerprints, cooldown, cost windows and email safety. Its
+    # Postgres-backed section SKIPS loudly when the database is down - a skip
+    # in this suite is not a pass, and the summary says so.
+    @{ Name = "rule engine, dedupe, cooldown, notification safety"; Args = @("tests\verify_alert_rules.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|Error'

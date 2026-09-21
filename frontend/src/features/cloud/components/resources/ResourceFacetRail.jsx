@@ -1,8 +1,8 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import Icon from '@/components/ui/Icon';
 import cn from '@/lib/cn';
 import {
-  categoryTone, formatCount, freshnessMeta, providerLabel, riskMeta, statusMeta,
+  categoryTone, formatCount, providerLabel, riskMeta, statusMeta,
   toggleFacet, typeIcon,
 } from '../../utils/resourceModel';
 
@@ -277,21 +277,29 @@ export default function ResourceFacetRail({
       {/* Cost, tags, attachment and freshness are not server facets — they are
           boolean narrowings of the same query, so their counts come from the
           summary, which is computed from that same filter. */}
-      <Section title="Cost" count={typeof filters.hasCost === 'boolean' ? 1 : 0} defaultOpen={false}>
-        <Row
-          label="Has cost data"
-          count={summary?.cost_resource_count ?? 0}
-          active={filters.hasCost === true}
-          onClick={() => onChange({ ...filters, hasCost: filters.hasCost === true ? null : true })}
-        />
-        <Row
-          label="No cost reported"
-          count={Math.max(0, (summary?.resource_count ?? 0) - (summary?.cost_resource_count ?? 0))}
-          active={filters.hasCost === false}
-          onClick={() => onChange({ ...filters, hasCost: filters.hasCost === false ? null : false })}
-          title="Either the provider does not bill this resource individually, or its billing integration cannot report per-resource cost."
-        />
-      </Section>
+      {/* The Cost section is offered ONLY where the scope actually has
+          per-resource billing. On AWS it read "Has cost data 0 / No cost
+          reported 227" — a filter whose only working option selects
+          everything, sitting above a Cost column that was 227 NAs. Azure and
+          OCI do report per-resource cost, so the section appears there rather
+          than being deleted for everyone. */}
+      {(summary?.cost_resource_count ?? 0) > 0 && (
+        <Section title="Cost" count={typeof filters.hasCost === 'boolean' ? 1 : 0} defaultOpen={false}>
+          <Row
+            label="Has cost data"
+            count={summary?.cost_resource_count ?? 0}
+            active={filters.hasCost === true}
+            onClick={() => onChange({ ...filters, hasCost: filters.hasCost === true ? null : true })}
+          />
+          <Row
+            label="No cost reported"
+            count={Math.max(0, (summary?.resource_count ?? 0) - (summary?.cost_resource_count ?? 0))}
+            active={filters.hasCost === false}
+            onClick={() => onChange({ ...filters, hasCost: filters.hasCost === false ? null : false })}
+            title="Either the provider does not bill this resource individually, or its billing integration cannot report per-resource cost."
+          />
+        </Section>
+      )}
 
       <Section title="Tags" count={typeof filters.hasTags === 'boolean' || filters.missingTag ? 1 : 0} defaultOpen={false}>
         <Row
@@ -321,53 +329,14 @@ export default function ResourceFacetRail({
         ))}
       </Section>
 
-      <Section title="Attachment" count={filters.attachment ? 1 : 0} defaultOpen={false}>
-        <Row
-          label="Attached"
-          count={undefined}
-          active={filters.attachment === 'ATTACHED'}
-          onClick={() => onChange({
-            ...filters, attachment: filters.attachment === 'ATTACHED' ? null : 'ATTACHED',
-          })}
-          title="Only storage volumes carry an attachment state. A subnet is not an unattached disk."
-        />
-        <Row
-          label="Unattached"
-          count={summary?.unattached_count ?? 0}
-          active={filters.attachment === 'UNATTACHED'}
-          onClick={() => onChange({
-            ...filters, attachment: filters.attachment === 'UNATTACHED' ? null : 'UNATTACHED',
-          })}
-        />
-      </Section>
-
-      <Section title="Freshness" count={typeof filters.stale === 'boolean' ? 1 : 0} defaultOpen={false}>
-        <Row
-          label={freshnessMeta('FRESH').label}
-          count={Math.max(0, (summary?.resource_count ?? 0) - (summary?.stale_count ?? 0))}
-          active={filters.stale === false}
-          onClick={() => onChange({ ...filters, stale: filters.stale === false ? null : false })}
-        />
-        <Row
-          label={freshnessMeta('STALE').label}
-          count={summary?.stale_count ?? 0}
-          active={filters.stale === true}
-          onClick={() => onChange({ ...filters, stale: filters.stale === true ? null : true })}
-          title="Discovery has not re-observed these resources within the freshness window, so the rows describe what was last seen rather than what is there now."
-        />
-      </Section>
-
-      <Section title="Display" count={filters.includeDefaults === false ? 1 : 0} defaultOpen={false}>
-        <Row
-          label="Hide default resources"
-          count={undefined}
-          active={filters.includeDefaults === false}
-          onClick={() => onChange({
-            ...filters, includeDefaults: filters.includeDefaults === false ? true : false,
-          })}
-          title="Provider-created boilerplate — default VPCs, default security groups — exists in every account and crowds out what someone actually built."
-        />
-      </Section>
+      {/* Attachment, Freshness and Display were removed on 2026-09-18.
+          All three were narrowings of something that is almost never true:
+          on a real estate the unattached count is 0, the stale count is 0,
+          and hiding provider defaults is a one-off preference rather than a
+          filter people reach for. Each cost a collapsed section in the rail
+          and returned nothing when opened. The underlying query still
+          supports attachment / stale / includeDefaults, so a saved view or a
+          URL carrying them keeps working - they simply have no control here. */}
     </div>
   );
 }

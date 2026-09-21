@@ -27,11 +27,16 @@ import { computeInstanceHealthScore } from '@/utils/oracleHealth';
  * sections about a product it does not run.
  */
 
+// No `reportPrefix`, deliberately: emailing and scheduling this report were
+// removed on 2026-09-17 after the scheduler re-sent the same daily report on
+// every 60s tick. ReportShell hides the Send / Schedule button for any engine
+// without a prefix, so the report is still viewable, printable and exportable —
+// it just cannot mail itself. Restoring it means rebuilding the backend service
+// and routes first, then adding `reportPrefix: 'oracle-report'` back here.
 const ENGINE = {
   key: 'oracle',
   label: 'Oracle',
   emoji: '🔶',
-  reportPrefix: 'oracle-report',
 };
 
 const api = (path, id) => client.get(`/connections/oracle/${id}/${path}`).then((r) => r.data);

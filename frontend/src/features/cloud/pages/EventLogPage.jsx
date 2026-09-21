@@ -133,9 +133,14 @@ const StatCard = ({
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      title={hint}
-      className={`flex items-center gap-3 rounded-card border p-3 text-left transition-colors disabled:cursor-default ${
-        active ? 'border-accent bg-accent-soft' : 'border-border bg-surface'
+      aria-pressed={onClick ? !!active : undefined}
+      title={active
+        ? `Filtering by ${label.toLowerCase()} — click again to remove`
+        : onClick ? `Filter the table by ${label.toLowerCase()}` : hint}
+      className={`relative flex items-center gap-3 rounded-card border p-3 text-left transition-colors disabled:cursor-default ${
+        active
+          ? 'border-accent bg-accent-soft ring-1 ring-accent'
+          : 'border-border bg-surface'
       } ${onClick ? 'hover:border-accent' : ''}`}
     >
       <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-control ${TONE_BG[tone]}`}>
@@ -150,8 +155,16 @@ const StatCard = ({
           </span>
         )}
         <span className="block truncate text-[11px] text-muted">{label}</span>
-        {hint && <span className="block truncate text-[10px] text-subtle">{hint}</span>}
+        {/* When the card is filtering, its own hint is replaced by the fact
+            that it is — the state the user needs is "this one is on and
+            clicking removes it", not the static description. */}
+        <span className="block truncate text-[10px] text-subtle">
+          {active ? 'Filtering · click to remove' : hint}
+        </span>
       </span>
+      {active && (
+        <X size={12} className="absolute right-2 top-2 shrink-0 text-accent-text" />
+      )}
     </button>
   );
 };
@@ -573,10 +586,33 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
     ...filters,
   }), [accountId, range, useCustom, customStart, customEnd, filters]);
 
+  /**
+   * The summary cards deliberately do NOT use the table's query.
+   *
+   * Each card both DISPLAYS a count and TOGGLES the filter that produces it.
+   * Feeding them the fully-filtered stats made every card rewrite every other
+   * card: click "Successful" and "Failed or denied" drops to 0 — not because
+   * there are no failures, but because zero failures are successes. The same
+   * click turned "Critical events: 14" into "14 critical successes" under a
+   * label that still said Critical events.
+   *
+   * So the cards are computed with the four card-controlled dimensions
+   * removed. They then describe the WINDOW — a stable denominator — and
+   * toggling one changes only which card is highlighted and what the table
+   * below shows. The row of numbers stops moving under the cursor.
+   *
+   * Scope filters (category, search, provider, actor…) ARE still applied,
+   * because those genuinely narrow what the page is about.
+   */
+  const cardQuery = useMemo(() => {
+    const { status, excludeReadOnly, action, minRisk, ...scope } = query;
+    return scope;
+  }, [query]);
+
   const {
     data: list, isLoading: listLoading, isFetching, isError: listFailed, error: listError,
   } = useEventList(query, { sort, page, pageSize, enabled: !!accountId }, refreshMs);
-  const { data: stats, isLoading: statsLoading } = useEventStats(query, refreshMs, !!accountId);
+  const { data: stats, isLoading: statsLoading } = useEventStats(cardQuery, refreshMs, !!accountId);
   const { data: timeline } = useEventTimeline(query, !!accountId, refreshMs);
   const { data: facets } = useEventFacets(accountId, useCustom ? undefined : range);
   const { data: access } = useEventAccess(!!accountId);
@@ -595,6 +631,47 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
     const v = filters[k];
     return k === 'excludeReadOnly' ? v === true : !!v;
   }).length;
+
+  // The four dimensions the summary cards toggle.
+  const CARD_FILTER_KEYS = ['status', 'excludeReadOnly', 'action', 'minRisk'];
+  const cardFilterCount = CARD_FILTER_KEYS.filter((k) => (
+    k === 'excludeReadOnly' ? filters[k] === true : !!filters[k]
+  )).length;
+
+  const CARD_FILTER_RESET = {
+    status: '', excludeReadOnly: false, action: '', minRisk: '',
+  };
+
+  const clearCardFilters = () => {
+    setFilters((f) => ({ ...f, ...CARD_FILTER_RESET }));
+    setPage(1);
+  };
+
+  /**
+   * The cards are SINGLE-SELECT: picking one clears the other three.
+   *
+   * They are technically independent dimensions (status, read-only, action,
+   * risk) and stacking them is a coherent query — "failed delete operations"
+   * is a real question. But two cards lit at once reads as a stuck control
+   * rather than a compound filter, and the combinations quietly produce
+   * empty tables ("Successful" + "Failed or denied" can only ever be zero).
+   * One highlighted card, one meaning.
+   *
+   * Clicking the card that is already on turns it off, so there is always a
+   * way back to the unfiltered window without hunting for a Clear button.
+   */
+  const selectCardFilter = (key, value) => () => {
+    setFilters((f) => ({
+      ...f,
+      ...CARD_FILTER_RESET,
+      // Toggle off when it is already the active one, otherwise make it the
+      // only one on.
+      [key]: (key === 'excludeReadOnly' ? f[key] === true : f[key] === value)
+        ? CARD_FILTER_RESET[key]
+        : value,
+    }));
+    setPage(1);
+  };
 
   const setFilter = (key) => (value) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -746,7 +823,6 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
             backTo="/cloud"
             icon="logs"
             title="Event Log"
-            description="Who did what, to which resource, when, from where, and what the result was."
           />
         )}
         <div className="rounded-card border border-border bg-surface py-12">
@@ -767,7 +843,6 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           backTo="/cloud"
           icon="logs"
           title="Event Log"
-          description="Who did what, to which resource, when, from where, and what the result was."
         />
       )}
 
@@ -854,7 +929,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
         )}
 
         {showHealth && (
-          <CloudSection title="Collection health" description="Per-scope checkpoints, ingestion metrics and retention">
+          <CloudSection title="Collection health" >
             <CollectionHealthPanel accountId={accountId} onClose={() => setShowHealth(false)} />
           </CloudSection>
         )}
@@ -923,45 +998,75 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           </div>
         )}
 
-        {/* ── Summary cards. Filter-aware, never hardcoded. ───────────────── */}
+        {/* ── Summary cards ───────────────────────────────────────────────
+            Five of the six are toggles and only ONE can be active at a time:
+            picking a card clears the others. The banner still explains the
+            one thing that is genuinely surprising — the numbers on the cards
+            cover the whole window and deliberately do not move when you
+            filter, so the card you clicked keeps showing the count you
+            clicked it for. */}
+        {cardFilterCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-control border border-accent bg-accent-soft px-3 py-1.5">
+            <Filter size={12} className="shrink-0 text-accent-text" />
+            <span className="text-[11px] text-fg">
+              One card is filtering the table below. The counts themselves
+              cover the whole window and do not change as you switch between
+              them.
+            </span>
+            <button
+              type="button"
+              onClick={clearCardFilters}
+              className="ml-auto text-[11px] font-semibold text-accent-text hover:underline"
+            >
+              Clear it
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+          {/* The only card that is not a toggle. It is the denominator the
+              others are read against, so it shows the window total and says so
+              — "Matching the current filters" was wrong the moment any card
+              was clicked, because the card row no longer moves with them. */}
           <StatCard
             icon={ScrollText} tone="accent" label="Total events" loading={statsLoading}
             value={formatCount(stats?.total_events)}
-            hint="Matching the current filters"
+            hint={cardFilterCount > 0
+              ? `${formatCount(total)} shown below`
+              : 'In this time window'}
           />
           <StatCard
             icon={Activity} tone="success" label="Successful" loading={statsLoading}
             value={formatCount(stats?.successful_events)}
             active={filters.status === 'Success'}
-            onClick={() => setFilter('status')(filters.status === 'Success' ? '' : 'Success')}
+            onClick={selectCardFilter('status', 'Success')}
           />
           <StatCard
             icon={AlertTriangle} tone="danger" label="Failed or denied" loading={statsLoading}
             value={formatCount(stats?.failed_events)}
             hint={stats?.denied_events ? `${formatCount(stats.denied_events)} refused` : undefined}
             active={filters.status === 'Denied'}
-            onClick={() => setFilter('status')(filters.status === 'Denied' ? '' : 'Denied')}
+            onClick={selectCardFilter('status', 'Denied')}
           />
           <StatCard
             icon={Settings2} tone="info" label="Administrative changes" loading={statsLoading}
             value={formatCount(stats?.administrative_changes)}
             hint="Provably changed something"
             active={filters.excludeReadOnly}
-            onClick={() => setFilter('excludeReadOnly')(!filters.excludeReadOnly)}
+            onClick={selectCardFilter('excludeReadOnly', true)}
           />
           <StatCard
             icon={Trash} tone="warning" label="Delete operations" loading={statsLoading}
             value={formatCount(stats?.delete_operations)}
             active={filters.action === 'Delete'}
-            onClick={() => setFilter('action')(filters.action === 'Delete' ? '' : 'Delete')}
+            onClick={selectCardFilter('action', 'Delete')}
           />
           <StatCard
             icon={ShieldAlert} tone="danger" label="Critical events" loading={statsLoading}
             value={formatCount(stats?.critical_events)}
             hint={stats?.high_risk_events ? `${formatCount(stats.high_risk_events)} high` : undefined}
             active={filters.minRisk === 'CRITICAL'}
-            onClick={() => setFilter('minRisk')(filters.minRisk === 'CRITICAL' ? '' : 'CRITICAL')}
+            onClick={selectCardFilter('minRisk', 'CRITICAL')}
           />
         </div>
 
@@ -1321,7 +1426,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
 
           {/* ── Right rail ──────────────────────────────────────────────── */}
           <div className="space-y-4">
-            <CloudSection title="Risk" description="Within the current filters">
+            <CloudSection title="Risk" >
               <ul className="space-y-1">
                 {[...RISK_ORDER].reverse().map((level) => {
                   const count = stats?.by_risk?.[level] ?? 0;
@@ -1350,7 +1455,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
               </ul>
             </CloudSection>
 
-            <CloudSection title="Most active principals" description="Who is doing the most">
+            <CloudSection title="Most active principals" >
               {stats?.top_actors?.length ? (
                 <ul className="space-y-1">
                   {stats.top_actors.map((a) => {
@@ -1471,6 +1576,17 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
         open={!!openEventId}
         onClose={() => setOpenEventId(null)}
         onOpenEvent={(id) => setOpenEventId(id)}
+        // Clicking a principal, resource or IP inside the drawer re-filters the
+        // log by it and closes the drawer, so the result is visible rather than
+        // hidden behind the panel that was just used. This is the move an
+        // investigation actually makes; without it the value has to be copied,
+        // the drawer closed, the right filter found and the value pasted.
+        onPivot={({ actor, search }) => {
+          if (actor) setFilter('actor')(actor);
+          if (search) setSearchInput(search);
+          setPage(1);
+          setOpenEventId(null);
+        }}
       />
     </>
   );

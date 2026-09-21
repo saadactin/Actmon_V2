@@ -431,7 +431,7 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
       </CloudSection>
 
       <div className="space-y-4">
-        <CloudSection title="Created per month" description="From the provider's own timestamps">
+        <CloudSection title="Created per month" >
           {data?.by_month?.length ? (
             <MonthBars months={data.by_month} field="created" />
           ) : (
@@ -439,7 +439,7 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
           )}
         </CloudSection>
 
-        <CloudSection title="First seen per month" description="When this system started recording them">
+        <CloudSection title="First seen per month" >
           {data?.by_month?.length ? (
             <MonthBars months={data.by_month} field="first_seen" tone="subtle" />
           ) : (
@@ -740,7 +740,6 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
           backTo="/cloud"
           icon="activity"
           title="Configuration Drift"
-          description="What changed on your cloud resources, when, and which pillar it affects."
         />
       )}
 
@@ -1003,7 +1002,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
                     </div>
                   </CloudSection>
 
-                  <CloudSection title="Most changed" description="Where to look first">
+                  <CloudSection title="Most changed" >
                     {summary?.top_resources?.length ? (
                       <ul className="space-y-1.5">
                         {summary.top_resources.map((r) => (

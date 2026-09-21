@@ -702,11 +702,21 @@ class ResourceQueryRepository:
         # Cost is totalled PER CURRENCY and never across them. This estate
         # bills in both INR and USD; a single summed number would be a figure
         # that exists in no currency at all.
+        # `period_days` and `fetched_at` travel WITH the figure because without
+        # them it cannot be read correctly. This total is the spend the provider
+        # attributes to individual resources, over a fixed window, as of a
+        # particular fetch -- it is NOT the account's bill, and on OCI the two
+        # differ by whatever the provider bills at tenancy level (data transfer,
+        # support, licences) plus every resource it prices at all. Reported as
+        # "35.03L" with no window and no age, it reads as the bill and is wrong
+        # by ~23%.
         totals = (await self.db.execute(
             select(
                 costs.c.currency,
                 func.sum(costs.c.amount),
                 func.count().filter(costs.c.amount.isnot(None)),
+                func.max(costs.c.period_days),
+                func.max(costs.c.fetched_at),
             )
             .select_from(CloudResource)
             .join(CloudAccount, CloudAccount.id == CloudResource.account_id)
@@ -735,8 +745,10 @@ class ResourceQueryRepository:
                     "currency": currency,
                     "amount": round(float(amount), 2) if amount is not None else None,
                     "resource_count": int(count or 0),
+                    "period_days": int(period_days) if period_days else None,
+                    "fetched_at": fetched_at.isoformat() if fetched_at else None,
                 }
-                for currency, amount, count in totals
+                for currency, amount, count, period_days, fetched_at in totals
                 if currency
             ],
         }

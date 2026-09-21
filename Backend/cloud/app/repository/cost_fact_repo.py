@@ -177,15 +177,23 @@ class CostFactRepository:
 
     async def daily_series(
         self, account_ids: Sequence[uuid.UUID], start: date, end: date,
+        *, region: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Per-day totals, split by currency.
 
         Grouped by currency rather than summed across it: a multi-cloud
         account set genuinely bills in more than one, and one number spanning
         USD and INR would be meaningless.
+
+        `region` narrows the series to one region. It matches only rows the
+        provider actually tagged with a region — spend it reported without one
+        is excluded rather than attributed to whichever region was asked for.
         """
         if not account_ids:
             return []
+        clauses = [self._scope(account_ids, start, end)]
+        if region:
+            clauses.append(CloudCostFact.region == region)
         stmt = (
             select(
                 CloudCostFact.billing_date,
@@ -193,7 +201,7 @@ class CostFactRepository:
                 func.sum(CloudCostFact.amount).label("amount"),
                 func.count().label("records"),
             )
-            .where(self._scope(account_ids, start, end))
+            .where(*clauses)
             .group_by(CloudCostFact.billing_date, CloudCostFact.currency)
             .order_by(CloudCostFact.billing_date)
         )
@@ -212,6 +220,7 @@ class CostFactRepository:
         end: date,
         dimension: str = "service",
         limit: int = 100,
+        region: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Window totals grouped by one dimension, per currency."""
         column = {
@@ -229,6 +238,9 @@ class CostFactRepository:
         if not account_ids:
             return []
 
+        clauses = [self._scope(account_ids, start, end)]
+        if region:
+            clauses.append(CloudCostFact.region == region)
         stmt = (
             select(
                 column.label("key"),
@@ -236,7 +248,7 @@ class CostFactRepository:
                 func.sum(CloudCostFact.amount).label("amount"),
                 func.count().label("records"),
             )
-            .where(self._scope(account_ids, start, end))
+            .where(*clauses)
             .group_by(column, CloudCostFact.currency)
             .order_by(func.sum(CloudCostFact.amount).desc().nullslast())
             .limit(limit)

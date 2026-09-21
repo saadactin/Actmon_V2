@@ -454,8 +454,22 @@ async def main():
             check("untagged_count is right", s["untagged_count"] == 5,
                   str(s["untagged_count"]))
             check("cost totals are per currency, never one merged number",
-                  s["cost_by_currency"] == [
-                      {"currency": "INR", "amount": 12710.5, "resource_count": 2}],
+                  [{k: v for k, v in entry.items()
+                    if k in ("currency", "amount", "resource_count")}
+                   for entry in s["cost_by_currency"]]
+                  == [{"currency": "INR", "amount": 12710.5, "resource_count": 2}],
+                  str(s["cost_by_currency"]))
+            # period_days and fetched_at travel WITH the figure, because
+            # without them it cannot be read correctly: this total is what the
+            # provider attributes to individual resources over a fixed window
+            # as of a particular fetch, not the account's bill. Reported bare,
+            # it read as the bill and was 23% short on a real OCI account.
+            check("each cost total states the window it covers",
+                  all("period_days" in e for e in s["cost_by_currency"]),
+                  str(s["cost_by_currency"]))
+            check("each cost total states when it was fetched, so a stale "
+                  "snapshot cannot pass as current",
+                  all("fetched_at" in e for e in s["cost_by_currency"]),
                   str(s["cost_by_currency"]))
 
             # Filtering must move the summary WITH the rows.

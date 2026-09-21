@@ -1,7 +1,7 @@
 import Badge from '@/components/ui/Badge';
 import Icon from '@/components/ui/Icon';
 import cn from '@/lib/cn';
-import { compact, exact } from '../../utils/costFormat';
+import { compact, exact, relativeTime } from '../../utils/costFormat';
 import { formatCount } from '../../utils/resourceModel';
 
 /**
@@ -82,9 +82,37 @@ export default function ResourceSummaryStrip({
   const costValue = costs.length === 0
     ? 'NA'
     : costs.map((c) => compact(c.amount, c.currency)).join(' + ');
+
+  // This figure is the spend the provider attributes to INDIVIDUAL resources.
+  // It is not the account's bill and is normally smaller — on OCI the gap is
+  // everything billed at tenancy level (data transfer, support, licences) plus
+  // every resource the provider prices at all. On one real account it read
+  // ₹35.03L against a ₹45.34L bill, a 23% shortfall, because the tile was
+  // labelled "Cost" and said only "212 of 476 priced". Saying how many
+  // resources are covered is not the same as saying the number is a subset of
+  // the bill, so both the label and the hover now say so outright, and the
+  // window and fetch time travel with the figure.
+  const costPeriod = costs.find((c) => c.period_days)?.period_days || null;
+  const costFetchedAt = costs.map((c) => c.fetched_at).filter(Boolean).sort().pop() || null;
+
+  const costSub = costs.length === 0 ? null : [
+    `${formatCount(summary.cost_resource_count)} of ${formatCount(summary.resource_count)} priced`,
+    'not the full bill',
+  ].join(' · ');
+
   const costTitle = costs.length === 0
     ? 'No per-resource cost is available for the resources in this view.'
-    : costs.map((c) => `${exact(c.amount, c.currency)} across ${c.resource_count} resource(s)`).join('\n');
+    : [
+      ...costs.map((c) => `${exact(c.amount, c.currency)} across ${c.resource_count} resource(s)`),
+      '',
+      `This is only the spend your provider attributes to individual resources${
+        costPeriod ? `, over the last ${costPeriod} days` : ''}.`,
+      `${formatCount(summary.resource_count - summary.cost_resource_count)} resource(s) in this `
+      + 'view report no per-resource billing, and spend billed at account level '
+      + '(data transfer, support, licences) never appears here at all.',
+      'Your account\'s actual billed total is on the Cost tab.',
+      costFetchedAt ? `\nPer-resource prices last fetched ${relativeTime(costFetchedAt)}.` : '',
+    ].filter(Boolean).join('\n');
 
   const isActive = (key, value) => (filters[key] || []).includes(value);
 
@@ -97,22 +125,28 @@ export default function ResourceSummaryStrip({
         sub={loading ? 'Updating…' : 'In this view'}
       />
 
-      <Card
-        label="Cost"
-        icon="report"
-        value={costValue}
-        title={costTitle}
-        sub={
-          summary.cost_resource_count
-            ? `${formatCount(summary.cost_resource_count)} of ${formatCount(summary.resource_count)} priced`
-            : 'No resource-level billing'
-        }
-        active={filters.hasCost === true}
-        onClick={() => onFilter({
-          ...filters,
-          hasCost: filters.hasCost === true ? null : true,
-        })}
-      />
+      {/* Shown only where the provider reports per-resource billing. On AWS
+          this tile read "NA / No resource-level billing" on every account, and
+          clicking it filtered to the zero resources that have a price — a
+          control that could only ever empty the table. Spend for those
+          accounts lives on the Cost tab, which reads the billing API at the
+          service level where AWS does report. */}
+      {summary.cost_resource_count > 0 && (
+        <Card
+          // "Per-resource cost", not "Cost". The old label invited the one
+          // reading it cannot support: that this is what the account costs.
+          label="Per-resource cost"
+          icon="report"
+          value={costValue}
+          title={costTitle}
+          sub={costSub}
+          active={filters.hasCost === true}
+          onClick={() => onFilter({
+            ...filters,
+            hasCost: filters.hasCost === true ? null : true,
+          })}
+        />
+      )}
 
       <Card
         label="At risk"
@@ -139,30 +173,24 @@ export default function ResourceSummaryStrip({
         })}
       />
 
-      <Card
-        label="Stopped"
-        icon="stop"
-        value={formatCount(summary.stopped_count)}
-        sub="Not running"
-        active={isActive('statuses', 'STOPPED')}
-        onClick={() => onFilter({
-          ...filters,
-          statuses: isActive('statuses', 'STOPPED') ? [] : ['STOPPED'],
-        })}
-      />
-
-      <Card
-        label="Unattached"
-        icon="plug"
-        value={formatCount(summary.unattached_count)}
-        sub="Storage with no host"
-        title="Volumes and disks the provider reports as attached to nothing. Networks and IAM objects are excluded — they are not attachable, so they are not orphans."
-        active={filters.attachment === 'UNATTACHED'}
-        onClick={() => onFilter({
-          ...filters,
-          attachment: filters.attachment === 'UNATTACHED' ? null : 'UNATTACHED',
-        })}
-      />
+      {/* The Stopped and Unattached tiles are gone.
+       *
+       * "Unattached" was the worse of the two: the word appeared twice on this
+       * page driven by two DIFFERENT backend columns — this tile counted
+       * `attachment_state = UNATTACHED` (a volume attached to no host), while
+       * the Status vocabulary has its own UNATTACHED value counted from
+       * `normalized_status`. Two counts, one word, no way for a reader to know
+       * which question either was answering.
+       *
+       * Both were also permanently 0 on a general inventory, because both only
+       * ever apply to block storage. A tile that reads 0 for every account and
+       * filters to nothing when clicked is a control that can only disappoint.
+       *
+       * The filters themselves still exist — `statuses: ['STOPPED']` and
+       * `attachment: 'UNATTACHED'` remain valid query parameters, so a saved
+       * view or a shared URL using them still works, and the Status facet
+       * still offers Stopped where the data has any.
+       */}
 
       <Card
         label="Untagged"

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+﻿import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Bot, ChevronDown, ChevronRight, Cloud, Copy, Check, Download,
@@ -6,6 +6,7 @@ import {
   UserCog, Workflow,
 } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
+import CopyButton from '@/components/ui/CopyButton';
 import Drawer from '@/components/ui/Drawer';
 import { InlineLoading } from '@/components/ui/Loading';
 import { useEvent, useEventRaw, useRelatedEvents } from '../hooks/useEvents';
@@ -79,7 +80,21 @@ const NotAvailable = ({ reason }) => (
   </span>
 );
 
-const Field = ({ label, value, copyable = false, mono = false, reason, children }) => (
+/**
+ * One labelled value.
+ *
+ * `onPivot` turns the value into a link that re-filters the Event Log by it —
+ * "show me everything this principal did", "everything that touched this
+ * resource", "everything from this IP". That is the move an investigation
+ * actually makes, and without it the reader has to copy the value, close the
+ * drawer, find the right filter and paste. The pivot is only offered where the
+ * Event Log can genuinely filter on that field, so a link never leads to an
+ * empty result caused by us rather than by the data.
+ */
+const Field = ({
+  label, value, copyable = false, mono = false, reason, children, onPivot,
+  pivotHint,
+}) => (
   <div className="min-w-0 py-1">
     <dt className="text-[10px] font-semibold uppercase tracking-wide text-subtle">{label}</dt>
     <dd className="mt-0.5 min-w-0">
@@ -87,9 +102,25 @@ const Field = ({ label, value, copyable = false, mono = false, reason, children 
         ? children
         : value === null || value === undefined || value === ''
           ? <NotAvailable reason={reason} />
-          : copyable
-            ? <CopyableValue value={value} mono={mono} />
-            : <span className={`break-words ${mono ? 'font-mono text-[11px]' : 'text-[12px]'} text-fg`}>{String(value)}</span>}
+          : onPivot
+            ? (
+              <span className="flex min-w-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onPivot(value)}
+                  title={pivotHint || `Filter the Event Log by ${label.toLowerCase()}`}
+                  className={`min-w-0 break-words text-left text-accent-text underline decoration-dotted underline-offset-2 hover:decoration-solid ${
+                    mono ? 'font-mono text-[11px]' : 'text-[12px]'
+                  }`}
+                >
+                  {String(value)}
+                </button>
+                {copyable && <CopyButton text={String(value)} label="" variant="ghost" />}
+              </span>
+            )
+            : copyable
+              ? <CopyableValue value={value} mono={mono} />
+              : <span className={`break-words ${mono ? 'font-mono text-[11px]' : 'text-[12px]'} text-fg`}>{String(value)}</span>}
     </dd>
   </div>
 );
@@ -315,7 +346,7 @@ const ActorChain = ({ chain }) => {
 };
 
 export default function EventDetailDrawer({
-  eventId, open, onClose, onOpenEvent, onViewDrift,
+  eventId, open, onClose, onOpenEvent, onViewDrift, onPivot,
 }) {
   const navigate = useNavigate();
   const [rawOpen, setRawOpen] = useState(false);
@@ -413,10 +444,14 @@ export default function EventDetailDrawer({
               )}
             </div>
             <dl className="grid gap-x-4 sm:grid-cols-2">
-              <Field label="Name" value={event.actor.name} copyable />
+              <Field label="Name" value={event.actor.name} copyable
+                onPivot={(v) => onPivot?.({ actor: v })}
+                pivotHint="Show every event by this principal" />
               <Field label="Email" value={event.actor.email} copyable
                 reason="This provider does not report an email address for this principal, and one is never derived from a username." />
-              <Field label="Principal ID" value={event.actor.id} copyable mono />
+              <Field label="Principal ID" value={event.actor.id} copyable mono
+                onPivot={(v) => onPivot?.({ actor: v })}
+                pivotHint="Show every event by this principal" />
               <Field label="Role" value={event.actor.role} copyable mono
                 reason="No role was named on this audit event." />
               <Field label="Authentication" value={event.actor.authentication_method}
@@ -449,9 +484,13 @@ export default function EventDetailDrawer({
           {/* ── Which resource ────────────────────────────────────────────── */}
           <Section title="Resource — what was affected" icon={Server}>
             <dl className="grid gap-x-4 sm:grid-cols-2">
-              <Field label="Name" value={event.resource.name} copyable />
+              <Field label="Name" value={event.resource.name} copyable
+                onPivot={(v) => onPivot?.({ search: v })}
+                pivotHint="Show every event touching this resource" />
               <Field label="Type" value={event.resource.type} />
-              <Field label="Resource ID / ARN / OCID" value={event.resource.id} copyable mono />
+              <Field label="Resource ID / ARN / OCID" value={event.resource.id} copyable mono
+                onPivot={(v) => onPivot?.({ search: v })}
+                pivotHint="Show every event touching this resource" />
               <Field label="Region" value={event.resource.region}
                 reason="This provider's audit event carries no region field, and one is never inferred." />
               <Field label="Account / subscription / tenancy"
@@ -519,6 +558,8 @@ export default function EventDetailDrawer({
           <Section title="Source — where it came from" icon={Globe}>
             <dl className="grid gap-x-4 sm:grid-cols-2">
               <Field label="Source IP" value={event.source.ip} copyable mono
+                onPivot={(v) => onPivot?.({ search: v })}
+                pivotHint="Show every event from this address"
                 reason="This provider did not record a source IP for this event." />
               <Field label="Access method" value={event.source.access_method}
                 reason="The provider recorded nothing that identifies the client, so the access method is genuinely unknown rather than assumed." />
@@ -767,3 +808,4 @@ function formatDelay(seconds) {
   if (minutes < 90) return `${minutes.toFixed(1)} minutes`;
   return `${(minutes / 60).toFixed(1)} hours`;
 }
+

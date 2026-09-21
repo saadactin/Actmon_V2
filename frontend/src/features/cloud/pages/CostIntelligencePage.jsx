@@ -58,6 +58,7 @@ import {
 import CostRecommendations from '../components/cost/CostRecommendations';
 import CostAllocation, { FinOpsHealth } from '../components/cost/CostAllocation';
 import { InsufficientHistory, PanelHeading } from '../components/cost/CostPrimitives';
+import RegionBreakdown from '../components/cost/RegionBreakdown';
 import { groupByCurrency, isMissing } from '../utils/costFormat';
 
 /** Date presets. Exact dates are always shown alongside — "last 30 days" on its
@@ -90,6 +91,14 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
   const days = Number(params.get('days') || 30);
   const accountParam = params.get('account') || 'ALL';
   const serviceFilter = params.get('service') || null;
+  const regionFilter = params.get('region') || null;
+  // A custom window only applies when BOTH ends are present. The backend
+  // rejects a half-pair rather than falling back to `days`, so the page must
+  // not send one either — a chart labelled "last 30 days" showing some other
+  // period is worse than no chart.
+  const startDate = params.get('start') || null;
+  const endDate = params.get('end') || null;
+  const customRange = !!(startDate && endDate);
 
   // Inside a provider scope, 'ALL' must not fan out to other providers. When
   // embedded in the account dashboard the route's account always wins — the
@@ -129,7 +138,11 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
   const quality = useCostQuality(accountView);
   const capabilities = useCostCapabilities(accountView);
   const coverage = useCostCoverage(accountView);
-  const history = useCostHistory(accountView, days, 'service');
+  const history = useCostHistory(accountView, days, 'service', {
+    startDate: customRange ? startDate : null,
+    endDate: customRange ? endDate : null,
+    region: regionFilter,
+  });
   const forecast = useCostForecast(accountView, Math.max(days, 90));
   const anomalies = useCostAnomalies(accountView, Math.max(days, 90));
   const trends = useCostTrends(accountView, days, 'service');
@@ -277,7 +290,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
         <CloudPageHeader
           backTo="/cloud"
           title="Cost Intelligence"
-          description="Multi-cloud spend, trends, forecasting, anomalies and optimization across AWS, Azure and OCI"
           actions={(
             <CloudToolbar
               selectorProps={accounts?.length ? {
@@ -306,10 +318,12 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
             <button
               key={r.days}
               type="button"
-              onClick={() => setParam({ days: r.days })}
-              aria-pressed={days === r.days}
+              // Choosing a preset clears any custom range, so the two controls
+              // can never both look active while only one is in effect.
+              onClick={() => setParam({ days: r.days, start: null, end: null })}
+              aria-pressed={!customRange && days === r.days}
               className={
-                days === r.days
+                !customRange && days === r.days
                   ? 'rounded-[6px] bg-accent-soft px-2.5 py-1 text-[11.5px] font-semibold text-accent-text'
                   : 'rounded-[6px] px-2.5 py-1 text-[11.5px] font-medium text-muted hover:text-fg'
               }
@@ -317,11 +331,80 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
               {r.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setParam(customRange
+              ? { start: null, end: null }
+              : { start: dates.start, end: dates.end })}
+            aria-pressed={customRange}
+            className={
+              customRange
+                ? 'rounded-[6px] bg-accent-soft px-2.5 py-1 text-[11.5px] font-semibold text-accent-text'
+                : 'rounded-[6px] px-2.5 py-1 text-[11.5px] font-medium text-muted hover:text-fg'
+            }
+          >
+            Custom
+          </button>
         </div>
-        <span className="text-[11.5px] text-muted">
-          {dates.start} → {dates.end}
-          <span className="ml-1.5 text-subtle">(UTC)</span>
-        </span>
+
+        {customRange ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input
+              type="date"
+              value={startDate || ''}
+              max={endDate || undefined}
+              onChange={(e) => setParam({ start: e.target.value || null })}
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[11.5px] text-fg"
+              aria-label="Start date"
+            />
+            <span className="text-[11.5px] text-subtle">→</span>
+            <input
+              type="date"
+              value={endDate || ''}
+              min={startDate || undefined}
+              onChange={(e) => setParam({ end: e.target.value || null })}
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[11.5px] text-fg"
+              aria-label="End date"
+            />
+            <span className="text-[11.5px] text-subtle">(UTC)</span>
+          </div>
+        ) : (
+          <span className="text-[11.5px] text-muted">
+            {dates.start} → {dates.end}
+            <span className="ml-1.5 text-subtle">(UTC)</span>
+          </span>
+        )}
+
+      </div>
+
+      {/* Active filters sit on their OWN row rather than trailing the date
+          controls. Presets, a custom range, two date inputs and up to three
+          badges in one wrapping flex row reflowed into a different shape on
+          every viewport — and the row a user reaches for (the dates) moved
+          every time a filter was added. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 empty:mb-0">
+        {/* A rejected range (reversed, or wider than the stored history allows)
+            is shown here rather than left as an empty chart the reader has to
+            interpret. */}
+        {history.isError && (
+          <Badge tone="danger">
+            {history.error?.response?.data?.detail || 'That date range could not be used.'}
+          </Badge>
+        )}
+
+        {regionFilter && (
+          <Badge tone="accent">
+            Region: {regionFilter}
+            <button
+              type="button"
+              onClick={() => setParam({ region: null })}
+              className="ml-1 font-bold"
+              aria-label="Clear region filter"
+            >
+              ×
+            </button>
+          </Badge>
+        )}
         {serviceFilter && (
           <Badge tone="accent">
             Service: {serviceFilter}
@@ -424,6 +507,19 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
             </CloudSection>
           </div>
 
+          <CloudSection
+            title="Spend by region"
+            description="Click a region to narrow the trend above"
+          >
+            <RegionBreakdown
+              rows={analytics.data?.by_region || []}
+              selected={regionFilter}
+              onSelect={(region) => setParam({
+                region: regionFilter === region ? null : region,
+              })}
+            />
+          </CloudSection>
+
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <CloudSection title="Cost by service">
               <CostBreakdownBars
@@ -436,7 +532,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
             </CloudSection>
             <CloudSection
               title="Spend calendar"
-              description="Daily intensity; anomalous days are ringed"
             >
               {calendarDays.days.length ? (
                 <CostCalendarHeatmap
@@ -500,7 +595,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
 
           <CloudSection
             title="What changed"
-            description="Associated cost movement between this period and the one before it"
           >
             {/* Change analysis compares two stored periods, so it genuinely
                 cannot run off the live 30-day window — it says so rather than
@@ -524,7 +618,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
 
           <CloudSection
             title="Cost by service"
-            description="Current period, from the provider billing API"
           >
             <CostBreakdownBars
               rows={serviceRows}
@@ -541,7 +634,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
       {tab === 'forecast' && (
         <CloudSection
           title="Forecast"
-          description="Run-rate projection from observed daily spend"
         >
           <ForecastPanel
             forecast={forecast.data}
@@ -557,7 +649,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
       {tab === 'anomalies' && (
         <CloudSection
           title="Cost anomalies"
-          description="Days exceeding both a percentage and an absolute threshold against their trailing baseline"
         >
           <AnomalyList
             anomalies={anomalies.data}
@@ -592,7 +683,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
       {tab === 'budgets' && (
         <CloudSection
           title="Budgets"
-          description="Each budget is evaluated in its own currency against stored billing facts"
         >
           <BudgetPanel budgets={budgets.data} canManage />
         </CloudSection>
@@ -608,21 +698,18 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
         <div className="space-y-4">
           <CloudSection
             title="Data freshness"
-            description="Each dataset refreshes on its own schedule — these are not synchronized"
           >
             <FreshnessPanel quality={quality_} />
           </CloudSection>
 
           <CloudSection
             title="Provider capabilities"
-            description="What each billing integration can and cannot answer"
           >
             <CapabilityMatrix capabilities={capabilities.data} />
           </CloudSection>
 
           <CloudSection
             title="Stored history"
-            description="What the analytics on this page are computed from"
           >
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {[
@@ -644,7 +731,6 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
               <div className="mt-4">
                 <PanelHeading
                   title="What this history supports"
-                  description="An analysis is withheld rather than computed from too few days"
                 />
                 <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                   {Object.entries(coverage.data.supports).map(([key, ready]) => (

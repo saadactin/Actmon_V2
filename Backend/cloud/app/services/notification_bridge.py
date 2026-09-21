@@ -80,6 +80,31 @@ def _build_context(*, alert, account_name: Optional[str]) -> dict:
     }
 
 
+async def _account_default_recipients(db: AsyncSession, alert) -> list:
+    """The enabled default To-addresses for this alert's account.
+
+    Account-scoped, never global: an alert on one account must not be emailed
+    to another account's owners just because they happen to be the only
+    recipients anybody has configured. An alert with no account (a
+    tenancy-wide condition) therefore has no defaults, and email is dropped.
+    """
+    account_id = getattr(alert, "account_id", None)
+    if not account_id:
+        return []
+    try:
+        rows = (await db.execute(
+            text(
+                "SELECT email FROM cloud_alert_recipients "
+                "WHERE account_id = :account_id AND enabled = true AND kind = 'to'"
+            ),
+            {"account_id": str(account_id)},
+        )).scalars().all()
+        return [r for r in rows if r]
+    except Exception as exc:  # noqa: BLE001 — a missing table must not break alerting
+        logger.debug("Could not read cloud_alert_recipients: %s", exc)
+        return []
+
+
 async def queue_notifications_for_alert(
     db: AsyncSession, alert, account_name: Optional[str] = None
 ) -> int:
@@ -102,12 +127,29 @@ async def queue_notifications_for_alert(
         if not wanted:
             return 0
 
-        # Email has no recipient concept for a cloud alert (no
-        # notification_recipients/cc/bcc the way an AlertRule has) — routing
-        # it would only ever produce a guaranteed-fail queue row, retried
-        # three times, forever. Drop it here the same way the DB-side
-        # evaluator drops email when no recipient is configured.
-        wanted = [c for c in wanted if c != "email"]
+        # Email used to be dropped here unconditionally. The reason was sound
+        # at the time: a cloud alert had no recipient field the way a DB
+        # AlertRule has notification_recipients/cc/bcc, and
+        # `email_channel_service.send_via_channel` takes its address list
+        # ENTIRELY from the firing rule with no org-wide fallback — so routing
+        # email could only ever produce a guaranteed-fail queue row, retried
+        # three times, forever.
+        #
+        # `cloud_alert_recipients` is now that missing field. Email is dropped
+        # only when this alert's account genuinely has nobody configured, which
+        # is the same test the DB-side evaluator applies, rather than a blanket
+        # refusal.
+        email_to: list = []
+        if "email" in wanted:
+            email_to = await _account_default_recipients(db, alert)
+            if not email_to:
+                logger.debug(
+                    "Dropping the email channel for alert %s: its account has no "
+                    "enabled default recipients, so the message would fail on "
+                    "every retry. Add one under Alerts → Email Settings.",
+                    getattr(alert, "id", "?"),
+                )
+                wanted = [c for c in wanted if c != "email"]
         if not wanted:
             return 0
 
@@ -130,6 +172,9 @@ async def queue_notifications_for_alert(
         # subtract offset-naive and offset-aware datetimes").
         now = datetime.utcnow()
         for channel_type in enabled:
+            payload: dict = {"context": context}
+            if channel_type == "email":
+                payload["recipients_override"] = email_to
             await db.execute(
                 text(
                     "INSERT INTO notification_queue "
@@ -142,7 +187,7 @@ async def queue_notifications_for_alert(
                 {
                     "org_id": ORG_ID,
                     "channel_type": channel_type,
-                    "payload": json.dumps({"context": context}),
+                    "payload": json.dumps(payload),
                     "next_attempt_at": now,
                     "created_at": now,
                 },

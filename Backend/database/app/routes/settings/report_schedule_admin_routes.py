@@ -25,16 +25,21 @@ from app.database.connection import SessionLocal
 from app.models.mysql_report_schedule_model import MysqlReportSchedule
 from app.models.postgres_report_schedule_model import PostgresReportSchedule
 from app.models.mssql_report_schedule_model import MssqlReportSchedule
-from app.models.oracle_report_schedule_model import OracleReportSchedule
 
 router = APIRouter(prefix="/api/v1/report-schedules", tags=["report-schedules"])
 
 # engine key -> (model, human label)
+#
+# Oracle is deliberately absent. Its report-email service, routes and model were
+# removed on 2026-09-17 after it re-sent the same daily report on every 60s tick
+# (see the note in main.py). Listing it here would offer an admin surface for
+# schedules that nothing can run, and a toggle that silently does nothing is
+# worse than no toggle. The oracle_report_schedules TABLE still exists, so the
+# historical rows are intact if the feature is ever rebuilt.
 ENGINES = {
     "mysql":      (MysqlReportSchedule,    "MySQL"),
     "postgresql": (PostgresReportSchedule, "PostgreSQL"),
     "mssql":      (MssqlReportSchedule,    "SQL Server"),
-    "oracle":     (OracleReportSchedule,   "Oracle"),
 }
 
 

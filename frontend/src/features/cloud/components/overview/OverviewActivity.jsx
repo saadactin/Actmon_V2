@@ -21,7 +21,6 @@ export function RecentlyDiscovered({ rows, isLoading, error, onOpenResource, onO
     <Panel
       title="Recently Discovered"
       icon="boxes"
-      subtitle="Newest resources in this account"
       action={<ViewLink onClick={onOpenAll}>Resources</ViewLink>}
       loading={isLoading}
       error={error}
@@ -198,7 +197,6 @@ export function TopRisks({ posture, isLoading, error, onOpenResource, onOpenSecu
     <Panel
       title="Top Risks"
       icon="alert"
-      subtitle="Highest-severity open findings"
       action={<ViewLink onClick={onOpenSecurity}>Security</ViewLink>}
       loading={isLoading}
       error={error}
@@ -245,7 +243,6 @@ export function TopCostResources({ rows, isLoading, error, capabilities, onOpenR
     <Panel
       title="Top Cost Resources"
       icon="report"
-      subtitle="By billed spend, where the provider bills per resource"
       action={<ViewLink onClick={onOpenCost}>Cost</ViewLink>}
       loading={isLoading}
       error={error}
@@ -290,7 +287,6 @@ export function TopologySnapshot({ topology, isLoading, error, onOpenTopology })
     <Panel
       title="Relationships"
       icon="network"
-      subtitle="From the topology engine"
       action={<ViewLink onClick={onOpenTopology}>Topology</ViewLink>}
       loading={isLoading}
       error={error}
@@ -335,7 +331,6 @@ export function DataQualityPanel({ dataQuality, monitoring, isLoading, error }) 
     <Panel
       title="Data Coverage"
       icon="gauge"
-      subtitle="How much of this account the platform actually has data for"
       loading={isLoading}
       error={error}
       dense

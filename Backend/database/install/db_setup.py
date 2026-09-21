@@ -408,6 +408,33 @@ END; $_$""",
     """ALTER TABLE connection_master
          ADD COLUMN IF NOT EXISTS oracle_deployment_type VARCHAR(50),
          ADD COLUMN IF NOT EXISTS oracle_role             VARCHAR(50)""",
+    # Agent bearer-token lookup columns (agent_model.py: Agent, AgentDbTarget)
+    # and the per-metric-sample fields (AgentMetric) — found missing on a
+    # live database by tests/collect_model_columns.py + the cloud service's
+    # verify_schema_drift.py. Every one of these already existed on the ORM
+    # model; a database provisioned before the model grew them (via
+    # create_all on an old schema, rather than through this patch list) never
+    # got them, and the FIRST query touching any of these tables would abort
+    # the whole session — the same failure mode as the notification_* columns
+    # above, just not yet noticed because nothing had exercised it.
+    """ALTER TABLE agent_db_targets
+         ADD COLUMN IF NOT EXISTS token_hash VARCHAR(64)""",
+    """ALTER TABLE agent_tokens
+         ADD COLUMN IF NOT EXISTS token_hash VARCHAR(64)""",
+    """ALTER TABLE agent_metrics
+         ADD COLUMN IF NOT EXISTS kind      VARCHAR(32),
+         ADD COLUMN IF NOT EXISTS tech      VARCHAR(64),
+         ADD COLUMN IF NOT EXISTS conn_id   INTEGER,
+         ADD COLUMN IF NOT EXISTS host_disk DOUBLE PRECISION""",
+    # os_servers: the Patroni cluster API port (read at ~16 call sites in
+    # patroni_cluster_service.py — probe, switchover, failover, restart,
+    # reload — every one of which raises on this database until the column
+    # exists), the agent bearer-token hash lookup, and the latest
+    # agent-pushed infra snapshot.
+    """ALTER TABLE os_servers
+         ADD COLUMN IF NOT EXISTS patroni_api_port  INTEGER,
+         ADD COLUMN IF NOT EXISTS agent_token_hash   VARCHAR(64),
+         ADD COLUMN IF NOT EXISTS last_infra_json    TEXT""",
 ]
 
 

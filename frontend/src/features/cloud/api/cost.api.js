@@ -57,9 +57,27 @@ export const getCostQuality = async (accountId) => {
 
 // ── Persisted history & analytics ────────────────────────────────────────────
 
-export const getCostHistory = async (accountId, days = 90, groupBy) => {
+/**
+ * Stored billing history.
+ *
+ * `startDate`/`endDate` (YYYY-MM-DD) override `days` when BOTH are given — the
+ * backend rejects a half-supplied pair rather than silently falling back, so a
+ * chart can never cover a different period than its label says.
+ *
+ * `region` narrows to one region, matching only spend the provider actually
+ * tagged with one. Unregioned spend is excluded rather than attributed to
+ * whichever region happened to be selected.
+ */
+export const getCostHistory = async (
+  accountId, days = 90, groupBy, { startDate, endDate, region } = {},
+) => {
+  const custom = startDate && endDate;
   const { data } = await cloudAxios.get(`/cost/history/${accountId}`, {
-    params: { days, group_by: groupBy },
+    params: {
+      ...(custom ? { start_date: startDate, end_date: endDate } : { days }),
+      ...(groupBy ? { group_by: groupBy } : {}),
+      ...(region ? { region } : {}),
+    },
   });
   return data;
 };
@@ -138,11 +156,6 @@ export const deleteBudget = async (budgetId) => {
 
 export const getAlertPolicies = async () => {
   const { data } = await cloudAxios.get('/cost/alert-policies');
-  return data;
-};
-
-export const getAccountDiagnostic = async (accountId) => {
-  const { data } = await cloudAxios.get(`/cloud-accounts/${accountId}/diagnostic`);
   return data;
 };
 

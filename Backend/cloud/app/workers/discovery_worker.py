@@ -15,7 +15,10 @@ logger = logging.getLogger("cloud_svc.discovery_runner")
 _warm_tasks: set[asyncio.Task] = set()
 
 
-async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
+async def run_discovery_scan(
+    job_id: uuid.UUID, account_id: uuid.UUID,
+    refresh_id: uuid.UUID | None = None,
+) -> None:
     """
     Async background task that:
       1. Decrypts credentials for the account
@@ -23,7 +26,19 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
       3. Scans all resources across ALL regions
       4. Upserts results into the DB
       5. Updates job status throughout
+
+    `refresh_id` is optional and changes NOTHING about what this does. When an
+    Account Refresh drove this scan it passes its id, and each stage stamps its
+    outcome onto that refresh record — which is how a refresh can report
+    "inventory fresh, cost throttled" instead of one opaque success.
+
+    The stamping is fire-and-forget by design. This worker already treats cost
+    and security failures as non-fatal so that a good inventory sweep is never
+    thrown away; bookkeeping about them must not become the thing that breaks
+    it.
     """
+    from app.services.account_refresh_service import set_component as _stamp
+
     from app.core.database import AsyncSessionLocal
     from app.repository.cloud_account_repo import CloudAccountRepository
     from app.repository.discovery_repo import DiscoveryRepository
@@ -73,8 +88,12 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
 
             provider = ProviderClass(credentials)
 
+            await _stamp(refresh_id, "connection", "RUNNING")
             await provider.authenticate()
             logger.info("Provider auth OK for job=%s", job_id)
+            await _stamp(refresh_id, "connection", "SUCCEEDED",
+                         detail=f"Authenticated to {provider_name}.")
+            await _stamp(refresh_id, "resources", "RUNNING")
 
             # Incremental persistence: each batch of resources is upserted and the
             # job's live count is updated the moment it's discovered, so the UI can
@@ -257,14 +276,47 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                             account.account_name, outcome.get("inserted", 0),
                             outcome.get("updated", 0),
                         )
+                        await _stamp(
+                            refresh_id, "cost", "SUCCEEDED",
+                            detail=(f"{outcome.get('inserted', 0)} billing fact(s) "
+                                    f"written, {outcome.get('updated', 0)} corrected."))
+                    else:
+                        # `ok: false` is the provider declining, not a crash —
+                        # a 403 on Cost Explorer, or a throttle. It carries the
+                        # reason, and that reason is the whole value of
+                        # reporting this component separately.
+                        await _stamp(
+                            refresh_id, "cost", "FAILED",
+                            detail=str(outcome.get("error")
+                                       or outcome.get("message")
+                                       or "The provider returned no billing data.")[:400])
                 except Exception as exc:  # never fail a completed scan on this
                     logger.warning(
                         "Cost ingestion failed for %s: %s", account.account_name, exc,
                     )
+                    await _stamp(refresh_id, "cost", "FAILED",
+                                 detail=str(exc)[:400])
 
-            ingest_task = asyncio.create_task(_ingest_costs())
-            _warm_tasks.add(ingest_task)
-            ingest_task.add_done_callback(_warm_tasks.discard)
+            # Same split as event collection below, and for the same reason.
+            #
+            # A plain Run Discovery fires and forgets: billing APIs take 30-50s
+            # and a completed inventory sweep must not wait on them.
+            #
+            # An Account Refresh AWAITS it, because it has to grade the run.
+            # Detaching it there is a race the refresh loses on any account
+            # whose event collection finishes first: grading reads `cost` while
+            # it is still PENDING, counts it as neither success nor failure,
+            # and reports SUCCEEDED for a run whose billing data never
+            # arrived — or worse, stamps FAILED onto a run already graded
+            # green. A component nobody waited for cannot be reported on
+            # honestly.
+            if refresh_id is None:
+                ingest_task = asyncio.create_task(_ingest_costs())
+                _warm_tasks.add(ingest_task)
+                ingest_task.add_done_callback(_warm_tasks.discard)
+            else:
+                await _stamp(refresh_id, "cost", "RUNNING")
+                await _ingest_costs()
 
             # Also fire-and-forget: pull this account's audit events now, so
             # the Event Log has the control-plane activity that explains the
@@ -272,12 +324,54 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             # that is throttled or unreachable must not delay a completed scan,
             # and collect_account never raises for a provider failure (it
             # records the failure in cloud_event_sync_state instead).
-            from app.services.event_collector import schedule_after_discovery
+            # Exactly one path collects events, never both.
+            #
+            # A plain Run Discovery fires and forgets, as it always has: an
+            # audit API that is throttled must not delay a completed scan.
+            #
+            # An Account Refresh needs the OUTCOME, not just the attempt — it
+            # has to report "events refreshed" or "events failed" honestly — so
+            # it awaits the same collection itself after this returns. Firing
+            # it here as well would mean two collection passes against the same
+            # provider for one refresh, which is precisely the duplicated API
+            # call the refresh design exists to avoid.
+            if refresh_id is None:
+                from app.services.event_collector import schedule_after_discovery
 
-            schedule_after_discovery(account_id)
+                schedule_after_discovery(account_id)
 
             await account_repo.update_last_discovery(account_id)
             await disco_repo.complete_job(job_id, count)
+            await _stamp(refresh_id, "resources", "SUCCEEDED",
+                         detail=f"{count} resource(s) in inventory.")
+            # Drift rides on the same upsert, so it succeeds exactly when the
+            # sweep does — except on the very first scan of an account, where
+            # there is no previous state to diff against and nothing is logged.
+            # Reporting that as a success would claim drift was checked when
+            # the baseline was merely established.
+            drift_detail = None
+            if drift_job_id:
+                # The number of changes this sweep actually logged. Counted
+                # rather than asserted: "drift checked" with no number leaves
+                # the reader unable to tell a clean comparison from one that
+                # ran against nothing.
+                from sqlalchemy import func as _func, select as _select
+
+                from app.models.drift import CloudResourceChange
+
+                logged = (await db.execute(
+                    _select(_func.count()).select_from(CloudResourceChange)
+                    .where(CloudResourceChange.job_id == drift_job_id)
+                )).scalar_one()
+                drift_detail = (f"{logged} change(s) recorded." if logged
+                                else "No configuration changes since the "
+                                     "previous scan.")
+            await _stamp(
+                refresh_id, "drift",
+                "SUCCEEDED" if drift_job_id else "SKIPPED",
+                detail=(drift_detail if drift_job_id else
+                        "First scan of this account — this run establishes the "
+                        "baseline, so there is nothing to compare against yet."))
             await db.commit()
 
             # The topology is derived from the inventory this scan just
@@ -340,11 +434,18 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
                         result["alerts"].get("created"),
                         result["alerts"].get("resolved"),
                     )
+                    await _stamp(
+                        refresh_id, "security", "SUCCEEDED",
+                        detail=(f"Score {result['score'].get('score')}, "
+                                f"{result['findings'].get('new')} new finding(s), "
+                                f"{result['findings'].get('resolved')} resolved."))
             except Exception as sec_exc:  # noqa: BLE001
                 logger.warning(
                     "Security assessment failed for job=%s: %s",
                     job_id, sec_exc, exc_info=True,
                 )
+                await _stamp(refresh_id, "security", "FAILED",
+                             detail=str(sec_exc)[:400])
 
             logger.info(
                 "Discovery complete: job=%s account=%s resources=%d",
@@ -355,6 +456,15 @@ async def run_discovery_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
             logger.error(
                 "Discovery failed: job=%s error=%s", job_id, exc, exc_info=True
             )
+            # Whichever stage was in flight is the one that failed. Anything
+            # still PENDING behind it is stamped SKIPPED rather than FAILED —
+            # a security assessment that never ran because authentication
+            # failed did not itself fail, and calling it a failure would send
+            # somebody looking at the wrong subsystem.
+            await _stamp(refresh_id, "resources", "FAILED", detail=str(exc)[:400])
+            for _later in ("drift", "cost", "security"):
+                await _stamp(refresh_id, _later, "SKIPPED",
+                             detail="Not reached — the inventory sweep failed first.")
             await disco_repo.fail_job(job_id, str(exc))
             # A scan that died partway through is an incomplete sweep by
             # definition, so its diffs get the same treatment as a sweep that

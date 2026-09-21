@@ -67,15 +67,26 @@ def _process_one(db, job: NotificationQueue):
         _write_history(db, job, status="failed", response_code=None, response_time_ms=None, error=job.last_error)
         return
 
-    context = (job.payload or {}).get("context", {})
-    recipients_override = (job.payload or {}).get("recipients_override") or None
-    cc_override = (job.payload or {}).get("cc_override") or None
-    bcc_override = (job.payload or {}).get("bcc_override") or None
+    payload = job.payload or {}
+    context = payload.get("context", {})
+    recipients_override = payload.get("recipients_override") or None
+    cc_override = payload.get("cc_override") or None
+    bcc_override = payload.get("bcc_override") or None
+    # A producer that rendered its own subject/body passes them through here.
+    # Cloud alerts do; DB alert rules do not and keep using the org template.
+    prerendered = None
+    if payload.get("subject") and (payload.get("html") or payload.get("text")):
+        prerendered = {
+            "subject": payload.get("subject"),
+            "html": payload.get("html"),
+            "text": payload.get("text"),
+        }
     started = time.monotonic()
     try:
         result = channel_dispatch.send(
             db, job.org_id, channel_row, context,
-            recipients_override=recipients_override, cc_override=cc_override, bcc_override=bcc_override,
+            recipients_override=recipients_override, cc_override=cc_override,
+            bcc_override=bcc_override, prerendered=prerendered,
         )
     except Exception as exc:  # noqa: BLE001 — a bad adapter must not crash the dispatcher
         log.exception("Notification adapter raised for channel %s", job.channel_type)

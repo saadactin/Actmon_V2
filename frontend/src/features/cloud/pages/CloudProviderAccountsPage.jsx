@@ -10,7 +10,7 @@ import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
 import CloudFilterBar from '../components/CloudFilterBar';
 import CloudSection from '../components/CloudSection';
-import { KEY_TO_SLUG, keyFromSlug, providerKeyOf } from '../utils/providerScope';
+import { keyFromSlug, providerKeyOf } from '../utils/providerScope';
 import Icon from '@/components/ui/Icon';
 
 // Real taxonomy this app's Cloud accounts are tagged with — see
@@ -195,30 +195,12 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
           ))}
         </div>
 
-        {/* provider switcher — same role as mysql-servers' tech-switcher pills */}
-        <div className="ml-2 flex flex-wrap items-center gap-1 border-l border-border pl-2">
-          {Object.keys(PROVIDER_META).map((key) => {
-            const pMeta = PROVIDER_META[key];
-            const isActive = key === providerKey;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => navigate(`/cloud/${KEY_TO_SLUG[key]}-accounts`)}
-                className={`flex h-7 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-all ${
-                  isActive ? 'border-transparent text-white shadow' : 'border-border text-subtle hover:opacity-80'
-                }`}
-                style={isActive ? { background: pMeta.color } : undefined}
-              >
-                {/* On the active pill the background is the brand colour, so a
-                    brand-coloured logo would disappear into it — show the mark
-                    only on the inactive pills. */}
-                {!isActive && <ProviderLogo provider={key} size={14} />}
-                <span className="hidden sm:inline">{key}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* The provider switcher pills that used to sit here are gone. On a
+            page headed "Amazon Web Services" they read as a FILTER sitting
+            beside the environment filter, so an AWS page appearing to offer
+            Azure and OCI looked like the account list was wrong. Switching
+            provider is navigation, and the back arrow to /cloud already does
+            it — one clear route beats two that look like different things. */}
 
         <div className="ml-auto flex items-center gap-2">
           <div className="min-w-[200px] max-w-xs flex-1">
