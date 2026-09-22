@@ -2,10 +2,24 @@ import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import useCountUp from '@/hooks/useCountUp';
 
-/** 1,284 → "1,284"; 12,900 → "12.9K". Keeps a headline number short. */
+/** 1,284 → "1,284"; 12,900 → "12.9K". Keeps a headline number short.
+ *
+ * A value that is not a number is returned untouched. It used to fall through
+ * to `Number(n).toLocaleString()`, which rendered the literal text "NaN" — and
+ * Dashboard already relies on this: it passes '—' for Cloud Accounts when the
+ * cloud service is unreachable, so that tile showed "NaN" on exactly the
+ * failure it was meant to explain. Note `Number.isNaN('—')` is false (it does
+ * not coerce), which is why the existing guard never caught it. */
 export function compact(n) {
-  if (n === null || n === undefined || Number.isNaN(n)) return '—';
-  const v = Number(n);
+  if (n === null || n === undefined) return '—';
+  if (typeof n !== 'number') {
+    const parsed = Number(n);
+    // "42" from an API is still a number; "613.02 MB" or "on" is not.
+    if (n === '' || Number.isNaN(parsed)) return String(n);
+    n = parsed;
+  }
+  if (Number.isNaN(n)) return '—';
+  const v = n;
   if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (Math.abs(v) >= 10_000) return `${(v / 1000).toFixed(1)}K`;
   return v.toLocaleString();

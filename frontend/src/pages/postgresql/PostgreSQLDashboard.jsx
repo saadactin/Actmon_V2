@@ -31,6 +31,7 @@ import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
 import { Paged } from '@/components/ui/Pagination';
 import DataTable, { EmptyState as TableEmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import StatTile from '@/components/charts/StatTile';
 import usePaged from '@/hooks/usePaged';
 import {
   DATABASE_COLUMNS, PG_DATABASE_EXTRAS, PG_DATABASE_HINTS, withExtras, withHints,
@@ -2626,34 +2627,46 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
         data={adaptPostgresTableDetails(tableDetail)}
       />
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-5 gap-3">
-        {[
-          { label:'Total Tables',   value: d.total_count ?? 0,      color:'indigo' },
-          { label:'Total Size',     value: fmtBytes(totalBytes),     color:'violet' },
-          { label:'Vacuum Needed',  value: vacNeed,                  color: vacNeed>0?'orange':'emerald' },
-          { label:'Analyze Needed', value: anaNeed,                  color: anaNeed>0?'yellow':'emerald' },
-          { label:'Autovacuum',     value: autovac.autovacuum||'?',  color: autovac.autovacuum==='on'?'emerald':'red' },
-        ].map(k => (
-          <div key={k.label} className={`bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex items-center gap-3`}>
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
-              ${k.color==='indigo'?'bg-indigo-50 border border-indigo-100':
-                k.color==='violet'?'bg-violet-50 border border-violet-100':
-                k.color==='orange'?'bg-orange-50 border border-orange-100':
-                k.color==='yellow'?'bg-yellow-50 border border-yellow-100':
-                k.color==='emerald'?'bg-emerald-50 border border-emerald-100':
-                'bg-red-50 border border-red-100'}`}>
-              <Table size={17} className={
-                k.color==='indigo'?'text-indigo-500':k.color==='violet'?'text-violet-500':
-                k.color==='orange'?'text-orange-500':k.color==='yellow'?'text-yellow-500':
-                k.color==='emerald'?'text-emerald-500':'text-red-500'} />
-            </div>
-            <div>
-              <p className="text-[18px] font-black text-slate-900 leading-tight">{k.value}</p>
-              <p className="text-[10px] text-slate-400 font-medium">{k.label}</p>
-            </div>
-          </div>
-        ))}
+      {/* KPI strip — the same <StatTile> the main Dashboard uses, rather than a
+          local lookalike. Reads label → number → detail top-to-bottom, and the
+          per-tile colour now comes from the shared tone vocabulary instead of a
+          six-branch hardcoded indigo/violet/orange/yellow/emerald/red ladder
+          that ignored the theme. `sub` carries what the old card had no room
+          for: every tile said only what it was, never whether it was healthy. */}
+      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 xl:grid-cols-5">
+        <StatTile
+          label="Total Tables" icon="table" tone="accent"
+          value={d.total_count ?? 0}
+          sub={`across ${dbs.length || 0} database${dbs.length === 1 ? '' : 's'}`}
+        />
+        <StatTile
+          label="Total Size" icon="database" tone="info"
+          value={fmtBytes(totalBytes)}
+          sub={`${fmtNum(d.total_count ?? 0)} tables on disk`}
+        />
+        <StatTile
+          label="Vacuum Needed" icon="alert" tone={vacNeed > 0 ? 'warning' : 'good'}
+          value={vacNeed} valueTone={vacNeed > 0 ? 'warning' : 'neutral'}
+          sub={vacNeed > 0
+            ? <b className="font-semibold text-warning-fg">dead tuples over threshold</b>
+            : 'all tables within threshold'}
+        />
+        <StatTile
+          label="Analyze Needed" icon="activity" tone={anaNeed > 0 ? 'warning' : 'good'}
+          value={anaNeed} valueTone={anaNeed > 0 ? 'warning' : 'neutral'}
+          sub={anaNeed > 0
+            ? <b className="font-semibold text-warning-fg">planner stats are stale</b>
+            : 'planner stats current'}
+        />
+        <StatTile
+          label="Autovacuum" icon="refresh"
+          tone={autovac.autovacuum === 'on' ? 'good' : 'danger'}
+          value={autovac.autovacuum || '?'}
+          valueTone={autovac.autovacuum === 'on' ? 'good' : 'danger'}
+          sub={autovac.autovacuum === 'on'
+            ? `${autovac.autovacuum_max_workers || '?'} max workers`
+            : <b className="font-semibold text-danger-fg">not running</b>}
+        />
       </div>
 
       {/* Vacuum warnings */}
