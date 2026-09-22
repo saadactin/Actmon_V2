@@ -2384,26 +2384,36 @@ function analyzeAgo(t) {
    through the shared <TableDetailsDialog> (see AdvancedTablesTab below),
    the same component every engine dashboard uses. */
 
-/* Column spec for the Tables list. Widths are set so the row reads at a glance
-   and the whole thing still scrolls horizontally rather than crushing 15
-   columns into the viewport. `sortKey` is omitted where it equals `key`. */
+/* Typography lifted verbatim from the Agents list (AgentsPage CELL_SIZE /
+   CELL_TEXT / CELL_TEXT_STYLE) so the two tables are the same table: 16px text
+   on an 18px line, weight 500, #6B7280 via --agent-gray. The identifier column
+   (Table, like Agents' Agent/Host) is the one exception — bold in --color-fg.
+   Colour that carries MEANING (dead-row red, cache-hit green) still overrides
+   the grey, exactly as Agents' CPU/Memory bands and status pill do. */
+const PG_CELL      = 'whitespace-nowrap text-[1rem] leading-[1.125rem] font-medium';
+const PG_CELL_GRAY = { color: 'var(--agent-gray)' };
+
+/* Column spec for the Tables list. Every column is centred except the Table
+   identifier, matching how the Agents list centres everything but Agent/Host.
+   Widths are set so the row reads at a glance and the whole thing scrolls
+   horizontally rather than crushing 15 columns into the viewport. */
 const PG_TABLE_COLUMNS = [
-  { key: 'database',    label: 'DB',            width: 120, sortable: true },
-  { key: 'schemaname',  label: 'Schema',        width: 110, sortable: true },
-  { key: 'relname',     label: 'Table',         width: 220, sortable: true },
-  { key: 'total_bytes', label: 'Total Size',    width: 160, sortable: true },
-  { key: 'heap',        label: 'Heap',          width: 100, sortable: true },
-  { key: 'indexes',     label: 'Indexes',       width: 110, sortable: true },
-  { key: 'live',        label: 'Live Rows',     width: 110, sortable: true, align: 'center' },
-  { key: 'dead',        label: 'Dead Rows',     width: 110, sortable: true, align: 'center' },
-  { key: 'deadPct',     label: 'Dead %',        width: 120, sortable: true },
-  { key: 'cachePct',    label: 'Cache Hit',     width: 130, sortable: true },
-  { key: 'seq',         label: 'Seq Scans',     width: 110, sortable: true, align: 'center' },
-  { key: 'idxPct',      label: 'Idx %',         width: 96,  sortable: true, align: 'center' },
-  { key: 'dml',         label: 'Ins/Upd/Del',   width: 150, sortable: true,
+  { key: 'database',    label: 'DB',            width: 140, sortable: true, align: 'center' },
+  { key: 'schemaname',  label: 'Schema',        width: 130, sortable: true, align: 'center' },
+  { key: 'relname',     label: 'Table',         width: 260, sortable: true },
+  { key: 'total_bytes', label: 'Total Size',    width: 190, sortable: true, align: 'center' },
+  { key: 'heap',        label: 'Heap',          width: 120, sortable: true, align: 'center' },
+  { key: 'indexes',     label: 'Indexes',       width: 130, sortable: true, align: 'center' },
+  { key: 'live',        label: 'Live Rows',     width: 130, sortable: true, align: 'center' },
+  { key: 'dead',        label: 'Dead Rows',     width: 130, sortable: true, align: 'center' },
+  { key: 'deadPct',     label: 'Dead %',        width: 140, sortable: true, align: 'center' },
+  { key: 'cachePct',    label: 'Cache Hit',     width: 150, sortable: true, align: 'center' },
+  { key: 'seq',         label: 'Seq Scans',     width: 130, sortable: true, align: 'center' },
+  { key: 'idxPct',      label: 'Idx %',         width: 120, sortable: true, align: 'center' },
+  { key: 'dml',         label: 'Ins/Upd/Del',   width: 190, sortable: true, align: 'center',
     hint: 'Inserted / updated / deleted tuples since stats were last reset. Sorts on the total.' },
-  { key: 'vacuum',      label: 'Last Vacuum',   width: 120, sortable: true, align: 'center' },
-  { key: 'analyze',     label: 'Last Analyze',  width: 120, sortable: true, align: 'center' },
+  { key: 'vacuum',      label: 'Last Vacuum',   width: 150, sortable: true, align: 'center' },
+  { key: 'analyze',     label: 'Last Analyze',  width: 150, sortable: true, align: 'center' },
 ];
 
 /** Epoch ms for sorting a "last vacuum / last analyze" pair. The API sends these
@@ -2425,11 +2435,11 @@ function MiniBar({ pct, label, tone }) {
     : tone === 'warning' ? 'var(--warning)'
     : 'var(--success)';
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center justify-center gap-2">
       <div className="h-1.5 w-10 shrink-0 overflow-hidden rounded-full bg-sunken">
         <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: colour }} />
       </div>
-      <span className="text-[11px] font-bold" style={{ color: colour }}>{label}</span>
+      <span className="text-[1rem] leading-[1.125rem] font-semibold" style={{ color: colour }}>{label}</span>
     </div>
   );
 }
@@ -2522,31 +2532,42 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
         analyze: tsOf(t.last_analyze, t.last_autoanalyze),
       },
       cells: {
-        database: <span className="rounded-full border border-accent-border bg-accent-softer px-2 py-0.5 text-[10px] font-bold whitespace-nowrap text-accent-text">{t.database || '—'}</span>,
-        schemaname: <span className="font-mono text-[11px] text-muted">{t.schemaname}</span>,
+        database: (
+          <span className="inline-flex items-center rounded-full border border-accent-border bg-accent-softer px-2.5 py-1 text-[0.875rem] leading-[1rem] font-semibold whitespace-nowrap text-accent-text">
+            {t.database || '—'}
+          </span>
+        ),
+        schemaname: <span className={PG_CELL} style={PG_CELL_GRAY}>{t.schemaname}</span>,
         relname: (
-          <span className="flex items-center gap-1 font-bold text-accent-text">
+          <span className="inline-flex items-center gap-1.5 text-[1rem] leading-[1.125rem] font-bold text-fg">
             {t.relname}
-            <ExternalLink size={11} className="shrink-0 opacity-50" />
+            <ExternalLink size={13} className="shrink-0 opacity-45" />
           </span>
         ),
         total_bytes: (
-          <div className="flex items-center gap-2">
-            <span className="font-bold whitespace-nowrap text-fg">{t.total_size || '—'}</span>
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-[1rem] leading-[1.125rem] font-semibold whitespace-nowrap text-fg">{t.total_size || '—'}</span>
             <div className="h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-sunken">
               <div className="h-full rounded-full bg-accent" style={{ width: `${sizePct}%` }} />
             </div>
           </div>
         ),
-        heap: <span className="font-mono text-muted">{t.heap_size || '—'}</span>,
-        indexes: <span className="font-mono text-muted">{t.indexes_size || '—'}</span>,
-        live: <span className="font-mono font-bold text-fg">{fmtNum(t.n_live_tup)}</span>,
-        dead: <span className={`font-mono font-bold ${t.n_dead_tup > 10000 ? 'text-danger' : t.n_dead_tup > 1000 ? 'text-warning-fg' : 'text-muted'}`}>{fmtNum(t.n_dead_tup)}</span>,
+        heap: <span className={PG_CELL} style={PG_CELL_GRAY}>{t.heap_size || '—'}</span>,
+        indexes: <span className={PG_CELL} style={PG_CELL_GRAY}>{t.indexes_size || '—'}</span>,
+        live: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{fmtNum(t.n_live_tup)}</span>,
+        // Grey is the default; red/amber here mean something, same as the
+        // Agents list's CPU/Memory bands overriding CELL_TEXT_STYLE.
+        dead: (
+          <span className={`text-[1rem] leading-[1.125rem] font-semibold ${t.n_dead_tup > 10000 ? 'text-danger' : t.n_dead_tup > 1000 ? 'text-warning-fg' : ''}`}
+                style={t.n_dead_tup > 1000 ? undefined : PG_CELL_GRAY}>
+            {fmtNum(t.n_dead_tup)}
+          </span>
+        ),
         deadPct: <MiniBar pct={Math.min(100, deadPct * 2)} label={`${deadPct}%`} tone={deadPct > 20 ? 'danger' : deadPct > 5 ? 'warning' : 'success'} />,
         cachePct: <MiniBar pct={cachePct} label={`${cachePct}%`} tone={cachePct > 90 ? 'success' : cachePct > 70 ? 'warning' : 'danger'} />,
-        seq: <span className="font-mono text-muted">{fmtNum(t.seq_scan)}</span>,
+        seq: <span className={PG_CELL} style={PG_CELL_GRAY}>{fmtNum(t.seq_scan)}</span>,
         idxPct: (
-          <span className="rounded-full px-2 py-0.5 text-[11px] font-bold"
+          <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[0.875rem] leading-[1rem] font-semibold"
                 style={{
                   color: idxPct > 80 ? 'var(--success-fg)' : idxPct > 50 ? 'var(--warning-fg)' : 'var(--danger-fg)',
                   background: idxPct > 80 ? 'var(--success-soft)' : idxPct > 50 ? 'var(--warning-soft)' : 'var(--danger-soft)',
@@ -2555,20 +2576,20 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
           </span>
         ),
         dml: (
-          <span className="font-mono text-[11px] whitespace-nowrap">
-            <span className="font-bold text-success">{fmtNum(t.n_tup_ins)}</span>
-            <span className="mx-1 text-subtle">/</span>
-            <span className="font-bold text-accent-text">{fmtNum(t.n_tup_upd)}</span>
-            <span className="mx-1 text-subtle">/</span>
-            <span className="font-bold text-danger">{fmtNum(t.n_tup_del)}</span>
+          <span className="text-[0.9375rem] leading-[1.125rem] font-semibold whitespace-nowrap">
+            <span className="text-success">{fmtNum(t.n_tup_ins)}</span>
+            <span className="mx-1 font-normal" style={PG_CELL_GRAY}>/</span>
+            <span className="text-accent-text">{fmtNum(t.n_tup_upd)}</span>
+            <span className="mx-1 font-normal" style={PG_CELL_GRAY}>/</span>
+            <span className="text-danger">{fmtNum(t.n_tup_del)}</span>
           </span>
         ),
         vacuum: va
-          ? <span className={`text-[11px] font-semibold ${needsVac ? 'text-warning-fg' : 'text-muted'}`}>{va}</span>
-          : <span className="text-[11px] font-bold text-danger">Never</span>,
+          ? <span className={PG_CELL} style={needsVac ? { color: 'var(--warning-fg)' } : PG_CELL_GRAY}>{va}</span>
+          : <span className="text-[1rem] leading-[1.125rem] font-semibold text-danger">Never</span>,
         analyze: aa
-          ? <span className="text-[11px] font-semibold text-muted">{aa}</span>
-          : <span className="text-[11px] font-bold text-warning-fg">Never</span>,
+          ? <span className={PG_CELL} style={PG_CELL_GRAY}>{aa}</span>
+          : <span className="text-[1rem] leading-[1.125rem] font-semibold text-warning-fg">Never</span>,
       },
     };
   }), [tables, maxSize]);
@@ -2716,14 +2737,22 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
       {/* Autovacuum config */}
       {Object.keys(autovac).length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="bg-gradient-to-r from-slate-50 to-indigo-50/30 border-b border-slate-100 px-5 py-3 flex items-center gap-2">
-            <RefreshCw size={13} className="text-slate-400"/>
-            <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">Autovacuum Configuration</h3>
-            <span className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${autovac.autovacuum==='on'?'bg-emerald-100 text-emerald-700':'bg-red-100 text-red-700'}`}>
-              {autovac.autovacuum||'?'}
+          {/* Header centred and scaled to the Agents list's own header band:
+              dark surface, 18px/600 white label, so this card reads as part of
+              the same table rather than a leftover from the old dense layout. */}
+          <div className="flex items-center justify-center gap-3 px-5 py-4"
+               style={{ background: 'var(--agent-slate-900)' }}>
+            <RefreshCw size={18} className="text-white/70" />
+            <h3 className="text-[1.125rem] leading-[1.25rem] font-semibold text-white">Autovacuum Configuration</h3>
+            <span className="rounded-full px-3 py-1 text-[0.875rem] leading-[1rem] font-semibold"
+                  style={{
+                    color:      autovac.autovacuum === 'on' ? 'var(--success-fg)' : 'var(--danger-fg)',
+                    background: autovac.autovacuum === 'on' ? 'var(--success-soft)' : 'var(--danger-soft)',
+                  }}>
+              {autovac.autovacuum || '?'}
             </span>
           </div>
-          <div className="p-5 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-4 p-6 md:grid-cols-3 xl:grid-cols-6">
             {[
               { key:'autovacuum_vacuum_threshold',     label:'Vacuum Threshold' },
               { key:'autovacuum_analyze_threshold',    label:'Analyze Threshold' },
@@ -2732,9 +2761,16 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
               { key:'autovacuum_vacuum_cost_delay',    label:'Cost Delay' },
               { key:'autovacuum_max_workers',          label:'Max Workers' },
             ].map(({ key, label }) => (
-              <div key={key}>
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">{label}</p>
-                <span className="inline-block px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-bold font-mono">
+              /* Each setting is its own centred card — same floating-card
+                 treatment as an Agents row, so six values read as six things
+                 rather than as a run-on grid of tiny labels. */
+              <div key={key}
+                   className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-sunken px-3 py-4 text-center">
+                <p className="text-[0.8125rem] leading-[1rem] font-semibold tracking-wide uppercase"
+                   style={PG_CELL_GRAY}>
+                  {label}
+                </p>
+                <span className="text-[1.25rem] leading-[1.5rem] font-bold text-fg">
                   {autovac[key] || 'n/a'}
                 </span>
               </div>
