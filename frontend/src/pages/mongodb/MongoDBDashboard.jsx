@@ -18,6 +18,9 @@ import {
   LineChart, Line, AreaChart, Area,
 } from 'recharts';
 import client from '@/api/client';
+import ObjectTable from '@/pages/_shared/ObjectTable';
+import StatTile from '@/components/charts/StatTile';
+import Badge from '@/components/ui/Badge';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptMongoCollectionDetails } from '@/pages/_shared/tableDetailsAdapters';
 import { PageLoading } from '@/components/ui/Loading';
@@ -135,6 +138,73 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
     </div>
   );
 }
+
+/* Collections list columns, in the same shape config/dbCatalog uses for every
+   other engine, so <ObjectTable> can sort and render them. Sizes carry an
+   explicit sortValue because the cell shows a formatted string while the sort
+   has to compare the underlying number. */
+const MONGO_COLLECTION_COLUMNS = [
+  {
+    key: 'dbName', label: 'Database', sortable: true, align: 'center',
+    sortValue: (c) => c.dbName || '',
+    render: (c) => <Badge tone="accent" size="xs">{c.dbName}</Badge>,
+  },
+  {
+    key: 'name', label: 'Collection', sortable: true,
+    sortValue: (c) => c.name || '',
+    render: (c) => (
+      <span className="inline-flex items-center gap-1.5 text-[1rem] leading-[1.125rem] font-bold text-fg">
+        <span className="truncate-safe max-w-[240px]">{c.name}</span>
+        <Eye size={13} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-60" />
+      </span>
+    ),
+  },
+  {
+    key: 'count', label: 'Documents', sortable: true, align: 'center',
+    sortValue: (c) => Number(c.count || 0),
+    render: (c) => <span className="tabular-nums">{fmtNum(c.count || 0)}</span>,
+  },
+  {
+    key: 'size', label: 'Size', sortable: true, align: 'center',
+    sortValue: (c) => Number(c.size_mb || 0),
+    render: (c, ctx) => {
+      const v = Number(c.size_mb || 0);
+      const pct = ctx?.maxSize > 0 ? Math.min(100, (v / ctx.maxSize) * 100) : 0;
+      return (
+        <span className="inline-flex items-center justify-center gap-2">
+          <span className="tabular-nums whitespace-nowrap">{v.toFixed(2)} MB</span>
+          <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-sunken">
+            <span className="block h-full rounded-full bg-accent"
+                  style={{ width: `${Math.max(pct, v > 0 ? 2 : 0)}%` }} />
+          </span>
+        </span>
+      );
+    },
+  },
+  {
+    key: 'avgObj', label: 'Avg Obj', sortable: true, align: 'center',
+    hint: 'Average document size in bytes (avgObjSize).',
+    sortValue: (c) => Number(c.avgObjSize || 0),
+    render: (c) => <span className="tabular-nums">{fmtNum(c.avgObjSize || 0)} B</span>,
+  },
+  {
+    key: 'nindexes', label: 'Indexes', sortable: true, align: 'center',
+    sortValue: (c) => Number(c.nindexes ?? 0),
+    render: (c) => <span className="tabular-nums">{c.nindexes ?? '—'}</span>,
+  },
+  {
+    key: 'idxSize', label: 'Index Size', sortable: true, align: 'center',
+    sortValue: (c) => Number(c.total_index_size_mb || 0),
+    render: (c) => <span className="tabular-nums">{Number(c.total_index_size_mb || 0).toFixed(2)} MB</span>,
+  },
+  {
+    key: 'capped', label: 'Capped', sortable: true, align: 'center',
+    sortValue: (c) => (c.capped ? 1 : 0),
+    render: (c) => (c.capped
+      ? <Badge tone="warning" size="xs">Yes</Badge>
+      : <span className="text-subtle">No</span>),
+  },
+];
 
 function Panel({ title, children, action }) {
   return (
@@ -1167,93 +1237,55 @@ export default function MongoDBDashboard() {
             (d.collections || []).map(c => ({ ...c, dbName: d.name }))
           );
           const dbs = dbsData.map(d => d.name);
-          const filtered = allColls.filter(c => {
-            const matchDb   = !selDb   || c.dbName === selDb;
-            const matchName = !collSearch || (c.name || '').toLowerCase().includes(collSearch.toLowerCase());
-            return matchDb && matchName;
-          });
+          // Only the DB filter is applied here now; ObjectTable owns the search
+          // box. That also decouples this tab from the Indexes tab, which was
+          // sharing the very same `collSearch` state (see the alias at the top
+          // of the Indexes tab) — typing here used to silently filter there too.
+          const filtered = allColls.filter(c => !selDb || c.dbName === selDb);
           const totalDocs    = filtered.reduce((a, c) => a + (c.count || 0), 0);
           const totalSizeMB  = filtered.reduce((a, c) => a + (c.size_mb || 0), 0).toFixed(2);
           const topBySize    = [...filtered].sort((a, b) => (b.size_mb || 0) - (a.size_mb || 0)).slice(0, 10);
 
           return (
             <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <MetricKpi title="Collections"  value={filtered.length}        accent="green" />
-                <MetricKpi title="Total Docs"   value={fmtNum(totalDocs)}      accent="emerald" />
-                <MetricKpi title="Total Size"   value={`${totalSizeMB} MB`}   accent="orange" />
-              </div>
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2 flex items-center gap-2 text-emerald-700 text-xs font-semibold">
-                <Eye size={13} /> Click any collection row to explore its schema, indexes &amp; statistics
-              </div>
-
-              <div className="flex items-center gap-3 flex-wrap">
-                {/* DB selector */}
-                <select value={selDb} onChange={e => setSelDb(e.target.value)}
-                  className="h-9 px-3 rounded-xl border border-slate-200 text-sm outline-none focus:border-green-400 bg-white">
-                  <option value="">All Databases</option>
-                  {dbs.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-                <div className="relative flex-1 max-w-sm">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input value={collSearch} onChange={e => setCollSearch(e.target.value)}
-                    placeholder="Search collections..."
-                    className="h-9 w-full pl-8 pr-4 rounded-xl border border-slate-200 text-sm outline-none focus:border-green-400" />
-                </div>
-                <span className="text-xs text-slate-400">{filtered.length} collections</span>
+              <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3">
+                <StatTile label="Collections" icon="layers" tone="accent"
+                  value={filtered.length}
+                  sub={selDb ? `in ${selDb}` : `across ${dbs.length} database${dbs.length === 1 ? '' : 's'}`} />
+                <StatTile label="Total Docs" icon="rows" tone="good"
+                  value={totalDocs}
+                  sub={`${fmtNum(filtered.length)} collections`} />
+                <StatTile label="Total Size" icon="database" tone="info"
+                  value={`${totalSizeMB} MB`}
+                  sub="documents and indexes" />
               </div>
 
-              <Panel title="Collection Statistics">
-                <div className="overflow-x-auto">
-                  <Paged rows={filtered} unit="collections">{(pageRows, pager) => (<>
-                  <table className="w-full text-xs">
-                    <thead className="bg-slate-50">
-                      <tr>{['Database', 'Collection', 'Documents', 'Size MB', 'Avg Obj (B)', 'Indexes', 'Total Idx MB', 'Capped'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
-                      ))}</tr>
-                    </thead>
-                    <tbody>
-                      {pageRows.map((c, i) => (
-                        <tr key={i}
-                          className="border-t border-slate-100 hover:bg-green-50 cursor-pointer transition-colors group"
-                          onClick={() => setSelectedColl({ dbName: c.dbName, name: c.name })}>
-                          <td className="px-3 py-2.5 text-slate-500 font-mono text-[10px]">{c.dbName}</td>
-                          <td className="px-3 py-2.5 font-bold flex items-center gap-1.5" style={{ color: C.darkGreen }}>
-                            {c.name}
-                            <Eye size={11} className="opacity-0 group-hover:opacity-60 text-green-600 transition-opacity flex-shrink-0" />
-                          </td>
-                          <td className="px-3 py-2.5 font-mono">{fmtNum(c.count || 0)}</td>
-                          <td className="px-3 py-2.5">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono">{(c.size_mb || 0).toFixed(4)}</span>
-                              <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden max-w-[50px]">
-                                <div className="h-full rounded-full" style={{
-                                  width: `${Math.min(100, ((c.size_mb || 0) / Math.max(...filtered.map(x => x.size_mb || 0), 0.001)) * 100)}%`,
-                                  background: C.green
-                                }} />
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2.5 font-mono">{fmtNum(c.avgObjSize || 0)}</td>
-                          <td className="px-3 py-2.5 font-mono">{c.nindexes ?? '—'}</td>
-                          <td className="px-3 py-2.5 font-mono">{(c.total_index_size_mb || 0).toFixed(4)}</td>
-                          <td className="px-3 py-2.5">
-                            {c.capped
-                              ? <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-[10px] font-bold rounded-full">Yes</span>
-                              : <span className="text-[10px] text-slate-300">No</span>
-                            }
-                          </td>
-                        </tr>
-                      ))}
-                      {filtered.length === 0 && (
-                        <tr><td colSpan={8}><EmptyState message="No collections found" /></td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                  {pager}
-                  </>)}</Paged>
-                </div>
-              </Panel>
+              {/* Collections list. Was a raw <table> with no sortable headers at
+                  all — the only engine whose object list could not be sorted.
+                  Now the same <ObjectTable> every other engine uses, so it gains
+                  sorting, the card/table toggle and its own search, and drops the
+                  hand-rolled slate/green markup for the shared tokens. */}
+              <ObjectTable
+                title="Collection Statistics"
+                icon="database"
+                columns={MONGO_COLLECTION_COLUMNS}
+                items={filtered}
+                searchOn={['name', 'dbName']}
+                searchPlaceholder="Search collections…"
+                filter={{
+                  value: selDb,
+                  onChange: setSelDb,
+                  options: [{ value: '', label: 'All Databases' },
+                            ...dbs.map(d => ({ value: d, label: d }))],
+                }}
+                sizeOf={(c) => Number(c.size_mb || 0)}
+                keyOf={(c) => `${c.dbName}.${c.name}`}
+                onRowClick={(c) => setSelectedColl({ dbName: c.dbName, name: c.name })}
+                defaultSort={{ key: 'size', dir: 'desc' }}
+                unit="collections"
+                note="Click a collection to explore its schema, indexes and statistics"
+                emptyTitle="No collections found"
+              />
 
               {topBySize.length > 0 && (
                 <ChartCard title="Top 10 Collections by Size (MB)">

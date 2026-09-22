@@ -187,6 +187,13 @@ export default function ObjectTable({
       {view === 'cards' ? (
         <CardGrid items={pageItems} columns={columns} ctx={ctx} loading={loading} empty={empty} />
       ) : (
+        /* darkHeader + 64px rows: the same treatment the Agents list and the
+           PostgreSQL Tables tab use, applied here once so MySQL, Oracle,
+           MSSQL, ClickHouse and CosmosDB all read as one product instead of
+           each engine's object list looking like its own component. The header
+           band (--agent-slate-900) is fixed chrome across themes, like the
+           sidebar; the rows are --agent-row-bg, which IS theme-adaptive, so
+           dark mode is unaffected. */
         <Table
           columns={columns}
           rows={pageRows}
@@ -194,6 +201,8 @@ export default function ObjectTable({
           onSort={setSort}
           loading={loading}
           empty={empty}
+          rowHeight={64}
+          darkHeader
         />
       )}
 

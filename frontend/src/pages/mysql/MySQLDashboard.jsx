@@ -33,6 +33,7 @@ import Button from '@/components/ui/Button';
 import IconButton from '@/components/ui/IconButton';
 import { Paged } from '@/components/ui/Pagination';
 import ObjectTable from '@/pages/_shared/ObjectTable';
+import StatTile from '@/components/charts/StatTile';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptMysqlTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 import { DATABASE_COLUMNS, TABLE_COLUMNS, TABLE_SORT_PRESETS } from '@/config/dbCatalog';
@@ -1641,34 +1642,30 @@ export default function MySQLDashboard() {
           const scoped   = all.filter(t => tblDbFilter === '__all__' || t.database === tblDbFilter);
           const largest  = [...scoped].sort((a, b) => (b.total_bytes || 0) - (a.total_bytes || 0))[0];
           const openTable = (t) => { setSelDb(t.database); setSelTable(t.name); };
-          const kpis = [
-            { label: 'Total Tables', value: totalCnt,                       color: 'cyan' },
-            { label: 'Total Size',   value: allTablesData?.total_size_human || fmtBytes(totBytes), color: 'violet' },
-            { label: 'Databases',    value: allDbs.length,                  color: 'blue' },
-            { label: 'Largest Table',value: largest?.name || '—',           color: 'emerald' },
-            { label: 'Total Rows',   value: fmtNum(all.reduce((s, t) => s + (t.row_estimate || 0), 0)), color: 'amber' },
-          ];
+          const totalRows = all.reduce((s, t) => s + (t.row_estimate || 0), 0);
           return (
           <div className="space-y-5">
 
-            {/* KPI strip */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-5 gap-3">
-              {kpis.map(k => (
-                <div key={k.label} className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4 flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                    k.color==='cyan'?'bg-cyan-50 border border-cyan-100':k.color==='violet'?'bg-violet-50 border border-violet-100':
-                    k.color==='blue'?'bg-blue-50 border border-blue-100':k.color==='emerald'?'bg-emerald-50 border border-emerald-100':
-                    'bg-amber-50 border border-amber-100'}`}>
-                    <Table size={17} className={
-                      k.color==='cyan'?'text-cyan-500':k.color==='violet'?'text-violet-500':
-                      k.color==='blue'?'text-blue-500':k.color==='emerald'?'text-emerald-500':'text-amber-500'} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[17px] font-black text-slate-900 leading-tight truncate">{k.value}</p>
-                    <p className="text-[10px] text-slate-400 font-medium">{k.label}</p>
-                  </div>
-                </div>
-              ))}
+            {/* KPI strip — the shared <StatTile>, same as the main Dashboard and
+                the PostgreSQL Tables tab. Replaces a hand-rolled card with a
+                five-branch cyan/violet/blue/emerald/amber ladder that ignored
+                the theme, and adds the `sub` line those cards had no room for. */}
+            <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 xl:grid-cols-5">
+              <StatTile label="Total Tables" icon="table" tone="accent"
+                value={totalCnt}
+                sub={`across ${allDbs.length} database${allDbs.length === 1 ? '' : 's'}`} />
+              <StatTile label="Total Size" icon="database" tone="info"
+                value={allTablesData?.total_size_human || fmtBytes(totBytes)}
+                sub={`${fmtNum(totalCnt)} tables on disk`} />
+              <StatTile label="Databases" icon="layers" tone="accent"
+                value={allDbs.length}
+                sub={tblDbFilter === '__all__' ? 'showing all' : `filtered to ${tblDbFilter}`} />
+              <StatTile label="Largest Table" icon="chart-bar" tone="warning"
+                value={largest?.name || '—'}
+                sub={largest ? (largest.size_human || fmtBytes(largest.total_bytes)) : 'no tables'} />
+              <StatTile label="Total Rows" icon="rows" tone="good"
+                value={totalRows}
+                sub={`${fmtNum(totalCnt)} tables`} />
             </div>
 
             {/* Tables. Columns, formatting and sorting all come from
