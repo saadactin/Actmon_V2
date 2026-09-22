@@ -31,7 +31,7 @@ export default function InternetExposurePanel({ accountId }) {
   if (isError || !data) {
     return (
       <CloudSection>
-        <EmptyState icon="alert-triangle" title="Exposure analysis unavailable"
+        <EmptyState icon="alert" title="Exposure analysis unavailable"
           body="Could not compute internet exposure for this account." />
       </CloudSection>
     );

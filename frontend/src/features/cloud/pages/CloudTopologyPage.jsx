@@ -497,7 +497,7 @@ export const CloudTopologyPage = ({ embedded = false, accountId: propAccountId }
           backTo="/cloud"
           icon="network"
           title="Multi-Cloud Topology"
-          description="Infrastructure relationship explorer · drag to pan · scroll to zoom"
+          
         />
       )}
 

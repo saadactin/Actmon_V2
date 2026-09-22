@@ -52,6 +52,12 @@ from app.models.cost_budget import (                   # noqa: F401
 from app.models.resource_cost import CloudResourceCost   # noqa: F401
 from app.models.resource_view import SavedResourceView   # noqa: F401
 from app.models.resource_action import CloudResourceAction  # noqa: F401
+from app.models.alert_rule import (                      # noqa: F401
+    CloudAlertEvent, CloudAlertRecipient, CloudAlertRule, CloudAlertSettings,
+)
+from app.models.account_refresh import (                 # noqa: F401
+    CloudAccountRefresh, CloudAccountRefreshSchedule,
+)
 
 
 @asynccontextmanager
@@ -212,10 +218,111 @@ async def lifespan(app: FastAPI):
                 "notification_status VARCHAR(40)",
                 "CREATE INDEX IF NOT EXISTS ix_cloud_alerts_finding "
                 "ON cloud_alerts (finding_fingerprint)",
+                # Which configured alert rule raised this. Added rather than
+                # made a foreign key on purpose: rules are soft-deleted so
+                # their alert history survives them, and a real FK would force
+                # a choice between cascading that history away and blocking
+                # the delete. Historical alerts keep NULL, which is correct —
+                # they predate rules and were raised directly by a feature.
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS rule_id UUID",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_alerts_rule "
+                "ON cloud_alerts (rule_id)",
             ):
                 await conn.execute(_text(ddl))
     except Exception as exc:  # never block startup on this housekeeping
         _log.warning("Could not reconcile cloud_alerts columns: %s", exc)
+
+    # The alerting tables are created by create_all above. What create_all
+    # cannot build is the PARTIAL unique index behind "one live rule per name
+    # per account" — SQLAlchemy emits it from __table_args__ on a fresh table,
+    # but an installation that already has cloud_alert_rules would never get
+    # it. Stated here too so both paths end up with the same constraint.
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(_text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_cloud_alert_rules_account_name "
+                "ON cloud_alert_rules (account_id, name) WHERE deleted_at IS NULL"
+            ))
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_cloud_alert_rules_due "
+                "ON cloud_alert_rules (enabled, deleted_at, last_evaluated_at)"
+            ))
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_cloud_alert_events_account_at "
+                "ON cloud_alert_events (account_id, at DESC)"
+            ))
+            # Account refresh. create_all builds these tables on a fresh
+            # install; the indexes are stated here so an installation that
+            # already has them gets the ones the lock and scheduler queries
+            # depend on.
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_account_refresh_account_status "
+                "ON cloud_account_refreshes (account_id, status)"
+            ))
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_account_refresh_account_created "
+                "ON cloud_account_refreshes (account_id, created_at DESC)"
+            ))
+            # The scheduler's only hot query: which schedules are due.
+            await conn.execute(_text(
+                "CREATE INDEX IF NOT EXISTS ix_refresh_schedule_due "
+                "ON cloud_account_refresh_schedules (enabled, next_run_at)"
+            ))
+            # Columns added to cloud_alert_rules after it shipped. create_all
+            # builds missing TABLES but never alters an existing one, so an
+            # installation that already has the table would silently miss
+            # these and every rule read would fail on the first SELECT.
+            for ddl in (
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "min_duration_seconds INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "consecutive_breaches_required INTEGER NOT NULL DEFAULT 1",
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "silenced_until TIMESTAMPTZ",
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "silenced_by VARCHAR(256)",
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "silence_reason TEXT",
+                # The engine's own hot path: find held breaches for a rule.
+                "CREATE INDEX IF NOT EXISTS ix_cloud_alerts_rule_state "
+                "ON cloud_alerts (rule_id, state)",
+                # Notification pacing, escalation and quiet-hours opt-out.
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "notification_mode VARCHAR(24) NOT NULL DEFAULT 'immediate'",
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "escalate_after_seconds INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE cloud_alert_rules ADD COLUMN IF NOT EXISTS "
+                "respect_quiet_hours BOOLEAN NOT NULL DEFAULT TRUE",
+                # Per-alert silence and the escalation latch.
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "silenced_until TIMESTAMPTZ",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "silenced_by VARCHAR(256)",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "silence_reason TEXT",
+                "ALTER TABLE cloud_alerts ADD COLUMN IF NOT EXISTS "
+                "escalated_at TIMESTAMPTZ",
+                # The escalation sweep's query: open, never escalated.
+                "CREATE INDEX IF NOT EXISTS ix_cloud_alerts_escalation "
+                "ON cloud_alerts (state, escalated_at) "
+                "WHERE escalated_at IS NULL",
+                # Quiet hours and digest bookkeeping on the settings row.
+                "ALTER TABLE cloud_alert_settings ADD COLUMN IF NOT EXISTS "
+                "quiet_hours_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+                "ALTER TABLE cloud_alert_settings ADD COLUMN IF NOT EXISTS "
+                "quiet_hours_start VARCHAR(5) NOT NULL DEFAULT '22:00'",
+                "ALTER TABLE cloud_alert_settings ADD COLUMN IF NOT EXISTS "
+                "quiet_hours_end VARCHAR(5) NOT NULL DEFAULT '07:00'",
+                "ALTER TABLE cloud_alert_settings ADD COLUMN IF NOT EXISTS "
+                "quiet_hours_critical_bypass BOOLEAN NOT NULL DEFAULT TRUE",
+                "ALTER TABLE cloud_alert_settings ADD COLUMN IF NOT EXISTS "
+                "last_hourly_digest_at TIMESTAMPTZ",
+                "ALTER TABLE cloud_alert_settings ADD COLUMN IF NOT EXISTS "
+                "last_daily_digest_at TIMESTAMPTZ",
+            ):
+                await conn.execute(_text(ddl))
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not reconcile alert rule indexes: %s", exc)
 
     # Seed the built-in alert policies. Without this the policy table is empty
     # on a fresh install and no security finding can ever produce an alert —
@@ -302,6 +409,54 @@ async def lifespan(app: FastAPI):
             "Events can still be collected on demand from the Event Log."
         )
 
+    # ── Account refresh: release orphans, then start the scheduler ───────────
+    # A refresh row left RUNNING by a killed process holds its account's lock
+    # forever, so every later refresh — manual or scheduled — would be refused
+    # with "already running" by a job nobody is running. Same reasoning as the
+    # orphaned discovery jobs released above.
+    try:
+        from app.services import refresh_scheduler as _refresh
+
+        released = await _refresh.release_orphaned_refreshes()
+        if released:
+            _log.warning(
+                "Released %d account refresh(es) left running by a previous "
+                "process.", released,
+            )
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not release orphaned account refreshes: %s", exc)
+
+    refresh_task = None
+    from app.services import refresh_scheduler as _refresh_sched
+
+    if _refresh_sched.scheduler_enabled():
+        refresh_task = asyncio.create_task(_refresh_sched.scheduler_loop())
+        _log.info("Account refresh scheduler started.")
+    else:
+        _log.warning(
+            "Account refresh scheduler is DISABLED "
+            "(REFRESH_SCHEDULER_ENABLED=false). Schedules can be configured but "
+            "nothing will run automatically; manual refresh is unaffected."
+        )
+
+    # ── Alert evaluation engine ──────────────────────────────────────────────
+    # Started here for the same reason the event collector is: a rule that is
+    # only evaluated while somebody has the Alerts page open is not monitoring.
+    # Each rule still honours its own interval; this loop only decides how
+    # often "is anything due" is asked.
+    alert_task = None
+    from app.services.alerts import engine as alert_engine
+
+    if alert_engine.engine_enabled():
+        alert_task = asyncio.create_task(alert_engine.engine_loop())
+        _log.info("Cloud alert engine started.")
+    else:
+        _log.warning(
+            "Cloud alert engine is DISABLED (ALERT_ENGINE_ENABLED=false). Alert "
+            "rules can be configured but nothing will be evaluated and no "
+            "notification will be sent."
+        )
+
     yield
 
     if collector_task is not None:
@@ -311,6 +466,22 @@ async def lifespan(app: FastAPI):
         except BaseException:
             # Cancellation is the expected outcome here; anything else has
             # already been logged inside the loop.
+            pass
+
+    if alert_task is not None:
+        alert_engine.stop_engine()
+        alert_task.cancel()
+        try:
+            await alert_task
+        except BaseException:
+            pass
+
+    if refresh_task is not None:
+        _refresh_sched.stop_scheduler()
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except BaseException:
             pass
 
     await engine.dispose()
@@ -348,6 +519,8 @@ from app.api.routes.cost_estimate import router as cost_estimate_router
 from app.api.routes.topology import router as topology_router
 from app.api.routes.compliance import router as compliance_router
 from app.api.routes.alerts import router as alerts_router
+from app.api.routes.alert_rules import router as alert_rules_router
+from app.api.routes.account_refresh import router as account_refresh_router
 from app.api.routes.drift import router as drift_router
 from app.api.routes.events import router as events_router
 # The unified Security Center. The three older routers (security, compliance,
@@ -372,7 +545,21 @@ from app.api.routes.security_center import router as security_center_router
 # whole budgets surface 422s. cost_budgets_router therefore goes first, and its
 # literal paths win. (Routes like /cloud/cost/capabilities/{id} are unaffected:
 # two segments never collide with a one-segment route.)
-for router in [accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alerts_router, drift_router, events_router, security_center_router]:
+#
+# alert_rules_router goes BEFORE alerts_router for the same reason
+# cost_budgets_router goes before cost_router. The old alerts router owns
+# `/cloud/alerts/{alert_id}/acknowledge` and `/cloud/alerts/{alert_id}/resolve`
+# — single-segment parameterised paths that would match the literal segment of
+# `/cloud/alerts/{account_id}/rules` if they were registered first. The new
+# router's paths are all two-or-more segments after the prefix, so putting it
+# first lets each set win the shapes it actually owns.
+#
+# account_refresh_router shares the /cloud/accounts prefix with accounts_router
+# and goes first, for the same reason cost_budgets and alert_rules do. Its
+# paths are all `/{account_id}/<literal>`, which do not collide with that
+# router's `/{account_id}` — but ordering it first means a future single-segment
+# route added there cannot start swallowing /refresh without anyone noticing.
+for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router]:
     app.include_router(router, prefix="/api/v1")
 
 

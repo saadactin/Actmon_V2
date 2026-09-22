@@ -110,7 +110,6 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
           backTo="/cloud"
           icon="shield"
           title="Security Center"
-          description="Findings, alerts and control assessment from one canonical evaluation."
           actions={accounts?.length > 0 && (
             <CloudToolbar
               selectorProps={{
@@ -363,7 +362,6 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
           <SecurityAlerts accountId={accountId} onOpenFinding={setDrawerFinding} />
           <CloudSection
             title="Alert policies"
-            description="What turns a finding into an alert."
           >
             <SecurityPolicies accountId={accountId} canManage={canManage} />
           </CloudSection>
@@ -446,7 +444,6 @@ function ScanStatusPanel({ accountId }) {
   return (
     <CloudSection
       title="Scan status"
-      description="What ran, what did not, and what the provider refused."
     >
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {rows.map(([label, status, detail]) => {

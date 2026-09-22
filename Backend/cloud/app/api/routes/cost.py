@@ -68,6 +68,14 @@ async def get_cost_history(
         default=None,
         description="service | region | provider | resource_type | cost_component | compartment",
     ),
+    start_date: Optional[str] = Query(
+        default=None, description="YYYY-MM-DD. With end_date, overrides `days`."),
+    end_date: Optional[str] = Query(default=None, description="YYYY-MM-DD."),
+    region: Optional[str] = Query(
+        default=None,
+        description="Narrow to one region. Matches only spend the provider "
+                    "actually tagged with a region.",
+    ),
     svc: CostService = Depends(get_cost_service),
     _: rbac.Principal = Depends(rbac.require(rbac.COST_VIEW)),
 ):
@@ -77,8 +85,14 @@ async def get_cost_history(
     stored facts, so it can reach past what the provider will return in one
     call and is fast enough to drive trends. Totals are grouped per currency
     and never summed across them.
+
+    A custom window needs BOTH `start_date` and `end_date`; supplying one is
+    rejected rather than silently falling back to `days`, because a chart
+    covering a different period than its label is worse than an error.
     """
-    return await svc.get_history(account_id, days=days, group_by=group_by)
+    return await svc.get_history(
+        account_id, days=days, group_by=group_by,
+        start_date=start_date, end_date=end_date, region=region)
 
 
 @router.get("/forecast/{account_id}")

@@ -33,6 +33,24 @@ STATE_OPEN = "OPEN"
 STATE_ACKNOWLEDGED = "ACKNOWLEDGED"
 STATE_RESOLVED = "RESOLVED"
 
+# A breach that has been observed but has not yet cleared the rule's
+# minimum-duration bar. PENDING exists so "CPU over 90% for 15 minutes" can be
+# expressed without inventing a second table: the breach is recorded against the
+# same dedupe_key the eventual alert will use, so the two cannot disagree about
+# which condition on which resource is being tracked.
+#
+# A PENDING row is NOT an alert. It is excluded from the feed, from the counts
+# and from notification. If the condition clears before the bar is met, the row
+# is deleted outright rather than resolved — a transient spike that never became
+# an alert should leave no history claiming it did.
+STATE_PENDING = "PENDING"
+
+# The states a human is meant to see. Everything that lists, counts or notifies
+# filters on these, so adding a new internal state cannot leak into the feed by
+# omission.
+VISIBLE_STATES = (STATE_OPEN, STATE_ACKNOWLEDGED, STATE_RESOLVED)
+ACTIVE_STATES = (STATE_OPEN, STATE_ACKNOWLEDGED)
+
 
 class CloudAlert(Base):
     __tablename__ = "cloud_alerts"
@@ -88,6 +106,37 @@ class CloudAlert(Base):
     policy_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     policy_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
+    # Which configured alert rule produced this, when one did. NULL for the
+    # alerts this system raised before rules existed (the stopped-instance
+    # storage check) and for anything a feature raises directly — both are
+    # legitimate, so this is a link, not a requirement.
+    #
+    # Deliberately NOT a foreign key: rules are soft-deleted precisely so their
+    # alert history survives them, and a real FK would mean either cascading
+    # that history away or blocking the delete. The rule id is enough to join
+    # when the rule is still there and harmless when it is not.
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True, index=True)
+
+    # ── Per-alert silence ────────────────────────────────────────────────────
+    # Distinct from silencing the RULE. "This one instance is known and being
+    # worked on, stop mailing me about it" is a different decision from "stop
+    # mailing me about this whole class of thing", and collapsing them means
+    # muting a rule to quieten one noisy resource — which then hides the next
+    # genuine one.
+    #
+    # Like rule silence, this suppresses notification only. The alert stays
+    # OPEN and stays in the feed, because it is still a real problem.
+    silenced_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    silenced_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    silence_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # When this alert was escalated, so it is escalated once rather than on
+    # every pass after the threshold.
+    escalated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+
     # Who acted, not just when. An audit trail that records the time but not the
     # actor answers half the question.
     acknowledged_by: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -131,6 +180,20 @@ class CloudAlert(Base):
         Index("ix_cloud_alerts_account_state", "account_id", "state"),
     )
 
+    def is_silenced(self, now: datetime | None = None) -> bool:
+        """Whether THIS alert's own notification is suppressed right now.
+
+        Independent of the rule's silence — both are checked at send time, and
+        either one suppresses.
+        """
+        if self.silenced_until is None:
+            return False
+        now = now or datetime.now(timezone.utc)
+        until = self.silenced_until
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
+        return until > now
+
     def to_dict(self) -> dict:
         """Response shape. Keeps the keys the existing AlertsPage already reads
         (id / anomaly_type / details / severity / created_at / is_read /
@@ -160,6 +223,15 @@ class CloudAlert(Base):
             "finding_fingerprint": self.finding_fingerprint,
             "policy_id": str(self.policy_id) if self.policy_id else None,
             "policy_name": self.policy_name,
+            "rule_id": str(self.rule_id) if self.rule_id else None,
+            "dedupe_key": self.dedupe_key,
+            "silenced_until": (self.silenced_until.isoformat()
+                               if self.silenced_until else None),
+            "silenced_by": self.silenced_by,
+            "silence_reason": self.silence_reason,
+            "is_silenced": self.is_silenced(),
+            "escalated_at": (self.escalated_at.isoformat()
+                             if self.escalated_at else None),
             "acknowledged_by": self.acknowledged_by,
             "resolved_by": self.resolved_by,
             "resolution_reason": self.resolution_reason,

@@ -54,11 +54,20 @@ export const useCostQuality = (accountId) => useQuery({
 
 // ── History & analytics ──────────────────────────────────────────────────────
 
-export const useCostHistory = (accountId, days = 90, groupBy) => useQuery({
-  queryKey: ['costHistory', accountId, days, groupBy],
-  queryFn: () => (accountId ? getCostHistory(accountId, days, groupBy) : Promise.resolve(null)),
+/** `opts` may carry `{ startDate, endDate, region }`. All three are part of the
+ *  key, so a custom range or a region selection is a distinct question rather
+ *  than the same answer re-filtered. */
+export const useCostHistory = (accountId, days = 90, groupBy, opts = {}) => useQuery({
+  queryKey: ['costHistory', accountId, days, groupBy,
+    opts.startDate || null, opts.endDate || null, opts.region || null],
+  queryFn: () => (accountId
+    ? getCostHistory(accountId, days, groupBy, opts)
+    : Promise.resolve(null)),
   enabled: !!accountId,
   staleTime: 5 * 60_000,
+  // A rejected custom range (one date missing, reversed, or too wide) is a
+  // 400 the user must see and fix, not something to retry behind their back.
+  retry: false,
 });
 
 export const useCostCoverage = (accountId) => useQuery({

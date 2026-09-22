@@ -12,6 +12,7 @@ import {
   RegionDistribution, ResourceLandscape, StatusDistribution,
 } from '../components/overview/ResourceLandscape';
 import SecurityPosturePanel from '../components/overview/SecurityPosturePanel';
+import { useAlertSummary } from '../hooks/useAlerts';
 import { useAccountDiagnostics } from '../hooks/useCloudAccounts';
 import {
   useChangeSummary, useCostSeries, useCostTotal, useLatestDiscovery,
@@ -60,6 +61,10 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
   const events = useRecentEvents(accountId, '7d');
   const topology = useTopologySummary(accountId);
   const discovery = useLatestDiscovery(accountId);
+  // The Alerts tab's own summary endpoint. Its own query, like every other
+  // panel here, so an alerting problem cannot blank the inventory or the
+  // posture beside it.
+  const alertSummary = useAlertSummary(accountId);
   const triggerDiscovery = useTriggerDiscovery();
   const { data: diagnostics, isLoading: diagnosticsLoading } = useAccountDiagnostics(
     accountId, showDiagnostic,
@@ -94,9 +99,12 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
     discovery: discovery.data,
     costError: costTotal.isError,
     postureError: posture.isError,
+    // Read from the Alerts API. The Overview does not evaluate a single alert
+    // condition of its own — it renders what the alert engine already decided.
+    alerts: alertSummary.data,
   }), [
     summary, posture.data, posture.isError, accountFreshness, changes.data,
-    discovery.data, costTotal.isError,
+    discovery.data, costTotal.isError, alertSummary.data,
   ]);
 
   const onAttention = useCallback((item) => {
@@ -117,10 +125,8 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
     <div className="space-y-4">
       <AccountIdentity
         account={account}
+        accountId={accountId}
         freshness={accountFreshness}
-        discovery={discovery.data}
-        discovering={triggerDiscovery.isPending}
-        onRunDiscovery={() => triggerDiscovery.mutate(accountId)}
       />
 
       {/* Region scope. Only offered once more than one region actually holds

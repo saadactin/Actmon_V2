@@ -149,6 +149,36 @@ RESOURCE_DISCOVER = "resources:discover"
 RESOURCE_ACTION = "resources:action"
 RESOURCE_ADMIN = "resources:admin"
 
+# ---- Alerts ----------------------------------------------------------------
+# Alerting splits three ways, on what an action can do to other people:
+#
+#   alerts:view          — the rules, the history, the delivery status. Every
+#                          role, like the other view permissions: an on-call
+#                          engineer must be able to see what is watched and
+#                          what fired without being able to change it.
+#   alerts:triage        — acknowledge and resolve. Changes what the rest of
+#                          the team sees as outstanding, so it sits with the
+#                          analyst role beside security:triage.
+#   alerts:manage_rules  — create, edit, enable, disable, delete a rule.
+#                          Administrator-only, and for the same reason
+#                          security:manage_policies is: a disabled rule is a
+#                          silent one, and silence is indistinguishable from
+#                          safety until the incident.
+#   alerts:manage_recipients — who receives the mail, and switching the shared
+#                          email channel on. Separate from managing rules
+#                          because it reaches outside the product: it decides
+#                          whose inbox this system writes to, and it touches a
+#                          delivery setting the database service shares.
+#   alerts:test          — run a rule's evaluation on demand, and send a test
+#                          message. Analyst-level: testing is how you find out
+#                          why a rule is quiet, and making that
+#                          administrator-only guarantees nobody checks.
+ALERT_VIEW = "alerts:view"
+ALERT_TRIAGE = "alerts:triage"
+ALERT_MANAGE_RULES = "alerts:manage_rules"
+ALERT_MANAGE_RECIPIENTS = "alerts:manage_recipients"
+ALERT_TEST = "alerts:test"
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "security_analyst"
 ROLE_ADMIN = "administrator"
@@ -162,7 +192,8 @@ ROLE_AUDIT_ADMIN = "audit_admin"
 # A viewer gets the structured event — every field needed to answer who/what/
 # when/where — and the payload needs the analyst role.
 ROLE_PERMISSIONS = {
-    ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW, RESOURCE_VIEW},
+    ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW, RESOURCE_VIEW,
+                  ALERT_VIEW},
     ROLE_ANALYST: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY,
         TOPOLOGY_VIEW, TOPOLOGY_VIEW_RAW, TOPOLOGY_EXPORT,
@@ -177,6 +208,9 @@ ROLE_PERMISSIONS = {
         # provider payload while investigating; cannot trigger discovery
         # against a rate-limited provider API.
         RESOURCE_VIEW, RESOURCE_VIEW_RAW, RESOURCE_EXPORT,
+        # Works the alert queue and can test why a rule is quiet; cannot
+        # change what is watched or whose inbox it reaches.
+        ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST,
     },
     ROLE_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -187,6 +221,8 @@ ROLE_PERMISSIONS = {
         COST_MANAGE_RECOMMENDATIONS, COST_ADMIN,
         RESOURCE_VIEW, RESOURCE_VIEW_RAW, RESOURCE_EXPORT,
         RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
+        ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
+        ALERT_MANAGE_RECIPIENTS,
     },
     ROLE_AUDIT_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -198,6 +234,8 @@ ROLE_PERMISSIONS = {
         COST_MANAGE_RECOMMENDATIONS, COST_ADMIN,
         RESOURCE_VIEW, RESOURCE_VIEW_RAW, RESOURCE_EXPORT,
         RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
+        ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
+        ALERT_MANAGE_RECIPIENTS,
     },
 }
 

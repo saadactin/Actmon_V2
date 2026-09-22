@@ -42,7 +42,6 @@ export const CloudAccountsPage = () => {
       <CloudPageHeader
         backTo="/cloud"
         title="Cloud Accounts"
-        description="Manage connections to AWS, Azure, and OCI."
         hideBreadcrumbs
         actions={canHere('add') && (
           <CloudToolbar>

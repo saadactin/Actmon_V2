@@ -39,10 +39,22 @@ export const COLUMNS = [
   { key: 'provider', label: 'Provider', sortable: true, sortKey: 'provider', default: false },
   { key: 'account', label: 'Account', sortable: true, sortKey: 'account', default: false },
   { key: 'region', label: 'Region', sortable: true, sortKey: 'region', default: true },
-  { key: 'status', label: 'Status', sortable: true, sortKey: 'status', default: true },
-  { key: 'cost', label: 'Cost', sortable: true, sortKey: 'cost', align: 'right', default: true },
+  // Status and Cost are OFF by default, and still available from the Columns
+  // picker. Both were columns of nothing on the estates people actually look
+  // at: AWS reports no resource-level billing at all, so Cost was 227 rows of
+  // "NA", and most inventory types (IAM roles, buckets, security groups) have
+  // no runtime state, so Status was 133 rows of "Not reported". A column that
+  // is almost entirely one placeholder costs horizontal space on every row and
+  // teaches people to stop reading it — which is worse than not showing it,
+  // because the handful of rows where it DOES say something get skipped too.
+  { key: 'status', label: 'Status', sortable: true, sortKey: 'status', default: false },
+  { key: 'cost', label: 'Cost', sortable: true, sortKey: 'cost', align: 'right', default: false },
   { key: 'tags', label: 'Tags', sortable: true, sortKey: 'tag_count', width: 70, default: true },
-  { key: 'related', label: 'Attached to', default: true },
+  // "Attached to" is off for the same reason as Status and Cost: only storage
+  // volumes carry an attachment, so on a general inventory it is a column of
+  // em dashes. It stays in the picker for the storage-heavy estates where it
+  // is the whole point.
+  { key: 'related', label: 'Attached to', default: false },
   { key: 'lastSeen', label: 'Last seen', sortable: true, sortKey: 'last_seen', default: true },
   { key: 'ip', label: 'IP', default: false },
   { key: 'environment', label: 'Environment', sortable: true, sortKey: 'environment', default: false },
@@ -54,7 +66,23 @@ export const COLUMNS = [
   { key: 'discovered', label: 'First seen', sortable: true, sortKey: 'discovered_at', default: false },
 ];
 
-const STORAGE_KEY = 'cloud.resources.columns';
+/**
+ * Versioned on purpose.
+ *
+ * Column choice persists per browser, which means a change to the DEFAULT set
+ * is invisible to everyone who has already loaded the page once — their stored
+ * list wins forever. Turning Status, Cost and "Attached to" off by default did
+ * nothing at all until this key changed, because every existing browser was
+ * still replaying a preference saved before they were removed.
+ *
+ * Bumping the suffix resets everyone to the current defaults once. That does
+ * discard a layout somebody set up by hand, which is the cost of the fix —
+ * paid once, and only when the default set genuinely changes. The old key is
+ * left in place rather than deleted: it is a few hundred bytes, and reading it
+ * is how a future migration could recover a customisation if that ever
+ * mattered.
+ */
+const STORAGE_KEY = 'cloud.resources.columns.v2';
 
 export const defaultColumnKeys = () => COLUMNS
   .filter((c) => c.always || c.default)

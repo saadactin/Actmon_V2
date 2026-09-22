@@ -97,7 +97,12 @@ export function percent(value, digits = 1) {
  * makes that distinction and this preserves it.
  */
 export function changeLabel(change) {
-  if (!change) return { text: NA, direction: 'flat', tone: 'neutral' };
+  // `isMissing`, not `!change`: a bare numeric 0 is falsy, so the old guard
+  // reported a real, measured "no change" as NA — the exact null-vs-zero
+  // conflation the top of this file forbids. CostKpiCards passes
+  // `mom.percent` straight in as a bare number, so a month whose spend
+  // matched the previous one rendered "NA" instead of "0.0%".
+  if (isMissing(change)) return { text: NA, direction: 'flat', tone: 'neutral' };
   if (typeof change === 'number') {
     return {
       text: `${change > 0 ? '+' : ''}${change.toFixed(1)}%`,

@@ -2,7 +2,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import {
   Server, DollarSign, ShieldAlert, LayoutDashboard, Share2,
-  GitCompareArrows, ScrollText,
+  GitCompareArrows, ScrollText, BellRing,
 } from 'lucide-react';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
@@ -14,6 +14,7 @@ import SecurityCenterPage from './SecurityCenterPage';
 import { CloudTopologyPage } from './CloudTopologyPage';
 import { ConfigDriftPage } from './ConfigDriftPage';
 import { EventLogPage } from './EventLogPage';
+import AlertsPage from './AlertsPage';
 
 // NOTE: `getSecurityGrade` used to live here — a second, independent mapping
 // from score to letter grade, feeding a card that was itself scored by a
@@ -40,6 +41,13 @@ const TABS = [
   // WHAT changed, the event log says WHO changed it, from where, how, and what
   // the provider answered. The two link to each other in both directions.
   { id: 'events', label: 'Event Log', icon: ScrollText },
+  // Last, and deliberately not first: Alerts is a CONSUMER of every tab before
+  // it. It owns no scanner, no cost engine and no event collector — it reads
+  // what those already decided and turns it into "tell this person now". The
+  // old 'alerts' tab id (which redirected to the Security Center after the
+  // Security/Compliance/Alerts merge) is this tab again, so a bookmark from
+  // before that merge lands somewhere that makes sense.
+  { id: 'alerts', label: 'Alerts', icon: BellRing },
 ];
 
 /**
@@ -100,10 +108,23 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         <SecurityCenterPage key={routeAccountId} embedded accountId={routeAccountId} />
       )}
       {tab === 'topology' && <CloudTopologyPage embedded accountId={routeAccountId} />}
-      {/* The old Compliance and Alerts tab ids still resolve, so a bookmarked
-          URL lands somewhere sensible instead of on an empty page. */}
-      {(tab === 'compliance' || tab === 'alerts') && (
+      {/* 'compliance' is still a Security Center view, so a bookmarked URL from
+          before the Security/Compliance/Alerts merge lands somewhere sensible.
+          'alerts' is no longer redirected here — it is a real tab again. */}
+      {tab === 'compliance' && (
         <SecurityCenterPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
+      {/* Keyed on the account like the others: the rule list, the history
+          filters and any open alert are all account-scoped, and carrying one
+          account's alerting configuration across to another would be actively
+          dangerous rather than merely confusing. */}
+      {tab === 'alerts' && (
+        <AlertsPage
+          key={routeAccountId}
+          embedded
+          accountId={routeAccountId}
+          account={scopedAccount}
+        />
       )}
       {/* Keyed on the account so switching accounts resets the window/filter
           state instead of carrying another account's drill-down across. */}

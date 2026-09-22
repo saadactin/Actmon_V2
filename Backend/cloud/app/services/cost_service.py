@@ -1010,6 +1010,52 @@ async def prewarm_cost_cache(account) -> None:
     )
 
 
+#: Where a provider gave us a charge with no region attached. A real label
+#: rather than None so it can be rendered, sorted and clicked like any other
+#: row — and so nobody mistakes it for a bug in the breakdown.
+REGION_NOT_REPORTED = "Not reported"
+
+
+def _regional_totals(by_service: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Billed spend per region, per currency, from the per-service rows.
+
+    Derived rather than queried separately so the two breakdowns cannot
+    disagree. Currencies are kept apart for the same reason they are
+    everywhere else in this service: a total spanning USD and INR is a number
+    that exists in no currency at all.
+    """
+    buckets: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for entry in by_service:
+        currency = entry.get("currency") or ""
+        splits = entry.get("by_region") or []
+        if not splits:
+            # No region breakdown at all — the whole amount is unregioned.
+            splits = [{"region": REGION_NOT_REPORTED,
+                       "monthly_cost": entry.get("monthly_cost") or 0.0}]
+        for split in splits:
+            region = split.get("region") or REGION_NOT_REPORTED
+            key = (region, currency)
+            bucket = buckets.get(key)
+            if bucket is None:
+                bucket = buckets[key] = {
+                    "region": region,
+                    "currency": entry.get("currency"),
+                    "monthly_cost": 0.0,
+                    "services": 0,
+                    "reported": region != REGION_NOT_REPORTED,
+                }
+            bucket["monthly_cost"] += float(split.get("monthly_cost") or 0.0)
+            bucket["services"] += 1
+
+    out = []
+    for bucket in buckets.values():
+        bucket["monthly_cost"] = round(bucket["monthly_cost"], 2)
+        out.append(bucket)
+    # Unregioned last, then by spend: it is a footnote, not a finding.
+    out.sort(key=lambda b: (not b["reported"], -b["monthly_cost"]))
+    return out
+
+
 def _single_currency(values: List[Optional[str]]) -> Optional[str]:
     """The one real currency present, or None when unknown/mixed (UI shows NA)."""
     currencies = {c for c in values if c}
@@ -1127,8 +1173,16 @@ class CostService:
     async def get_history(
         self, account_id: uuid.UUID | str, *, days: int = 90,
         group_by: Optional[str] = None,
+        start_date: Optional[str] = None, end_date: Optional[str] = None,
+        region: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Stored billing history for this scope.
+
+        `start_date`/`end_date` (YYYY-MM-DD) override `days` when both are
+        given, so a caller can ask for an arbitrary window rather than only a
+        lookback. An incomplete or reversed pair is rejected rather than
+        silently falling back to `days` — a report quietly covering a different
+        period than the one on screen is worse than an error.
 
         Always reports `coverage` alongside the series, because a 90-day chart
         drawn from 6 days of stored facts is not a 90-day chart, and the caller
@@ -1142,14 +1196,40 @@ class CostService:
         ids = [a.id for a in accounts]
         repo = CostFactRepository(self.db)
 
-        end = _date.today()
-        start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
+        custom = bool(start_date or end_date)
+        if custom:
+            if not (start_date and end_date):
+                raise HTTPException(
+                    status_code=400,
+                    detail="A custom range needs both start_date and end_date.")
+            try:
+                start = _date.fromisoformat(start_date)
+                end = _date.fromisoformat(end_date)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="start_date and end_date must be YYYY-MM-DD.")
+            if start > end:
+                raise HTTPException(
+                    status_code=400,
+                    detail="start_date is after end_date.")
+            span = (end - start).days + 1
+            if span > MAX_REPORT_DAYS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"That range covers {span} days; the maximum is "
+                            f"{MAX_REPORT_DAYS}. Narrow the range."))
+            days = span
+        else:
+            end = _date.today()
+            start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
 
-        series = await repo.daily_series(ids, start, end)
+        series = await repo.daily_series(ids, start, end, region=region)
         payload: Dict[str, Any] = {
             "account_id": str(account_id),
             "period": {"start": start.isoformat(), "end": end.isoformat(),
-                       "days": days, "timezone": "UTC"},
+                       "days": days, "timezone": "UTC", "custom": custom},
+            "region": region,
             "series": series,
             "coverage": await repo.coverage(ids),
             "monthly": await repo.monthly_totals(ids),
@@ -1157,7 +1237,8 @@ class CostService:
         }
         if group_by:
             try:
-                payload["grouped"] = await repo.totals_by(ids, start, end, group_by)
+                payload["grouped"] = await repo.totals_by(
+                    ids, start, end, group_by, region=region)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
             payload["group_by"] = group_by
@@ -1679,24 +1760,66 @@ class CostService:
             )
 
         # ── Real billed totals per service ────────────────────────────────────
-        by_service: List[Dict[str, Any]] = []
+        # Aggregated by (account, service, currency), NOT one row per provider
+        # record. The providers return a row per service PER REGION, so simply
+        # appending produced a "top cost drivers" list with the same service
+        # listed several times — "Amazon Elastic Compute Cloud - Compute" at
+        # both #1 and #3, "EC2 - Other" twice, and so on. Every one of those
+        # pairs was the same service in two regions, and splitting it made the
+        # biggest cost look smaller than it is and pushed real drivers off the
+        # end of the list.
+        #
+        # Currency is part of the key because amounts in different currencies
+        # are never added together. Regions are kept as a breakdown on the
+        # entry rather than discarded, so the UI can still answer "where".
+        grouped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         real_total = 0.0
         real_found = False
         currencies: List[Optional[str]] = []
         for acc, rows in zip(accounts, real_cost_rows):
-            if rows:
-                real_found = True
-                real_total += sum(float(r.get("monthly_cost") or 0.0) for r in rows)
-                for r in rows:
-                    currencies.append(r.get("currency"))
-                    by_service.append({
+            if not rows:
+                continue
+            real_found = True
+            real_total += sum(float(r.get("monthly_cost") or 0.0) for r in rows)
+            for r in rows:
+                currency = r.get("currency")
+                currencies.append(currency)
+                service = r.get("resource_name") or "Unknown"
+                region = r.get("region")
+                amount = float(r.get("monthly_cost") or 0.0)
+                key = (str(acc.id), service, currency or "")
+                entry = grouped.get(key)
+                if entry is None:
+                    entry = grouped[key] = {
                         "account": acc.account_name,
+                        "account_id": str(acc.id),
                         "provider": acc.provider,
-                        "service": r.get("resource_name", "Unknown"),
-                        "region": r.get("region"),
-                        "monthly_cost": round(float(r.get("monthly_cost") or 0.0), 2),
-                        "currency": r.get("currency"),
-                    })
+                        "service": service,
+                        "monthly_cost": 0.0,
+                        "currency": currency,
+                        "regions": {},
+                    }
+                entry["monthly_cost"] += amount
+                if region:
+                    entry["regions"][region] = round(
+                        entry["regions"].get(region, 0.0) + amount, 4)
+
+        by_service: List[Dict[str, Any]] = []
+        for entry in grouped.values():
+            regions = entry.pop("regions")
+            entry["monthly_cost"] = round(entry["monthly_cost"], 2)
+            # `region` stays a single value when the spend genuinely sits in one
+            # place, so existing consumers keep working; `by_region` carries the
+            # split when there is one, and `region_count` says so without the
+            # caller having to count.
+            entry["by_region"] = [
+                {"region": name, "monthly_cost": round(value, 2)}
+                for name, value in sorted(regions.items(), key=lambda kv: -kv[1])
+            ]
+            entry["region"] = (entry["by_region"][0]["region"]
+                               if len(entry["by_region"]) == 1 else None)
+            entry["region_count"] = len(entry["by_region"])
+            by_service.append(entry)
         by_service.sort(key=lambda x: -x["monthly_cost"])
 
         total_monthly_cost = round(real_total, 2) if real_found else None
@@ -2157,6 +2280,14 @@ class CostService:
             "cost_source": cost_source,
             "currency": currency,
             "by_service": by_service[:20],
+            # Billed spend per region, derived from the same per-service rows
+            # rather than from a second query — so the region totals and the
+            # service totals always add up to the same number. A row the
+            # provider gave us with no region lands under "Not reported" and is
+            # NOT silently dropped: an unregioned charge is still real money,
+            # and omitting it would make the regions fail to reconcile with the
+            # account total.
+            "by_region": _regional_totals(by_service),
             "cost_diagnostics": cost_diagnostics,
             # True when a provider was still responding at the deadline: the
             # numbers shown are cached, and a refresh is finishing in the

@@ -46,7 +46,6 @@ export default function CloudProviderChooser() {
     <>
       <CloudPageHeader
         title="Cloud Infrastructure"
-        description="Select a cloud provider to explore its accounts, resources & cost"
         hideBreadcrumbs
         actions={(
           <div className="flex items-center gap-2">
