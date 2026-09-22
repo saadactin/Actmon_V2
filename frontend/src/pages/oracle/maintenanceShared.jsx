@@ -141,12 +141,20 @@ export function CategorySummaryBar({ items }) {
 }
 
 /** Manual refresh + last-updated — the countdown itself is owned by the
- * caller since each page's poll interval can differ. */
-export function RefreshBar({ seconds, isFetching, onRefresh, lastUpdatedAt }) {
+ * caller since each page's poll interval can differ. `queryTimeMs` is the
+ * backend's own `execution_time_ms` (every Oracle panel's `_run_with_timeout`
+ * response carries it) — surfacing it here, once, covers every maintenance
+ * page rather than each page rendering its own timing badge. */
+export function RefreshBar({ seconds, isFetching, onRefresh, lastUpdatedAt, queryTimeMs }) {
   return (
     <div className="flex items-center justify-between">
-      <p className="text-[11px] text-subtle">
-        {lastUpdatedAt ? `Last refreshed ${new Date(lastUpdatedAt).toLocaleTimeString()}` : 'Loading…'}
+      <p className="flex items-center gap-2 text-[11px] text-subtle">
+        <span>{lastUpdatedAt ? `Last refreshed ${new Date(lastUpdatedAt).toLocaleTimeString()}` : 'Loading…'}</span>
+        {queryTimeMs != null && (
+          <span className="font-mono text-muted" title="Time the backend spent waiting on this Oracle query">
+            · Query: {queryTimeMs < 1000 ? `${Math.round(queryTimeMs)} ms` : `${(queryTimeMs / 1000).toFixed(1)} s`}
+          </span>
+        )}
       </p>
       <Button size="sm" variant="secondary" icon="refresh" loading={isFetching} onClick={onRefresh}>
         {isFetching ? 'Refreshing…' : `Refresh (${seconds}s)`}

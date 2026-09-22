@@ -35,6 +35,24 @@ def agent_host_for_conn(conn_id, db):
     ), {"c": conn_id}).first()
 
 
+def _agent_dbname(conn) -> str:
+    """The database to hand the agent.
+
+    PostgreSQL has no 'connect without a database' mode — libpq falls back to the
+    ROLE name, so a connection saved with an empty database_name silently asks the
+    agent for a database called e.g. 'sa', which almost never exists. The direct
+    path has always defaulted this to 'postgres' (postgres_monitoring_service's
+    `conn.database_name or 'postgres'`); the agent payload did not, so the same
+    connection behaved differently depending on which path served it. Same default,
+    both paths. Other engines are happy with an empty string, so leave them alone.
+    """
+    name = (getattr(conn, "database_name", "") or "").strip()
+    if name:
+        return name
+    dbtype = (getattr(conn, "db_type", "") or "").lower()
+    return "postgres" if ("postgre" in dbtype or dbtype == "pg") else ""
+
+
 def _agent_dbquery(token, conn, sql):
     """Run one query on the host agent. Returns list[tuple], None if the agent didn't
     answer (caller should fall back to direct), or raises on a DB-side error."""
@@ -45,7 +63,7 @@ def _agent_dbquery(token, conn, sql):
         "port": conn.port or 0,
         "user": conn.username or "",
         "password": conn.password or "",
-        "database": conn.database_name or "",
+        "database": _agent_dbname(conn),
         "sql": sql,
     })
     raw = agent_fs_service.request(token, "dbquery", payload)
@@ -104,10 +122,10 @@ def make_runner(conn, db):
             rows = _agent_dbquery(host.token, conn, sql)
             if rows is not None:
                 return rows
-            dbtype = (getattr(conn, "db_type", "") or "").lower()
-            if not any(k in dbtype for k in _DIRECT_CAPABLE):
-                # Server has no driver for this engine (oracle/mssql) and can't reach
-                # the agent host's localhost — a direct try would only mislead.
+            if not _can_go_direct(conn):
+                # Either the server has no driver for this engine (oracle/mssql), or
+                # the connection's host is loopback and so names the AGENT'S machine,
+                # not this one — a direct try would only mislead. See _can_go_direct.
                 raise RuntimeError("The agent on the DB host did not answer in time.")
             logger.warning("[db_proxy] agent '%s' unreachable for conn %s — direct fallback",
                            host.hostname, getattr(conn, "id", "?"))
@@ -169,7 +187,7 @@ def _agent_query_meta(token, conn, sql, timeout=_AGENT_QUERY_TIMEOUT):
     payload = json.dumps({
         "db_type": (conn.db_type or "").lower(), "host": conn.host or "127.0.0.1",
         "port": conn.port or 0, "user": conn.username or "", "password": conn.password or "",
-        "database": conn.database_name or "", "sql": sql,
+        "database": _agent_dbname(conn), "sql": sql,
     })
     raw = agent_fs_service.request(token, "dbquery", payload, timeout=timeout)
     if raw is None:
@@ -293,9 +311,31 @@ class _NoOpTx:
 _DIRECT_CAPABLE = ("mysql", "maria", "postgre", "pg")
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", ""}
+
+
+def _is_loopback(conn) -> bool:
+    return (getattr(conn, "host", "") or "").strip().lower() in _LOOPBACK_HOSTS
+
+
 def _can_go_direct(conn):
+    """Whether a server-direct attempt could possibly reach the RIGHT database.
+
+    Engine support is necessary but not sufficient: when the connection's host is
+    loopback, 'localhost' means the AGENT host's own machine, and the ActMon
+    server's localhost is a completely different box. A direct attempt there can
+    only mislead — at best it fails with an unrelated error (a stale agent answer
+    surfacing as 'password authentication failed for user X', which is what a
+    loopback PostgreSQL connection actually produced: it hit ActMon's OWN
+    metadata database, which happens to listen on localhost:5432 too), and at
+    worst it SUCCEEDS against the wrong database and the UI silently reports
+    ActMon's internals as the user's server. Refuse it, and let the caller raise
+    the honest 'agent did not answer' instead.
+    """
     dbtype = (getattr(conn, "db_type", "") or "").lower()
-    return any(k in dbtype for k in _DIRECT_CAPABLE)
+    if not any(k in dbtype for k in _DIRECT_CAPABLE):
+        return False
+    return not _is_loopback(conn)
 
 
 class _AgentConnection:

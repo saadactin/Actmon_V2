@@ -141,6 +141,22 @@ def _schema_owners(engine) -> dict:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def get_databases(conn_id: int, db: Session) -> dict:
+    """Bounded wrapper — see _get_databases_inner for what it does.
+
+    This module's endpoints sit behind the Tables/Databases tabs and were the
+    only MySQL read paths with no upper bound on how long they could take. On an
+    agent-routed connection each statement here is its own agent round trip with
+    a fresh DB connect on the far side, so an unreachable agent left the tab
+    spinning indefinitely instead of reporting a timeout.
+    """
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_databases_inner, conn_id, db,
+        default={**timeout_error(), "data": []}, label="mysql_databases",
+    )
+
+
+def _get_databases_inner(conn_id: int, db: Session) -> dict:
     """
     Full per-schema metadata for the Databases list.
 
@@ -262,6 +278,16 @@ def get_tables(conn_id: int, db_name: str, db: Session) -> dict:
 
 
 def get_all_tables(conn_id: int, db: Session) -> dict:
+    """Bounded wrapper — see _get_all_tables_inner."""
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_all_tables_inner, conn_id, db,
+        default={**timeout_error(), "data": [], "tables": [], "databases": []},
+        label="mysql_all_tables",
+    )
+
+
+def _get_all_tables_inner(conn_id: int, db: Session) -> dict:
     """Flat list of every table across all user databases (one query) — powers the
     PostgreSQL-style single-list Tables view."""
     conn = _get_conn(conn_id, db)

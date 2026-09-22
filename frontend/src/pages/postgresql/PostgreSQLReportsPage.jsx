@@ -24,7 +24,9 @@ const ENGINE = {
   key: 'pg',
   label: 'PostgreSQL',
   emoji: '🐘',
-  reportPrefix: 'pg-report',
+  // Must match the backend, which registers every PostgreSQL report route
+  // under /postgres-report/* — 'pg-report' silently 404'd Send/Schedule.
+  reportPrefix: 'postgres-report',
 };
 
 /* ─── palette ─── */

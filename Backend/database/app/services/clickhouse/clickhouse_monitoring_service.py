@@ -126,10 +126,15 @@ def _query(conn, sql):
         username    = (conn.username or "default").strip()
         native_port = conn.port if conn.port and conn.port not in (8123, 8443) else 9000
         database    = (conn.database_name or "default").strip()
+        # connect_timeout alone only bounds the handshake — without
+        # send_receive_timeout, client.execute() below blocks forever on a
+        # server that accepts the connection and then stops answering, which
+        # is what turns one wedged query into a permanently stuck dashboard.
         client      = _CHClient(
             host=conn.host, port=native_port, user=username,
             password=conn.password or "", database=database,
-            connect_timeout=8, settings={"use_numpy": False},
+            connect_timeout=8, send_receive_timeout=20,
+            settings={"use_numpy": False},
         )
         rows_raw, cols = client.execute(sql, with_column_types=True)
         client.disconnect()
@@ -217,7 +222,14 @@ def get_dashboard(conn_id: int, db: Session) -> dict:
     cached = _get_snap(conn_id, "ch_dashboard", db)
     if cached is not None:
         return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_dashboard_inner, conn_id, db,
+        default=timeout_error(), label="clickhouse_dashboard",
+    )
 
+
+def _get_dashboard_inner(conn_id: int, db: Session) -> dict:
     conn    = _get_connection_or_404(conn_id, db)
     results = {}
     errors  = {}

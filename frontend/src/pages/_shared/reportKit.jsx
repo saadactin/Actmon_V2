@@ -519,6 +519,17 @@ export function ReportShell({
   const printRef = useRef(null);
   const reportElementId = `${engine.key}-report`;
 
+  /**
+   * Print the report exactly as it appears on screen — the browser's own
+   * Save-as-PDF, so what you get is this page, paginated, and nothing else.
+   *
+   * This depends entirely on the `@media print` block in styles/index.css,
+   * which hides the app shell and reveals only `#<engine>-report`. That block
+   * went missing in the frontend rewrite, which is why printing used to dump
+   * the whole app (nav bar included) and why `.no-print` appeared to do
+   * nothing — it had no CSS behind it. Restored, so this is again the real
+   * report rather than a screenshot of the application.
+   */
   const handlePrint = () => { setGenTime(now()); setTimeout(() => window.print(), 200); };
 
   const openEmailModal = async () => {

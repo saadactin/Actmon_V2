@@ -22,6 +22,7 @@ from app.services.oracle.oracle_monitoring_service import (
     oracle_schema_tables,
     oracle_table_detail,
     oracle_users,
+    oracle_user_privileges,
     oracle_redo_logs,
     oracle_data_guard,
     oracle_processes,
@@ -143,6 +144,12 @@ def route_oracle_table_detail(conn_id: int, owner: str, table: str, db: Session 
 @router.get("/{conn_id}/oracle-users")
 def route_oracle_users(conn_id: int, db: Session = Depends(get_db)):
     return oracle_users(conn_id, db)
+
+
+# 10b
+@router.get("/{conn_id}/oracle-users/{username}/privileges")
+def route_oracle_user_privileges(conn_id: int, username: str, db: Session = Depends(get_db)):
+    return oracle_user_privileges(conn_id, db, username)
 
 
 # 11

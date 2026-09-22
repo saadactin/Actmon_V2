@@ -4,6 +4,11 @@ Part A: helpers + endpoints 1-15
 Part B: endpoints 16-31
 """
 
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import create_engine, text
@@ -12,6 +17,8 @@ from urllib.parse import quote_plus
 from app.models.connection_model import ConnectionMaster
 from app.services.common.actmon_internal_tables import oracle_exclude_internal_tables_sql
 from app.services.common.slow_query_normalize import attach_normalized, build_normalized_row
+
+logger = logging.getLogger("oracle_monitoring")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -74,6 +81,67 @@ def _get_engine(conn):
         raise HTTPException(status_code=500, detail=f"Engine creation failed: {str(e)}")
 
 
+# ──────────────────────────────────────────────────────────────
+#  TIMEOUT + TIMING — shared by every Oracle panel across this file AND
+#  oracle_maintenance_telemetry_service.py (which imports these three names
+#  from here rather than keeping its own copy).
+# ──────────────────────────────────────────────────────────────
+
+ANALYSIS_TIMEOUT_SECONDS = 30
+
+
+def _timeout_error():
+    return {
+        "status": "error",
+        "error": f"Timed out after {ANALYSIS_TIMEOUT_SECONDS}s waiting for Oracle — "
+                 "the connection or its agent isn't answering right now.",
+    }
+
+
+def _run_with_timeout(fn, *args, timeout=ANALYSIS_TIMEOUT_SECONDS, default=None, label=None, **kwargs):
+    """Run `fn` on a worker thread and give up waiting after `timeout` seconds,
+    returning `default` instead of hanging forever — an agent-routed Oracle
+    connection that never answers has no timeout of its own at this layer, so
+    every panel that can be agent-routed must go through this rather than
+    calling Oracle directly. Also stamps the result with `execution_time_ms`
+    and logs it under `label`, so a slow panel shows up by name in the logs
+    instead of as a silent hang — this is the one place that instruments every
+    panel's timing, rather than repeating a timer in each endpoint.
+
+    Deliberately NOT a `with ThreadPoolExecutor(...)` block — exiting that
+    context calls shutdown(wait=True), which blocks until the timed-out thread
+    finishes too, silently undoing the timeout. The pool is left to be
+    garbage-collected; an orphaned thread finishes on its own whenever
+    Oracle/the agent eventually responds, without holding this request open.
+
+    Also catches any OTHER exception `fn` raises (not just a timeout) and
+    degrades to an error result instead of letting it blow up the whole
+    request — a single panel's real bug/DB error must not 500 a page that
+    fans out to several panels from one route."""
+    label = label or getattr(fn, "__name__", "oracle_query")
+    t0 = time.perf_counter()
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(fn, *args, **kwargs)
+    try:
+        result = future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        pool.shutdown(wait=False)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        logger.info("[oracle] %s: TIMEOUT after %sms (limit %ss)", label, elapsed_ms, timeout)
+        return default
+    except Exception as exc:  # noqa: BLE001 — one panel's bug must not 500 the page
+        pool.shutdown(wait=False)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        logger.info("[oracle] %s: ERROR after %sms: %s", label, elapsed_ms, exc)
+        return {"status": "error", "error": str(exc), "execution_time_ms": elapsed_ms}
+    pool.shutdown(wait=False)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+    logger.info("[oracle] %s: OK in %sms", label, elapsed_ms)
+    if isinstance(result, dict) and "status" in result:
+        result = {**result, "execution_time_ms": elapsed_ms}
+    return result
+
+
 _SYSTEM_OWNERS = (
     "'SYS','SYSTEM','OUTLN','DBSNMP','WMSYS','XDB','APEX_030200','APEX_040200',"
     "'CTXSYS','MDSYS','OLAPSYS','ORDDATA','ORDSYS','SI_INFORMTN_SCHEMA',"
@@ -106,6 +174,22 @@ def oracle_dashboard(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_dashboard", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_dashboard_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_dashboard",
+    )
+
+
+def _oracle_dashboard_inner(conn_id: int, db: Session):
+    """~20 sequential Oracle round-trips (version/instance/db info, session
+    counts, SGA/PGA, storage, cache-hit ratios, CPU, top waits, tablespaces,
+    redo logs) for the Overview tab's KPI strip — this is the landing tab
+    every user sees first, polled every 15s, so the whole thing is wrapped in
+    _run_with_timeout by its caller (oracle_dashboard() above) rather than
+    left to hang indefinitely if any one of the ~20 queries below stalls.
+    Each query already has its own try/except -> errors.append(...), so a
+    single query FAILING never blocks the others; the outer wrapper is what
+    protects against a query that neither succeeds nor raises, just hangs."""
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
     errors = []
@@ -418,6 +502,13 @@ def oracle_sga_detail(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_sga_detail", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_sga_detail_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_sga_detail",
+    )
+
+
+def _oracle_sga_detail_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -465,6 +556,13 @@ def oracle_pga_detail(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_pga_detail", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_pga_detail_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_pga_detail",
+    )
+
+
+def _oracle_pga_detail_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -504,6 +602,13 @@ def oracle_sessions(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_sessions", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_sessions_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_sessions",
+    )
+
+
+def _oracle_sessions_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -584,6 +689,13 @@ def oracle_top_sql(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_top_sql", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_top_sql_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_top_sql",
+    )
+
+
+def _oracle_top_sql_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -640,6 +752,13 @@ def oracle_wait_events(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_wait_events", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_wait_events_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_wait_events",
+    )
+
+
+def _oracle_wait_events_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -686,6 +805,13 @@ def oracle_wait_events(conn_id: int, db: Session):
 # ──────────────────────────────────────────────────────────────
 
 def oracle_tablespaces(conn_id: int, db: Session):
+    return _run_with_timeout(
+        _oracle_tablespaces_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_tablespaces",
+    )
+
+
+def _oracle_tablespaces_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -734,6 +860,13 @@ def oracle_tablespaces(conn_id: int, db: Session):
 # ──────────────────────────────────────────────────────────────
 
 def oracle_objects(conn_id: int, db: Session):
+    return _run_with_timeout(
+        _oracle_objects_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_objects",
+    )
+
+
+def _oracle_objects_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -821,6 +954,13 @@ def oracle_schema_tables(conn_id: int, db: Session, owner: str = ""):
         _cached = _get_snap(conn_id, "oracle_schema_tables", db)
         if _cached is not None:
             return _cached
+    return _run_with_timeout(
+        _oracle_schema_tables_inner, conn_id, db, owner,
+        default=_timeout_error(), label="oracle_schema_tables",
+    )
+
+
+def _oracle_schema_tables_inner(conn_id: int, db: Session, owner: str = ""):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -851,13 +991,15 @@ def oracle_schema_tables(conn_id: int, db: Session, owner: str = ""):
                       (SELECT count(*) FROM dba_indexes  i  WHERE i.table_owner=t.owner AND i.table_name=t.table_name) AS idx_count
                FROM dba_tables t
                LEFT JOIN dba_segments s ON s.owner=t.owner AND s.segment_name=t.table_name AND s.segment_type='TABLE'
-               WHERE t.owner = :ow ORDER BY t.table_name""",
+               WHERE t.owner = :ow ORDER BY t.table_name
+               FETCH FIRST 300 ROWS ONLY""",
             """SELECT t.table_name, t.num_rows, t.avg_row_len, t.last_analyzed,
                       t.status, t.partitioned, t.row_movement,
                       NULL AS size_mb,
                       (SELECT count(*) FROM all_tab_columns c WHERE c.owner=t.owner AND c.table_name=t.table_name) AS col_count,
                       (SELECT count(*) FROM all_indexes    i WHERE i.table_owner=t.owner AND i.table_name=t.table_name) AS idx_count
-               FROM all_tables t WHERE t.owner = :ow ORDER BY t.table_name""",
+               FROM all_tables t WHERE t.owner = :ow ORDER BY t.table_name
+               FETCH FIRST 300 ROWS ONLY""",
             {"ow": target_owner},
         )
         tables = [
@@ -1306,6 +1448,13 @@ def oracle_table_detail(conn_id: int, db: Session, owner: str, table: str) -> di
 # ──────────────────────────────────────────────────────────────
 
 def oracle_users(conn_id: int, db: Session):
+    return _run_with_timeout(
+        _oracle_users_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_users",
+    )
+
+
+def _oracle_users_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -1343,10 +1492,160 @@ def oracle_users(conn_id: int, db: Session):
 
 
 # ──────────────────────────────────────────────────────────────
+#  10b. ONE USER'S PRIVILEGES — roles, system privileges, object
+#  privileges, tablespace quotas. Opened by clicking a row on the Users
+#  tab (oracle-users above only returns the summary list).
+# ──────────────────────────────────────────────────────────────
+
+def oracle_user_privileges(conn_id: int, db: Session, username: str):
+    return _run_with_timeout(
+        _oracle_user_privileges_inner, conn_id, db, username,
+        default=_timeout_error(), label="oracle_user_privileges",
+    )
+
+
+def _oracle_user_privileges_inner(conn_id: int, db: Session, username: str):
+    conn   = _get_conn_or_404(conn_id, db)
+    engine = _get_engine(conn)
+    uname = (username or "").strip().upper()
+    errors = []
+
+    profile = {}
+    try:
+        rows = _rows(
+            engine,
+            """SELECT username, account_status,
+                      TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS') AS created,
+                      profile, default_tablespace, temporary_tablespace,
+                      TO_CHAR(last_login, 'YYYY-MM-DD HH24:MI:SS') AS last_login,
+                      TO_CHAR(expiry_date, 'YYYY-MM-DD HH24:MI:SS') AS expiry_date,
+                      authentication_type
+               FROM dba_users WHERE username = :u""",
+            {"u": uname},
+        )
+        if rows:
+            r = rows[0]
+            profile = {
+                "username":             _safe_str(r.get("USERNAME")),
+                "account_status":       _safe_str(r.get("ACCOUNT_STATUS")),
+                "created":              _safe_str(r.get("CREATED")),
+                "profile":              _safe_str(r.get("PROFILE")),
+                "default_tablespace":   _safe_str(r.get("DEFAULT_TABLESPACE")),
+                "temporary_tablespace": _safe_str(r.get("TEMPORARY_TABLESPACE")),
+                "last_login":           _safe_str(r.get("LAST_LOGIN")) or None,
+                "expiry_date":          _safe_str(r.get("EXPIRY_DATE")) or None,
+                "authentication_type":  _safe_str(r.get("AUTHENTICATION_TYPE")),
+            }
+    except Exception as exc:
+        errors.append(f"profile: {exc}")
+
+    if not profile:
+        return {"status": "error", "error": f"User '{username}' not found."}
+
+    roles = []
+    try:
+        rows = _rows(
+            engine,
+            """SELECT granted_role, admin_option, default_role
+               FROM dba_role_privs WHERE grantee = :u ORDER BY granted_role""",
+            {"u": uname},
+        )
+        roles = [
+            {
+                "role":         _safe_str(r.get("GRANTED_ROLE")),
+                "admin_option": _safe_str(r.get("ADMIN_OPTION")) == "YES",
+                "default_role": _safe_str(r.get("DEFAULT_ROLE")) == "YES",
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        errors.append(f"roles: {exc}")
+
+    sys_privs = []
+    try:
+        rows = _rows(
+            engine,
+            "SELECT privilege, admin_option FROM dba_sys_privs WHERE grantee = :u ORDER BY privilege",
+            {"u": uname},
+        )
+        sys_privs = [
+            {"privilege": _safe_str(r.get("PRIVILEGE")), "admin_option": _safe_str(r.get("ADMIN_OPTION")) == "YES"}
+            for r in rows
+        ]
+    except Exception as exc:
+        errors.append(f"system privileges: {exc}")
+
+    obj_privs = []
+    try:
+        rows = _rows(
+            engine,
+            """SELECT owner, table_name, privilege, grantable
+               FROM dba_tab_privs WHERE grantee = :u
+               ORDER BY owner, table_name, privilege
+               FETCH FIRST 300 ROWS ONLY""",
+            {"u": uname},
+        )
+        obj_privs = [
+            {
+                "owner":       _safe_str(r.get("OWNER")),
+                "object_name": _safe_str(r.get("TABLE_NAME")),
+                "privilege":   _safe_str(r.get("PRIVILEGE")),
+                "grantable":   _safe_str(r.get("GRANTABLE")) == "YES",
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        errors.append(f"object privileges: {exc}")
+
+    quotas = []
+    try:
+        rows = _rows(
+            engine,
+            "SELECT tablespace_name, bytes, max_bytes FROM dba_ts_quotas WHERE username = :u ORDER BY tablespace_name",
+            {"u": uname},
+        )
+        quotas = [
+            {
+                "tablespace_name": _safe_str(r.get("TABLESPACE_NAME")),
+                "used_mb": round(_safe_float(r.get("BYTES")) / 1024 / 1024, 2),
+                # Oracle stores UNLIMITED as -1, not NULL.
+                "max_mb": (round(_safe_float(r.get("MAX_BYTES")) / 1024 / 1024, 2)
+                           if _safe_float(r.get("MAX_BYTES")) > 0 else None),
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        errors.append(f"tablespace quotas: {exc}")
+
+    return {
+        "status": "success",
+        "profile": profile,
+        "roles": roles,
+        "system_privileges": sys_privs,
+        "object_privileges": obj_privs,
+        "tablespace_quotas": quotas,
+        "summary": {
+            "role_count": len(roles),
+            "system_privilege_count": len(sys_privs),
+            "object_privilege_count": len(obj_privs),
+            "is_dba": any(rp["role"] == "DBA" for rp in roles),
+        },
+        "errors": errors,
+    }
+
+
+# ──────────────────────────────────────────────────────────────
 #  11. REDO LOGS
 # ──────────────────────────────────────────────────────────────
 
 def oracle_redo_logs(conn_id: int, db: Session):
+    return _run_with_timeout(
+        _oracle_redo_logs_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_redo_logs",
+    )
+
+
+def _oracle_redo_logs_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -1612,6 +1911,13 @@ def _parse_dg_interval_seconds(value):
 # ──────────────────────────────────────────────────────────────
 
 def oracle_processes(conn_id: int, db: Session):
+    return _run_with_timeout(
+        _oracle_processes_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_processes",
+    )
+
+
+def _oracle_processes_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -1655,6 +1961,13 @@ def oracle_processes(conn_id: int, db: Session):
 # ──────────────────────────────────────────────────────────────
 
 def oracle_system_stats(conn_id: int, db: Session):
+    return _run_with_timeout(
+        _oracle_system_stats_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_system_stats",
+    )
+
+
+def _oracle_system_stats_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -3244,6 +3557,13 @@ def oracle_topology_detect(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_topology", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_topology_detect_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_topology_detect",
+    )
+
+
+def _oracle_topology_detect_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
@@ -3492,6 +3812,13 @@ def oracle_cdb_pdb(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "oracle_cdb_pdb", db)
     if _cached is not None:
         return _cached
+    return _run_with_timeout(
+        _oracle_cdb_pdb_inner, conn_id, db,
+        default=_timeout_error(), label="oracle_cdb_pdb",
+    )
+
+
+def _oracle_cdb_pdb_inner(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 

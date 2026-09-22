@@ -30,6 +30,7 @@ import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
 import { Paged } from '@/components/ui/Pagination';
+import DataTable, { EmptyState as TableEmptyState, nextSort, sortRows } from '@/components/ui/Table';
 import usePaged from '@/hooks/usePaged';
 import {
   DATABASE_COLUMNS, PG_DATABASE_EXTRAS, PG_DATABASE_HINTS, withExtras, withHints,
@@ -109,6 +110,12 @@ export default function PostgreSQLDashboard() {
   });
 
   const [tablesDb, setTablesDb] = useState('__all__');   // selected DB to drill into Tables
+  // Locks tab: system-catalog locks are hidden by default. They are almost always
+  // just the observation cost of reading pg_locks/pg_class/pg_stat_activity — real
+  // AccessShareLocks, but on catalogs, never actionable. Kept one click away
+  // rather than dropped, because a catalog lock CAN matter (a stuck DDL, an
+  // ANALYZE holding pg_statistic), and an admin needs to be able to look.
+  const [showSystemLocks, setShowSystemLocks] = useState(false);
   const { data: tablesDetail, isLoading: tablesLoading, refetch: refetchTables } = useQuery({
     queryKey: ['pgTablesDetail', id],
     queryFn:  () => client.get(`/connections/postgresql/${id}/tables-detail`).then(r => r.data),
@@ -182,7 +189,7 @@ export default function PostgreSQLDashboard() {
     connections_detail = {}, replication = [], replication_slots = [],
     process_list = [], long_running_queries = [],
     pg_stat_statements = [], pg_stat_user_tables = [],
-    pg_locks = [], blocking_queries = [],
+    pg_locks = [], blocking_queries = [], locks_summary = {},
     tablespaces = [], users_activity = [],
     server_vars = {},
   } = data || {};
@@ -581,12 +588,12 @@ export default function PostgreSQLDashboard() {
           <div className="space-y-5">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                ['Total Locks',      pg_locks.length,                              'bg-blue-50 border-blue-200 text-blue-700'],
-                ['Blocking Queries', blocking_queries.length,                      blocking_queries.length>0?'bg-red-50 border-red-200 text-red-700':'bg-green-50 border-green-200 text-green-700'],
-                ['Waiting Conns',    connections_detail.waiting||0,                (connections_detail.waiting||0)>0?'bg-orange-50 border-orange-200 text-orange-700':'bg-green-50 border-green-200 text-green-700'],
-                ['Idle in Txn',      connections_detail.idle_in_transaction||0,    (connections_detail.idle_in_transaction||0)>0?'bg-orange-50 border-orange-200 text-orange-700':'bg-green-50 border-green-200 text-green-700'],
-              ].map(([t,v,cls])=>(
-                <div key={t} className={`rounded-xl border p-4 ${cls}`}>
+                ['Application Locks', locks_summary.application ?? 0,              'Locks on your own tables, indexes and transactions', 'bg-blue-50 border-blue-200 text-blue-700'],
+                ['Blocking',          locks_summary.blocking ?? 0,                 'Sessions holding a lock somebody else is waiting on', (locks_summary.blocking||0)>0?'bg-red-50 border-red-200 text-red-700':'bg-green-50 border-green-200 text-green-700'],
+                ['Waiting',           locks_summary.waiting ?? 0,                  'Sessions queued for a lock they have not been granted', (locks_summary.waiting||0)>0?'bg-orange-50 border-orange-200 text-orange-700':'bg-green-50 border-green-200 text-green-700'],
+                ['System Objects',    locks_summary.system ?? 0,                   'Locks on PostgreSQL catalogs — normal, not a problem', 'bg-slate-50 border-slate-200 text-slate-600'],
+              ].map(([t,v,hint,cls])=>(
+                <div key={t} className={`rounded-xl border p-4 ${cls}`} title={hint}>
                   <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{t}</p>
                   <p className="text-2xl font-black mt-1">{v}</p>
                 </div>
@@ -600,10 +607,14 @@ export default function PostgreSQLDashboard() {
                 </div>
                 {blocking_queries.map((q,i)=>(
                   <div key={i} className="bg-white rounded-xl border border-red-100 px-4 py-3 mb-2 text-xs">
-                    <div className="flex gap-4 mb-1">
+                    <div className="flex gap-4 mb-1 flex-wrap">
                       <span className="font-bold text-red-600">Blocker PID: {q.blocking_pid}</span>
                       <span className="text-slate-500">Blocked PID: {q.blocked_pid}</span>
-                      <span className="text-orange-600 font-bold">Mode: {q.lock_mode}</span>
+                      {q.lock_mode && <span className="text-orange-600 font-bold">Mode: {q.lock_mode}</span>}
+                      {q.locktype && <span className="text-slate-400">Type: {q.locktype}</span>}
+                      {q.wait_sec != null && (
+                        <span className="text-red-500 font-bold">Waiting: {Number(q.wait_sec).toFixed(1)}s</span>
+                      )}
                     </div>
                     <div className="font-mono text-slate-500 truncate">{String(q.blocking_query||q.query||'').slice(0,160)}</div>
                   </div>
@@ -611,40 +622,92 @@ export default function PostgreSQLDashboard() {
               </div>
             )}
 
-            <Panel title={`pg_locks (${pg_locks.length})`} icon={<Lock size={15} className="text-slate-400"/>}>
+            {(() => {
+              const visible = showSystemLocks ? pg_locks : pg_locks.filter(l => !l.is_system);
+              const hidden  = pg_locks.length - visible.length;
+              return (
+            <Panel
+              title={`Locks (${visible.length})`}
+              icon={<Lock size={15} className="text-slate-400"/>}
+              action={
+                <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
+                  <input type="checkbox" className="accent-indigo-600"
+                         checked={showSystemLocks}
+                         onChange={e => setShowSystemLocks(e.target.checked)} />
+                  Show System Objects
+                  {hidden > 0 && <span className="text-slate-400">({hidden} hidden)</span>}
+                </label>
+              }
+            >
+              {locks_summary.truncated && (
+                <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-700">
+                  Showing {locks_summary.returned} of {locks_summary.total} locks. Waiting and
+                  blocking locks are listed first, so nothing actionable is cut off.
+                </div>
+              )}
               <div className="overflow-x-auto">
-                <Paged rows={pg_locks} unit="locks">{(pageRows, pager) => (<>
+                <Paged rows={visible} unit="locks">{(pageRows, pager) => (<>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50">
-                      {['PID','Lock Type','Relation','Mode','Granted','Database','Duration'].map(h=>(
+                      {['PID','State','Lock Type','Object','Mode','Database','Query Age'].map(h=>(
                         <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {pageRows.map((l,i)=>(
-                      <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${!l.granted?'bg-red-50':''}`}>
+                      <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${
+                        l.category==='waiting' ? 'bg-red-50'
+                        : l.category==='blocking' ? 'bg-orange-50' : ''}`}>
                         <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{l.pid}</td>
+                        <td className="px-3 py-2.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            l.category==='waiting'     ? 'bg-red-100 text-red-700'
+                          : l.category==='blocking'    ? 'bg-orange-100 text-orange-700'
+                          : l.category==='system'      ? 'bg-slate-100 text-slate-500'
+                          :                              'bg-green-100 text-green-700'}`}>
+                            {l.category==='waiting'  ? 'Waiting'
+                           : l.category==='blocking' ? 'Blocking'
+                           : l.category==='system'   ? 'System' : 'Granted'}
+                          </span>
+                          {l.category==='waiting' && l.blocked_by?.length > 0 && (
+                            <span className="ml-1.5 text-[10px] text-red-600 font-mono">
+                              ← {l.blocked_by.join(', ')}
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5 text-xs">{l.locktype}</td>
-                        <td className="px-3 py-2.5 text-xs text-indigo-700 font-semibold">{l.relation_name||l.relation||'—'}</td>
+                        <td className="px-3 py-2.5 text-xs">
+                          <span className={l.is_system ? 'text-slate-400' : 'text-indigo-700 font-semibold'}>
+                            {l.relation_label || '—'}
+                          </span>
+                          {l.object_type && (
+                            <span className="ml-1.5 text-[10px] text-slate-400">{l.object_type}</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5">
                           <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full">{l.mode}</span>
                         </td>
-                        <td className="px-3 py-2.5">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${l.granted?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
-                            {l.granted?'Granted':'Waiting'}
-                          </span>
-                        </td>
                         <td className="px-3 py-2.5 text-xs text-slate-400">{l.database_name||l.database||'—'}</td>
-                        <td className="px-3 py-2.5 text-xs font-mono">{l.duration||'—'}</td>
+                        {/* Query age of the holding/waiting backend — PostgreSQL does not
+                            record when a lock was acquired, so this is the honest proxy. */}
+                        <td className="px-3 py-2.5 text-xs font-mono" title="Age of this backend's current query. PostgreSQL does not record lock acquisition time.">
+                          {l.query_age_sec == null ? '—' : `${Number(l.query_age_sec).toFixed(1)}s`}
+                        </td>
                       </tr>
                     ))}
-                    {pg_locks.length===0 && (
+                    {visible.length===0 && (
                       <tr><td colSpan={7} className="text-center py-14">
                         <CheckCircle2 className="mx-auto text-green-400 mb-3" size={36}/>
-                        <p className="text-slate-500 font-semibold">No locks detected</p>
-                        <p className="text-slate-400 text-xs mt-1">All connections are operating normally</p>
+                        <p className="text-slate-500 font-semibold">
+                          {hidden > 0 ? 'No application locks' : 'No locks detected'}
+                        </p>
+                        <p className="text-slate-400 text-xs mt-1">
+                          {hidden > 0
+                            ? `${hidden} system-catalog lock${hidden===1?'':'s'} hidden — mostly ACTMON's own monitoring queries reading pg_class / pg_stat_activity. Tick "Show System Objects" to inspect them.`
+                            : 'All connections are operating normally'}
+                        </p>
                       </td></tr>
                     )}
                   </tbody>
@@ -653,6 +716,8 @@ export default function PostgreSQLDashboard() {
                 </>)}</Paged>
               </div>
             </Panel>
+              );
+            })()}
           </div>
         )}
 
@@ -731,13 +796,16 @@ function fmtMs(ms) {
 }
 
 /* ─── shared components ─── */
-function Panel({ title, icon, children }) {
+// `action` is optional — a control rendered at the right of the header (e.g. the
+// Locks tab's "Show System Objects" toggle). Omitting it renders exactly as before.
+function Panel({ title, icon, children, action }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       {title && (
         <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
           {icon}
           <h3 className="font-bold text-slate-800 text-sm">{title}</h3>
+          {action && <div className="ml-auto">{action}</div>}
         </div>
       )}
       <div className="p-5">{children}</div>
@@ -2316,12 +2384,65 @@ function analyzeAgo(t) {
    through the shared <TableDetailsDialog> (see AdvancedTablesTab below),
    the same component every engine dashboard uses. */
 
+/* Column spec for the Tables list. Widths are set so the row reads at a glance
+   and the whole thing still scrolls horizontally rather than crushing 15
+   columns into the viewport. `sortKey` is omitted where it equals `key`. */
+const PG_TABLE_COLUMNS = [
+  { key: 'database',    label: 'DB',            width: 120, sortable: true },
+  { key: 'schemaname',  label: 'Schema',        width: 110, sortable: true },
+  { key: 'relname',     label: 'Table',         width: 220, sortable: true },
+  { key: 'total_bytes', label: 'Total Size',    width: 160, sortable: true },
+  { key: 'heap',        label: 'Heap',          width: 100, sortable: true },
+  { key: 'indexes',     label: 'Indexes',       width: 110, sortable: true },
+  { key: 'live',        label: 'Live Rows',     width: 110, sortable: true, align: 'center' },
+  { key: 'dead',        label: 'Dead Rows',     width: 110, sortable: true, align: 'center' },
+  { key: 'deadPct',     label: 'Dead %',        width: 120, sortable: true },
+  { key: 'cachePct',    label: 'Cache Hit',     width: 130, sortable: true },
+  { key: 'seq',         label: 'Seq Scans',     width: 110, sortable: true, align: 'center' },
+  { key: 'idxPct',      label: 'Idx %',         width: 96,  sortable: true, align: 'center' },
+  { key: 'dml',         label: 'Ins/Upd/Del',   width: 150, sortable: true,
+    hint: 'Inserted / updated / deleted tuples since stats were last reset. Sorts on the total.' },
+  { key: 'vacuum',      label: 'Last Vacuum',   width: 120, sortable: true, align: 'center' },
+  { key: 'analyze',     label: 'Last Analyze',  width: 120, sortable: true, align: 'center' },
+];
+
+/** Epoch ms for sorting a "last vacuum / last analyze" pair. The API sends these
+    as strings (possibly ""), so an unparseable or missing value becomes 0 —
+    never vacuumed sorts as maximally stale, which is exactly what it is. */
+function tsOf(...candidates) {
+  for (const c of candidates) {
+    if (!c) continue;
+    const ms = new Date(c).getTime();
+    if (Number.isFinite(ms)) return ms;
+  }
+  return 0;
+}
+
+/** The percent-bar used in the Dead % and Cache Hit cells. Was duplicated inline
+    with two near-identical colour ladders; one component, one ladder. */
+function MiniBar({ pct, label, tone }) {
+  const colour = tone === 'danger' ? 'var(--danger)'
+    : tone === 'warning' ? 'var(--warning)'
+    : 'var(--success)';
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="h-1.5 w-10 shrink-0 overflow-hidden rounded-full bg-sunken">
+        <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: colour }} />
+      </div>
+      <span className="text-[11px] font-bold" style={{ color: colour }}>{label}</span>
+    </div>
+  );
+}
+
 const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, refetch, connId, initialDb }) {
   const [view,          setView]          = React.useState('size');
   const [searchInput,   setSearchInput]   = React.useState('');
   const [search,        setSearch]        = React.useState('');   // debounced — the actual filter key
   const [selDb,         setSelDb]         = React.useState(initialDb || '__all__');
   const [selectedTable, setSelectedTable] = React.useState(null);
+  // null = follow the view chip's own ordering (By Size, Dead Tuples, …).
+  // Clicking a column header takes over from it; the chips still re-filter.
+  const [tblSort,       setTblSort]       = React.useState(null);
 
   // when the user drills in from the Databases tab, follow the chosen DB
   React.useEffect(() => {
@@ -2367,10 +2488,100 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.tables, selDb, view, search]);
 
+  const maxSize = Math.max(...(d.tables || []).map(t => t.total_bytes || 0), 1);
+
+  /* Shaped for the shared <Table> — same component, same dark header, same row
+     chrome as the Agents list, so the two read as one product instead of two.
+     `sort` carries the raw comparable value so a cell can render a bar or a
+     badge while the column still sorts numerically. */
+  const tableRows = useMemo(() => tables.map((t, i) => {
+    const deadPct  = t.dead_pct || 0;
+    const cachePct = t.heap_cache_pct || 0;
+    const idxPct   = t.idx_scan_pct || 0;
+    const needsVac = t.needs_vacuum;
+    const va = vacuumAgo(t);
+    const aa = analyzeAgo(t);
+    const sizePct = Math.min(100, Math.round((t.total_bytes || 0) / maxSize * 100));
+    return {
+      key: `${t.database}.${t.schemaname}.${t.relname}.${i}`,
+      onClick: () => setSelectedTable(t),
+      // No row tint for "needs vacuum": <Table> documents a row `tone` but never
+      // implements it, so setting it would be dead code. The cue lives in the
+      // Last Vacuum cell (orange) plus the banner and the "Vacuum Needed" chip.
+      sort: {
+        database: t.database || '', schemaname: t.schemaname || '', relname: t.relname || '',
+        total_bytes: t.total_bytes || 0, heap: t.heap_bytes || 0, indexes: t.indexes_bytes || 0,
+        live: Number(t.n_live_tup) || 0, dead: Number(t.n_dead_tup) || 0,
+        deadPct, cachePct, seq: Number(t.seq_scan) || 0, idxPct,
+        dml: (Number(t.n_tup_ins) || 0) + (Number(t.n_tup_upd) || 0) + (Number(t.n_tup_del) || 0),
+        // Sort by real recency, never by the rendered "3d ago" string (which
+        // would put "9h" after "10d" alphabetically). A table that has NEVER
+        // been vacuumed is the most stale thing on the list, so it sorts as 0
+        // rather than being dropped to the end as a blank.
+        vacuum: tsOf(t.last_vacuum, t.last_autovacuum),
+        analyze: tsOf(t.last_analyze, t.last_autoanalyze),
+      },
+      cells: {
+        database: <span className="rounded-full border border-accent-border bg-accent-softer px-2 py-0.5 text-[10px] font-bold whitespace-nowrap text-accent-text">{t.database || '—'}</span>,
+        schemaname: <span className="font-mono text-[11px] text-muted">{t.schemaname}</span>,
+        relname: (
+          <span className="flex items-center gap-1 font-bold text-accent-text">
+            {t.relname}
+            <ExternalLink size={11} className="shrink-0 opacity-50" />
+          </span>
+        ),
+        total_bytes: (
+          <div className="flex items-center gap-2">
+            <span className="font-bold whitespace-nowrap text-fg">{t.total_size || '—'}</span>
+            <div className="h-1.5 w-12 shrink-0 overflow-hidden rounded-full bg-sunken">
+              <div className="h-full rounded-full bg-accent" style={{ width: `${sizePct}%` }} />
+            </div>
+          </div>
+        ),
+        heap: <span className="font-mono text-muted">{t.heap_size || '—'}</span>,
+        indexes: <span className="font-mono text-muted">{t.indexes_size || '—'}</span>,
+        live: <span className="font-mono font-bold text-fg">{fmtNum(t.n_live_tup)}</span>,
+        dead: <span className={`font-mono font-bold ${t.n_dead_tup > 10000 ? 'text-danger' : t.n_dead_tup > 1000 ? 'text-warning-fg' : 'text-muted'}`}>{fmtNum(t.n_dead_tup)}</span>,
+        deadPct: <MiniBar pct={Math.min(100, deadPct * 2)} label={`${deadPct}%`} tone={deadPct > 20 ? 'danger' : deadPct > 5 ? 'warning' : 'success'} />,
+        cachePct: <MiniBar pct={cachePct} label={`${cachePct}%`} tone={cachePct > 90 ? 'success' : cachePct > 70 ? 'warning' : 'danger'} />,
+        seq: <span className="font-mono text-muted">{fmtNum(t.seq_scan)}</span>,
+        idxPct: (
+          <span className="rounded-full px-2 py-0.5 text-[11px] font-bold"
+                style={{
+                  color: idxPct > 80 ? 'var(--success-fg)' : idxPct > 50 ? 'var(--warning-fg)' : 'var(--danger-fg)',
+                  background: idxPct > 80 ? 'var(--success-soft)' : idxPct > 50 ? 'var(--warning-soft)' : 'var(--danger-soft)',
+                }}>
+            {idxPct}%
+          </span>
+        ),
+        dml: (
+          <span className="font-mono text-[11px] whitespace-nowrap">
+            <span className="font-bold text-success">{fmtNum(t.n_tup_ins)}</span>
+            <span className="mx-1 text-subtle">/</span>
+            <span className="font-bold text-accent-text">{fmtNum(t.n_tup_upd)}</span>
+            <span className="mx-1 text-subtle">/</span>
+            <span className="font-bold text-danger">{fmtNum(t.n_tup_del)}</span>
+          </span>
+        ),
+        vacuum: va
+          ? <span className={`text-[11px] font-semibold ${needsVac ? 'text-warning-fg' : 'text-muted'}`}>{va}</span>
+          : <span className="text-[11px] font-bold text-danger">Never</span>,
+        analyze: aa
+          ? <span className="text-[11px] font-semibold text-muted">{aa}</span>
+          : <span className="text-[11px] font-bold text-warning-fg">Never</span>,
+      },
+    };
+  }), [tables, maxSize]);
+
+  const sortedRows = useMemo(
+    () => (tblSort ? sortRows(tableRows, tblSort) : tableRows),
+    [tableRows, tblSort],
+  );
+
   /* 110 tables in one scroll is not a list anyone reads. Same stepper, same
      app-wide rows-per-page default and same per-list override as every other
      list — the hook exists so a hand-written table gets it without a rewrite. */
-  const paged = usePaged(tables);
+  const paged = usePaged(sortedRows);
 
   const totalBytes  = d.total_bytes || 0;
   const vacNeed     = d.vacuum_needed || 0;
@@ -2378,8 +2589,6 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
   const autovac     = d.autovac_config || {};
 
   if (isLoading && !d.status) return <PageLoading title="Loading table statistics…" illustration />;
-
-  const maxSize = Math.max(...(d.tables||[]).map(t=>t.total_bytes||0), 1);
 
   return (
     <div className="space-y-5">
@@ -2489,101 +2698,16 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
             {d.total_count===0 && <p className="text-[12px] text-slate-400 mt-1">No user tables were found in any database on this server.</p>}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="bg-slate-50/70 border-b border-slate-200">
-                  {['DB','Schema','Table','Total Size','Heap','Indexes','Live Rows','Dead Rows','Dead %','Cache Hit','Seq Scans','Idx %','Ins/Upd/Del','Last Vacuum','Last Analyze'].map(h=>(
-                    <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {paged.rows.map((t, i) => {
-                  const deadPct    = t.dead_pct || 0;
-                  const cachePct   = t.heap_cache_pct || 0;
-                  const idxPct     = t.idx_scan_pct || 0;
-                  const needsVac   = t.needs_vacuum;
-                  const va         = vacuumAgo(t);
-                  const aa         = analyzeAgo(t);
-                  const sizePct    = Math.min(100, Math.round((t.total_bytes||0)/maxSize*100));
-                  return (
-                      <tr key={i} className={`border-t border-slate-100 hover:bg-indigo-50/20 transition-colors ${needsVac?'bg-orange-50/30':''}`}>
-                        <td className="px-3 py-2.5">
-                          <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[9px] font-bold border border-indigo-200 whitespace-nowrap">{t.database||'—'}</span>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400 text-[10px]">{t.schemaname}</td>
-                        <td className="px-3 py-2.5">
-                          <button onClick={() => setSelectedTable(t)}
-                            className="font-black text-indigo-700 hover:text-indigo-500 hover:underline text-left flex items-center gap-1 group">
-                            {t.relname}
-                            <ExternalLink size={10} className="text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"/>
-                          </button>
-                        </td>
-                        {/* Total size bar */}
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-700 whitespace-nowrap">{t.total_size||'—'}</span>
-                            <div className="h-1.5 w-12 bg-slate-100 rounded-full overflow-hidden flex-shrink-0">
-                              <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-500" style={{width:`${sizePct}%`}}/>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-slate-500 font-mono">{t.heap_size||'—'}</td>
-                        <td className="px-3 py-2.5 text-violet-600 font-mono">{t.indexes_size||'—'}</td>
-                        <td className="px-3 py-2.5 font-mono font-bold text-slate-700">{fmtNum(t.n_live_tup)}</td>
-                        <td className={`px-3 py-2.5 font-mono font-bold ${t.n_dead_tup>10000?'text-red-600':t.n_dead_tup>1000?'text-orange-500':'text-slate-500'}`}>
-                          {fmtNum(t.n_dead_tup)}
-                        </td>
-                        {/* Dead% */}
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center gap-1.5">
-                            <div className="h-1.5 w-10 bg-slate-100 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${deadPct>20?'bg-red-500':deadPct>5?'bg-orange-400':'bg-emerald-400'}`} style={{width:`${Math.min(100,deadPct*2)}%`}}/>
-                            </div>
-                            <span className={`font-bold ${deadPct>20?'text-red-600':deadPct>5?'text-orange-600':'text-emerald-600'}`}>{deadPct}%</span>
-                          </div>
-                        </td>
-                        {/* Cache hit */}
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center gap-1.5">
-                            <div className="h-1.5 w-10 bg-slate-100 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${cachePct>90?'bg-emerald-400':cachePct>70?'bg-yellow-400':'bg-red-500'}`} style={{width:`${cachePct}%`}}/>
-                            </div>
-                            <span className={`font-bold ${cachePct>90?'text-emerald-600':cachePct>70?'text-yellow-600':'text-red-600'}`}>{cachePct}%</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-600">{fmtNum(t.seq_scan)}</td>
-                        {/* Idx scan % */}
-                        <td className="px-3 py-2.5">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${idxPct>80?'bg-emerald-100 text-emerald-700':idxPct>50?'bg-yellow-100 text-yellow-700':'bg-red-100 text-red-700'}`}>
-                            {idxPct}%
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 whitespace-nowrap">
-                          <span className="text-emerald-600 font-bold">{fmtNum(t.n_tup_ins)}</span>
-                          <span className="text-slate-300 mx-1">/</span>
-                          <span className="text-blue-600 font-bold">{fmtNum(t.n_tup_upd)}</span>
-                          <span className="text-slate-300 mx-1">/</span>
-                          <span className="text-red-500 font-bold">{fmtNum(t.n_tup_del)}</span>
-                        </td>
-                        {/* Vacuum */}
-                        <td className="px-3 py-2.5">
-                          {va
-                            ? <span className={`text-[10px] font-semibold ${needsVac?'text-orange-600':'text-slate-400'}`}>{va}</span>
-                            : <span className="text-[10px] text-red-500 font-bold">Never</span>}
-                        </td>
-                        {/* Analyze */}
-                        <td className="px-3 py-2.5">
-                          {aa
-                            ? <span className="text-[10px] text-slate-400 font-semibold">{aa}</span>
-                            : <span className="text-[10px] text-orange-500 font-bold">Never</span>}
-                        </td>
-                      </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div>
+            <DataTable
+              columns={PG_TABLE_COLUMNS}
+              rows={paged.rows}
+              sort={tblSort}
+              onSort={(key) => setTblSort((cur) => nextSort(cur, key))}
+              rowHeight={64}
+              darkHeader
+              empty={<TableEmptyState icon="boxes" title="No tables match this view." />}
+            />
             <Pagination {...paged.props} unit="tables" />
           </div>
         )}

@@ -42,6 +42,7 @@ const LogsPage = lazy(() => import('@/pages/logs/LogsPage'));
 // an engine dashboard's Overview/Performance/Queries/… tabs for one connection.
 const CloudShell = lazy(() => import('@/features/cloud/components/CloudShell').then((m) => ({ default: m.CloudShell })));
 const CloudProviderChooser = lazy(() => import('@/features/cloud/pages/CloudProviderChooser'));
+const CloudDashboardPage = lazy(() => import('@/features/cloud/pages/CloudDashboardPage'));
 const CloudAccountsPage = lazy(() => import('@/features/cloud/pages/CloudAccountsPage').then((m) => ({ default: m.CloudAccountsPage })));
 const CloudProviderAccountsPage = lazy(() => import('@/features/cloud/pages/CloudProviderAccountsPage'));
 const CloudDashboard = lazy(() => import('@/features/cloud/pages/CloudDashboard').then((m) => ({ default: m.CloudDashboard })));
@@ -91,6 +92,7 @@ const PgReportsPage = lazy(() => import('@/pages/postgresql/PostgreSQLReportsPag
 const OracleDashboard = lazy(() => import('@/pages/oracle/OracleDashboard'));
 const OracleLiveQueries = lazy(() => import('@/pages/oracle/LiveQueries'));
 const OracleSessionDetailPage = lazy(() => import('@/pages/oracle/SessionDetailPage'));
+const OracleUserDetailPage = lazy(() => import('@/pages/oracle/UserDetailPage'));
 const OracleErrorLogs = lazy(() => import('@/pages/oracle/ErrorLogs'));
 const OracleIndexAnalysis = lazy(() => import('@/pages/oracle/IndexAnalysis'));
 const OracleStorageHealth = lazy(() => import('@/pages/oracle/StorageHealth'));
@@ -195,6 +197,12 @@ export default function App() {
       <Route element={(token || AUTH_DISABLED) ? <AppShell user={user} onSignOut={onSignOut} /> : <Navigate to={APP.loginRoute} replace />}>
         <Route index element={<Navigate to={APP.defaultRoute} replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        {/* Child of the main Dashboard, not the Cloud module — its own
+            top-level route, gated by its own CLOUD_DASHBOARD page permission
+            (migrations/2026-09-18_cloud_dashboard_page.sql, parent_id=67).
+            A role holding only this permission (not page 67 itself) lands
+            here directly after login via the existing firstAllowedPath(). */}
+        <Route path="/cloud-dashboard" element={<CloudDashboardPage />} />
         <Route path="/alerts" element={<AlertsPage />} />
         <Route path="/agents" element={<AgentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
@@ -333,6 +341,7 @@ export default function App() {
             with `embedded` deciding whether it draws a page header. */}
         <Route path="/oracle-dashboard/:id" element={<OracleDashboard />} />
         <Route path="/oracle-dashboard/:id/live-queries/session" element={<OracleSessionDetailPage />} />
+        <Route path="/oracle-dashboard/:id/users/:username" element={<OracleUserDetailPage />} />
         <Route path="/oracle-dashboard/:id/live-queries" element={<OracleLiveQueries />} />
         <Route path="/oracle-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="oracle" />} />
         <Route path="/oracle-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="oracle" />} />

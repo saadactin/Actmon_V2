@@ -16,9 +16,22 @@ from app.services.common.slow_query_normalize import attach_normalized, build_no
 # Helpers
 # ---------------------------------------------------------------------------
 
+# serverSelectionTimeoutMS alone only bounds "which server do I talk to" — once
+# a server IS selected, a mongod that accepts the socket but never answers makes
+# every .command() block forever, with nothing above it to cut it short. socket/
+# connect timeouts are what actually bound an individual command, and matter most
+# here because get_dashboard() issues 4 + one-per-database commands SERIALLY:
+# without them a single wedged database hangs the whole dashboard indefinitely.
+_MONGO_TIMEOUTS = {
+    "serverSelectionTimeoutMS": 5000,
+    "connectTimeoutMS": 5000,
+    "socketTimeoutMS": 20000,
+}
+
+
 def _direct_mongo_client(conn):
     if conn.connection_uri:
-        return MongoClient(conn.connection_uri, serverSelectionTimeoutMS=5000)
+        return MongoClient(conn.connection_uri, **_MONGO_TIMEOUTS)
     pw = quote_plus(conn.password or "")
     proto_raw = conn.mongo_protocol or "mongodb"
     protocol = proto_raw.split("://")[0] if "://" in proto_raw else proto_raw
@@ -27,7 +40,7 @@ def _direct_mongo_client(conn):
     replica = f"&replicaSet={conn.replica_set}" if conn.replica_set else ""
     return MongoClient(
         f"{protocol}://{auth}{conn.host}:{conn.port}/{conn.database_name or ''}{auth_source}{replica}",
-        serverSelectionTimeoutMS=5000,
+        **_MONGO_TIMEOUTS,
     )
 
 
@@ -147,6 +160,14 @@ def get_dashboard(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "mongo_dashboard", db)
     if _cached is not None:
         return _cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_dashboard_inner, conn_id, db,
+        default=timeout_error(), label="mongo_dashboard",
+    )
+
+
+def _get_dashboard_inner(conn_id: int, db: Session):
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -793,6 +814,14 @@ def get_collections(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "mongo_collections", db)
     if _cached is not None:
         return _cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_collections_inner, conn_id, db,
+        default=timeout_error(), label="mongo_collections",
+    )
+
+
+def _get_collections_inner(conn_id: int, db: Session):
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:
@@ -870,6 +899,14 @@ def get_indexes(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "mongo_indexes", db)
     if _cached is not None:
         return _cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_indexes_inner, conn_id, db,
+        default=timeout_error(), label="mongo_indexes",
+    )
+
+
+def _get_indexes_inner(conn_id: int, db: Session):
     conn = _get_conn_or_404(conn_id, db)
     mc = None
     try:

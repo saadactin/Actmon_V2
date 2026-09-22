@@ -196,6 +196,12 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
   const [page, setPage] = useState(1);
   const [statusFilterId, setStatusFilterIdRaw] = useState('all');
   const setStatusFilterId = (id) => { setStatusFilterIdRaw(id); setPage(1); };
+  // Every resource gets the same free-text search, matched across every
+  // column shown in its table — one search box here covers Roles, User
+  // Master, Employees, Departments, Designations, Permissions, Modules and
+  // Pages at once, rather than wiring search into each config separately.
+  const [search, setSearchRaw] = useState('');
+  const setSearch = (v) => { setSearchRaw(v); setPage(1); };
   // Same pattern as AgentsPage.jsx/ObjectTable.jsx: the app-wide rowsPerPage
   // appearance setting is the default, overridable per-session by the
   // pager's own page-size control — so this table's pager behaves exactly
@@ -239,7 +245,20 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     return opt?.test ? rows.filter(opt.test) : rows;
   }, [rows, config.statusFilter, statusFilterId]);
 
-  const allTableRows = useMemo(() => filteredRows.map((row) => ({
+  const searchedRows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return filteredRows;
+    // Prefer the resource's own searchKeys (already defined on 13 configs,
+    // just never consumed until now) — lets a config exclude columns that
+    // wouldn't produce a meaningful text match (status pills, JSON blobs).
+    // Falls back to every visible column for the configs without one.
+    const keys = config.searchKeys || config.columns.map((c) => c.key);
+    return filteredRows.filter((row) => keys.some(
+      (k) => String(row[k] ?? '').toLowerCase().includes(term),
+    ));
+  }, [filteredRows, search, config.searchKeys, config.columns]);
+
+  const allTableRows = useMemo(() => searchedRows.map((row) => ({
     key: row[config.idKey],
     cells: {
       ...Object.fromEntries(config.columns.map((c, i) => [c.key, <Cell key={c.key} col={c} row={row} identity={i === 1} />])),
@@ -253,7 +272,7 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     },
     sort: Object.fromEntries(config.columns.map((c) => [c.key, row[c.key]])),
     // eslint-disable-next-line no-use-before-define
-  })), [filteredRows, config.columns, config.idKey, allowEdit, allowDelete]);
+  })), [searchedRows, config.columns, config.idKey, allowEdit, allowDelete]);
 
   const sortedRows = sortRows(allTableRows, sort);
   const pageCount = pageCountOf(sortedRows.length, pageSize);
@@ -422,6 +441,15 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
         backLabel={config.orgScoped ? 'Administration' : (config.hub?.label || 'Administration')}
         actions={(
           <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onClear={() => setSearch('')}
+              placeholder={`Search ${config.title.toLowerCase()}…`}
+              icon="search"
+              size="sm"
+              wrapperClassName="w-56"
+            />
             {config.statusFilter && (
               <div className="w-36">
                 <Select
@@ -465,8 +493,8 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
           empty={(
             <EmptyState
               icon={config.icon}
-              title={`No ${config.title.toLowerCase()} yet`}
-              body={allowAdd ? `Click "Add ${singular}" to create the first one.` : undefined}
+              title={search.trim() ? `No ${config.title.toLowerCase()} match “${search.trim()}”` : `No ${config.title.toLowerCase()} yet`}
+              body={search.trim() ? 'Try a different search term.' : (allowAdd ? `Click "Add ${singular}" to create the first one.` : undefined)}
             />
           )}
           darkHeader

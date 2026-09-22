@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import cn from '@/lib/cn';
 import PageHeader from '@/components/layout/PageHeader';
+import FlowDiagram from '@/components/diagram/FlowDiagram';
 import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import { PageLoading } from '@/components/ui/Loading';
@@ -344,29 +345,28 @@ export default function HostAgentPage({ name, hasConnection = false }) {
           </div>
         )}
 
-        <ol className="flex flex-col gap-3 lg:flex-row lg:items-stretch">
-          {d.pipeline.map((stage, i) => (
-            <li key={stage.id} className="flex min-w-0 flex-1 items-start gap-3">
-              <span
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-white"
-                style={{ background: stage.ok ? 'var(--status-good)' : 'var(--status-critical)' }}
-              >
-                <Icon name={stage.ok ? 'check' : 'close'} size={13} strokeWidth={3} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[12px] font-bold text-fg">{stage.label}</span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-muted">{stage.detail}</span>
-              </span>
-              {i < d.pipeline.length - 1 && (
-                <Icon
-                  name="chevron-right"
-                  size={15}
-                  className="mt-1 hidden shrink-0 text-subtle lg:block"
-                />
-              )}
-            </li>
-          ))}
-        </ol>
+        {/* A pipeline is a chain of relationships, so it uses the shared flow
+            diagram like every other topology in the app. The old markup drew
+            chevrons only at lg: and up, which meant the connection between
+            stages — the entire point of a pipeline — was invisible on a
+            laptop or phone. The diagram scrolls horizontally instead. */}
+        <FlowDiagram
+          caption="Each hop feeds the next; a red stage is where telemetry stops."
+          nodes={d.pipeline.map((stage) => ({
+            id: stage.id,
+            label: stage.label,
+            sublabel: stage.detail,
+            tone: stage.ok ? 'success' : 'danger',
+            dot: true,
+          }))}
+          edges={d.pipeline.slice(1).map((stage, i) => ({
+            from: d.pipeline[i].id,
+            to: stage.id,
+            // Dash the hop INTO a failed stage: that edge is where flow stopped.
+            tone: stage.ok ? undefined : 'danger',
+            dashed: !stage.ok,
+          }))}
+        />
 
         <div className="mt-4 border-t border-border pt-3">
           <p className="mb-2 text-[10px] font-bold tracking-wide text-subtle uppercase">

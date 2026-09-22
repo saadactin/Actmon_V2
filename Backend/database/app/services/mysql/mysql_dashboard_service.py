@@ -125,7 +125,14 @@ def get_dashboard(conn_id: int, db: Session, live: bool = False) -> dict:
         cached = _get_snap(conn_id, "mysql_dashboard", db)
         if cached is not None:
             return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_dashboard_inner, conn_id, db, live,
+        default=timeout_error(), label="mysql_dashboard",
+    )
 
+
+def _get_dashboard_inner(conn_id: int, db: Session, live: bool = False) -> dict:
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -399,7 +406,14 @@ def get_backup_info(conn_id: int, db: Session, live: bool = False) -> dict:
         cached = _get_snap(conn_id, "mysql_backup_info", db)
         if cached is not None:
             return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_backup_info_inner, conn_id, db, live,
+        default=timeout_error(), label="mysql_backup_info",
+    )
 
+
+def _get_backup_info_inner(conn_id: int, db: Session, live: bool = False) -> dict:
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -506,7 +520,14 @@ def get_table_stats(conn_id: int, db: Session, live: bool = False) -> dict:
         cached = _get_snap(conn_id, "mysql_table_stats", db)
         if cached is not None:
             return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_table_stats_inner, conn_id, db, live,
+        default=timeout_error(), label="mysql_table_stats",
+    )
 
+
+def _get_table_stats_inner(conn_id: int, db: Session, live: bool = False) -> dict:
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -554,7 +575,14 @@ def get_user_stats(conn_id: int, db: Session, live: bool = False) -> dict:
         cached = _get_snap(conn_id, "mysql_user_stats", db)
         if cached is not None:
             return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_user_stats_inner, conn_id, db, live,
+        default=timeout_error(), label="mysql_user_stats",
+    )
 
+
+def _get_user_stats_inner(conn_id: int, db: Session, live: bool = False) -> dict:
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -605,7 +633,14 @@ def get_innodb_metrics(conn_id: int, db: Session, live: bool = False) -> dict:
         cached = _get_snap(conn_id, "mysql_innodb", db)
         if cached is not None:
             return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_innodb_metrics_inner, conn_id, db, live,
+        default=timeout_error(), label="mysql_innodb_metrics",
+    )
 
+
+def _get_innodb_metrics_inner(conn_id: int, db: Session, live: bool = False) -> dict:
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()
@@ -673,7 +708,14 @@ def get_performance_detail(conn_id: int, db: Session, live: bool = False) -> dic
         cached = _get_snap(conn_id, "mysql_performance_detail", db)
         if cached is not None:
             return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_performance_detail_inner, conn_id, db, live,
+        default=timeout_error(), label="mysql_performance_detail",
+    )
 
+
+def _get_performance_detail_inner(conn_id: int, db: Session, live: bool = False) -> dict:
     connection = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id, ConnectionMaster.db_type == "mysql"
     ).first()

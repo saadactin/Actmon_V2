@@ -104,6 +104,7 @@ from app.routes.settings.help_center_appearance_routes import router as help_cen
 from app.routes.mongo.mongo_monitoring_routes import router as mongo_monitoring_router
 
 from app.routes.common.db_diagnose_routes import router as db_diagnose_router
+from app.routes.common.report_pdf_routes import router as report_pdf_router
 
 from app.routes.os_server.os_server_routes import router as os_server_router
 from app.routes.os_server.terminal_routes import router as terminal_router
@@ -119,6 +120,7 @@ from app.routes.agent.agent_install_routes import router as agent_install_router
 from app.routes.chatbot.chatbot_routes import router as chatbot_router
 from app.routes.chatbot.chat_session_routes import router as chat_session_router
 from app.routes.admin.ai_chat_audit_routes import router as ai_chat_audit_router
+from app.routes.cloud.cloud_dashboard_routes import router as cloud_dashboard_router
 from app.routes.alerts.alert_routes import router as alerts_router
 from app.routes.logs.logs_routes import router as logs_router
 from app.routes.download.download_routes import router as download_router
@@ -278,6 +280,7 @@ app.include_router(mysql_binlog_router)
 app.include_router(mysql_report_router)
 
 app.include_router(db_diagnose_router)
+app.include_router(report_pdf_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
@@ -335,6 +338,7 @@ app.include_router(agent_install_router)
 app.include_router(chatbot_router)
 app.include_router(chat_session_router)
 app.include_router(ai_chat_audit_router)
+app.include_router(cloud_dashboard_router)
 app.include_router(alerts_router)
 app.include_router(notification_router)
 app.include_router(logs_router)

@@ -4,11 +4,12 @@ import {
   GitBranch, Shield, RefreshCw, ChevronDown, Server, Activity, Clock, AlertTriangle,
   CheckCircle2, Settings, ScrollText, History, Repeat, Zap, Power, RotateCw, Play,
   Pause, Save, Info, FileText, ArrowRightLeft, LayoutGrid, Wrench, Stethoscope,
-  ArrowDown, Crown,
+  ArrowDown,
 } from 'lucide-react';
 import client, { errorText } from '@/api/client';
 import { usePermissions } from '@/hooks/usePermissions';
 import Popover from '@/components/ui/Popover';
+import FlowDiagram from '@/components/diagram/FlowDiagram';
 import Button from '@/components/ui/Button';
 import Dialog from '@/components/ui/Dialog';
 import CodeEditor from '@/components/ui/CodeEditor';
@@ -451,65 +452,70 @@ function TopologyView({ s, compact = false }) {
     }
   });
 
-  const NodeBox = ({ m, isLeader }) => {
-    const hs = hStyle(m.node_health);
-    const label = roleLabel(m);
-    return (
-      <div className={`rounded-xl border-2 px-4 py-3 text-center shadow-sm ${isLeader ? 'border-emerald-300 bg-emerald-50' : m.patroni_state === 'missing' ? 'border-red-300 bg-red-50' : 'border-blue-200 bg-blue-50'}`}>
-        <div className="flex items-center justify-center gap-1">
-          {isLeader && <Crown size={11} className="text-emerald-600" />}
-          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-        </div>
-        <p className="text-[14px] font-black text-slate-900 mt-0.5">{m.member_name}</p>
-        <p className="text-[11px] font-mono text-slate-500">{m.ip_address}</p>
-        <p className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">{m.patroni_state}</p>
-        {!isLeader && m.patroni_state !== 'missing' && (
-          <>
-            <p className={`text-[11px] font-bold mt-1 ${m.wal_receiver_streaming ? 'text-emerald-600' : 'text-amber-600'}`}>
-              {m.wal_receiver_streaming ? 'Streaming' : 'Not Streaming'} · Lag {m.lag_bytes ?? m.replay_lag ?? '—'}
-            </p>
-            {m.upstream_member && <p className="text-[10px] text-slate-400 mt-0.5">from {m.upstream_member}</p>}
-          </>
-        )}
-        {!compact && <p className="text-[10px] text-slate-400 mt-0.5">Timeline {m.timeline ?? '—'}</p>}
-        <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-[9px] font-black ${hs.bg} ${hs.text}`}>
-          {m.node_health}
-        </span>
-      </div>
-    );
-  };
-
-  const renderChain = (parentName) => {
-    const kids = childrenOf[parentName] || [];
-    if (!kids.length) return null;
-    return (
-      <div className="flex flex-wrap justify-center gap-6">
-        {kids.map((r) => (
-          <div key={r.member_name} className="flex flex-col items-center gap-1.5">
-            <ArrowDown size={13} className="text-slate-300" />
-            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">
-              {r.is_cascading ? `WAL Streaming · via ${r.upstream_member}` : 'WAL Streaming'}
-            </div>
-            <NodeBox m={r} />
-            {renderChain(r.member_name)}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   if (!leader) return <p className="text-slate-400 text-[12px]">No leader detected right now.</p>;
 
+  // member -> FlowDiagram node. The upstream map above becomes the edge list
+  // directly, so a cascading replica lands one column right of the replica it
+  // actually streams from — the old markup drew every replica in a single flat
+  // row with an arrow that never reached any box.
+  const toNode = (m, isLeader) => {
+    const missing = m.patroni_state === 'missing';
+    const streaming = m.wal_receiver_streaming;
+    return {
+      id: m.member_name,
+      label: m.member_name,
+      sublabel: `${roleLabel(m)} · ${m.ip_address || '—'}`,
+      meta: isLeader
+        ? `${m.patroni_state}${compact ? '' : ` · timeline ${m.timeline ?? '—'}`}`
+        : missing
+          ? 'missing'
+          : `${streaming ? 'Streaming' : 'Not streaming'} · lag ${m.lag_bytes ?? m.replay_lag ?? '—'}`,
+      tone: isLeader ? 'success' : missing ? 'danger' : streaming ? 'accent' : 'warning',
+      dot: true,
+      title: `${m.member_name} — health ${m.node_health}`,
+    };
+  };
+
+  const inTree = [leader, ...(s.members || []).filter(
+    (m) => !isLeaderRole(m.role) && m.patroni_state !== 'missing' && m.upstream_member,
+  )];
+  const diagramNodes = inTree.map((m) => toNode(m, isLeaderRole(m.role)));
+  const known = new Set(diagramNodes.map((n) => n.id));
+  const diagramEdges = [];
+  Object.entries(childrenOf).forEach(([parent, kids]) => {
+    if (!known.has(parent)) return;             // upstream we have no member row for
+    kids.forEach((r) => diagramEdges.push({
+      from: parent,
+      to: r.member_name,
+      label: r.is_cascading ? 'cascade' : 'WAL',
+      tone: r.wal_receiver_streaming ? undefined : 'warning',
+      dashed: !r.wal_receiver_streaming,
+    }));
+  });
+
   return (
-    <div className="flex flex-col items-center gap-3 py-2">
-      <NodeBox m={leader} isLeader />
-      <div className="w-px h-5 bg-slate-300" />
-      {renderChain(leader.member_name)}
+    <div className="flex flex-col gap-3 py-2">
+      <FlowDiagram
+        caption="WAL flows left to right, from each replica's actual resolved upstream."
+        nodes={diagramNodes}
+        edges={diagramEdges}
+      />
+      {/* Deliberately OUTSIDE the diagram: a replica whose upstream could not be
+          resolved has no known edge, and drawing it hanging off the leader would
+          assert a relationship we do not have. Same intent as the old markup. */}
       {unresolved.length > 0 && (
-        <div className="mt-2 flex flex-col items-center gap-2">
-          <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wide">Upstream unresolved</p>
-          <div className="flex flex-wrap justify-center gap-6">
-            {unresolved.map((r) => <NodeBox key={r.member_name} m={r} />)}
+        <div className="rounded-card border border-warning/40 bg-warning-soft/40 p-gutter">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-warning-fg">
+            Upstream unresolved — not placed in the diagram
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {unresolved.map((r) => (
+              <span key={r.member_name}
+                    className="rounded-control border border-border bg-surface px-2.5 py-1.5 text-[11px]">
+                <span className="font-semibold text-fg">{r.member_name}</span>
+                <span className="ml-1.5 text-muted">{r.ip_address}</span>
+              </span>
+            ))}
           </div>
         </div>
       )}

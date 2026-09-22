@@ -18,10 +18,9 @@ import { metricShort } from '@/config/alertCatalog';
  *
  * The card matches the height of the chart column beside it (CSS grid stretches
  * this sibling to that height already) and never grows past it — the list scrolls
- * WITHIN the card instead. A "More Alerts" action already exists (header button +
- * the footer link below), so there's no need to make the dashboard itself metres
- * long just to show every row; `MAX_ROWS` is a soft cap on top of that (rows past
- * it are reported in the footer, never silently dropped).
+ * WITHIN the card instead. The header's "More Alerts" button is the way out to
+ * the full list; `MAX_ROWS` just keeps this panel itself from scrolling forever
+ * on an org with hundreds of alerts.
  */
 
 const MAX_ROWS = 12;
@@ -58,7 +57,6 @@ export default function RecentAlertsPanel({
     [alerts, filter],
   );
   const visible = matching.slice(0, MAX_ROWS);
-  const hidden = matching.length - visible.length;
 
   return (
     <section className={cn('card flex min-h-0 flex-col overflow-hidden', className)}>
@@ -103,20 +101,9 @@ export default function RecentAlertsPanel({
         {visible.length === 0 ? (
           <Empty filtered={filter !== 'all' && counts.total > 0} />
         ) : (
-          <>
-            <ul className="flex flex-col gap-2">
-              {visible.map((alert, i) => <AlertRow key={alert.id ?? i} alert={alert} />)}
-            </ul>
-            {hidden > 0 && (
-              <button
-                type="button"
-                onClick={onOpenAll}
-                className="mt-3 w-full text-[12px] font-semibold text-accent-text hover:underline"
-              >
-                {hidden} more not shown — open alerts
-              </button>
-            )}
-          </>
+          <ul className="flex flex-col gap-2">
+            {visible.map((alert, i) => <AlertRow key={alert.id ?? i} alert={alert} />)}
+          </ul>
         )}
       </div>
     </section>

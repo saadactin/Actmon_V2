@@ -3,7 +3,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from urllib.parse import quote_plus
 
 from app.models.connection_model import ConnectionMaster
@@ -28,14 +28,33 @@ BENIGN_WAIT_TYPES_SQL = """
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_MSSQL_QUERY_TIMEOUT_SECONDS = 20
+
+
 def _mssql_direct_engine(conn):
     pw = quote_plus(conn.password or "")
     db_name = conn.database_name or "master"
-    return create_engine(
+    engine = create_engine(
         f"mssql+pyodbc://{conn.username}:{pw}@{conn.host}:{conn.port}/{db_name}"
         "?driver=ODBC+Driver+17+for+SQL+Server&timeout=5",
         pool_pre_ping=True,
     )
+
+    # The `timeout=5` in the URL above is the ODBC LOGIN timeout only — it says
+    # nothing about how long a query may run once connected. Without the
+    # per-statement bound below, one wedged DMV (sys.dm_exec_requests against a
+    # blocked server, dm_db_index_physical_stats on a huge table) keeps its
+    # worker thread alive indefinitely even after the request itself has given
+    # up and returned. pyodbc exposes this as a connection attribute, so it has
+    # to be set on connect rather than in the URL.
+    @event.listens_for(engine, "connect")
+    def _set_query_timeout(dbapi_connection, _record):  # noqa: ANN001
+        try:
+            dbapi_connection.timeout = _MSSQL_QUERY_TIMEOUT_SECONDS
+        except Exception:  # noqa: BLE001 — a driver without the attr must not break connecting
+            pass
+
+    return engine
 
 
 def _mssql_engine(conn):
@@ -141,7 +160,14 @@ def get_monitoring_dashboard(conn_id: int, db: Session):
     cached = _get_snap(conn_id, "mssql_monitoring_dashboard", db)
     if cached is not None:
         return cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _get_monitoring_dashboard_inner, conn_id, db,
+        default=timeout_error(), label="mssql_monitoring_dashboard",
+    )
 
+
+def _get_monitoring_dashboard_inner(conn_id: int, db: Session):
     conn_rec = _get_conn_or_404(conn_id, db)
     conn_meta = {
         "id": conn_rec.id,

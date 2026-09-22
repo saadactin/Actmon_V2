@@ -481,7 +481,7 @@ DOCS['db-overview'] = {
     elsewhere in ActMon:</p>
     <div class="tblwrap"><table class="doc">
       <tr><th>Dashboard shows</th><th>Full detail lives in</th></tr>
-      <tr><td>Database Server tile, Engine Distribution, Servers By Technology</td><td>Database module (per-engine server lists and dashboards)</td></tr>
+      <tr><td>Database Server tile, Engine Distribution, Servers By Database Technologies</td><td>Database module (per-engine server lists and dashboards)</td></tr>
       <tr><td>Infra Hosts tile, Fleet Health, Top Hosts By CPU, Average Resource Usage, Hosts by Environment</td><td>Infrastructure module</td></tr>
       <tr><td>Agents tile</td><td>Agents module</td></tr>
       <tr><td>Active Alerts tile, Alerts By Severity, Recent Alerts panel</td><td>Alerts module</td></tr>
@@ -534,7 +534,7 @@ DOCS['db-layout'] = {
         <ul>
           <li>Chart row A: Fleet Health, Engine Distribution, and a third card that is either "Cloud by
           Provider" or "Hosts by Environment" depending on whether any cloud accounts exist.</li>
-          <li>Chart row B: Alerts By Severity, Servers By Technology.</li>
+          <li>Chart row B: Alerts By Severity, Servers By Database Technologies.</li>
           <li>Chart row C: Top Hosts By CPU, Average Resource Usage.</li>
           <li>Right column: the Recent Alerts panel, spanning all three rows' height.</li>
         </ul>
@@ -547,7 +547,7 @@ DOCS['db-layout'] = {
       <tr><td>Engine Distribution</td><td>Donut chart</td><td>Host list, grouped by database engine</td><td>With host feed (60s)</td></tr>
       <tr><td>Cloud by Provider / Hosts by Environment</td><td>Donut chart (title switches)</td><td>Cloud accounts, or host <code>environment</code> field</td><td>60s (cloud) / with host feed</td></tr>
       <tr><td>Alerts By Severity</td><td>Column chart</td><td>Active alerts, grouped by severity</td><td>15s</td></tr>
-      <tr><td>Servers By Technology</td><td>Stacked column chart</td><td>Host list, grouped by engine × status</td><td>With host feed (60s)</td></tr>
+      <tr><td>Servers By Database Technologies</td><td>Stacked column chart</td><td>Host list, grouped by engine × status</td><td>With host feed (60s)</td></tr>
       <tr><td>Top Hosts By CPU</td><td>Horizontal bar chart</td><td>Host list, sorted by CPU%, top 5</td><td>With host feed (60s)</td></tr>
       <tr><td>Average Resource Usage</td><td>Radial gauges (CPU/RAM/Disk)</td><td>Host list, averaged</td><td>With host feed (60s)</td></tr>
       <tr><td>Recent Alerts panel</td><td>Filterable list</td><td>Active alerts</td><td>15s</td></tr>
@@ -609,7 +609,7 @@ DOCS['db-monitoring'] = {
     <p>The Dashboard's monitoring content splits into three areas, each summarizing one ActMon module:</p>
     <div class="tblwrap"><table class="doc">
       <tr><th>Area</th><th>Dashboard elements</th><th>Chapter</th></tr>
-      <tr><td>Database</td><td>Database Server tile, Engine Distribution chart, Servers By Technology chart</td><td><button onclick="go('db-database-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Monitoring</button></td></tr>
+      <tr><td>Database</td><td>Database Server tile, Engine Distribution chart, Servers By Database Technologies chart</td><td><button onclick="go('db-database-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Database Monitoring</button></td></tr>
       <tr><td>Agent</td><td>Agents tile</td><td><button onclick="go('db-agent-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Agent Monitoring</button></td></tr>
       <tr><td>Infrastructure</td><td>Infra Hosts tile, Fleet Health, Top Hosts By CPU, Average Resource Usage, Hosts by Environment</td><td><button onclick="go('db-infra-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Infrastructure Monitoring</button></td></tr>
     </div></table></div>
@@ -629,7 +629,7 @@ DOCS['db-database-mon'] = {
       <tr><th>Element</th><th>Shows</th><th>Click behavior</th></tr>
       <tr><td>Database Server tile</td><td>Total hosts running any database service, split Online/Offline</td><td>Navigates to <code>/databases</code></td></tr>
       <tr><td>Engine Distribution (donut)</td><td>Host count per database engine (MySQL, PostgreSQL, Oracle, MSSQL, MongoDB, ClickHouse). Engines with zero hosts are excluded from the chart.</td><td>Clicking a slice or legend row navigates to that engine's own server-list route, e.g. <code>/mysql-servers</code>, <code>/postgresql-servers</code></td></tr>
-      <tr><td>Servers By Technology (stacked column)</td><td>Same per-engine breakdown as Engine Distribution, but split further into Online / Warning / Offline segments per engine</td><td>Clicking a column navigates to that engine's server-list route</td></tr>
+      <tr><td>Servers By Database Technologies (stacked column)</td><td>Same per-engine breakdown as Engine Distribution, but split further into Online / Warning / Offline segments per engine</td><td>Clicking a column navigates to that engine's server-list route</td></tr>
     </table></div>
     <p>"Database" here means any host whose <code>database_services</code> list names a recognized engine — a
     single physical host running two database engines counts toward both engines' totals.</p>
@@ -771,7 +771,7 @@ DOCS['db-charts'] = {
       <tr><td>Engine Distribution</td><td>Donut</td><td>Hosts by database engine (zero-host engines excluded)</td><td>Count</td><td><strong>Yes</strong> — per-engine server list</td><td>"No database hosts discovered yet"</td></tr>
       <tr><td>Cloud by Provider / Hosts by Environment</td><td>Donut</td><td>Cloud accounts by provider, or hosts by <code>environment</code></td><td>Count</td><td>No</td><td>"No accounts" / "No hosts registered yet"</td></tr>
       <tr><td>Alerts By Severity</td><td>Column</td><td>Active alerts by severity — only populated if at least one alert is firing</td><td>Count</td><td>No (header has a separate "Open alerts" action)</td><td>"Nothing firing"</td></tr>
-      <tr><td>Servers By Technology</td><td>Stacked column</td><td>Hosts by engine × status (Online/Warning/Offline)</td><td>Count</td><td><strong>Yes</strong> — per-engine server list</td><td>"No database hosts discovered yet"</td></tr>
+      <tr><td>Servers By Database Technologies</td><td>Stacked column</td><td>Hosts by engine × status (Online/Warning/Offline)</td><td>Count</td><td><strong>Yes</strong> — per-engine server list</td><td>"No database hosts discovered yet"</td></tr>
       <tr><td>Top Hosts By CPU</td><td>Horizontal bar</td><td>Top 5 hosts by CPU%, banded coloring</td><td>%</td><td>No</td><td>"No host is reporting CPU yet"</td></tr>
       <tr><td>Average Resource Usage</td><td>Radial gauge ×3</td><td>Fleet average CPU/RAM/Disk</td><td>%</td><td>No</td><td>—</td></tr>
     </table></div>
@@ -813,7 +813,7 @@ DOCS['db-refresh'] = {
       <tr><td>Active alerts</td><td class="num">15s</td><td>Active Alerts tile, Alerts By Severity, Recent Alerts panel</td></tr>
       <tr><td>Agents</td><td class="num">30s</td><td>Agents tile</td></tr>
       <tr><td>Host summary</td><td class="num">30s</td><td>Infra Hosts tile, Fleet Health</td></tr>
-      <tr><td>Host list</td><td class="num">60s</td><td>Engine Distribution, Servers By Technology, Top Hosts By CPU, Average Resource Usage, Hosts by Environment</td></tr>
+      <tr><td>Host list</td><td class="num">60s</td><td>Engine Distribution, Servers By Database Technologies, Top Hosts By CPU, Average Resource Usage, Hosts by Environment</td></tr>
       <tr><td>Cloud accounts</td><td class="num">60s</td><td>Cloud Accounts tile, Cloud by Provider</td></tr>
     </table></div>
     <p>None of these requests retry automatically on failure — a failed request surfaces its empty/error state
@@ -848,7 +848,7 @@ DOCS['db-actions'] = {
       <tr><td>Refresh now</td><td>Header icon button</td><td>Re-fetches all five feeds immediately; resets the visible countdown to 30s</td></tr>
       <tr><td>Click a KPI tile</td><td>Any of the 5 headline tiles</td><td>Navigates to that tile's module (see <button onclick="go('db-drilldown')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Navigation &amp; Drill-Down</button>)</td></tr>
       <tr><td>Click an Engine Distribution slice/legend row</td><td>Engine Distribution chart</td><td>Navigates to that engine's server list</td></tr>
-      <tr><td>Click a Servers By Technology column</td><td>Servers By Technology chart</td><td>Navigates to that engine's server list</td></tr>
+      <tr><td>Click a Servers By Database Technologies column</td><td>Servers By Database Technologies chart</td><td>Navigates to that engine's server list</td></tr>
       <tr><td>Click "Open alerts"</td><td>Alerts By Severity card header</td><td>Navigates to <code>/alerts</code></td></tr>
       <tr><td>Click "More Alerts"</td><td>Recent Alerts panel header</td><td>Navigates to <code>/alerts</code></td></tr>
       <tr><td>Click "N more not shown"</td><td>Recent Alerts panel (only when &gt;40 alerts are active)</td><td>Navigates to <code>/alerts</code></td></tr>
@@ -876,7 +876,7 @@ DOCS['db-drilldown'] = {
       <tr><td>Agents tile</td><td>Click</td><td><code>/agents</code></td><td>See every registered agent</td></tr>
       <tr><td>Active Alerts tile</td><td>Click</td><td><code>/alerts</code></td><td>See every active alert</td></tr>
       <tr><td>Engine Distribution slice/legend</td><td>Click</td><td><code>/mysql-servers</code>, <code>/postgresql-servers</code>, <code>/oracle-servers</code>, <code>/mssql-servers</code>, <code>/mongodb-servers</code>, or <code>/clickhouse-servers</code></td><td>See that engine's server list</td></tr>
-      <tr><td>Servers By Technology column</td><td>Click</td><td>Same per-engine routes as above</td><td>Same as above</td></tr>
+      <tr><td>Servers By Database Technologies column</td><td>Click</td><td>Same per-engine routes as above</td><td>Same as above</td></tr>
       <tr><td>Alerts By Severity "Open alerts"</td><td>Click</td><td><code>/alerts</code></td><td>See every active alert</td></tr>
       <tr><td>Recent Alerts panel "More Alerts"</td><td>Click</td><td><code>/alerts</code></td><td>See every active alert</td></tr>
       <tr><td>Recent Alerts panel overflow link</td><td>Click</td><td><code>/alerts</code></td><td>See alerts beyond the panel's 40-row cap</td></tr>
@@ -933,7 +933,7 @@ DOCS['db-states'] = {
       <tr><td>Engine Distribution</td><td>"No database hosts discovered yet"</td><td>No host runs a recognized database engine</td></tr>
       <tr><td>Cloud by Provider / Hosts by Environment</td><td>"No accounts" / "No hosts registered yet"</td><td>Depending on which mode the card is in</td></tr>
       <tr><td>Alerts By Severity</td><td>"Nothing firing"</td><td>Zero active alerts</td></tr>
-      <tr><td>Servers By Technology</td><td>"No database hosts discovered yet"</td><td>Same condition as Engine Distribution</td></tr>
+      <tr><td>Servers By Database Technologies</td><td>"No database hosts discovered yet"</td><td>Same condition as Engine Distribution</td></tr>
       <tr><td>Top Hosts By CPU</td><td>"No host is reporting CPU yet"</td><td>No host currently reports CPU &gt; 0%</td></tr>
       <tr><td>Recent Alerts panel</td><td>"All clear" / "No alerts are firing."</td><td>Zero active alerts</td></tr>
       <tr><td>Recent Alerts panel (filtered)</td><td>"None at this severity" / "Other alerts are still firing."</td><td>A severity filter is active but matches nothing</td></tr>
@@ -1044,7 +1044,7 @@ DOCS['db-reference'] = {
       <tr><td>Engine Distribution</td><td>flat / donut</td></tr>
       <tr><td>Cloud by Provider / Hosts by Environment</td><td>flat / donut</td></tr>
       <tr><td>Alerts By Severity</td><td>flat / column</td></tr>
-      <tr><td>Servers By Technology</td><td>breakdown / stacked column</td></tr>
+      <tr><td>Servers By Database Technologies</td><td>breakdown / stacked column</td></tr>
       <tr><td>Top Hosts By CPU</td><td>flat / horizontal bar</td></tr>
       <tr><td>Average Resource Usage</td><td>ratio / radial gauge</td></tr>
     </table></div>
@@ -1798,7 +1798,7 @@ DOCS['dbm-overview'] = {
     <h2>How the Database module connects to other modules</h2>
     <div class="tblwrap"><table class="doc">
       <tr><th>Database module shows</th><th>Also summarized in</th></tr>
-      <tr><td>Total server/engine counts</td><td>Dashboard's Database Server tile, Engine Distribution and Servers By Technology charts (see <button onclick="go('db-database-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Dashboard → Database Monitoring</button>)</td></tr>
+      <tr><td>Total server/engine counts</td><td>Dashboard's Database Server tile, Engine Distribution and Servers By Database Technologies charts (see <button onclick="go('db-database-mon')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Dashboard → Database Monitoring</button>)</td></tr>
       <tr><td>Host-level CPU/RAM/Disk (via the embedded Host Resources widget)</td><td>Infrastructure module (host detail page) — not yet documented</td></tr>
       <tr><td>Per-connection agent status</td><td>Agents module (see <button onclick="go('agt-database-monitoring')" style="all:unset;cursor:pointer;color:var(--accent-ink);text-decoration:underline">Agents → Database Agent Monitoring</button>)</td></tr>
     </table></div>

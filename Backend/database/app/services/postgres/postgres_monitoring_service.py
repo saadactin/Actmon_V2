@@ -70,6 +70,239 @@ def _pgss_engine(conn):
     return None, None
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  pg_locks
+# ═════════════════════════════════════════════════════════════════════════════
+# The Locks tab used to run a query that reported mostly its OWN footprint:
+# reading pg_locks/pg_class/pg_stat_activity takes AccessShareLock on each of
+# those catalogs (and on the catalog indexes the planner touches), and since the
+# query neither excluded its own backend nor marked catalog objects, the result
+# was dominated by pg_class, pg_locks, pg_authid, pg_database and friends — all
+# granted, none blocking, none actionable. Worse, `LIMIT 50` with no ORDER BY
+# meant that noise could crowd a genuine blocking lock out of the payload
+# entirely.
+#
+# This version keeps every lock type (nothing is hidden), but labels each row so
+# the UI can lead with what matters:
+#   is_self      — never true; this backend is excluded in SQL (see below)
+#   is_system    — the locked object lives in a system schema
+#   is_blocking  — this PID is holding a lock somebody else is waiting on
+#   granted=false— this PID is itself waiting
+#
+# Design notes, in order of how easy each is to get wrong:
+#
+# 1. `l.pid <> pg_backend_pid()` — an observer cannot report on itself without
+#    reporting its own observation. Same exclusion svc_pg_session_details has
+#    always used. This also removes the ONLY source of negative durations (see 3).
+#
+# 2. The pg_class join is guarded by database. pg_locks spans the whole cluster
+#    but pg_class only holds THIS database's relations, and OIDs are per-database
+#    — so an unguarded join silently renames another database's relation to
+#    whatever happens to share that OID here. Shared catalogs (pg_database,
+#    pg_authid, ...) carry database = 0 and resolve correctly everywhere, hence
+#    the `= 0 OR = current` test rather than a plain equality.
+#
+# 3. clock_timestamp(), not now(). now() is transaction_timestamp() — FIXED at
+#    transaction start — so for a backend whose query began microseconds after
+#    that, `now() - query_start` is NEGATIVE. That is exactly where the reported
+#    "-0.000189s" came from. GREATEST(...,0) then floors any remaining skew
+#    (clock drift on a standby, a query_start from the future), and the NULL is
+#    kept explicit because GREATEST ignores NULLs and would turn "unknown" into
+#    a confident 0.
+#
+#    Naming honesty: PostgreSQL does not record when a lock was ACQUIRED. There
+#    is no such column in pg_locks. This is the age of the holding/waiting
+#    backend's current query, which is the closest available proxy — the field is
+#    named query_age_sec so the UI cannot imply otherwise.
+#
+# 4. pg_blocking_pids() is evaluated ONLY for ungranted rows. It is the correct
+#    answer to "who is blocking me" (it understands lock queues, which a
+#    self-join on locktype/relation does not), but it takes lock-manager LWLocks,
+#    so it runs for the handful of waiters rather than every row.
+#
+# 5. ORDER BY puts waiting first, then blockers, then application objects, then
+#    the oldest — so the LIMIT truncates noise, never an incident. count(*)
+#    OVER () is computed before LIMIT, so the UI can say how many were omitted.
+#
+# 6. `starts_with(nspname,'pg_')` minus the temp schemas. PostgreSQL normally
+#    rejects CREATE SCHEMA with a pg_ prefix, so that namespace is effectively
+#    reserved — though a superuser with allow_system_table_mods=on can still
+#    force one, which is why this is a strong default and not a guarantee. The
+#    misclassification is benign either way: the row is hidden, not dropped, and
+#    "Show System Objects" brings it back.
+#
+#    pg_temp_N / pg_toast_temp_N are carved back OUT. They carry a pg_ prefix but
+#    hold a user session's TEMP TABLES — those are application objects, and a
+#    lock on one is exactly the kind of thing this tab exists to show.
+#
+# 7. Rows with a NULL relation (transactionid, virtualxid, advisory, tuple) are
+#    deliberately NOT system rows — a transactionid lock is application
+#    behaviour, and it is where real contention usually shows up.
+#
+# 8. What this does NOT remove: ACTMON builds the dashboard with a 20-worker
+#    ThreadPoolExecutor, so while this statement runs, up to ~14 SIBLING ACTMON
+#    connections are holding their own catalog AccessShareLocks on OTHER pids.
+#    pg_backend_pid() excludes this backend only. Those siblings are caught by
+#    is_system instead (they are all catalog reads), which is why the default
+#    view is clean — the pid filter alone would not be enough. Labelling them
+#    outright would need application_name set at connect time, which the
+#    agent-routed path does not control.
+#
+# 9. Deadlocks are deliberately NOT claimed here. PostgreSQL resolves a deadlock
+#    itself after deadlock_timeout (1s default) by aborting a victim, so a polled
+#    snapshot will essentially never contain one. Historical deadlocks live in
+#    the PostgreSQL error log, which the Error Logs page already parses.
+#
+# Verified against PostgreSQL 16/17 catalogs: pg_locks, pg_class.relkind,
+# pg_namespace, pg_database, pg_stat_activity and pg_blocking_pids() are all
+# unchanged in both.
+_PG_LOCKS_SQL = """
+WITH raw AS MATERIALIZED (
+    SELECT l.pid, l.locktype, l.mode, l.granted, l.relation, l.database,
+           l.transactionid::text AS transactionid,
+           CASE WHEN l.granted THEN NULL ELSE pg_blocking_pids(l.pid) END AS blocked_by
+    FROM pg_locks l
+    WHERE l.pid IS NOT NULL
+      AND l.pid <> pg_backend_pid()
+),
+blockers AS (
+    SELECT DISTINCT b.pid FROM raw r, LATERAL unnest(r.blocked_by) AS b(pid)
+)
+SELECT
+    r.pid,
+    r.locktype,
+    r.mode,
+    r.granted,
+    r.relation,
+    r.transactionid,
+    n.nspname                                   AS schema_name,
+    c.relname                                   AS relation_name,
+    c.relkind::text                             AS relkind,
+    a.datname                                   AS database_name,
+    a.usename                                   AS user_name,
+    a.state                                     AS state,
+    a.wait_event_type                           AS wait_event_type,
+    a.wait_event                                AS wait_event,
+    left(a.query, 500)                          AS query,
+    CASE WHEN a.query_start IS NULL THEN NULL
+         ELSE GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - a.query_start)), 0)::numeric(14,3)
+    END                                         AS query_age_sec,
+    COALESCE(
+        n.nspname = 'information_schema'
+        OR (starts_with(n.nspname, 'pg_')
+            AND n.nspname NOT LIKE 'pg\\_temp\\_%'
+            AND n.nspname NOT LIKE 'pg\\_toast\\_temp\\_%')
+    , false)                                    AS is_system,
+    (bk.pid IS NOT NULL)                        AS is_blocking,
+    COALESCE(array_to_string(r.blocked_by, ','), '')   AS blocked_by_csv,
+    count(*) OVER ()                            AS total_matched
+FROM raw r
+LEFT JOIN pg_class c
+       ON c.oid = r.relation
+      AND (r.database = 0
+           OR r.database = (SELECT d.oid FROM pg_database d
+                             WHERE d.datname = current_database()))
+LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
+LEFT JOIN pg_stat_activity a ON a.pid = r.pid
+LEFT JOIN blockers bk ON bk.pid = r.pid
+ORDER BY r.granted ASC, is_blocking DESC, is_system ASC, query_age_sec DESC NULLS LAST
+LIMIT 200
+"""
+
+# relkind is a single char in pg_class. Spelled out so the UI never has to.
+_RELKIND_LABEL = {
+    "r": "table",       "i": "index",            "S": "sequence",
+    "t": "toast",       "v": "view",             "m": "materialized view",
+    "c": "composite",   "f": "foreign table",    "p": "partitioned table",
+    "I": "partitioned index",
+}
+
+
+def _as_bool(v) -> bool:
+    """Booleans survive SQLAlchemy as real bools, but the agent-routed path
+    (db_proxy_service) hands them back as whatever JSON carried — often the
+    strings 't'/'f' or 'true'/'false'. Plain bool('f') is True, which would mark
+    every waiting lock as granted, so the string forms are decoded explicitly."""
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    if isinstance(v, (int, float)):
+        return bool(v)
+    return str(v).strip().lower() in ("t", "true", "y", "yes", "1")
+
+
+def _summarise_locks(locks: list) -> dict:
+    """Counts the UI's KPI cards read.
+
+    `total_matched` comes from a window function evaluated BEFORE the LIMIT, so
+    when a busy cluster has more locks than the payload carries, the cards still
+    show the true total and `truncated` says the list is partial. Counting
+    len(pg_locks) alone would quietly under-report exactly when it matters most.
+    """
+    total_matched = 0
+    for lk in locks:
+        try:
+            total_matched = max(total_matched, int(lk.get("total_matched") or 0))
+        except (TypeError, ValueError):
+            pass
+    counts = {"waiting": 0, "blocking": 0, "system": 0, "application": 0}
+    for lk in locks:
+        counts[lk.get("category", "application")] = counts.get(lk.get("category", "application"), 0) + 1
+    return {
+        "returned":     len(locks),
+        "total":        total_matched or len(locks),
+        "truncated":    bool(total_matched and total_matched > len(locks)),
+        "waiting":      counts["waiting"],
+        "blocking":     counts["blocking"],
+        "system":       counts["system"],
+        "application":  counts["application"],
+        # What the default (system objects hidden) view will actually show.
+        "visible_default": counts["waiting"] + counts["blocking"] + counts["application"],
+    }
+
+
+def _shape_lock_row(lk: dict) -> dict:
+    """Normalise one pg_locks row and give it the category the UI filters on."""
+    lk["granted"]     = _as_bool(lk.get("granted"))
+    lk["is_system"]   = _as_bool(lk.get("is_system"))
+    lk["is_blocking"] = _as_bool(lk.get("is_blocking"))
+
+    csv = (lk.pop("blocked_by_csv", "") or "").strip()
+    lk["blocked_by"] = [int(p) for p in csv.split(",") if p.strip().isdigit()]
+
+    age = lk.get("query_age_sec")
+    try:
+        lk["query_age_sec"] = None if age is None else max(float(age), 0.0)
+    except (TypeError, ValueError):
+        lk["query_age_sec"] = None
+
+    lk["object_type"] = _RELKIND_LABEL.get(lk.get("relkind") or "", None)
+
+    schema, rel = lk.get("schema_name"), lk.get("relation_name")
+    if rel:
+        lk["relation_label"] = f"{schema}.{rel}" if schema else rel
+    elif lk.get("relation"):
+        # A relation OID we could not resolve — it belongs to another database in
+        # the cluster. Say so rather than printing a bare number as if it were a name.
+        lk["relation_label"] = f"OID {lk['relation']} (other database)"
+    else:
+        lk["relation_label"] = None  # transactionid / virtualxid / advisory locks
+
+    if not lk["granted"]:
+        lk["category"] = "waiting"
+    elif lk["is_blocking"]:
+        lk["category"] = "blocking"
+    elif lk["is_system"]:
+        lk["category"] = "system"
+    else:
+        lk["category"] = "application"
+
+    # Kept so the existing Reports page's `l.datname || l.database` keeps resolving.
+    lk["database"] = lk.get("database_name")
+    return lk
+
+
 def _val(engine, sql):
     with engine.connect() as c:
         row = c.execute(text(sql)).fetchone()
@@ -443,7 +676,14 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "pg_monitoring_dashboard", db)
     if _cached is not None:
         return _cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _svc_monitoring_dashboard_inner, conn_id, db,
+        default=timeout_error(), label="postgres_monitoring_dashboard",
+    )
 
+
+def _svc_monitoring_dashboard_inner(conn_id: int, db: Session):
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"
@@ -831,44 +1071,83 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
             return []
 
     def _fetch_pg_locks():
+        """One query, classified — see _PG_LOCKS_SQL for why each clause is there."""
         try:
-            pg_locks = _rows(
-                engine,
-                "SELECT l.pid, l.locktype, c.relname AS relation_name, l.relation, "
-                "l.mode, l.granted, a.datname AS database_name, "
-                "EXTRACT(EPOCH FROM (now() - a.query_start))::int AS duration_sec, "
-                "CASE WHEN a.query_start IS NOT NULL "
-                "     THEN EXTRACT(EPOCH FROM (now() - a.query_start))::text || 's' "
-                "     ELSE NULL END AS duration "
-                "FROM pg_locks l "
-                "LEFT JOIN pg_class c ON l.relation = c.oid "
-                "LEFT JOIN pg_stat_activity a ON l.pid = a.pid "
-                "WHERE NOT l.granted OR l.locktype = 'relation' "
-                "LIMIT 50"
-            )
-            pg_locks = [dict(lk) for lk in pg_locks]
-            for lk in pg_locks:
-                lk["granted"]      = bool(lk.get("granted"))
-                lk["duration_sec"] = int(lk.get("duration_sec") or 0)
-            return pg_locks
+            rows = _rows(engine, _PG_LOCKS_SQL)
+            return [_shape_lock_row(dict(lk)) for lk in rows]
         except Exception:
             return []
 
     def _fetch_blocking_queries():
+        """Who is blocking whom, via pg_blocking_pids().
+
+        The previous version self-joined pg_locks on
+        `grant_lock.relation = bl.relation`, which is wrong twice over. NULL is
+        never equal to NULL, so every lock type with no relation — transactionid,
+        tuple, advisory, virtualxid — was dropped, and row-level write conflicts
+        (the single most common real-world blocking case in PostgreSQL, since
+        they wait on the holder's transactionid) never appeared here at all.
+        It also matched any granted lock on the same relation regardless of
+        whether its mode actually conflicts, inventing blockers that were not.
+
+        pg_blocking_pids() asks the lock manager directly: it understands the
+        wait queue and mode conflicts, and needs no self-join. One call per
+        WAITING backend — not per lock row — so the cost tracks the number of
+        blocked sessions, which is near zero on a healthy system.
+        """
         try:
             blocking_queries = _rows(
                 engine,
-                "SELECT blocked.pid AS blocked_pid, blocker.pid AS blocking_pid, "
-                "blocked.query AS query, blocker.query AS blocking_query, "
-                "bl.mode AS lock_mode "
-                "FROM pg_stat_activity blocked "
-                "JOIN pg_locks bl ON bl.pid = blocked.pid AND NOT bl.granted "
-                "JOIN pg_locks grant_lock ON grant_lock.locktype = bl.locktype "
-                "AND grant_lock.relation = bl.relation AND grant_lock.granted "
-                "JOIN pg_stat_activity blocker ON blocker.pid = grant_lock.pid "
-                "LIMIT 20"
+                """
+                SELECT blocked.pid                AS blocked_pid,
+                       blocker.pid                AS blocking_pid,
+                       blocked.usename            AS blocked_user,
+                       blocker.usename            AS blocking_user,
+                       left(blocked.query, 500)   AS query,
+                       left(blocker.query, 500)   AS blocking_query,
+                       blocked.wait_event_type    AS wait_event_type,
+                       blocked.wait_event         AS wait_event,
+                       blocker.state              AS blocking_state,
+                       bl.locktype                AS locktype,
+                       bl.mode                    AS lock_mode,
+                       CASE WHEN blocked.query_start IS NULL THEN NULL
+                            ELSE GREATEST(EXTRACT(EPOCH FROM
+                                 (clock_timestamp() - blocked.query_start)), 0)::numeric(14,3)
+                       END                        AS wait_sec
+                FROM pg_stat_activity blocked
+                JOIN LATERAL unnest(pg_blocking_pids(blocked.pid)) AS b(pid) ON true
+                JOIN pg_stat_activity blocker ON blocker.pid = b.pid
+                LEFT JOIN LATERAL (
+                    SELECT l.locktype, l.mode
+                    FROM pg_locks l
+                    WHERE l.pid = blocked.pid AND NOT l.granted
+                    LIMIT 1
+                ) bl ON true
+                -- wait_event_type='Lock' is exactly the set of backends that can
+                -- have blockers, and it is free (already in pg_stat_activity).
+                -- Without it pg_blocking_pids(), which takes lock-manager LWLocks,
+                -- would be evaluated once per session on the server, busy or not.
+                -- The LATERAL join already drops rows whose array is empty, so no
+                -- extra cardinality() test is needed.
+                -- (ASCII only on purpose: this text is shipped to the server, and
+                -- over the agent transport / a SQL_ASCII database non-ASCII in a
+                -- statement is risk for no benefit.)
+                WHERE blocked.pid <> pg_backend_pid()
+                  AND blocked.wait_event_type = 'Lock'
+                ORDER BY wait_sec DESC NULLS LAST
+                LIMIT 20
+                """
             )
-            return [dict(bq) for bq in blocking_queries]
+            out = []
+            for bq in blocking_queries:
+                bq = dict(bq)
+                w = bq.get("wait_sec")
+                try:
+                    bq["wait_sec"] = None if w is None else max(float(w), 0.0)
+                except (TypeError, ValueError):
+                    bq["wait_sec"] = None
+                out.append(bq)
+            return out
         except Exception:
             return []
 
@@ -1094,6 +1373,7 @@ def svc_monitoring_dashboard(conn_id: int, db: Session):
         "pg_stat_user_tables":  table_stats,
         "table_stats":          table_stats,
         "pg_locks":             pg_locks,
+        "locks_summary":        _summarise_locks(pg_locks),
         "blocking_queries":     blocking_queries,
         "tablespaces":          tablespaces,
         "users_activity":       users_activity,
@@ -1519,7 +1799,14 @@ def svc_replication_detail(conn_id: int, db: Session):
     _cached = _get_snap(conn_id, "pg_replication_detail", db)
     if _cached is not None:
         return _cached
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _svc_replication_detail_inner, conn_id, db,
+        default=timeout_error(), label="postgres_replication_detail",
+    )
 
+
+def _svc_replication_detail_inner(conn_id: int, db: Session):
     conn_rec = db.query(ConnectionMaster).filter(
         ConnectionMaster.id == conn_id,
         ConnectionMaster.db_type == "postgresql"

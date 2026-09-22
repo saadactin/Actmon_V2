@@ -83,7 +83,7 @@ export default function IndexMaintenancePage({ connId }) {
 
   return (
     <div className="space-y-gutter">
-      <RefreshBar seconds={countdown} isFetching={q.isFetching} onRefresh={() => { q.refetch(); setCountdown(REFRESH_SECONDS); }} lastUpdatedAt={new Date().toISOString()} />
+      <RefreshBar seconds={countdown} isFetching={q.isFetching} onRefresh={() => { q.refetch(); setCountdown(REFRESH_SECONDS); }} lastUpdatedAt={new Date().toISOString()} queryTimeMs={q.data?.execution_time_ms} />
 
       {(q.data.errors || []).length > 0 && (
         <Notice tone="warning" title="Some telemetry could not be collected.">{q.data.errors.join(' · ')}</Notice>

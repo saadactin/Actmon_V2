@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import {
   Server, CheckCircle2, AlertTriangle, XCircle, Database, GitBranch,
-  Terminal, ArrowRight, RefreshCw, Trash2, Plus, Loader2, Search, X,
+  Terminal, RefreshCw, Trash2, Plus, Loader2, Search, X,
   Activity, Layers, ChevronRight, Network, Clock, ChevronLeft, LayoutGrid, List, Stethoscope,
 } from 'lucide-react';
 
@@ -15,6 +15,7 @@ import client from '@/api/client';
 import { QK } from '@/api/queryKeys';
 import { usePermissions } from '@/hooks/usePermissions';
 import PageHeader from '@/components/layout/PageHeader';
+import FlowConnector from '@/components/diagram/FlowConnector';
 import HeaderRefreshButton from '@/components/layout/HeaderRefreshButton';
 import { PageLoading } from '@/components/ui/Loading';
 import { engineColor } from '@/config/agents';
@@ -1165,18 +1166,7 @@ function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, a
           <div className="flex-shrink-0 w-[296px]">
             <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} repl={replByNodeId[node.id]} authoritativeHealth={healthByNodeId[node.id]} authoritativeRole={roleByNodeId[node.id]} fullWidth/>
           </div>
-          {idx < ordered.length-1 && (
-            <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
-              <div className="flex flex-col items-center gap-1.5">
-                <div className="w-px h-4 bg-slate-200"/>
-                <div className="relative w-8 h-8 rounded-full border-2 border-dashed border-blue-300 bg-blue-50 flex items-center justify-center">
-                  <ArrowRight size={13} className="text-blue-400"/>
-                  <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 whitespace-nowrap">stream</span>
-                </div>
-                <div className="w-px h-7 bg-slate-200"/>
-              </div>
-            </div>
-          )}
+          {idx < ordered.length-1 && <FlowConnector label="stream" />}
         </React.Fragment>
       ))}
     </div>
@@ -1201,19 +1191,9 @@ function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allCon
             <div className="flex-shrink-0 w-[296px]">
               <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} fullWidth/>
             </div>
-            {idx < nodes.length-1 && (
-              <div className="flex flex-col items-center justify-center px-2 flex-shrink-0 self-center">
-                <div className="flex flex-col items-center gap-1.5">
-                  <div className="w-px h-4 bg-purple-100"/>
-                  <div className="w-8 h-8 rounded-full border-2 border-purple-300 bg-purple-50 flex items-center justify-center shadow-sm">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-purple-500">
-                      <path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>
-                    </svg>
-                  </div>
-                  <div className="w-px h-7 bg-purple-100"/>
-                </div>
-              </div>
-            )}
+            {/* Bidirectional: Galera is multi-primary, so writes really do flow
+                both ways — a one-way arrow here would misdescribe the cluster. */}
+            {idx < nodes.length-1 && <FlowConnector label="wsrep" bidirectional tone="accent" />}
           </React.Fragment>
         ))}
       </div>

@@ -397,7 +397,10 @@ export default function MySQLDashboard() {
     queryFn:  () => fetchTableStats(id),
     retry: false,
     refetchInterval: 30000,
-    enabled: activeTab === 'tables' || activeTab === 'storage',
+    // Storage only. This scans information_schema.TABLES in full, and the Tables
+    // tab never reads the result (it has its own /all-tables) — firing it there
+    // cost a whole extra round trip per visit and refresh for nothing.
+    enabled: activeTab === 'storage',
   });
 
   /* ── User stats query ── */

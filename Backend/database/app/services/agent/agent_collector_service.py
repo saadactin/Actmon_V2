@@ -982,15 +982,21 @@ def _run_snaps(agent_name, conn_id, db, snaps):
 
 
 def _collect_mysql_snapshots(agent_name: str, conn_id: int, db):
-    from app.routes.mysql.mysql_routes import (
-        get_mysql_dashboard, get_table_stats, get_innodb_metrics,
-        get_user_stats, get_performance_detail, get_backup_info,
-    )
+    # SERVICE functions, never the route wrappers. Every route wrapper here is
+    # `(conn_id, live: Query(False), db: Depends(get_db))`, so the previous
+    # positional call `fn(conn_id, db)` landed the Session in the `live` slot and
+    # left `db` as an unresolved Depends() sentinel — the exact bug already
+    # called out below for replication/slow-queries, but still live for these
+    # seven. Every one of them raised `'Depends' object has no attribute
+    # 'query'` on every cycle, which _try_snapshot swallows at debug level, so
+    # these snapshot types had NEVER been cached for any MySQL connection and
+    # every page load fell through to a live query over the agent channel.
+    from app.services.mysql import mysql_dashboard_service as _mysql_dash
+    from app.services.mysql import mysql_index_service as _mysql_idx
     from app.services.mysql import (
         mysql_slow_query_service, mysql_log_service, mysql_binlog_service,
         mysql_replication_service, mysql_history_flush_service as _hist,
     )
-    from app.routes.mysql.mysql_index_analysis_routes import index_analysis
 
     # Each of these also feeds the historical ClickHouse event/snapshot tables
     # (Reports architecture, §16) from data ALREADY being fetched for the live
@@ -1029,21 +1035,21 @@ def _collect_mysql_snapshots(agent_name: str, conn_id: int, db):
         return result
 
     _run_snaps(agent_name, conn_id, db, [
-        ("mysql_dashboard",             lambda: get_mysql_dashboard(conn_id, db)),
+        ("mysql_dashboard",             lambda: _mysql_dash.get_dashboard(conn_id, db)),
         # Calls the SERVICE function directly, not the route wrapper — see
         # _replication_and_flush's note above for why (identical bug class).
         # That was throwing on every cycle, caught by _try_snapshot's blanket
         # except and logged at debug level — so this snapshot type had never
         # once been cached for any agent-routed MySQL connection.
         ("mysql_slow_queries",          _slow_queries_and_flush),
-        ("mysql_table_stats",           lambda: get_table_stats(conn_id, db)),
-        ("mysql_innodb",                lambda: get_innodb_metrics(conn_id, db)),
-        ("mysql_user_stats",            lambda: get_user_stats(conn_id, db)),
-        ("mysql_performance_detail",    lambda: get_performance_detail(conn_id, db)),
-        ("mysql_backup_info",           lambda: get_backup_info(conn_id, db)),
+        ("mysql_table_stats",           lambda: _mysql_dash.get_table_stats(conn_id, db)),
+        ("mysql_innodb",                lambda: _mysql_dash.get_innodb_metrics(conn_id, db)),
+        ("mysql_user_stats",            lambda: _mysql_dash.get_user_stats(conn_id, db)),
+        ("mysql_performance_detail",    lambda: _mysql_dash.get_performance_detail(conn_id, db)),
+        ("mysql_backup_info",           lambda: _mysql_dash.get_backup_info(conn_id, db)),
         ("mysql_replication_status",    _replication_and_flush),
         ("mysql_replication_variables", lambda: mysql_replication_service.get_replication_variables(conn_id, db)),
-        ("mysql_index_analysis",        lambda: index_analysis(conn_id, db)),
+        ("mysql_index_analysis",        lambda: _mysql_idx.get_index_analysis(conn_id, db)),
         ("mysql_error_logs",            _error_logs_and_flush),
         ("mysql_binlog_status",         _binlog_and_flush),
     ])

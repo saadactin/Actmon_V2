@@ -382,3 +382,62 @@
   50%      { transform: scaleY(1); }
 }
 .monitor-bar { animation: monitor-bar 1s ease-in-out infinite; transform-origin: bottom; }
+
+/* ── Reports: Print / Save-as-PDF ──────────────────────────────────────
+   Restored from the pre-rewrite stylesheet (Actmon_V1/src/index.css). The
+   report markup has always tagged its controls `.no-print` and rendered a
+   print-only header via Tailwind's `print:block`, but the @media print block
+   backing them was lost in the rewrite — so `.no-print` was a dead class and
+   printing dumped the whole app, nav bar included.
+
+   The visibility (not display) trick is deliberate: parent containers stay in
+   layout so the report keeps its width, while everything outside it goes
+   invisible. position:absolute rather than fixed, so content flows across
+   multiple pages instead of repeating page one. */
+@media print {
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+
+  * { visibility: hidden !important; }
+
+  #oracle-report, #oracle-report *,
+  #pg-report, #pg-report *,
+  #mysql-report, #mysql-report *,
+  #mssql-report, #mssql-report *,
+  #clickhouse-report, #clickhouse-report *,
+  #mongo-report, #mongo-report * { visibility: visible !important; }
+
+  #oracle-report,
+  #pg-report,
+  #mysql-report,
+  #mssql-report,
+  #clickhouse-report,
+  #mongo-report {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    background: white !important;
+    padding: 6mm 8mm !important;
+    font-size: 10px !important;
+    line-height: 1.4 !important;
+  }
+
+  .no-print { display: none !important; visibility: hidden !important; }
+
+  .report-card {
+    box-shadow: none !important;
+    border: 1px solid #e2e8f0 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .report-section { break-before: auto; page-break-before: auto; }
+  .page-break     { break-before: page !important; page-break-before: always !important; }
+
+  svg    { overflow: visible !important; }
+  canvas { break-inside: avoid; }
+  tr     { break-inside: avoid; page-break-inside: avoid; }
+
+  table  { font-size: 9px !important; }
+  th, td { padding: 3px 6px !important; }
+}

@@ -55,6 +55,7 @@ function FlatBody({
           items={coloured}
           donut={kind === 'donut'}
           unit={unit}
+          format={format}
           emptyLabel={emptyLabel}
           legend={legend}
           centerLabel={centerLabel}

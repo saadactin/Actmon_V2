@@ -8,6 +8,7 @@ import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import HostResources from '@/pages/postgresql/PgHostResources';
 import TrendChart from '@/components/gauges/TrendChart';
 import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
+import FlowDiagram from '@/components/diagram/FlowDiagram';
 import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import ChartCard from '@/components/charts/ChartCard';
 import { STATUS, bandFor } from '@/components/charts/status';
@@ -257,21 +258,6 @@ function OracleTopologyPeers({ id }) {
   );
 }
 
-function TopologyNodeBox({ label, sub, ok }) {
-  return (
-    <div className="flex min-w-[140px] flex-col rounded-control border border-border bg-panel px-3 py-2">
-      <span className="flex items-center gap-1.5 text-[12px] font-semibold text-fg">
-        <span className={cnDot(ok)} />
-        {label}
-      </span>
-      {sub && <span className="mt-0.5 text-[11px] text-subtle">{sub}</span>}
-    </div>
-  );
-}
-function cnDot(ok) {
-  return `inline-block h-2 w-2 rounded-full ${ok ? 'bg-success' : 'bg-danger'}`;
-}
-
 /**
  * §25 — a clear visual: who's Primary, who's Standby, which nodes/instances
  * are running, is transport/apply healthy, what's the lag. Auto-discovered
@@ -279,49 +265,81 @@ function cnDot(ok) {
  * host-level ReplicationTopology/GaleraTopology on DatabaseServersPage.
  */
 function OracleTopologyDiagram({ topology, racNodes, dataGuard }) {
-  const nodes = racNodes?.nodes || [];
+  const racList = racNodes?.nodes || [];
   const isRac = topology?.is_rac;
   const isDg = topology?.is_dataguard;
 
   if (!isRac && !isDg) {
-    return <TopologyNodeBox label="Standalone Instance" sub="No RAC, no Data Guard" ok />;
+    return (
+      <FlowDiagram
+        caption="Standalone instance — no RAC, no Data Guard."
+        nodes={[{ id: 'std', label: 'Standalone Instance', sublabel: 'No RAC, no Data Guard', tone: 'success', dot: true }]}
+      />
+    );
+  }
+
+  // Redo flows RAC-instances -> standby, so the instances are the roots and the
+  // standby falls out one column to the right. Previously this was two stacked
+  // <div>s with a literal "↓ Redo Transport" between them and no line at all.
+  const nodes = [];
+  const edges = [];
+
+  if (isRac) {
+    racList.forEach((n) => {
+      const open = String(n.instance_status).toUpperCase() === 'OPEN';
+      nodes.push({
+        id: `inst-${n.instance_number}`,
+        label: `Node ${n.instance_number} · ${n.instance_name}`,
+        sublabel: n.host_name,
+        meta: `Instance ${n.instance_status}`,
+        tone: open ? 'success' : 'danger',
+        dot: true,
+      });
+    });
+  }
+  if (!nodes.length) {
+    nodes.push({
+      id: 'primary',
+      label: dataGuard?.role || 'Primary',
+      sublabel: dataGuard?.open_mode || 'Primary database',
+      tone: 'success',
+      dot: true,
+    });
+  }
+
+  if (isDg) {
+    const applyStopped = dataGuard?.apply_status === 'stopped';
+    const lag = (v) => (v != null ? `${v}s` : 'N/A');
+    nodes.push({
+      id: 'standby',
+      label: 'Standby Database',
+      sublabel: `Apply: ${dataGuard?.apply_status || 'unknown'}`,
+      meta: `Apply lag ${lag(dataGuard?.apply_lag_sec)}`,
+      tone: applyStopped ? 'danger' : 'success',
+      dot: true,
+    });
+    // One redo-transport edge from every primary instance, because in RAC any
+    // instance can ship redo — a single edge from the first would be a lie.
+    const transportFailed = dataGuard?.transport_status === 'failed';
+    nodes.filter((n) => n.id !== 'standby').forEach((n, i) => {
+      edges.push({
+        from: n.id,
+        to: 'standby',
+        label: i === 0 ? `Redo · lag ${lag(dataGuard?.transport_lag_sec)}` : undefined,
+        tone: transportFailed ? 'danger' : undefined,
+        dashed: transportFailed,
+      });
+    });
   }
 
   return (
-    <div className="flex flex-col gap-gutter">
-      <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">
-          {isRac ? 'RAC Cluster (Primary)' : 'Primary'}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {isRac ? nodes.map((n) => (
-            <TopologyNodeBox key={n.instance_number}
-              label={`Node ${n.instance_number} / ${n.instance_name}`}
-              sub={`${n.host_name} — ${n.instance_status}`}
-              ok={String(n.instance_status).toUpperCase() === 'OPEN'} />
-          )) : (
-            <TopologyNodeBox label={dataGuard?.role || 'Primary'} sub={dataGuard?.open_mode} ok />
-          )}
-        </div>
-      </div>
-
-      {isDg && (
-        <>
-          <div className="flex items-center gap-2 pl-2 text-[11px] text-muted">
-            <span>↓ Redo Transport</span>
-            <Badge tone={dataGuard?.transport_status === 'failed' ? 'danger' : 'neutral'} size="xs">
-              {dataGuard?.transport_status || 'unknown'}
-            </Badge>
-            <span>Lag: {dataGuard?.transport_lag_sec != null ? `${dataGuard.transport_lag_sec}s` : 'N/A'}</span>
-          </div>
-          <div>
-            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">Standby</p>
-            <TopologyNodeBox label="Standby database" sub={`Apply: ${dataGuard?.apply_status || 'unknown'} · Lag: ${dataGuard?.apply_lag_sec != null ? `${dataGuard.apply_lag_sec}s` : 'N/A'}`}
-              ok={dataGuard?.apply_status !== 'stopped'} />
-          </div>
-        </>
-      )}
-    </div>
+    <FlowDiagram
+      caption={isRac
+        ? 'RAC instances on the left; redo ships left to right into the standby.'
+        : 'Redo ships left to right from the primary into the standby.'}
+      nodes={nodes}
+      edges={edges}
+    />
   );
 }
 
@@ -1675,9 +1693,10 @@ export default function OracleDashboard() {
                   searchPlaceholder="Search accounts…"
                   defaultSort={{ key: 'username', dir: 'asc' }}
                   keyOf={(u) => u.username}
+                  onRowClick={(u) => navigate(`/oracle-dashboard/${id}/users/${u.username}`)}
                   unit="accounts"
                   views={['table']}
-                  note="dba_users — includes Oracle's own accounts, most of which are locked by design"
+                  note="dba_users — includes Oracle's own accounts, most of which are locked by design. Click a row for its roles and privileges."
                   emptyTitle="No accounts"
                   emptyBody={users.data?.error || 'dba_users returned nothing.'}
                 />

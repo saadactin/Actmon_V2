@@ -31,3 +31,10 @@ clickhouse-connect==1.4.1
 azure-cosmos>=4.5.1,<5
 # Test suite (credential encryption, and a base for future tests)
 pytest
+
+# PDF generation for emailed + downloadable monitoring reports. Imported lazily
+# inside generate_<engine>_pdf() in each *_report_email_service.py — it was
+# working only because it had been hand-installed into the dev venv, so any
+# Docker build or clean install silently lost the attachment (the email path
+# swallows the ImportError). Declared here so that can't happen again.
+fpdf2>=2.8.7

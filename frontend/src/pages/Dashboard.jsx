@@ -241,7 +241,7 @@ export default function Dashboard() {
         <StatTile
           label="Agents" value={d.agents.total} icon="agent" tone={agentTone} valueTone={agentTone}
           sub={`${d.agents.good} Online`}
-          loading={d.isLoading} onClick={() => navigate('/infra')}
+          loading={d.isLoading} onClick={() => navigate('/agents')}
         />
         <StatTile
           label="SSH Hosts" value={d.ssh.total} icon="terminal" tone={sshTone} valueTone={sshTone}
@@ -338,7 +338,7 @@ export default function Dashboard() {
               defaultKind="stackedColumn"
               rows={engineRows}
               chartProps={engineChartProps}
-              title="Servers By Technology"
+              title="Servers By Database Technologies"
               className={cn('lg:min-h-[316px]', CARD_HOVER)}
               loading={busy}
               tableColumns={ENGINE_TABLE_COLUMNS}

@@ -16,6 +16,7 @@
  */
 export const MENU_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', to: '/dashboard', icon: 'layout-grid' },
+  { id: 'cloud-dashboard', label: 'Cloud Dashboard', to: '/cloud-dashboard', icon: 'layout-grid' },
   { id: 'agents', label: 'Agents', to: '/agents', icon: 'shield' },
   { id: 'databases', label: 'Database', to: '/databases', icon: 'database' },
   { id: 'cloud', label: 'Cloud', to: '/cloud', icon: 'cloud' },
@@ -67,6 +68,7 @@ export const NAV_INDEX = [...MENU_ITEMS, ...EXTRA_ITEMS];
 export const ROUTE_LABELS = {
   '': 'Home',
   dashboard: 'Dashboard',
+  'cloud-dashboard': 'Cloud Dashboard',
   agents: 'Agents',
   deploy: 'Deploy',
   setup: 'Setup',

@@ -268,6 +268,7 @@ class OracleStorageAiExplainRequest(BaseModel):
     facts:            dict = {}     # size/blocks/load/impact-estimate — whatever the page already shows
     question:         Optional[str] = None   # None -> produce the initial plain-English summary
     history:          list = []     # [{question, answer}, ...] prior turns on this page
+    language:         str = "English"   # e.g. "Marathi", "Hindi" — the whole answer is written in this language
 
 
 def oracle_storage_ai_explain(payload: OracleStorageAiExplainRequest) -> dict:
@@ -279,8 +280,11 @@ def oracle_storage_ai_explain(payload: OracleStorageAiExplainRequest) -> dict:
         history_lines = "\n".join(
             f"Q: {h.get('question')}\nA: {h.get('answer')}" for h in (payload.history or []) if h.get("question")
         )
+        language = (payload.language or "English").strip() or "English"
 
-        prompt = f"""You are ActMon's database assistant, explaining Oracle storage data to someone who is NOT a DBA — plain, short, everyday English. No jargon without explaining it in the same sentence. Never invent a number — use ONLY the facts given below; if something isn't in the facts, say it isn't known rather than guessing.
+        prompt = f"""You are ActMon's database assistant, explaining Oracle storage data to someone who is NOT a DBA — plain, short, everyday language. No jargon without explaining it in the same sentence. Never invent a number — use ONLY the facts given below; if something isn't in the facts, say it isn't known rather than guessing.
+
+Respond ONLY in {language} — the entire answer, not just a translated summary. Write it the way a fluent {language} speaker would naturally explain this out loud, not a literal word-for-word translation from English.
 
 === OBJECT ===
 Type: {payload.object_type}

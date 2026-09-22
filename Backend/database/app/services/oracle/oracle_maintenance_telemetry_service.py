@@ -14,6 +14,7 @@ narrower Phase 1/2 views expose.
 Read-only. Nothing here executes DDL — that stays in oracle_maintenance_service.py.
 """
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime
@@ -25,7 +26,10 @@ from app.models.oracle_maintenance_job_model import OracleMaintenanceJob
 from app.services.oracle.oracle_monitoring_service import (
     _get_conn_or_404, _get_engine, _rows, _safe_float, _safe_int, _safe_str,
     _SYSTEM_OWNERS, oracle_tablespaces, oracle_datafile_mounts,
+    ANALYSIS_TIMEOUT_SECONDS, _timeout_error, _run_with_timeout,
 )
+
+logger = logging.getLogger("oracle_maintenance_telemetry")
 from app.services.oracle.oracle_storage_decision_service import STATS_STALE_DAYS, _tablespace_growth_map
 from app.services.oracle.oracle_storage_service import oracle_storage_block_detail
 
@@ -103,7 +107,7 @@ def _is_stale(last_analyzed_str):
 
 def table_maintenance_telemetry(conn_id: int, db: Session):
     """Timeout-bounded like tablespace_space_analysis — see _run_with_timeout."""
-    return _run_with_timeout(_table_maintenance_telemetry_inner, conn_id, db, default=_timeout_error())
+    return _run_with_timeout(_table_maintenance_telemetry_inner, conn_id, db, default=_timeout_error(), label="oracle_table_maintenance")
 
 
 def _table_maintenance_telemetry_inner(conn_id: int, db: Session):
@@ -205,7 +209,7 @@ def _table_maintenance_telemetry_inner(conn_id: int, db: Session):
 
 def index_maintenance_telemetry(conn_id: int, db: Session):
     """Timeout-bounded like tablespace_space_analysis — see _run_with_timeout."""
-    return _run_with_timeout(_index_maintenance_telemetry_inner, conn_id, db, default=_timeout_error())
+    return _run_with_timeout(_index_maintenance_telemetry_inner, conn_id, db, default=_timeout_error(), label="oracle_index_maintenance")
 
 
 def _index_maintenance_telemetry_inner(conn_id: int, db: Session):
@@ -295,7 +299,55 @@ def _index_maintenance_telemetry_inner(conn_id: int, db: Session):
 
 def statistics_maintenance_telemetry(conn_id: int, db: Session):
     """Timeout-bounded like tablespace_space_analysis — see _run_with_timeout."""
-    return _run_with_timeout(_statistics_maintenance_telemetry_inner, conn_id, db, default=_timeout_error())
+    return _run_with_timeout(_statistics_maintenance_telemetry_inner, conn_id, db, default=_timeout_error(), label="oracle_statistics_maintenance")
+
+
+def _fetch_table_stats_core(engine):
+    """DBA_TABLES alone — no DBA_TAB_MODIFICATIONS join. Kept as its own
+    query so a slow DBA_TAB_MODIFICATIONS (see _fetch_table_modifications)
+    can never block the core stats-staleness data from coming back."""
+    try:
+        return _rows(
+            engine,
+            f"""SELECT t.owner, t.table_name, t.num_rows, t.last_analyzed, t.stale_stats
+                FROM dba_tables t
+                WHERE t.owner NOT IN ({_SYSTEM_OWNERS})
+                  AND t.temporary = 'N'
+                ORDER BY t.last_analyzed ASC NULLS FIRST
+                FETCH FIRST 300 ROWS ONLY"""
+        )
+    except Exception:
+        # STALE_STATS requires the table to be monitored — fall back without
+        # it rather than fail the whole panel over one optional column.
+        return _rows(
+            engine,
+            f"""SELECT t.owner, t.table_name, t.num_rows, t.last_analyzed, NULL AS stale_stats
+                FROM dba_tables t
+                WHERE t.owner NOT IN ({_SYSTEM_OWNERS})
+                  AND t.temporary = 'N'
+                ORDER BY t.last_analyzed ASC NULLS FIRST
+                FETCH FIRST 300 ROWS ONLY"""
+        )
+
+
+_MODIFICATIONS_TIMEOUT_SECONDS = 8
+
+
+def _fetch_table_modifications(engine):
+    """DBA_TAB_MODIFICATIONS alone — a data-dictionary view backed by
+    Oracle's in-memory modification-monitoring counters, documented to
+    sometimes be slow to query regardless of how few rows it returns. Never
+    joined onto DBA_TABLES directly for that reason: it is fetched
+    separately, under its own short timeout (_MODIFICATIONS_TIMEOUT_SECONDS),
+    merged onto the core table list in Python by owner+table_name, and is
+    allowed to simply be missing without failing the panel."""
+    return _rows(
+        engine,
+        f"""SELECT table_owner, table_name, inserts, updates, deletes, timestamp AS mod_timestamp
+            FROM dba_tab_modifications
+            WHERE partition_name IS NULL
+              AND table_owner NOT IN ({_SYSTEM_OWNERS})"""
+    )
 
 
 def _statistics_maintenance_telemetry_inner(conn_id: int, db: Session):
@@ -303,42 +355,32 @@ def _statistics_maintenance_telemetry_inner(conn_id: int, db: Session):
     engine = _get_engine(conn)
     errors = []
 
-    raw = []
     try:
-        raw = _rows(
-            engine,
-            f"""SELECT t.owner, t.table_name, t.num_rows, t.last_analyzed,
-                       t.stale_stats,
-                       m.inserts, m.updates, m.deletes, m.timestamp AS mod_timestamp
-                FROM dba_tables t
-                LEFT JOIN dba_tab_modifications m
-                       ON m.table_owner = t.owner AND m.table_name = t.table_name
-                      AND m.partition_name IS NULL
-                WHERE t.owner NOT IN ({_SYSTEM_OWNERS})
-                  AND t.temporary = 'N'
-                ORDER BY t.last_analyzed ASC NULLS FIRST
-                FETCH FIRST 300 ROWS ONLY"""
-        )
+        raw = _fetch_table_stats_core(engine)
     except Exception as exc:
-        # STALE_STATS requires the table to be monitored — fall back without it
-        # rather than fail the whole page over one optional column.
-        try:
-            raw = _rows(
-                engine,
-                f"""SELECT t.owner, t.table_name, t.num_rows, t.last_analyzed,
-                           NULL AS stale_stats,
-                           m.inserts, m.updates, m.deletes, m.timestamp AS mod_timestamp
-                    FROM dba_tables t
-                    LEFT JOIN dba_tab_modifications m
-                           ON m.table_owner = t.owner AND m.table_name = t.table_name
-                          AND m.partition_name IS NULL
-                    WHERE t.owner NOT IN ({_SYSTEM_OWNERS})
-                      AND t.temporary = 'N'
-                    ORDER BY t.last_analyzed ASC NULLS FIRST
-                    FETCH FIRST 300 ROWS ONLY"""
-            )
-        except Exception as exc2:
-            errors.append(f"statistics: {exc2}")
+        errors.append(f"statistics: {exc}")
+        raw = []
+
+    mods_by_key = {}
+    modifications_available = True
+    mod_rows = _run_with_timeout(
+        _fetch_table_modifications, engine,
+        timeout=_MODIFICATIONS_TIMEOUT_SECONDS, default=None,
+        label="oracle_statistics_modifications",
+    )
+    if mod_rows is None:
+        modifications_available = False
+        errors.append(
+            f"modifications: unavailable — DBA_TAB_MODIFICATIONS did not respond "
+            f"within {_MODIFICATIONS_TIMEOUT_SECONDS}s (table stats above are unaffected)"
+        )
+    elif isinstance(mod_rows, dict) and mod_rows.get("status") == "error":
+        modifications_available = False
+        errors.append(f"modifications: {mod_rows.get('error')}")
+    else:
+        for m in mod_rows:
+            key = (_safe_str(m.get("TABLE_OWNER")), _safe_str(m.get("TABLE_NAME")))
+            mods_by_key[key] = m
 
     hist = _job_history_map(db, conn_id, ("table_stats",))
     last_by_object = hist["last_by_object"]
@@ -351,9 +393,11 @@ def _statistics_maintenance_telemetry_inner(conn_id: int, db: Session):
         last_analyzed = _safe_str(r.get("LAST_ANALYZED")) or None
         stale_flag = _safe_str(r.get("STALE_STATS"))
         stale = (stale_flag == "YES") if stale_flag in ("YES", "NO") else _is_stale(last_analyzed)
-        inserts = r.get("INSERTS")
-        updates = r.get("UPDATES")
-        deletes = r.get("DELETES")
+
+        m = mods_by_key.get((owner, name))
+        inserts = m.get("INSERTS") if m else None
+        updates = m.get("UPDATES") if m else None
+        deletes = m.get("DELETES") if m else None
         mod_total = None
         if inserts is not None or updates is not None or deletes is not None:
             mod_total = _safe_int(inserts) + _safe_int(updates) + _safe_int(deletes)
@@ -376,6 +420,7 @@ def _statistics_maintenance_telemetry_inner(conn_id: int, db: Session):
     return {
         "status": "success",
         "tables": tables,
+        "modifications_available": modifications_available,
         "summary": {
             "total_tables": len(tables),
             "stale_count": len(needing),
@@ -395,7 +440,7 @@ def _statistics_maintenance_telemetry_inner(conn_id: int, db: Session):
 
 def partition_maintenance_telemetry(conn_id: int, db: Session):
     """Timeout-bounded like tablespace_space_analysis — see _run_with_timeout."""
-    return _run_with_timeout(_partition_maintenance_telemetry_inner, conn_id, db, default=_timeout_error())
+    return _run_with_timeout(_partition_maintenance_telemetry_inner, conn_id, db, default=_timeout_error(), label="oracle_partition_maintenance")
 
 
 def _partition_maintenance_telemetry_inner(conn_id: int, db: Session):
@@ -526,7 +571,7 @@ def _partition_maintenance_telemetry_inner(conn_id: int, db: Session):
 
 def space_maintenance_telemetry(conn_id: int, db: Session):
     """Timeout-bounded like tablespace_space_analysis — see _run_with_timeout."""
-    return _run_with_timeout(_space_maintenance_telemetry_inner, conn_id, db, default=_timeout_error())
+    return _run_with_timeout(_space_maintenance_telemetry_inner, conn_id, db, default=_timeout_error(), label="oracle_space_maintenance")
 
 
 def _space_fetch_tablespaces(conn_id: int):
@@ -669,50 +714,6 @@ def _datafile_resize_info_inner(conn_id: int, db: Session, file_name: str):
         return {"status": "error", "error": str(exc)}
 
 
-ANALYSIS_TIMEOUT_SECONDS = 30
-
-
-def _timeout_error():
-    return {
-        "status": "error",
-        "error": f"Timed out after {ANALYSIS_TIMEOUT_SECONDS}s waiting for Oracle — "
-                 "the connection or its agent isn't answering right now.",
-    }
-
-
-def _run_with_timeout(fn, *args, timeout=ANALYSIS_TIMEOUT_SECONDS, default=None, **kwargs):
-    """Run `fn` on a worker thread and give up waiting after `timeout`
-    seconds, returning `default` instead of hanging forever. An agent-routed
-    Oracle connection (or ClickHouse) that never answers has no built-in
-    timeout of its own at this layer — an on-demand analysis endpoint must
-    never leave the frontend's dialog spinning indefinitely regardless of
-    what's actually stuck underneath.
-
-    Deliberately NOT a `with ThreadPoolExecutor(...)` block — exiting that
-    context calls shutdown(wait=True), which blocks until the timed-out
-    thread finishes too, silently undoing the timeout. The pool is left to
-    be garbage-collected instead; the orphaned thread (if the call really
-    never returns) finishes on its own whenever Oracle/the agent eventually
-    responds or errors, without holding this request open.
-
-    Also catches any OTHER exception `fn` raises (not just a timeout) and
-    degrades to an error result instead of letting it blow up the whole
-    request — a single category's real bug/DB error must not 500 the entire
-    Maintenance Overview page, which calls all 5 categories from one route."""
-    pool = ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(fn, *args, **kwargs)
-    try:
-        result = future.result(timeout=timeout)
-    except FuturesTimeoutError:
-        pool.shutdown(wait=False)
-        return default
-    except Exception as exc:
-        pool.shutdown(wait=False)
-        return {"status": "error", "error": str(exc)}
-    pool.shutdown(wait=False)
-    return result
-
-
 def tablespace_space_analysis(conn_id: int, db: Session, tablespace_name: str):
     """Read-only report — deliberately NOT a tracked job, since nothing here
     executes any SQL. Bundles the same real block/growth data Storage
@@ -757,19 +758,44 @@ def _fetch_category_with_own_session(fn, conn_id: int):
         return fn(conn_id, session)
 
 
-def oracle_maintenance_overview(conn_id: int, db: Session):
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        table_future = pool.submit(_fetch_category_with_own_session, table_maintenance_telemetry, conn_id)
-        index_future = pool.submit(_fetch_category_with_own_session, index_maintenance_telemetry, conn_id)
-        stats_future = pool.submit(_fetch_category_with_own_session, statistics_maintenance_telemetry, conn_id)
-        partition_future = pool.submit(_fetch_category_with_own_session, partition_maintenance_telemetry, conn_id)
-        space_future = pool.submit(_fetch_category_with_own_session, space_maintenance_telemetry, conn_id)
+_OVERVIEW_CATEGORY_TIMEOUT_SECONDS = ANALYSIS_TIMEOUT_SECONDS + 5
 
-        table_resp = table_future.result()
-        index_resp = index_future.result()
-        stats_resp = stats_future.result()
-        partition_resp = partition_future.result()
-        space_resp = space_future.result()
+
+def _await_category(future, label):
+    """Backstop above each category's own 30s _run_with_timeout — that inner
+    guarantee only starts counting once the category's own SessionLocal()
+    has actually been acquired, which is a small un-timed seam if Postgres
+    itself is slow/exhausted. A few seconds of headroom (35s vs. the inner
+    30s) lets the inner timeout win in the normal case; this only fires if
+    something upstream of it stalls instead."""
+    try:
+        return future.result(timeout=_OVERVIEW_CATEGORY_TIMEOUT_SECONDS)
+    except FuturesTimeoutError:
+        logger.info("[oracle] oracle_maintenance_overview.%s: outer timeout (>%ss)", label, _OVERVIEW_CATEGORY_TIMEOUT_SECONDS)
+        return _timeout_error()
+    except Exception as exc:  # noqa: BLE001 — one category's bug must not 500 the page
+        return {"status": "error", "error": str(exc)}
+
+
+def oracle_maintenance_overview(conn_id: int, db: Session):
+    # Deliberately NOT `with ThreadPoolExecutor(...) as pool:` — exiting that
+    # block calls shutdown(wait=True), which blocks until every future
+    # finishes regardless of the per-future timeout below, silently undoing
+    # it (same reasoning as _run_with_timeout's own docstring). The pool is
+    # left to be garbage-collected instead.
+    pool = ThreadPoolExecutor(max_workers=5)
+    table_future = pool.submit(_fetch_category_with_own_session, table_maintenance_telemetry, conn_id)
+    index_future = pool.submit(_fetch_category_with_own_session, index_maintenance_telemetry, conn_id)
+    stats_future = pool.submit(_fetch_category_with_own_session, statistics_maintenance_telemetry, conn_id)
+    partition_future = pool.submit(_fetch_category_with_own_session, partition_maintenance_telemetry, conn_id)
+    space_future = pool.submit(_fetch_category_with_own_session, space_maintenance_telemetry, conn_id)
+
+    table_resp = _await_category(table_future, "table")
+    index_resp = _await_category(index_future, "index")
+    stats_resp = _await_category(stats_future, "statistics")
+    partition_resp = _await_category(partition_future, "partition")
+    space_resp = _await_category(space_future, "space")
+    pool.shutdown(wait=False)
 
     def _status_for(summary, recommended_key="recommended_count"):
         if summary.get("failed"):
