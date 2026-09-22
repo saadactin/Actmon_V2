@@ -101,6 +101,13 @@ export default function RolePermissionsMatrix() {
     (modules.data || []).forEach((x) => { m[x.module_id] = x.module_name; });
     return m;
   }, [modules.data]);
+  const moduleList = useMemo(
+    () => (modules.data || [])
+      .filter((m) => m.is_active !== false)
+      .sort((a, b) => (a.display_order - b.display_order)
+        || String(a.module_name).localeCompare(String(b.module_name))),
+    [modules.data],
+  );
 
   // First active role by default, so the screen is never an empty shell.
   useEffect(() => {
@@ -125,6 +132,9 @@ export default function RolePermissionsMatrix() {
   useEffect(() => { setDraft({}); setSaveError(null); setSavedNote(null); }, [roleId]);
 
   /* ── tree ───────────────────────────────────────────────────────────────── */
+  /* Children keyed by parent_id, each level ordered by display_order — the same
+     order the real navigation uses, so the tree reads like the app's own menu
+     rather than like a database dump. */
   const childrenOf = useMemo(() => {
     const m = {};
     pageList.forEach((p) => { (m[p.parent_id ?? 0] ||= []).push(p); });
@@ -133,6 +143,17 @@ export default function RolePermissionsMatrix() {
     ));
     return m;
   }, [pageList]);
+
+  /* Roots grouped by MODULE, so the tree is
+       Dashboard ─ Main Dashboard / Cloud Dashboard / …
+       Agents    ─ /agents ─ Add Data ─ Integrations ─ Apache
+     A page whose parent_id is 0 is a root WITHIN its module; nesting below that
+     follows parent_id all the way down, at any depth. */
+  const rootsByModule = useMemo(() => {
+    const m = {};
+    (childrenOf[0] || []).forEach((p) => { (m[p.module_id] ||= []).push(p); });
+    return m;
+  }, [childrenOf]);
 
   const q = search.trim().toLowerCase();
   /** Pages matching the search, plus every ancestor, so a deep match stays
@@ -152,10 +173,12 @@ export default function RolePermissionsMatrix() {
     return keep;
   }, [q, pageList]);
 
-  const allParentIds = useMemo(
-    () => pageList.filter((p) => (childrenOf[p.page_id] || []).length).map((p) => p.page_id),
-    [pageList, childrenOf],
-  );
+  // Modules are expandable too, so Expand All has to cover them — otherwise it
+  // would open every page but leave the modules containing them shut.
+  const allParentIds = useMemo(() => [
+    ...moduleList.filter((m) => (rootsByModule[m.module_id] || []).length).map((m) => `mod-${m.module_id}`),
+    ...pageList.filter((p) => (childrenOf[p.page_id] || []).length).map((p) => p.page_id),
+  ], [pageList, childrenOf, moduleList, rootsByModule]);
   const allExpanded = expanded.size >= allParentIds.length && allParentIds.length > 0;
   const toggleExpandAll = () => setExpanded(allExpanded ? new Set() : new Set(allParentIds));
   const toggleNode = (id) => setExpanded((s) => {
@@ -319,19 +342,40 @@ export default function RolePermissionsMatrix() {
                    placeholder="Search pages…" icon="search" size="sm" />
           </div>
           <div className="max-h-[560px] overflow-y-auto px-1.5 pb-2.5">
-            <TreeLevel
-              parentId={0}
-              depth={0}
-              childrenOf={childrenOf}
-              visibleIds={visibleIds}
-              expanded={expanded}
-              forceOpen={!!q}
-              onToggle={toggleNode}
-              selectedId={selectedPageId}
-              onSelect={setSelectedPageId}
-              maskOf={maskOf}
-              dirty={draft}
-            />
+            {moduleList.map((mod) => {
+              const roots = (rootsByModule[mod.module_id] || [])
+                .filter((p) => !visibleIds || visibleIds.has(p.page_id));
+              if (!roots.length) return null;
+              const key = `mod-${mod.module_id}`;
+              const open = !!q || expanded.has(key);
+              return (
+                <div key={key} className="mb-0.5">
+                  <button type="button" onClick={() => toggleNode(key)}
+                          className="flex w-full items-center gap-1 rounded-control px-1.5 py-1.5 text-left hover:bg-sunken">
+                    <Icon name={open ? 'chevron-down' : 'chevron-right'} size={13} className="shrink-0 text-subtle" />
+                    <Icon name="boxes" size={13} className="shrink-0 text-muted" />
+                    <span className="truncate text-[12.5px] font-bold text-fg">{mod.module_name}</span>
+                    <span className="ml-auto shrink-0 text-[10.5px] text-subtle">{roots.length}</span>
+                  </button>
+                  {open && (
+                    <TreeLevel
+                      parentId={0}
+                      only={roots}
+                      depth={1}
+                      childrenOf={childrenOf}
+                      visibleIds={visibleIds}
+                      expanded={expanded}
+                      forceOpen={!!q}
+                      onToggle={toggleNode}
+                      selectedId={selectedPageId}
+                      onSelect={setSelectedPageId}
+                      maskOf={maskOf}
+                      dirty={draft}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -484,8 +528,10 @@ const PERM_HINT = {
   restart: 'Can restart services',
 };
 
-function TreeLevel({ parentId, depth, childrenOf, visibleIds, expanded, forceOpen, onToggle, selectedId, onSelect, maskOf, dirty }) {
-  const kids = (childrenOf[parentId] || []).filter((p) => !visibleIds || visibleIds.has(p.page_id));
+/** `only` overrides the parentId lookup — the module level passes the roots it
+    has already narrowed to that module, since parent_id 0 spans every module. */
+function TreeLevel({ parentId, only, depth, childrenOf, visibleIds, expanded, forceOpen, onToggle, selectedId, onSelect, maskOf, dirty }) {
+  const kids = only || (childrenOf[parentId] || []).filter((p) => !visibleIds || visibleIds.has(p.page_id));
   if (!kids.length) return null;
   return (
     <ul className={depth ? 'ml-3.5 border-l border-border pl-1.5' : undefined}>

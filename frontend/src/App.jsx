@@ -412,11 +412,17 @@ export default function App() {
 
         {/* Administration — the hub, the bespoke Role/Page Permissions
             drill-down, and one generic engine instance per master resource. */}
-        <Route path="/administration" element={<AdministrationPage />} />
-        <Route path="/administration/:orgId" element={<AdministrationPage />} />
-        {/* Access Control — the whole RBAC model on one tabbed screen. The
-            individual routes below stay: they are what page_master holds, so
-            RBAC still governs each screen, and existing links keep working. */}
+        {/* Administration IS Access Control now — the tabbed screen replaces the
+            card grid that made you leave and come back for all eleven masters.
+            The menu label and the /administration URL are unchanged, so nothing
+            in page_master or anyone's bookmarks has to move. The old hub stays
+            reachable at /administration/hub while the new screen beds in.
+            `tab` is a path segment rather than :orgId so an org id in an old
+            link can never be mistaken for a tab name. */}
+        <Route path="/administration" element={<AccessControlPage />} />
+        <Route path="/administration/tab/:tab" element={<AccessControlPage />} />
+        <Route path="/administration/hub" element={<AdministrationPage />} />
+        <Route path="/administration/:orgId" element={<AccessControlPage />} />
         <Route path="/access-control" element={<AccessControlPage />} />
         <Route path="/access-control/:tab" element={<AccessControlPage />} />
         <Route path="/role-permissions" element={<GroupRolePagePermission />} />
