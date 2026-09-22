@@ -165,7 +165,15 @@ function FieldControl({ field, value, onChange, options }) {
  * global catalogs (Permissions, Modules, Pages) and unused for read-only
  * log pages.
  */
-export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: orgNameProp }) {
+/**
+ * `embedded` renders the same screen WITHOUT its own PageHeader, for the
+ * Access Control shell where the page title and breadcrumb already live in the
+ * tab strip above. The search / filter / refresh / add controls move into a
+ * compact bar instead of being lost with the header. Every other behaviour —
+ * permissions, CRUD, paging, the form dialog — is identical, so the standalone
+ * routes and the tabbed ones can never drift apart.
+ */
+export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: orgNameProp, embedded = false }) {
   // Org context for a `orgScoped` resource comes from the Administration hub's
   // `?org=&orgName=` query params by default — routes can still pass it as an
   // explicit prop (e.g. the bespoke Role Permissions page uses a URL param
@@ -431,8 +439,53 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
     );
   }
 
+  const controls = (
+    <div className="flex items-center gap-2">
+      <Input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        onClear={() => setSearch('')}
+        placeholder={`Search ${config.title.toLowerCase()}…`}
+        icon="search"
+        size="sm"
+        wrapperClassName="w-56"
+      />
+      {config.statusFilter && (
+        <div className="w-36">
+          <Select
+            value={statusFilterId}
+            onChange={setStatusFilterId}
+            options={[{ id: 'all', label: config.statusFilter.allLabel || 'All' }, ...config.statusFilter.options]}
+          />
+        </div>
+      )}
+      {config.showTimezoneSelector && (
+        <div className="w-44">
+          <Select
+            value={logsTz}
+            onChange={setLogsTz}
+            options={LOG_TIMEZONES.map((t) => ({ id: t.id, label: t.label }))}
+          />
+        </div>
+      )}
+      <IconButton icon="refresh" label="Refresh" onClick={refresh} iconClassName={isFetching ? 'animate-spin' : undefined} />
+      {allowAdd && <Button variant="primary" icon="plus" onClick={openCreate}>Add {singular}</Button>}
+    </div>
+  );
+
   return (
     <>
+      {embedded ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-semibold text-fg">{config.title}</h2>
+            <p className="text-[12px] text-muted">
+              {orgName ? `${config.subtitle} · ${orgName}` : config.subtitle}
+            </p>
+          </div>
+          {controls}
+        </div>
+      ) : (
       <PageHeader
         title={config.title}
         icon={config.icon}
@@ -473,6 +526,7 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
           </div>
         )}
       />
+      )}
 
       {/* No outer .card wrapper — matches AgentsPage.jsx's list view: darkHeader
           mode already renders each row as its own floating rounded card on a
@@ -481,8 +535,9 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
           spacing plus darkHeader's own internal top padding (Table.jsx's
           `rounded-2xl bg-sunken p-3` wrapper) — both are shared/app-wide, so
           rather than touch either, this page (the only one with nothing in
-          between) compensates locally for a genuinely minimal gap. */}
-      <div className="-mt-4">
+          between) compensates locally for a genuinely minimal gap. The pull-up
+          is wrong when embedded: there is no PageHeader above to close up to. */}
+      <div className={embedded ? undefined : '-mt-4'}>
         <Table
           columns={tableColumns}
           rows={pageRows}

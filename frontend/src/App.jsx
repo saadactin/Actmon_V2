@@ -135,6 +135,7 @@ const CosmosDBEditConnectionPage = lazy(() => import('@/pages/cosmosdb/CosmosDBE
 const AdminResourcePage = lazy(() => import('@/pages/administration/_shared/AdminResourcePage'));
 const AdministrationPage = lazy(() => import('@/pages/administration/AdministrationPage'));
 const GroupRolePagePermission = lazy(() => import('@/pages/administration/GroupRolePagePermission'));
+const AccessControlPage = lazy(() => import('@/pages/administration/AccessControlPage'));
 const AiChatSessionsPage = lazy(() => import('@/pages/administration/AiChatSessionsPage'));
 const HelpCenterAppearancePage = lazy(() => import('@/pages/administration/HelpCenterAppearancePage'));
 
@@ -413,6 +414,11 @@ export default function App() {
             drill-down, and one generic engine instance per master resource. */}
         <Route path="/administration" element={<AdministrationPage />} />
         <Route path="/administration/:orgId" element={<AdministrationPage />} />
+        {/* Access Control — the whole RBAC model on one tabbed screen. The
+            individual routes below stay: they are what page_master holds, so
+            RBAC still governs each screen, and existing links keep working. */}
+        <Route path="/access-control" element={<AccessControlPage />} />
+        <Route path="/access-control/:tab" element={<AccessControlPage />} />
         <Route path="/role-permissions" element={<GroupRolePagePermission />} />
         <Route path="/role-permissions/:orgId" element={<GroupRolePagePermission />} />
         <Route path="/role-permissions/:orgId/:roleId" element={<GroupRolePagePermission />} />
