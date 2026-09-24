@@ -2796,6 +2796,22 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
   );
 });
 
+/* Agents-list cell typography (AgentsPage CELL_SIZE / CELL_TEXT_STYLE):
+   16px on an 18px line, weight 500, #6B7280. One definition for every table on
+   this page, so they cannot drift from each other or from the Agents list. */
+const AG_CELL = 'whitespace-nowrap text-[1rem] leading-[1.125rem] font-medium';
+const AG_GRAY = { color: 'var(--agent-gray)' };
+/** Default cell — grey unless the value means something. */
+const Muted = ({ children }) => <span className={AG_CELL} style={AG_GRAY}>{children}</span>;
+/** The identifier in a row, bold in --color-fg like Agents' Agent/Host column. */
+const Strong = ({ children }) => (
+  <span className="text-[1rem] leading-[1.125rem] font-bold text-fg">{children}</span>
+);
+/** A count that is worth noticing when non-zero. */
+const CountBadge = ({ n, tone = 'info' }) => (
+  <Badge tone={n > 0 ? tone : 'neutral'} size="xs">{n ?? 0}</Badge>
+);
+
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED CONFIG TAB  — pg_settings across 15 categories
 ══════════════════════════════════════════════════════════════════════════ */
@@ -2843,6 +2859,20 @@ const CTX_CLS = {
   'superuser-backend':   'bg-indigo-100 text-indigo-700 border border-indigo-200',
   'backend':             'bg-teal-100 text-teal-700 border border-teal-200',
 };
+/* Badge tone per source/context, replacing the hardcoded Tailwind colour-class
+   ladders above. The tone vocabulary is the app's, so these follow the theme
+   instead of being pinned to one palette. The CLS maps are kept because the
+   group chips elsewhere on this tab still use them. */
+const SRC_TONE = {
+  'default': 'neutral', 'configuration file': 'info', 'override': 'warning',
+  'environment variable': 'accent', 'command line': 'accent',
+  'database': 'accent', 'user': 'success',
+};
+const CTX_TONE = {
+  'postmaster': 'danger', 'sighup': 'warning', 'superuser': 'info',
+  'user': 'success', 'superuser-backend': 'accent', 'backend': 'info',
+};
+
 const CTX_LABEL = {
   'postmaster':          '⚠ restart',
   'sighup':              '↺ reload',
@@ -2896,6 +2926,7 @@ const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, r
   const [search,      setSearch]      = React.useState('');   // debounced — the actual filter key
   const [copied,      setCopied]      = React.useState(null);
   const [showDesc,    setShowDesc]    = React.useState(true);
+  const [cfgSort, setCfgSort] = React.useState({ key: 'name', dir: 'asc' });
 
   React.useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput), 250);
@@ -3089,124 +3120,118 @@ const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, r
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <Paged rows={params} unit="parameters">{(pageRows, pager) => (<>
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="bg-slate-50/70 border-b border-slate-200">
-                  {[
-                    { label: 'Parameter',      w: '' },
-                    { label: 'Current Value',  w: 'min-w-[120px]' },
-                    { label: 'Unit',           w: 'w-16' },
-                    { label: 'Default',        w: 'min-w-[80px]' },
-                    { label: 'Source',         w: 'w-24' },
-                    { label: 'Context',        w: 'w-24' },
-                    { label: '↻',             w: 'w-8 text-center' },
-                    ...(showDesc ? [{ label: 'Description', w: 'min-w-[200px]' }] : []),
-                  ].map(h => (
-                    <th key={h.label} className={`px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap ${h.w}`}>
-                      {h.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map(p => (
-                  <tr key={p.name}
-                    className={`border-t border-slate-100 hover:bg-indigo-50/20 transition-colors
-                      ${p.pending_restart ? 'bg-red-50/30' : p.is_modified ? 'bg-blue-50/20' : ''}`}>
-
-                    {/* Parameter name */}
-                    <td className="px-3 py-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <code className="font-mono text-[11px] font-bold text-slate-800 select-all">{p.name}</code>
-                        <button onClick={() => copyParam(p.name)}
-                          className="w-5 h-5 rounded flex items-center justify-center text-slate-300 hover:text-indigo-500 transition-colors flex-shrink-0">
-                          {copied === p.name
-                            ? <CheckCheck size={10} className="text-emerald-500"/>
-                            : <Copy size={10}/>}
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* Current value */}
-                    <td className="px-3 py-2.5">
-                      <code className={`font-mono text-[12px] font-black px-2 py-1 rounded-lg block max-w-[160px] truncate
-                        ${p.pending_restart
-                          ? 'bg-red-100 text-red-700 border border-red-200'
-                          : p.is_modified
-                            ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                            : 'bg-slate-50 text-slate-700 border border-slate-100'}`}
-                        title={p.setting}>
-                        {p.setting ?? '—'}
-                      </code>
-                    </td>
-
-                    {/* Unit */}
-                    <td className="px-3 py-2.5 font-mono text-[10px] text-slate-400">{p.unit || '—'}</td>
-
-                    {/* Default (boot_val) */}
-                    <td className="px-3 py-2.5">
-                      <code className="font-mono text-[10px] text-slate-400 max-w-[100px] truncate block" title={p.boot_val}>
-                        {p.boot_val ?? '—'}
-                      </code>
-                    </td>
-
-                    {/* Source */}
-                    <td className="px-3 py-2.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold
-                        ${SRC_CLS[p.source || 'default'] || 'bg-slate-100 text-slate-500'}`}>
-                        {SRC_LABEL[p.source || 'default'] || p.source || '—'}
+          {(() => {
+            /* Shared <Table darkHeader> — same navy header, 64px floating rows
+               and 16px/18px cell text as the Agents list. The old markup was a
+               hand-rolled table at 9px headers and 10-12px cells, with its own
+               hover tints; every column here sorts, which it could not do.
+               Parameter name and value stay monospace: they are literal config
+               text, where a proportional font would hide a trailing space. */
+            const rows = params.map((prm) => ({
+              key: prm.name,
+              sort: {
+                name: prm.name || '',
+                setting: prm.setting ?? '',
+                unit: prm.unit || '',
+                boot_val: prm.boot_val ?? '',
+                source: prm.source || 'default',
+                context: prm.context || '',
+                // Restart-pending first, then merely modified: the two states
+                // an operator is actually scanning for.
+                restart: prm.pending_restart ? 2 : (prm.is_modified ? 1 : 0),
+                description: prm.description || '',
+              },
+              cells: {
+                name: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <code className="font-mono text-[0.875rem] font-bold text-fg select-all">{prm.name}</code>
+                    <button onClick={(e) => { e.stopPropagation(); copyParam(prm.name); }}
+                            className="grid h-5 w-5 shrink-0 place-items-center rounded text-subtle transition-colors hover:text-accent-text"
+                            title="Copy parameter name">
+                      {copied === prm.name
+                        ? <CheckCheck size={11} style={{ color: 'var(--success-fg)' }} />
+                        : <Copy size={11} />}
+                    </button>
+                  </span>
+                ),
+                setting: (
+                  <code className="block max-w-[180px] truncate rounded-lg px-2 py-1 font-mono text-[0.875rem] font-bold"
+                        title={prm.setting}
+                        style={prm.pending_restart
+                          ? { background: 'var(--danger-soft)', color: 'var(--danger-fg)' }
+                          : prm.is_modified
+                            ? { background: 'var(--info-soft)', color: 'var(--info-fg)' }
+                            : { background: 'var(--surface-sunken)', color: 'var(--fg)' }}>
+                    {prm.setting ?? '—'}
+                  </code>
+                ),
+                unit: <Muted>{prm.unit || '—'}</Muted>,
+                boot_val: (
+                  <code className="block max-w-[120px] truncate font-mono text-[0.8125rem]" style={AG_GRAY} title={prm.boot_val}>
+                    {prm.boot_val ?? '—'}
+                  </code>
+                ),
+                source: (
+                  <span className="inline-flex flex-col items-center">
+                    <Badge tone={SRC_TONE[prm.source || 'default'] || 'neutral'} size="xs">
+                      {SRC_LABEL[prm.source || 'default'] || prm.source || '—'}
+                    </Badge>
+                    {prm.sourcefile && (
+                      <span className="mt-0.5 truncate font-mono text-[10px]" style={AG_GRAY} title={prm.sourcefile}>
+                        :{prm.sourceline}
                       </span>
-                      {p.sourcefile && (
-                        <p className="text-[8px] text-slate-400 mt-0.5 font-mono truncate max-w-[100px]" title={p.sourcefile}>
-                          :{p.sourceline}
-                        </p>
-                      )}
-                    </td>
-
-                    {/* Context */}
-                    <td className="px-3 py-2.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold
-                        ${CTX_CLS[p.context || ''] || 'bg-slate-100 text-slate-500'}`}>
-                        {CTX_LABEL[p.context || ''] || p.context || '—'}
-                      </span>
-                    </td>
-
-                    {/* Pending restart */}
-                    <td className="px-3 py-2.5 text-center">
-                      {p.pending_restart && (
-                        <span title="Pending restart — server must be restarted" className="text-red-500 font-black text-[16px] leading-none">↻</span>
-                      )}
-                    </td>
-
-                    {/* Description */}
-                    {showDesc && (
-                      <td className="px-3 py-2.5 text-slate-400 text-[11px]" style={{maxWidth: 280}}>
-                        {p.description || '—'}
-                      </td>
                     )}
-                  </tr>
-                ))}
-
-                {params.length === 0 && (
-                  <tr>
-                    <td colSpan={showDesc ? 8 : 7} className="text-center py-16">
-                      <Settings size={40} className="mx-auto mb-3 text-slate-200"/>
-                      <p className="text-slate-400 font-bold text-[13px]">
-                        {searchLower ? 'No parameters match your search' : 'No parameters in this group'}
-                      </p>
-                      {searchLower && (
-                        <p className="text-slate-400 text-[12px] mt-1">Try a broader term, e.g. "memory", "wal", "checkpoint"</p>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
-          </div>
+                  </span>
+                ),
+                context: (
+                  <Badge tone={CTX_TONE[prm.context || ''] || 'neutral'} size="xs">
+                    {CTX_LABEL[prm.context || ''] || prm.context || '—'}
+                  </Badge>
+                ),
+                restart: prm.pending_restart
+                  ? <Badge tone="danger" size="xs">restart</Badge>
+                  : prm.is_modified
+                    ? <Badge tone="info" size="xs">changed</Badge>
+                    : <Muted>—</Muted>,
+                description: (
+                  <span className="block max-w-[320px] truncate text-[0.875rem]" style={AG_GRAY} title={prm.description}>
+                    {prm.description || '—'}
+                  </span>
+                ),
+              },
+            }));
+            const cols = [
+              { key: 'name',     label: 'Parameter',     sortable: true, width: 300 },
+              { key: 'setting',  label: 'Current Value', sortable: true, align: 'center', width: 200 },
+              { key: 'unit',     label: 'Unit',          sortable: true, align: 'center', width: 100 },
+              { key: 'boot_val', label: 'Default',       sortable: true, align: 'center', width: 150 },
+              { key: 'source',   label: 'Source',        sortable: true, align: 'center', width: 150 },
+              { key: 'context',  label: 'Context',       sortable: true, align: 'center', width: 150 },
+              { key: 'restart',  label: 'State',         sortable: true, align: 'center', width: 130,
+                hint: 'Sorts restart-pending first, then changed-from-default.' },
+              ...(showDesc ? [{ key: 'description', label: 'Description', sortable: true, width: 340 }] : []),
+            ];
+            return (
+              <div className="p-card">
+                <DataTable
+                  columns={cols}
+                  rows={sortRows(rows, cfgSort)}
+                  sort={cfgSort}
+                  onSort={(key) => setCfgSort((cur) => nextSort(cur, key))}
+                  rowHeight={64}
+                  darkHeader
+                  loading={isLoading}
+                  empty={(
+                    <TableEmptyState
+                      icon="settings"
+                      title={searchLower ? 'No parameters match your search' : 'No parameters in this group'}
+                      body={searchLower ? 'Try a broader term, e.g. "memory", "wal", "checkpoint".' : undefined}
+                    />
+                  )}
+                />
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -3245,6 +3270,9 @@ const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, r
 const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, refetch }) {
   const [activeSection, setActiveSection] = React.useState('roles');
   const [roleSort, setRoleSort] = React.useState({ key: 'rolname', dir: 'asc' });
+  const [actSort,  setActSort]  = React.useState({ key: 'total', dir: 'desc' });
+  const [memSort,  setMemSort]  = React.useState({ key: 'role_name', dir: 'asc' });
+  const [objSort,  setObjSort]  = React.useState({ key: 'total', dir: 'desc' });
   const d          = detail || {};
   const roles      = d.roles      || [];
   const members    = d.memberships|| [];
@@ -3399,137 +3427,135 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
           );
         })()}
 
-        {activeSection === 'activity' && (
-          <div className="overflow-x-auto">
-            <Paged rows={activity} unit="sessions">{(pageRows, pager) => (<>
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50">
-                  {['User','Database','Total','Active','Idle','Idle in Txn','Waiting','Max Query Age'].map(h => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((u, i) => (
-                  <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/50">
-                    <td className="px-4 py-3 font-bold text-indigo-700">{u.usename}</td>
-                    <td className="px-4 py-3 text-slate-400 font-mono text-[11px]">{u.datname || '-'}</td>
-                    <td className="px-4 py-3 font-black text-slate-800">{u.total}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.active>0?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-400'}`}>{u.active}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">{u.idle}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.idle_in_txn>0?'bg-amber-100 text-amber-700':'bg-slate-100 text-slate-400'}`}>{u.idle_in_txn}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.waiting>0?'bg-red-100 text-red-700':'bg-slate-100 text-slate-400'}`}>{u.waiting}</span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-[11px]">
-                      {u.max_query_age_s > 0
-                        ? <span className={`font-bold ${u.max_query_age_s>60?'text-red-600':u.max_query_age_s>10?'text-amber-600':'text-slate-600'}`}>
-                            {u.max_query_age_s >= 60 ? `${Math.floor(u.max_query_age_s/60)}m ${u.max_query_age_s%60}s` : `${u.max_query_age_s}s`}
-                          </span>
-                        : <span className="text-slate-300">-</span>}
-                    </td>
-                  </tr>
-                ))}
-                {activity.length === 0 && (
-                  <tr><td colSpan={8} className="text-center py-14 text-slate-400">No active sessions</td></tr>
-                )}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
-          </div>
-        )}
+        {activeSection === 'activity' && (() => {
+          const rows = activity.map((u, i) => ({
+            key: `${u.usename}-${u.datname}-${i}`,
+            sort: {
+              usename: u.usename || '', datname: u.datname || '',
+              total: Number(u.total) || 0, active: Number(u.active) || 0,
+              idle: Number(u.idle) || 0, idle_in_txn: Number(u.idle_in_txn) || 0,
+              waiting: Number(u.waiting) || 0, age: Number(u.max_query_age_s) || 0,
+            },
+            cells: {
+              usename: <Strong>{u.usename}</Strong>,
+              datname: <Muted>{u.datname || '—'}</Muted>,
+              total: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{u.total}</span>,
+              active: <CountBadge n={u.active} tone="success" />,
+              idle: <CountBadge n={u.idle} tone="neutral" />,
+              idle_in_txn: <CountBadge n={u.idle_in_txn} tone="warning" />,
+              waiting: <CountBadge n={u.waiting} tone="danger" />,
+              // Banded like the Agents list's CPU/memory columns: grey until
+              // the number actually means something.
+              age: u.max_query_age_s > 0
+                ? <span className="text-[1rem] leading-[1.125rem] font-semibold"
+                        style={{ color: u.max_query_age_s > 60 ? 'var(--danger-fg)'
+                          : u.max_query_age_s > 10 ? 'var(--warning-fg)' : 'var(--agent-gray)' }}>
+                    {u.max_query_age_s >= 60
+                      ? `${Math.floor(u.max_query_age_s / 60)}m ${u.max_query_age_s % 60}s`
+                      : `${u.max_query_age_s}s`}
+                  </span>
+                : <Muted>—</Muted>,
+            },
+          }));
+          return (
+            <div className="p-card">
+              <DataTable
+                columns={[
+                  { key: 'usename',     label: 'User',          sortable: true, width: 200 },
+                  { key: 'datname',     label: 'Database',      sortable: true, width: 200 },
+                  { key: 'total',       label: 'Total',         sortable: true, align: 'center', width: 110 },
+                  { key: 'active',      label: 'Active',        sortable: true, align: 'center', width: 110 },
+                  { key: 'idle',        label: 'Idle',          sortable: true, align: 'center', width: 110 },
+                  { key: 'idle_in_txn', label: 'Idle in Txn',   sortable: true, align: 'center', width: 140 },
+                  { key: 'waiting',     label: 'Waiting',       sortable: true, align: 'center', width: 120 },
+                  { key: 'age',         label: 'Max Query Age', sortable: true, align: 'center', width: 160 },
+                ]}
+                rows={sortRows(rows, actSort)}
+                sort={actSort}
+                onSort={(key) => setActSort((cur) => nextSort(cur, key))}
+                rowHeight={64} darkHeader loading={isLoading}
+                empty={<TableEmptyState icon="users" title="No active sessions" />}
+              />
+            </div>
+          );
+        })()}
 
-        {activeSection === 'members' && (
-          <div className="overflow-x-auto">
-            {members.length === 0 ? (
-              <div className="p-12 text-center">
-                <Users size={32} className="mx-auto text-slate-200 mb-3"/>
-                <p className="text-slate-500 font-semibold">No role memberships</p>
-                <p className="text-slate-400 text-sm mt-1">No roles are members of other roles</p>
-              </div>
-            ) : (
-              <Paged rows={members} unit="members">{(pageRows, pager) => (<>
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/50">
-                    {['Role (Group)','Member','Admin Option'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((m, i) => (
-                    <tr key={i} className="border-t border-slate-50 hover:bg-indigo-50/20">
-                      <td className="px-4 py-3 font-bold text-purple-700">{m.role_name}</td>
-                      <td className="px-4 py-3 font-bold text-indigo-700">
-                        <div className="flex items-center gap-2">
-                          <ArrowRight size={10} className="text-slate-300"/>
-                          {m.member_name}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {m.admin_option
-                          ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">ADMIN</span>
-                          : <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400">member</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {pager}
-              </>)}</Paged>
-            )}
-          </div>
-        )}
+        {activeSection === 'members' && (() => {
+          const rows = members.map((m, i) => ({
+            key: `${m.role_name}-${m.member_name}-${i}`,
+            sort: { role_name: m.role_name || '', member_name: m.member_name || '', admin: m.admin_option ? 1 : 0 },
+            cells: {
+              role_name: <Strong>{m.role_name}</Strong>,
+              member_name: (
+                <span className="inline-flex items-center gap-1.5">
+                  <ArrowRight size={12} style={AG_GRAY} />
+                  <Strong>{m.member_name}</Strong>
+                </span>
+              ),
+              admin: m.admin_option
+                ? <Badge tone="warning" size="xs">ADMIN</Badge>
+                : <Badge tone="neutral" size="xs">member</Badge>,
+            },
+          }));
+          return (
+            <div className="p-card">
+              <DataTable
+                columns={[
+                  { key: 'role_name',   label: 'Role (Group)',  sortable: true, width: 280 },
+                  { key: 'member_name', label: 'Member',        sortable: true, width: 280 },
+                  { key: 'admin',       label: 'Admin Option',  sortable: true, align: 'center', width: 180,
+                    hint: 'WITH ADMIN OPTION lets the member grant this role onward.' },
+                ]}
+                rows={sortRows(rows, memSort)}
+                sort={memSort}
+                onSort={(key) => setMemSort((cur) => nextSort(cur, key))}
+                rowHeight={64} darkHeader loading={isLoading}
+                empty={<TableEmptyState icon="users" title="No role memberships"
+                                        body="No roles are members of other roles." />}
+              />
+            </div>
+          );
+        })()}
 
-        {activeSection === 'objects' && (
-          <div className="overflow-x-auto">
-            {ownership.length === 0 ? (
-              <div className="p-12 text-center">
-                <Database size={32} className="mx-auto text-slate-200 mb-3"/>
-                <p className="text-slate-500 font-semibold">No object ownership data</p>
-              </div>
-            ) : (
-              <Paged rows={ownership} unit="objects">{(pageRows, pager) => (<>
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/50">
-                    {['Owner','Tables','Views','Indexes','Sequences','Total Objects'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((o, i) => {
-                    const total = (o.tables||0)+(o.views||0)+(o.indexes||0)+(o.sequences||0);
-                    return (
-                      <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/50">
-                        <td className="px-4 py-3 font-bold text-indigo-700">{o.owner}</td>
-                        <td className="px-4 py-3 font-black text-slate-800">{o.tables}</td>
-                        <td className="px-4 py-3 text-slate-600">{o.views}</td>
-                        <td className="px-4 py-3 text-slate-600">{o.indexes}</td>
-                        <td className="px-4 py-3 text-slate-600">{o.sequences}</td>
-                        <td className="px-4 py-3">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700">{total}</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {pager}
-              </>)}</Paged>
-            )}
-          </div>
-        )}
+        {activeSection === 'objects' && (() => {
+          const rows = ownership.map((o, i) => {
+            const total = (o.tables || 0) + (o.views || 0) + (o.indexes || 0) + (o.sequences || 0);
+            return {
+              key: `${o.owner}-${i}`,
+              sort: {
+                owner: o.owner || '', tables: Number(o.tables) || 0, views: Number(o.views) || 0,
+                indexes: Number(o.indexes) || 0, sequences: Number(o.sequences) || 0, total,
+              },
+              cells: {
+                owner: <Strong>{o.owner}</Strong>,
+                tables: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{o.tables}</span>,
+                views: <Muted>{o.views}</Muted>,
+                indexes: <Muted>{o.indexes}</Muted>,
+                sequences: <Muted>{o.sequences}</Muted>,
+                total: <Badge tone="accent" size="xs">{total}</Badge>,
+              },
+            };
+          });
+          return (
+            <div className="p-card">
+              <DataTable
+                columns={[
+                  { key: 'owner',     label: 'Owner',         sortable: true, width: 260 },
+                  { key: 'tables',    label: 'Tables',        sortable: true, align: 'center', width: 130 },
+                  { key: 'views',     label: 'Views',         sortable: true, align: 'center', width: 130 },
+                  { key: 'indexes',   label: 'Indexes',       sortable: true, align: 'center', width: 130 },
+                  { key: 'sequences', label: 'Sequences',     sortable: true, align: 'center', width: 140 },
+                  { key: 'total',     label: 'Total Objects', sortable: true, align: 'center', width: 160 },
+                ]}
+                rows={sortRows(rows, objSort)}
+                sort={objSort}
+                onSort={(key) => setObjSort((cur) => nextSort(cur, key))}
+                rowHeight={64} darkHeader loading={isLoading}
+                empty={<TableEmptyState icon="database" title="No object ownership data" />}
+              />
+            </div>
+          );
+        })()}
       </div>
 
       {d.errors?.length > 0 && (
