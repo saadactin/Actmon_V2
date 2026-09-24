@@ -32,6 +32,7 @@ import Pagination from '@/components/ui/Pagination';
 import { Paged } from '@/components/ui/Pagination';
 import DataTable, { EmptyState as TableEmptyState, nextSort, sortRows } from '@/components/ui/Table';
 import StatTile from '@/components/charts/StatTile';
+import Badge from '@/components/ui/Badge';
 import usePaged from '@/hooks/usePaged';
 import {
   DATABASE_COLUMNS, PG_DATABASE_EXTRAS, PG_DATABASE_HINTS, withExtras, withHints,
@@ -3243,6 +3244,7 @@ const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, r
 ══════════════════════════════════════════════════════════════════════════ */
 const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, refetch }) {
   const [activeSection, setActiveSection] = React.useState('roles');
+  const [roleSort, setRoleSort] = React.useState({ key: 'rolname', dir: 'asc' });
   const d          = detail || {};
   const roles      = d.roles      || [];
   const members    = d.memberships|| [];
@@ -3266,19 +3268,34 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {[
-          { label:'Total Roles',      value: summary.total_roles     ?? 0, cls:'bg-indigo-50 border-indigo-200 text-indigo-700' },
-          { label:'Login Roles',      value: summary.login_roles     ?? 0, cls:'bg-emerald-50 border-emerald-200 text-emerald-700' },
-          { label:'Superusers',       value: summary.superuser_count ?? 0, cls: (summary.superuser_count||0) > 1 ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-700' },
-          { label:'Active Sessions',  value: activity.reduce((a,u)=>a+(u.active||0),0), cls:'bg-blue-50 border-blue-200 text-blue-700' },
-          { label:'Expired Passwords',value: summary.expired_count   ?? 0, cls: (summary.expired_count||0) > 0 ? 'bg-red-50 border-red-200 text-red-700' : 'bg-slate-50 border-slate-200 text-slate-700' },
-        ].map(({ label, value, cls }) => (
-          <div key={label} className={`rounded-xl border p-4 ${cls}`}>
-            <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{label}</p>
-            <p className="text-2xl font-black mt-1">{value}</p>
-          </div>
-        ))}
+      {/* Same <StatTile> as the main Dashboard and the Tables tab. Replaces a
+          hand-rolled card whose colour came from a hardcoded indigo/emerald/
+          amber/blue/red ladder, and adds the `sub` verdict line those cards had
+          no room for — a count alone never said whether it was healthy. */}
+      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 xl:grid-cols-5">
+        <StatTile label="Total Roles" icon="users" tone="accent"
+          value={summary.total_roles ?? 0}
+          sub={`${summary.login_roles ?? 0} can log in`} />
+        <StatTile label="Login Roles" icon="key" tone="good"
+          value={summary.login_roles ?? 0}
+          sub="roles that can connect" />
+        <StatTile label="Superusers" icon="shield"
+          tone={(summary.superuser_count || 0) > 1 ? 'warning' : 'good'}
+          valueTone={(summary.superuser_count || 0) > 1 ? 'warning' : 'neutral'}
+          value={summary.superuser_count ?? 0}
+          sub={(summary.superuser_count || 0) > 1
+            ? <b className="font-semibold text-warning-fg">more than one</b>
+            : 'one, as expected'} />
+        <StatTile label="Active Sessions" icon="activity" tone="info"
+          value={activity.reduce((a, u) => a + (u.active || 0), 0)}
+          sub={`across ${roles.length} role${roles.length === 1 ? '' : 's'}`} />
+        <StatTile label="Expired Passwords" icon="alert"
+          tone={(summary.expired_count || 0) > 0 ? 'danger' : 'good'}
+          valueTone={(summary.expired_count || 0) > 0 ? 'danger' : 'neutral'}
+          value={summary.expired_count ?? 0}
+          sub={(summary.expired_count || 0) > 0
+            ? <b className="font-semibold text-danger-fg">needs attention</b>
+            : 'none expired'} />
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -3294,70 +3311,93 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
           </button>
         </div>
 
-        {activeSection === 'roles' && (
-          <div className="overflow-x-auto">
-            <Paged rows={roles} unit="roles">{(pageRows, pager) => (<>
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50">
-                  {['Role Name','Permissions','Conn Limit','Password Expires','Current Conns'].map(h => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
+        {activeSection === 'roles' && (() => {
+          /* Same shared <Table darkHeader> as the Agents list: 64px floating row
+             cards, navy header, 16px/18px cell text in --agent-gray. Every column
+             sorts, which the hand-rolled table could not do at all. Colour is kept
+             only where it MEANS something — SUPERUSER, an expired password, a live
+             connection — exactly as the Agents list bands CPU and memory. */
+          const CELL = 'whitespace-nowrap text-[1rem] leading-[1.125rem] font-medium';
+          const GRAY = { color: 'var(--agent-gray)' };
+          const FLAGS = [
+            ['SUPERUSER',   'rolsuper',       'danger'],
+            ['LOGIN',       'rolcanlogin',    'success'],
+            ['CREATEDB',    'rolcreatedb',    'info'],
+            ['CREATEROLE',  'rolcreaterole',  'accent'],
+            ['REPLICATION', 'rolreplication', 'info'],
+            ['BYPASSRLS',   'rolbypassrls',   'warning'],
+            ['INHERIT',     'rolinherit',     'neutral'],
+          ];
+          const roleRows = roles.map((r, i) => ({
+            key: `${r.rolname}-${i}`,
+            sort: {
+              rolname: r.rolname || '',
+              perms: FLAGS.filter(([, k]) => r[k]).length,
+              conn: r.rolconnlimit == null ? -1 : Number(r.rolconnlimit),
+              expires: r.rolvaliduntil ? new Date(r.rolvaliduntil).getTime() : Infinity,
+              current: Number(connSummary[r.rolname] ?? -1),
+            },
+            cells: {
+              rolname: (
+                <span className="flex items-center gap-2">
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg"
+                        style={{ background: r.rolsuper ? 'var(--danger-soft)'
+                          : r.rolcanlogin ? 'var(--success-soft)' : 'var(--neutral-soft)' }}>
+                    <Shield size={13} style={{ color: r.rolsuper ? 'var(--danger-fg)'
+                      : r.rolcanlogin ? 'var(--success-fg)' : 'var(--fg-muted)' }} />
+                  </span>
+                  <span className="truncate text-[1rem] leading-[1.125rem] font-bold text-fg">{r.rolname}</span>
+                </span>
+              ),
+              perms: (
+                <span className="flex flex-wrap items-center justify-center gap-1">
+                  {FLAGS.filter(([, k]) => r[k]).map(([label, , tone]) => (
+                    <Badge key={label} tone={tone} size="xs">{label}</Badge>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((r, i) => (
-                  <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50/50 ${r.expired?'bg-red-50/30':''}`}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${r.rolsuper?'bg-red-100':r.rolcanlogin?'bg-emerald-100':'bg-slate-100'}`}>
-                          <Shield size={12} className={r.rolsuper?'text-red-600':r.rolcanlogin?'text-emerald-600':'text-slate-400'}/>
-                        </div>
-                        <span className={`font-bold ${r.rolcanlogin?'text-indigo-700':'text-slate-600'}`}>{r.rolname}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        <RoleBadge label="SUPERUSER"   active={r.rolsuper}       color="bg-red-100 text-red-700"/>
-                        <RoleBadge label="LOGIN"       active={r.rolcanlogin}    color="bg-emerald-100 text-emerald-700"/>
-                        <RoleBadge label="CREATEDB"    active={r.rolcreatedb}    color="bg-blue-100 text-blue-700"/>
-                        <RoleBadge label="CREATEROLE"  active={r.rolcreaterole}  color="bg-purple-100 text-purple-700"/>
-                        <RoleBadge label="REPLICATION" active={r.rolreplication} color="bg-cyan-100 text-cyan-700"/>
-                        <RoleBadge label="BYPASSRLS"   active={r.rolbypassrls}   color="bg-orange-100 text-orange-700"/>
-                        <RoleBadge label="INHERIT"     active={r.rolinherit}     color="bg-slate-100 text-slate-500"/>
-                        {!r.rolsuper && !r.rolcanlogin && !r.rolcreatedb && !r.rolcreaterole && (
-                          <span className="text-slate-300 text-[10px]">group role</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-slate-600">
-                      {r.rolconnlimit == null ? <span className="text-slate-300">unlimited</span> : r.rolconnlimit}
-                    </td>
-                    <td className="px-4 py-3">
-                      {r.rolvaliduntil
-                        ? <span className={`text-[11px] font-bold ${r.expired?'text-red-600':'text-slate-600'}`}>
-                            {r.expired ? 'EXPIRED: ' : ''}{String(r.rolvaliduntil).slice(0,10)}
-                          </span>
-                        : <span className="text-slate-300 text-[10px]">never</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      {connSummary[r.rolname] != null
-                        ? <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${connSummary[r.rolname]>0?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-400'}`}>
-                            {connSummary[r.rolname]}
-                          </span>
-                        : <span className="text-slate-300">-</span>}
-                    </td>
-                  </tr>
-                ))}
-                {roles.length === 0 && (
-                  <tr><td colSpan={5} className="text-center py-14 text-slate-400">No roles found</td></tr>
-                )}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
-          </div>
-        )}
+                  {!r.rolsuper && !r.rolcanlogin && !r.rolcreatedb && !r.rolcreaterole && (
+                    <span className={CELL} style={GRAY}>group role</span>
+                  )}
+                </span>
+              ),
+              conn: r.rolconnlimit == null
+                ? <span className={CELL} style={GRAY}>unlimited</span>
+                : <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{r.rolconnlimit}</span>,
+              expires: r.rolvaliduntil
+                ? <span className="text-[1rem] leading-[1.125rem] font-semibold"
+                        style={r.expired ? { color: 'var(--danger-fg)' } : GRAY}>
+                    {r.expired ? 'Expired ' : ''}{String(r.rolvaliduntil).slice(0, 10)}
+                  </span>
+                : <span className={CELL} style={GRAY}>never</span>,
+              current: connSummary[r.rolname] != null
+                ? <Badge tone={connSummary[r.rolname] > 0 ? 'info' : 'neutral'} size="xs">
+                    {connSummary[r.rolname]}
+                  </Badge>
+                : <span className={CELL} style={GRAY}>—</span>,
+            },
+          }));
+          const sortedRoles = sortRows(roleRows, roleSort);
+          return (
+            <div className="p-card">
+              <DataTable
+                columns={[
+                  { key: 'rolname',  label: 'Role Name',        sortable: true, width: 260 },
+                  { key: 'perms',    label: 'Permissions',      sortable: true, align: 'center', width: 420,
+                    hint: 'Sorts by how many attributes the role carries.' },
+                  { key: 'conn',     label: 'Conn Limit',       sortable: true, align: 'center', width: 150 },
+                  { key: 'expires',  label: 'Password Expires', sortable: true, align: 'center', width: 190 },
+                  { key: 'current',  label: 'Current Conns',    sortable: true, align: 'center', width: 160 },
+                ]}
+                rows={sortedRoles}
+                sort={roleSort}
+                onSort={(key) => setRoleSort((cur) => nextSort(cur, key))}
+                rowHeight={64}
+                darkHeader
+                loading={isLoading}
+                empty={<TableEmptyState icon="users" title="No roles found" />}
+              />
+            </div>
+          );
+        })()}
 
         {activeSection === 'activity' && (
           <div className="overflow-x-auto">
