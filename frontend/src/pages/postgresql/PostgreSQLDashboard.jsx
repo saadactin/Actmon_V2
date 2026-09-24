@@ -7,7 +7,7 @@ import {
   FileText, Zap, GitBranch, RotateCcw,
   CheckCircle2, XCircle, ChevronRight, Heart, Users, Lock,
   TrendingUp, Table, Search, ArrowUp, ArrowDown, Shield,
-  Circle, Wifi, WifiOff, AlertCircle, Info, Radio, Copy, CheckCheck,
+  Circle, Wifi, WifiOff, Info, Radio, Copy, CheckCheck,
   ArrowRight, Crown, Signal, SignalHigh, SignalLow, SignalZero, Settings,
   BarChart3, ExternalLink, Pencil, Archive,
 } from 'lucide-react';
@@ -2987,31 +2987,30 @@ const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, r
         </div>
       )}
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label:'Total pg_settings',   value: d.total_params ?? 0,          icon: Database,      color:'indigo' },
-          { label:'Tracked Params',       value: d.tracked_params ?? 0,        icon: Settings,      color:'violet' },
-          { label:'Modified from Default',value: d.modified_count ?? 0,        icon: AlertCircle,   color:(d.modified_count||0)>0?'blue':'emerald' },
-          { label:'Pending Restart',      value: d.pending_restart_count ?? 0, icon: AlertTriangle, color:(d.pending_restart_count||0)>0?'red':'emerald' },
-        ].map(k => (
-          <div key={k.label} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
-              ${k.color==='indigo'?'bg-indigo-50 border border-indigo-100':
-                k.color==='violet'?'bg-violet-50 border border-violet-100':
-                k.color==='blue'?'bg-blue-50 border border-blue-100':
-                k.color==='emerald'?'bg-emerald-50 border border-emerald-100':
-                'bg-red-50 border border-red-100'}`}>
-              <k.icon size={16} className={
-                k.color==='indigo'?'text-indigo-500':k.color==='violet'?'text-violet-500':
-                k.color==='blue'?'text-blue-500':k.color==='emerald'?'text-emerald-500':'text-red-500'} />
-            </div>
-            <div>
-              <p className="text-[20px] font-black text-slate-900 leading-tight">{k.value}</p>
-              <p className="text-[10px] text-slate-400 font-medium leading-tight">{k.label}</p>
-            </div>
-          </div>
-        ))}
+      {/* KPI strip — the shared <StatTile>, same as the main Dashboard and every
+          other tab here. Replaces a hand-rolled card with a five-branch
+          indigo/violet/blue/emerald/red ladder that ignored the theme, and adds
+          the `sub` line those cards had no room for: a count on its own never
+          said whether 41 modified parameters was normal or a problem. */}
+      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-4">
+        <StatTile label="Total pg_settings" icon="database" tone="accent"
+          value={d.total_params ?? 0}
+          sub="every parameter the server exposes" />
+        <StatTile label="Tracked Params" icon="settings" tone="info"
+          value={d.tracked_params ?? 0}
+          sub={`${Object.keys(groups).length} categories`} />
+        <StatTile label="Modified from Default" icon="alert"
+          tone={(d.modified_count || 0) > 0 ? 'info' : 'good'}
+          valueTone={(d.modified_count || 0) > 0 ? 'accent' : 'neutral'}
+          value={d.modified_count ?? 0}
+          sub={(d.modified_count || 0) > 0 ? 'tuned away from the shipped default' : 'all at default'} />
+        <StatTile label="Pending Restart" icon="refresh"
+          tone={(d.pending_restart_count || 0) > 0 ? 'danger' : 'good'}
+          valueTone={(d.pending_restart_count || 0) > 0 ? 'danger' : 'neutral'}
+          value={d.pending_restart_count ?? 0}
+          sub={(d.pending_restart_count || 0) > 0
+            ? <b className="font-semibold text-danger-fg">restart to apply</b>
+            : 'nothing waiting on a restart'} />
       </div>
 
       {/* Pending restart warning */}
