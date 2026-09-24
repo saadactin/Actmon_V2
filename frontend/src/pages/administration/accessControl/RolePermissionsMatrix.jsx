@@ -48,10 +48,20 @@ const PERM_STYLE = {
 const styleFor = (name) => PERM_STYLE[String(name).toLowerCase()]
   || { bar: 'var(--border-strong)', fg: 'var(--fg-muted)', soft: 'var(--neutral-soft)' };
 
-/** "Full Access" is the catalogue's sentinel — the sum of every real bit (511
-    today, 255 before Restart was added). It is matched by NAME, never by value,
-    so adding a bit tomorrow needs no change here. */
-const isRealPermission = (p) => String(p.permission_name).toLowerCase() !== 'full access';
+/** A grantable permission occupies exactly ONE bit, so its value is a power of
+    two. Anything else in the catalogue is a COMPOSITE — "Full Access" (511), or
+    any other roll-up someone adds — and must never appear as its own checkbox.
+
+    Matching the sentinel by name was not enough. A composite passes the obvious
+    "is this bit set?" test whenever its bits are a subset of the mask: with the
+    mask at 511, `511 & 510 === 510`, so a 510 entry reported itself as granted
+    and the value breakdown read "1 + 2 + ... + 256 + 510" — a sum of 1021 shown
+    against a total of 511. Testing for a power of two is exact and needs no
+    maintenance when a bit is added. */
+const isRealPermission = (p) => {
+  const v = Number(p.permission_value);
+  return Number.isFinite(v) && v > 0 && (v & (v - 1)) === 0;
+};
 
 /** Every descendant of a page, by real parent_id — used for the cascade. */
 function descendantsOf(pageId, allPages) {
@@ -440,7 +450,7 @@ export default function RolePermissionsMatrix() {
                                  : 'cursor-pointer hover:bg-sunken focus-visible:bg-sunken')}>
                           <Checkbox checked={on} disabled={readOnly} label={p.permission_name} />
                           <span className="w-32 shrink-0 text-[13px] font-semibold" style={{ color: st.fg }}>
-                            {p.permission_name} ({p.permission_value})
+                            {p.permission_name}
                           </span>
                           <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted">
                             {PERM_HINT[String(p.permission_name).toLowerCase()] || `Grants ${p.permission_name}`}
@@ -451,35 +461,40 @@ export default function RolePermissionsMatrix() {
                     })}
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="rounded-card border border-accent-border bg-accent-softer px-4 py-4 text-center">
-                      <p className="text-[11px] font-bold tracking-wide text-muted uppercase">Permission Value</p>
-                      <p className="mt-1 text-[32px] leading-none font-bold text-accent-text">{mask}</p>
-                      <p className="mt-1.5 text-[11.5px] text-muted">
-                        {activePerms.length
-                          ? `(${activePerms.map((p) => p.permission_value).join(' + ')})`
-                          : '(no permissions)'}
+                  {/* What this role can do, in words. The numeric bitmask and
+                      its "1 + 2 + 4 + ..." breakdown are deliberately gone: the
+                      value is an implementation detail of how the grant is
+                      stored, and showing the arithmetic invited reading it as
+                      something to reason about. The permissions themselves are
+                      the answer to "what does this role have?". */}
+                  <div className="rounded-card border border-border p-4">
+                    <p className="mb-2.5 text-[11px] font-bold tracking-wide text-muted uppercase">
+                      Granted on this page
+                    </p>
+                    {activePerms.length ? (
+                      <ul className="space-y-1.5">
+                        {activePerms.map((p) => {
+                          const st = styleFor(p.permission_name);
+                          return (
+                            <li key={p.permission_id} className="flex items-center gap-2">
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: st.bar }} />
+                              <span className="flex-1 text-[13px] font-semibold text-fg">{p.permission_name}</span>
+                              {!readOnly && (
+                                <button type="button" onClick={() => togglePerm(p)}
+                                        title={`Remove ${p.permission_name}`}
+                                        className="grid h-5 w-5 shrink-0 place-items-center rounded text-subtle transition-colors hover:text-danger-fg">
+                                  <Icon name="close" size={12} />
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <p className="text-[12.5px] text-subtle">
+                        Nothing granted — this role cannot open this page.
                       </p>
-                    </div>
-                    <div className="rounded-card border border-border px-3 py-3">
-                      <p className="mb-2 text-[11px] font-bold tracking-wide text-muted uppercase">Active Permissions</p>
-                      {activePerms.length ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {activePerms.map((p) => {
-                            const st = styleFor(p.permission_name);
-                            return (
-                              <button key={p.permission_id} type="button" disabled={readOnly}
-                                      onClick={() => togglePerm(p)}
-                                      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-semibold disabled:cursor-not-allowed"
-                                      style={{ color: st.fg, background: st.soft }}>
-                                {p.permission_name}
-                                {!readOnly && <Icon name="close" size={11} />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : <p className="text-[12px] text-subtle">None granted.</p>}
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>

@@ -9,7 +9,8 @@ import Button from '@/components/ui/Button';
 import CopyButton from '@/components/ui/CopyButton';
 import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
-import { StatCell, SqlBlock, SqlCell } from './enginePanels';
+import { SqlBlock, SqlCell } from './enginePanels';
+import StatTile from '@/components/charts/StatTile';
 import { fmtBytes, fmtNumber } from '@/config/dbCatalog';
 
 /**
@@ -84,9 +85,14 @@ function SectionTable({ columns, rows, empty }) {
     <Paged rows={rows} unit="rows">
       {(pageRows, pager) => (
         <>
+          {/* darkHeader + 64px rows: the same treatment as the Agents list and
+              every engine's Tables tab, so inspecting a table looks like the
+              rest of the product rather than like a dialog of its own. */}
           <Table
             columns={columns}
             rows={pageRows.map((r, i) => ({ key: r.__key ?? i, cells: r.__cells }))}
+            rowHeight={64}
+            darkHeader
             empty={<EmptyState icon="boxes" title={empty || 'Nothing here'} />}
           />
           {pager}
@@ -345,13 +351,24 @@ export default function TableDetailsDialog({
         </div>
       ) : (
         <div className="flex h-full flex-col">
+          {/* The Dashboard's <StatTile>, scoped to THIS dialog. StatCell stays
+              the shared primitive for the dense detail pages that use it ~125
+              times over — swapping it globally would put a 30px headline number
+              into places sized for a 16px one. */}
           <div className="mb-4 grid grid-cols-2 gap-gutter-sm sm:grid-cols-3 lg:grid-cols-6">
-            <StatCell label="Rows" value={s.row_count != null ? fmtNumber(s.row_count) : null} />
-            <StatCell label="Total Size" value={s.total_bytes != null ? fmtBytes(s.total_bytes) : null} />
-            <StatCell label="Data Size" value={s.data_bytes != null ? fmtBytes(s.data_bytes) : null} />
-            <StatCell label="Index Size" value={s.index_bytes != null ? fmtBytes(s.index_bytes) : null} />
-            <StatCell label="Columns" value={s.column_count ?? sections.columns.rows?.length ?? null} />
-            <StatCell label="Indexes" value={s.index_count ?? sections.indexes.rows?.length ?? null} />
+            <StatTile label="Rows" icon="rows" tone="accent"
+              value={s.row_count != null ? fmtNumber(s.row_count) : '—'} />
+            <StatTile label="Total Size" icon="database" tone="info"
+              value={s.total_bytes != null ? fmtBytes(s.total_bytes) : '—'}
+              sub={s.data_bytes != null && s.index_bytes != null ? 'data + indexes' : undefined} />
+            <StatTile label="Data Size" icon="layers" tone="info"
+              value={s.data_bytes != null ? fmtBytes(s.data_bytes) : '—'} />
+            <StatTile label="Index Size" icon="key" tone="accent"
+              value={s.index_bytes != null ? fmtBytes(s.index_bytes) : '—'} />
+            <StatTile label="Columns" icon="table" tone="good"
+              value={s.column_count ?? sections.columns.rows?.length ?? '—'} />
+            <StatTile label="Indexes" icon="key" tone="good"
+              value={s.index_count ?? sections.indexes.rows?.length ?? '—'} />
           </div>
 
           <Tabs tabs={tabsWithCounts} value={tab} onChange={setTab} className="mb-4" />
