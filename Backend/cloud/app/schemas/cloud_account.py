@@ -46,11 +46,20 @@ class CloudAccountCreate(BaseModel):
     tenant_or_region: str
     auth_mode: str = "API_Keys"
     auto_discovery: bool = True
+    # The client this account is run for. Optional; can be set later.
+    # NOT `client_id`: that name is already the Azure service principal's
+    # application id below, and a second declaration of a field silently
+    # replaces the first — the Azure app id was being looked up as a client.
+    target_client_id: Optional[uuid.UUID] = None
 
     # AWS
     access_key_id: Optional[str] = None
     secret_access_key: Optional[str] = None
     session_token: Optional[str] = None
+    # Cross-account access: the keys above belong to another account (usually
+    # an Organizations management account) and every call assumes this role.
+    role_arn: Optional[str] = None
+    external_id: Optional[str] = None
 
     # Azure
     tenant_id: Optional[str] = None
@@ -69,12 +78,17 @@ class CloudAccountCreate(BaseModel):
         """Pull provider-specific fields into a credentials dict."""
         p = self.provider.upper()
         if p == "AWS":
-            return {
+            creds = {
                 "access_key_id": self.access_key_id,
                 "secret_access_key": self.secret_access_key,
                 "session_token": self.session_token,
                 "region": self.tenant_or_region,
             }
+            if (self.role_arn or "").strip():
+                creds["role_arn"] = self.role_arn.strip()
+                if (self.external_id or "").strip():
+                    creds["external_id"] = self.external_id.strip()
+            return creds
         if p == "AZURE":
             return {
                 "tenant_id": self.tenant_id,
@@ -108,5 +122,9 @@ class CloudAccountResponse(BaseModel):
     # Derived from the account's most recent discovery job, not stored on the
     # account row itself — see CloudAccountService.list_accounts().
     last_discovery_status: Optional[str] = None  # never_scanned | scanning | failed | ok
+    client_id: Optional[uuid.UUID] = None
+    client_name: Optional[str] = None
+    provider_account_id: Optional[str] = None
+    onboarding_source: Optional[dict] = None
 
     model_config = {"from_attributes": True}

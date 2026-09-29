@@ -276,17 +276,12 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
 
   return (
     <>
-      {embedded ? (
-        // The dashboard already supplies a page header and an account picker,
-        // so only the quality badge is carried over — it must stay reachable
-        // from every context, not just the standalone page.
-        <div className="mb-3 flex justify-end">
-          <DataQualityBadge
-            quality={quality_?.quality}
-            onClick={() => setShowDiagnostics(true)}
-          />
-        </div>
-      ) : (
+      {/* Embedded in the account dashboard, which already supplies a page
+          header and an account picker: the quality badge and the account's
+          billing / inventory status ride at the end of the date-range row
+          below rather than taking a row each, which left three near-empty
+          bands above the numbers. */}
+      {!embedded && (
         <CloudPageHeader
           backTo="/cloud"
           title="Cost Intelligence"
@@ -375,6 +370,19 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
           </span>
         )}
 
+        {embedded && (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <ProviderStatusStrip
+              quality={quality_}
+              onDiagnostics={() => setShowDiagnostics(true)}
+              compact
+            />
+            <DataQualityBadge
+              quality={quality_?.quality}
+              onClick={() => setShowDiagnostics(true)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Active filters sit on their OWN row rather than trailing the date
@@ -420,10 +428,12 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
         )}
       </div>
 
-      <ProviderStatusStrip
-        quality={quality_}
-        onDiagnostics={() => setShowDiagnostics(true)}
-      />
+      {!embedded && (
+        <ProviderStatusStrip
+          quality={quality_}
+          onDiagnostics={() => setShowDiagnostics(true)}
+        />
+      )}
 
       <Tabs tabs={TABS} value={tab} onChange={(id) => setParam({ tab: id })} className="my-4" />
 

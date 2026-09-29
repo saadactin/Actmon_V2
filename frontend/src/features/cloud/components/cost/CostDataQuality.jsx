@@ -53,8 +53,12 @@ export function DataQualityBadge({ quality, onClick }) {
 /**
  * Per-provider health strip. Cost and inventory are shown as two independent
  * states on the same row — that separation is the point.
+ *
+ * `compact` is for the account dashboard, whose header already names the
+ * account: one line, no name, so it can sit in the toolbar row instead of
+ * taking a row of its own.
  */
-export function ProviderStatusStrip({ quality, onDiagnostics }) {
+export function ProviderStatusStrip({ quality, onDiagnostics, compact = false }) {
   const freshness = quality?.freshness || {};
   const errorsByAccount = new Map(
     (quality?.errors || []).map((e) => [e.account_id, e]),
@@ -76,6 +80,24 @@ export function ProviderStatusStrip({ quality, onDiagnostics }) {
             : error.category === 'credentials' ? 'Credentials'
             : 'Degraded')
           : (info.billing?.stale ? 'Stale' : 'Healthy');
+        const inventoryTone = info.inventory?.retrieved_at ? 'success' : 'neutral';
+        const inventoryLabel = info.inventory?.retrieved_at ? 'Scanned' : 'Never scanned';
+
+        if (compact) {
+          return (
+            <button
+              key={accountId}
+              type="button"
+              onClick={onDiagnostics}
+              title="Open cost diagnostics"
+              className="flex h-control-sm items-center gap-2 rounded-control border border-border bg-surface px-2.5 text-[11px] text-muted transition-colors hover:bg-sunken"
+            >
+              Billing <Badge tone={billingTone} size="xs">{billingLabel}</Badge>
+              <span className="text-subtle">·</span>
+              Inventory <Badge tone={inventoryTone} size="xs">{inventoryLabel}</Badge>
+            </button>
+          );
+        }
 
         return (
           <button
@@ -99,9 +121,7 @@ export function ProviderStatusStrip({ quality, onDiagnostics }) {
               </span>
               <span className="flex items-center gap-1 text-[10px] text-muted">
                 Inventory
-                <Badge tone={info.inventory?.retrieved_at ? 'success' : 'neutral'} size="xs">
-                  {info.inventory?.retrieved_at ? 'Scanned' : 'Never scanned'}
-                </Badge>
+                <Badge tone={inventoryTone} size="xs">{inventoryLabel}</Badge>
               </span>
             </div>
           </button>

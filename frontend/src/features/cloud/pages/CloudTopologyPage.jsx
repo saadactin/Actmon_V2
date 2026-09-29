@@ -287,7 +287,7 @@ export const CloudTopologyPage = ({ embedded = false, accountId: propAccountId }
   }), [view, debouncedSearch, filters, hideDefaults, hideIsolated, hideEmptyContainers, contextHops]);
 
   const {
-    data: topology, isLoading, isFetching, error, refetch,
+    data: topology, isLoading, error, refetch,
   } = useTopology(scope, graphOptions);
 
   const { data: globalView } = useGlobalView(!embedded);
@@ -656,8 +656,6 @@ export const CloudTopologyPage = ({ embedded = false, accountId: propAccountId }
           onOpenDiagnostics={() => setDiagnosticsOpen(true)}
           onOpenPathFinder={() => setPathOpen(true)}
           onExport={onExport}
-          onRefresh={() => { refetch(); setFitSignal((n) => n + 1); }}
-          refreshing={isFetching}
           displayMode={displayMode}
           onChangeDisplayMode={setDisplayMode}
           fullscreen={fullscreen}

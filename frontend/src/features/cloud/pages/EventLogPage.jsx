@@ -544,7 +544,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
 
   const refreshMs = REFRESH_INTERVALS.find((r) => r.id === refreshId)?.ms || 0;
 
-  // How far back "Collect now" asks the provider to read. The time-range
+  // How far back "Load events for the last Nh" asks the provider to read. The time-range
   // selector only filters events that are ALREADY stored, so without this the
   // button fetched nothing older than the last checkpoint and there was no way
   // to back-fill — selecting 7 days then collecting appeared to do nothing.
@@ -852,27 +852,20 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           <SourceStatusBar sources={sources} onOpenDetail={() => setShowHealth(true)} />
           <div className="flex flex-wrap items-center gap-2">
             {refreshMs > 0 && <LiveBadge label="Live" />}
+            {/* "Live view", not "Auto-refresh": this only re-reads the events
+                already stored, every N seconds. The account header's "Auto
+                refresh" is the provider schedule, and the two used one name.
+                The toolbar's "Collect now" is gone for the same reason — the
+                header's Refresh all collects events with everything else. */}
             <Select
               value={refreshId}
               onChange={setRefreshId}
               width="auto"
               size="sm"
               options={REFRESH_INTERVALS.map((r) => ({
-                id: r.id, label: r.id === '0' ? 'Auto-refresh: off' : `Every ${r.label}`,
+                id: r.id, label: r.id === '0' ? 'Live view: off' : `Live view: every ${r.label}`,
               }))}
             />
-            {canCollect && (
-              <Button
-                size="sm"
-                variant="secondary"
-                icon="refresh"
-                loading={collect.isPending}
-                onClick={collectNow}
-                title={`Fetch audit events for the selected window (last ${lookbackHours}h) from the provider now, instead of waiting for the next scheduled collection. The provider's own retention still caps how far back this can reach.`}
-              >
-                Collect now
-              </Button>
-            )}
           </div>
         </div>
 
@@ -1393,12 +1386,17 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                       : 'Every event source is collecting normally, so nothing was recorded in the selected window. Control-plane audit events only cover changes made through the cloud API — a change made inside a VM leaves no event here.'
                 }
                 action={
+                  // Kept, and only here: loading OLDER history for the chosen
+                  // window is something a refresh does not do — it collects
+                  // forward from the last checkpoint. Named for that, so it is
+                  // not mistaken for a second refresh button.
                   canCollect ? (
-                    <Button size="sm" variant="secondary" icon="refresh"
+                    <Button size="sm" variant="secondary" icon="history"
                       loading={collect.isPending}
                       onClick={collectNow}
+                      title={`Fetch audit events for the selected window (last ${lookbackHours}h) from the provider. The provider's own retention still caps how far back this can reach.`}
                     >
-                      Collect the last {lookbackHours}h
+                      Load events for the last {lookbackHours}h
                     </Button>
                   ) : undefined
                 }

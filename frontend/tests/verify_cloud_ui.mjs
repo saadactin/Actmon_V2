@@ -404,6 +404,10 @@ console.log('\n7. REFRESHED_ROOTS matches the query keys the hooks really use');
     'allResources', 'resourceMetrics', 'resources', 'resourceDetail',
     'resourceDrift', 'inventoryHistory', 'cloudEventSources',
     'cloudEventCollection', 'cloudEventStats', 'cloudEventFacets',
+    // Clients: the portfolio and a client's page roll up MANY accounts, so no
+    // key names one account for a refresh to match. They go stale on their
+    // 30-second staleTime instead, and every client write invalidates them.
+    'clients',
   ]);
   const unclassified = [...roots].filter(
     (r) => !declaredSet.has(r) && !DELIBERATELY_NOT_REFRESHED.has(r),
@@ -506,6 +510,50 @@ console.log('\n10. Every page is reachable, with the export shape its route expe
   check('every lazy route that destructures a NAMED export finds that export '
     + '(a mismatch throws only when the route is navigated to)',
   problems.length === 0, problems.join(' | '));
+}
+
+console.log('\n11. One refresh control, one name, on every tab');
+{
+  // There were six controls with six names — Refresh Account, Run Discovery
+  // Scan, Run, Run assessment, Collect now, Retry — each re-reading a slice of
+  // the same account, so nobody could tell which one made which tab current.
+  const rel = (f) => relative(CLOUD, f).replace(/\\/g, '/');
+  const usersOf = (pattern, allowed) => [...SOURCES]
+    .filter(([f, s]) => !allowed.includes(rel(f)) && pattern.test(s))
+    .map(([f]) => rel(f));
+
+  const starters = usersOf(/\b(useStartRefresh|startRefresh)\s*\(/,
+    ['hooks/useAccountRefresh.js', 'api/refresh.api.js']);
+  check('only the shared hook starts a refresh — every button goes through '
+    + 'RefreshAllButton / useRefreshAll', starters.length === 0, starters.join(', '));
+
+  const plainScans = usersOf(/\buseTriggerDiscovery\b/, ['hooks/useDiscovery.js']);
+  check('no component starts a plain discovery scan — a subset of Refresh all '
+    + 'under another name', plainScans.length === 0, plainScans.join(', '));
+
+  const sliceRefreshers = usersOf(
+    /\b(useRunAssessment|useCollectCertificates|useCollectIdentity)\b/,
+    ['hooks/useSecurityCenter.js', 'hooks/useCertificates.js'],
+  );
+  check('no tab re-reads its own slice (assessment, certificate stores, identity) '
+    + '— every refresh does all three', sliceRefreshers.length === 0,
+  sliceRefreshers.join(', '));
+
+  const OLD_NAMES = ['Run Discovery Scan', 'Run assessment', 'Refresh Account',
+    'Collect now', 'Re-check account', 'Scan Running'];
+  const named = [];
+  for (const [file, src] of SOURCES) {
+    for (const name of OLD_NAMES) {
+      const i = src.indexOf(name);
+      if (i !== -1) named.push(`${at(file, src, i)} "${name}"`);
+    }
+  }
+  check('none of the old names survives in code (comments are not code)',
+    named.length === 0, named.slice(0, 6).join(', '));
+
+  const bars = [...SOURCES].filter(([, s]) => /<AccountRefreshBar\b/.test(s)).map(([f]) => rel(f));
+  check('the bar is rendered once, by the account header every tab shares',
+    bars.length === 1 && bars[0] === 'pages/CloudDashboard.jsx', bars.join(', '));
 }
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);

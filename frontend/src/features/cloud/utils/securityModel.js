@@ -221,5 +221,29 @@ export const coverageTone = (pct) => {
   return 'danger';
 };
 
+/** Coverage dimension keys arrive lower_snake; the acronyms among them would
+ *  read "Iam" under CSS `capitalize`. */
+export const DIMENSION_LABEL = { iam: 'IAM' };
+export const dimensionLabel = (dim) => DIMENSION_LABEL[dim] || (dim || '').replace(/_/g, ' ');
+
+/** A sweep's unanswered scopes ("ElastiCache [ap-south-1]"), one entry per
+ *  service and kind of failure, so nine regions of one service are one line.
+ *  A dropped connection and an error stay apart: the first retries by
+ *  itself, the second needs someone to look. */
+export const groupFailedScopes = (failed) => {
+  const groups = new Map();
+  for (const f of failed || []) {
+    const m = /^(.*) \[([^\]]+)\]$/.exec(f?.scope || '');
+    const service = m ? m[1] : (f?.scope || 'Unknown');
+    const transient = Boolean(f?.transient);
+    const key = `${service}|${transient}`;
+    if (!groups.has(key)) {
+      groups.set(key, { service, transient, regions: [], error: f?.error || null });
+    }
+    if (m) groups.get(key).regions.push(m[2]);
+  }
+  return [...groups.values()];
+};
+
 export const PROVIDER_LABEL = { AWS: 'AWS', AZURE: 'Azure', OCI: 'OCI' };
 export const providerLabel = (p) => PROVIDER_LABEL[(p || '').toUpperCase()] || p || '—';

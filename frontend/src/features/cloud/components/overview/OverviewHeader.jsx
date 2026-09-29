@@ -1,9 +1,7 @@
 import Badge from '@/components/ui/Badge';
-import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
 import CopyButton from '@/components/ui/CopyButton';
 import { formatDateTime, relativeTime } from '../../utils/resourceModel';
-import AccountRefreshControl from './AccountRefreshControl';
 import { FreshnessBadge, Kpi, Panel, PanelEmpty } from './OverviewPrimitives';
 
 /**
@@ -36,7 +34,7 @@ const IDENTITY = {
   ],
 };
 
-export function AccountIdentity({ account, accountId, freshness }) {
+export function AccountIdentity({ account, freshness }) {
   const provider = account?.provider === 'Oracle' ? 'OCI' : account?.provider;
   const rows = (IDENTITY[provider] || IDENTITY.AWS)
     .map(([label, get]) => [label, get(account || {})])
@@ -52,7 +50,10 @@ export function AccountIdentity({ account, accountId, freshness }) {
           {freshness && (
             <FreshnessBadge
               severity={freshness.severity}
-              label={freshness.label}
+              /* The header's "Last refreshed" formats its time with the same
+                 function, so the two cannot read "1 hours" and "2 hours" for
+                 one scan, as the server's floored label did beside it. */
+              label={freshness.observed_at ? relativeTime(freshness.observed_at) : undefined}
               title={
                 freshness.observed_at
                   ? `Inventory last observed ${formatDateTime(freshness.observed_at)}`
@@ -75,12 +76,8 @@ export function AccountIdentity({ account, accountId, freshness }) {
         </dl>
       </div>
 
-      {/* Refresh, not "Run Discovery". A refresh runs the same provider sweep
-          discovery does and then the rest — cost, security, events — so
-          offering both here would be two buttons where the second is a subset
-          of the first. Discovery on its own is still reachable from the
-          Discovery panel lower down, where it is the panel's own action. */}
-      <AccountRefreshControl account={account} accountId={accountId} />
+      {/* No refresh button here: the account header above every tab has the
+          one "Refresh all", which runs discovery and everything after it. */}
     </div>
   );
 }
@@ -94,7 +91,7 @@ export function AccountIdentity({ account, accountId, freshness }) {
  * run — they are omitted entirely when the run predates change recording,
  * rather than printed as three zeros.
  */
-export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, onRunDiscovery }) {
+export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic }) {
   const latest = discovery?.latest;
   const lastOk = discovery?.last_successful;
   const changes = discovery?.changes;
@@ -105,17 +102,14 @@ export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, 
     : null;
 
   return (
+    /* Status only. Its "Run" button started a plain discovery — a subset of
+       the header's Refresh all, under a different name. */
     <Panel
       title="Discovery"
       icon="refresh"
       loading={isLoading}
       error={error}
       dense
-      action={(
-        <Button variant="ghost" size="sm" icon="refresh" onClick={onRunDiscovery}>
-          Run
-        </Button>
-      )}
     >
       {!latest ? (
         <PanelEmpty>

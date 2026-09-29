@@ -207,6 +207,7 @@ class SecurityRepository:
         resource_types: Optional[Sequence[str]] = None,
         rule_ids: Optional[Sequence[str]] = None,
         search: Optional[str] = None,
+        resource_key: Optional[str] = None,
         detected_after: Optional[datetime] = None,
         detected_before: Optional[datetime] = None,
         limit: int = 100,
@@ -240,6 +241,10 @@ class SecurityRepository:
             conds.append(CloudSecurityFinding.resource_type.in_(list(resource_types)))
         if rule_ids:
             conds.append(CloudSecurityFinding.rule_id.in_(list(rule_ids)))
+        if resource_key:
+            # Exact, not the free-text search: a certificate named cert_ls_2023
+            # is a LIKE pattern in which every "_" matches any character.
+            conds.append(CloudSecurityFinding.resource_key == resource_key)
         if detected_after:
             conds.append(CloudSecurityFinding.last_detected_at >= detected_after)
         if detected_before:

@@ -2,11 +2,17 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { useCreateCloudAccount } from '../hooks/useCloudAccounts';
+import { useClientOptions } from '../hooks/useClients';
 import { useCloudStore } from '../state/cloudStore';
 import { slugForProvider } from '../utils/providerScope';
 import Input from '@/components/ui/Input';
 import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
+
+// Optional fields that must be omitted, not sent as "", when left blank: the
+// backend parses target_client_id as a UUID and treats any role_arn as a
+// request to assume a role.
+const OPTIONAL_FIELDS = ['target_client_id', 'role_arn', 'external_id', 'session_token'];
 
 // Brand colours are pinned (not theme tokens) — same provider identity used by
 // CloudProviderSelector / CloudProviderChooser.
@@ -26,17 +32,26 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
   // provider /cloud/accounts page or the chooser, where nothing is scoped.
   const scopeProviderKey = useCloudStore((state) => state.scopeProviderKey);
   const [provider, setProvider] = useState(scopeProviderKey || 'AWS');
+  const [showRole, setShowRole] = useState(false);
   const { register, handleSubmit, reset } = useForm();
   const { mutateAsync: createAccount, isPending } = useCreateCloudAccount();
+  const { data: clients } = useClientOptions();
   const navigate = useNavigate();
   const setSelectedAccountId = useCloudStore((state) => state.setSelectedAccountId);
 
   const onSubmit = async (data) => {
     try {
-      const payload = {
-        ...data,
-        provider,
-      };
+      const payload = { ...data, provider };
+      for (const key of OPTIONAL_FIELDS) {
+        if (typeof payload[key] === 'string') payload[key] = payload[key].trim();
+        if (!payload[key]) delete payload[key];
+      }
+      // A role only means something for AWS; never let a hidden field leak
+      // into another provider's payload.
+      if (provider !== 'AWS') {
+        delete payload.role_arn;
+        delete payload.external_id;
+      }
       const newAccount = await createAccount(payload);
       push?.('Cloud account added successfully.', 'success');
       reset();
@@ -76,6 +91,24 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
         <Input {...register('account_name', { required: true })} placeholder="e.g. Prod AWS" />
       </div>
 
+      <div>
+        <label className={LBL}>
+          Client <span className="font-normal text-subtle">(optional)</span>
+        </label>
+        <select
+          className="h-control w-full rounded-control border border-border bg-surface px-2.5 text-[13px] text-fg transition-colors hover:border-strong focus:outline-none focus:ring-2 focus:ring-accent"
+          {...register('target_client_id')}
+        >
+          <option value="">No client</option>
+          {(clients || []).map((c) => (
+            <option key={c.id} value={c.id}>{c.code ? `${c.name} (${c.code})` : c.name}</option>
+          ))}
+        </select>
+        <p className="mt-1 text-[11px] text-subtle">
+          Decides whose monthly report this account appears in. Can be changed later from Clients.
+        </p>
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={LBL}>Environment</label>
@@ -110,6 +143,30 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
           <>
             <div><label className={LBL}>Access Key ID</label><Input {...register('access_key_id', { required: provider === 'AWS' })} placeholder="AKIA…" /></div>
             <div><label className={LBL}>Secret Access Key</label><Input type="password" {...register('secret_access_key', { required: provider === 'AWS' })} placeholder="••••••••" /></div>
+            <button
+              type="button"
+              onClick={() => setShowRole((v) => !v)}
+              className="text-[12px] font-semibold text-accent-text hover:underline"
+            >
+              {showRole ? 'Hide cross-account role' : 'Connect through a cross-account role (optional)'}
+            </button>
+            {showRole && (
+              <div className="space-y-3 rounded-control border border-border bg-surface p-3">
+                <p className="text-[11px] leading-relaxed text-muted">
+                  The keys above belong to another account — usually the organisation&apos;s
+                  management account — and every call assumes this role. The account is then
+                  scanned with the role&apos;s permissions, never the keys&apos; own.
+                </p>
+                <div>
+                  <label className={LBL}>Role ARN</label>
+                  <Input {...register('role_arn')} placeholder="arn:aws:iam::123456789012:role/ActmonReadOnly" />
+                </div>
+                <div>
+                  <label className={LBL}>External ID <span className="font-normal text-subtle">(if the role requires one)</span></label>
+                  <Input {...register('external_id')} autoComplete="off" />
+                </div>
+              </div>
+            )}
           </>
         )}
 

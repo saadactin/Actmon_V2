@@ -98,8 +98,9 @@ export function SpendHeadline({ totals, period, source, change, onWhy }) {
       </div>
 
       {/* One real figure per currency. This is what the user actually reads
-          when the headline has to say NA. */}
-      {currencies.length > 0 && (
+          when the headline has to say NA. With a single currency it would only
+          repeat the headline figure, in a band of its own. */}
+      {currencies.length > 1 && (
         <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
           {currencies.map((code) => (
             <div

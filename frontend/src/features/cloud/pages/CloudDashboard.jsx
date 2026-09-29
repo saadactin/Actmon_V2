@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
+import AccountRefreshBar from '../components/refresh/AccountRefreshBar';
 import Tabs from '@/components/ui/Tabs';
 import CloudOverview from './CloudOverview';
 import { ResourcesPage } from './ResourcesPage';
@@ -83,6 +84,12 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         )}
         title={scopedAccount?.account_name || 'Account'}
         description={[scopedAccount?.provider, scopedAccount?.tenant_or_region || scopedAccount?.environment].filter(Boolean).join(' · ')}
+        /* One refresh control for the whole account, in the header every tab
+           shares — the tabs no longer carry refresh buttons of their own, and
+           all of them re-read when the refresh finishes. */
+        actions={routeAccountId && (
+          <AccountRefreshBar account={scopedAccount} accountId={routeAccountId} />
+        )}
         tabs={<Tabs tabs={TABS} value={tab} onChange={setTab} />}
       />
 

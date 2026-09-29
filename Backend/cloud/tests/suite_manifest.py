@@ -35,7 +35,7 @@ SUITES = [
     {"Area": "meta", "File": "tests/verify_schema_drift.py", "Db": True,
      "Tier": 0, "Label": "ORM models agree with the live database (cloud + database services)"},
 
-    # ── Tier 1: pure logic, no Postgres, no ASGI (17 suites) ────────────────
+    # ── Tier 1: pure logic, no Postgres, no ASGI (23 suites) ────────────────
     {"Area": "drift", "File": "tests/verify_client_reuse.py", "Db": False, "Tier": 1,
      "Label": "provider client/connection reuse + auth preflight"},
     {"Area": "cost", "File": "tests/verify_cost_contract.py", "Db": False, "Tier": 1,
@@ -74,6 +74,17 @@ SUITES = [
      "Label": "every template describes a condition the engine can evaluate"},
     {"Area": "alerts", "File": "tests/verify_alert_policy.py", "Db": False, "Tier": 1,
      "Label": "CRITICAL never batched, quiet hours delay not cancel, escalation 0 = off"},
+    {"Area": "security", "File": "tests/verify_credentials_analysis.py", "Db": False,
+     "Tier": 1,
+     "Label": "certificates/secrets: parsing, expired vs expiring, unread stores never pass"},
+    {"Area": "security", "File": "tests/verify_compliance_frameworks.py", "Db": False,
+     "Tier": 1,
+     "Label": "9 frameworks: strict CIS, per-type controls, provider scope, *:* visible"},
+    {"Area": "discovery", "File": "tests/verify_scan_coverage.py", "Db": False, "Tier": 1,
+     "Label": "sweep coverage: share read not 0%, not-offered is no failure, denials named"},
+    {"Area": "clients", "File": "tests/verify_client_reports_logic.py", "Db": False,
+     "Tier": 1,
+     "Label": "report periods, local schedule times, no catch-up flood, money, PDF"},
 
     # ── Tier 2: Postgres fixtures, no ASGI (11 files, 12 invocations) ───────
     {"Area": "account_refresh", "File": "tests/verify_account_refresh.py", "Db": True, "Tier": 2,
@@ -105,8 +116,10 @@ SUITES = [
      "Label": "the two data-loss guards, refresh component stamping, one event path"},
     {"Area": "alerts", "File": "tests/verify_notification_bridge.py", "Db": True, "Tier": 2,
      "Label": "what gets queued, account-scoped recipients, no secrets in the payload"},
+    {"Area": "clients", "File": "tests/verify_onboarding.py", "Db": True, "Tier": 2,
+     "Label": "organisation onboarding: recognised members, role per member, isolation"},
 
-    # ── Tier 3: in-process ASGI (also DB, via the app) (10 suites) ──────────
+    # ── Tier 3: in-process ASGI (also DB, via the app) (12 suites) ──────────
     {"Area": "alerts", "File": "tests/verify_alert_api.py", "Db": True, "Tier": 3,
      "Label": "HTTP API + response shape"},
     {"Area": "cost", "File": "tests/verify_cost_api.py", "Db": True, "Tier": 3,
@@ -127,6 +140,10 @@ SUITES = [
      "Label": "HTTP API + RBAC + finding lifecycle"},
     {"Area": "topology", "File": "tests/verify_topology_api.py", "Db": True, "Tier": 3,
      "Label": "HTTP API + RBAC + export"},
+    {"Area": "clients", "File": "tests/verify_clients_api.py", "Db": True, "Tier": 3,
+     "Label": "clients, portfolio, reports, scheduler idempotency, attachment, RBAC"},
+    {"Area": "security", "File": "tests/verify_certificates_api.py", "Db": True, "Tier": 3,
+     "Label": "certificates: scope replacement, views, assessment, expiry alerts"},
 ]
 
 # Helper scripts that live under tests/ but are not suites: they never define

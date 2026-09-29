@@ -67,6 +67,7 @@ def _send_email(db: Session, org_id: int, channel_row: NotificationChannel, cont
     return email_channel_service.send_via_channel(
         db, org_id, channel_row.config or {}, subject, body, text,
         recipients_override=recipients_override, cc_override=cc_override, bcc_override=bcc_override,
+        attachments=(prerendered or {}).get("attachments"),
     )
 
 

@@ -43,10 +43,12 @@ from app.models.identity_grant import (
 )
 from app.repository.alert_repo import AlertRepository
 from app.repository.cloud_account_repo import CloudAccountRepository
+from app.repository.credential_repo import CredentialRepository
 from app.repository.identity_repo import IdentityRepository
 from app.repository.resource_repo import ResourceRepository
 from app.repository.security_repo import SecurityRepository
 from app.security import compliance as comp
+from app.security import controls as ctl
 from app.security import engine, exposure, identity, policies as pol, scoring
 from app.security import registry as reg
 from app.security.model import (
@@ -75,6 +77,7 @@ class SecurityCenterService:
         self.resources = ResourceRepository(db)
         self.identity = IdentityRepository(db)
         self.alerts = AlertRepository(db)
+        self.credentials = CredentialRepository(db)
 
     # ═════════════════════════════════════════════════════════════════════════
     # Write path
@@ -85,20 +88,51 @@ class SecurityCenterService:
         account_id: uuid.UUID,
         *,
         triggered_by: str = "manual",
-        sweep_complete: bool = True,
-        failed_scopes: int = 0,
+        sweep_complete: Optional[bool] = None,
+        failed_scopes: Optional[int] = None,
+        scope_summary: Optional[Dict[str, Any]] = None,
         discovery_scan_id: Optional[uuid.UUID] = None,
         evaluate_policies: bool = True,
         account_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Evaluate an account, persist the result, and fire any due alerts."""
+        """Evaluate an account, persist the result, and fire any due alerts.
+
+        The sweep's completeness is the inventory's, not the caller's: when a
+        caller does not say (the "Run assessment" button, a certificate
+        re-check), it is read from the latest FINISHED discovery job. This used
+        to default to complete, so a manual run straight after a partial sweep
+        reported the inventory as fully read.
+        """
         account = await self.accounts.get_by_id(account_id)
         if account is None:
             raise ValueError(f"Account {account_id} not found")
 
+        if sweep_complete is None or scope_summary is None:
+            from app.models.discovery_job import DiscoveryJob
+
+            last = (await self.db.execute(
+                select(DiscoveryJob).where(
+                    DiscoveryJob.account_id == account_id,
+                    DiscoveryJob.status.in_(["COMPLETED", "FAILED"]))
+                .order_by(DiscoveryJob.started_at.desc()).limit(1)
+            )).scalar_one_or_none()
+            if last is not None:
+                if sweep_complete is None:
+                    # A partial sweep COMPLETEs with its note in error_detail.
+                    sweep_complete = last.status == "COMPLETED" and not last.error_detail
+                if scope_summary is None:
+                    scope_summary = last.scope_summary
+        if sweep_complete is None:
+            # Never scanned: the engine's empty-inventory branch says so.
+            sweep_complete = True
+        if failed_scopes is None:
+            failed_scopes = 0
+
         resources = await self.resources.list_by_account(account_id)
         grants = await self.identity.grants(account_id)
         state = await self.identity.state(account_id)
+        cred_objects = await self.credentials.objects([account_id])
+        cred_sources = await self.credentials.sources([account_id])
 
         assessment = engine.assess(
             account_id=str(account_id),
@@ -106,8 +140,11 @@ class SecurityCenterService:
             resources=resources,
             grants=grants,
             identity_state=state,
+            credentials=cred_objects,
+            credential_sources=cred_sources,
             sweep_complete=sweep_complete,
             failed_scopes=failed_scopes,
+            scope_summary=scope_summary,
             discovery_scan_id=str(discovery_scan_id) if discovery_scan_id else None,
             inventory_last_discovered=account.last_discovery,
         )
@@ -337,6 +374,8 @@ class SecurityCenterService:
         alert_counts = await self.alerts.counts_by_state(account_id)
         state = await self.identity.state(account_id)
         grants = await self.identity.grants(account_id)
+        prov = normalize_provider(account.provider)
+        identity_row = _identity_state(state, prov)
 
         # Top risks: the findings an operator should look at first. Confirmed
         # only — an UNKNOWN belongs in Coverage, not at the top of a risk list.
@@ -382,17 +421,16 @@ class SecurityCenterService:
             },
             "exposure_summary": _exposure_summary_from_findings(active),
             "identity_summary": {
-                "collection_status": _identity_status(
-                    state, normalize_provider(account.provider)),
-                # AWS and OCI have no collection-state row, because their
-                # identity data arrives with the inventory. `state and
-                # state.trustworthy` therefore reported both as untrustworthy,
-                # and the Overview tile read "identity not collected" directly
-                # beside 39 escalation findings derived from that very data.
-                "trustworthy": _identity_status(
-                    state, normalize_provider(account.provider)) == COLLECT_OK,
-                "missing_permission": state.missing_permission if state else None,
-                "error_detail": state.error_detail if state else None,
+                "collection_status": _identity_status(state, prov),
+                # AWS and OCI identity data arrives with the inventory, so
+                # there is no collection step to fail. `state and
+                # state.trustworthy` reported both as untrustworthy, and the
+                # Overview tile read "identity not collected" directly beside
+                # 39 escalation findings derived from that very data.
+                "trustworthy": _identity_status(state, prov) == COLLECT_OK,
+                "missing_permission": (identity_row.missing_permission
+                                       if identity_row else None),
+                "error_detail": identity_row.error_detail if identity_row else None,
                 "grants_collected": len(grants),
                 "flagged": sum(1 for f in confirmed if f.category == "Identity & Access"),
                 "escalation_paths": sum(
@@ -622,8 +660,10 @@ class SecurityCenterService:
         """
         findings = await self.repo.findings_for_account(account_id)
         rule_stats = await self._rule_stats(account_id, findings)
+        account = await self.accounts.get_by_id(account_id)
         out = comp.build(findings=findings, rule_stats=rule_stats,
-                         account_id=str(account_id), framework=framework)
+                         account_id=str(account_id), framework=framework,
+                         provider=normalize_provider(account.provider) if account else None)
         if include_diff:
             prev = await self.repo.latest_assessment(account_id, offset=1)
             out["trend"] = comp.diff(out, _stored_compliance(prev))
@@ -655,16 +695,45 @@ class SecurityCenterService:
         for f in findings:
             if f.status not in ACTIVE_FINDING_STATUSES:
                 continue
-            stats.setdefault(f.rule_id, {})
-            stats[f.rule_id][f.verdict] = stats[f.rule_id].get(f.verdict, 0) + 1
+            # A synthetic finding (certificate, role assignment) has no inventory
+            # row; its statistics come from the analyser below, not from here.
+            n = max(1, int(f.affected_count or 1))
+            for key in (f.rule_id, ctl.stat_key(f.rule_id, f.resource_type or "")):
+                stats.setdefault(key, {})
+                stats[key][f.verdict] = stats[key].get(f.verdict, 0) + n
 
         if prov:
             for rtype, n in counts.items():
                 for rule in reg.rules_for(prov, rtype):
-                    entry = stats.setdefault(rule.rule_id, {})
-                    accounted = sum(entry.values())
-                    if n > accounted:
-                        entry["SAFE"] = entry.get("SAFE", 0) + (n - accounted)
+                    for key in (rule.rule_id, ctl.stat_key(rule.rule_id, rtype)):
+                        entry = stats.setdefault(key, {})
+                        accounted = sum(entry.values())
+                        if key == rule.rule_id:
+                            # Per-rule totals span every type the rule covers —
+                            # all of them for a universal rule.
+                            total = (sum(counts.values()) if rule.resource_types == ("*",)
+                                     else sum(counts.get(t, 0) for t in rule.resource_types))
+                            if total > accounted:
+                                entry["SAFE"] = entry.get("SAFE", 0) + (total - accounted)
+                        elif n > accounted:
+                            entry["SAFE"] = entry.get("SAFE", 0) + (n - accounted)
+
+            # Certificate / secret / key rules: rebuilt from the stored
+            # credential inventory with the same analyser the assessment ran,
+            # so "the vault refused us" reaches compliance as NOT_SCANNED —
+            # never as a pass.
+            cred_objects = await self.credentials.objects([account_id])
+            cred_sources = await self.credentials.sources([account_id])
+            if cred_objects or cred_sources:
+                from app.security import credentials as credx
+
+                analysis = credx.analyse(provider=prov, objects=cred_objects,
+                                         sources=cred_sources,
+                                         now=datetime.now(timezone.utc))
+                for rid, verdicts in analysis.rule_stats.items():
+                    # Replace, not add: the persisted findings counted above are
+                    # the same subjects the analyser just counted.
+                    stats[rid] = dict(verdicts)
             # Exposure rules have no resource type of their own; if any exposure
             # finding exists the rules ran, and if the account has compute at
             # all they ran and found nothing.
@@ -728,15 +797,14 @@ class SecurityCenterService:
             reviewed = counts.get("IAMPolicy", 0)
         else:
             reviewed = len(grants)
+        row = _identity_state(state, prov)
         out = identity.review(
             provider=prov,
             findings=findings,
             grants=grants,
-            collection_status=(state.status if state
-                               else (COLLECT_OK if prov in ("AWS", "OCI")
-                                     else COLLECT_NEVER_RUN)),
-            collection_error=state.error_detail if state else None,
-            missing_permission=state.missing_permission if state else None,
+            collection_status=_identity_status(state, prov),
+            collection_error=row.error_detail if row else None,
+            missing_permission=row.missing_permission if row else None,
             identities_reviewed=reviewed,
         )
         out["grants"] = [g.to_dict() for g in grants[:500]]
@@ -746,7 +814,9 @@ class SecurityCenterService:
     async def coverage(self, account_id: uuid.UUID) -> Dict[str, Any]:
         latest = await self.repo.latest_assessment(account_id)
         account = await self.accounts.get_by_id(account_id)
-        state = await self.identity.state(account_id)
+        identity_row = _identity_state(
+            await self.identity.state(account_id),
+            normalize_provider(account.provider) if account else None)
         findings = await self.repo.findings_for_account(
             account_id, statuses=ACTIVE_FINDING_STATUSES)
         gaps = [
@@ -761,21 +831,43 @@ class SecurityCenterService:
             for f in findings if f.verdict in ("UNKNOWN", "NOT_SCANNED")
         ]
         gaps.sort(key=lambda g: -(g["affected_count"] or 1))
+        sweep = await self._last_sweep(account_id)
+        sources = await self.credentials.sources([account_id])
         return {
             "account_id": str(account_id),
             "overall_pct": latest.coverage_pct if latest else None,
             "dimensions": latest.coverage if latest else None,
             "assessment_outcome": latest.outcome if latest else None,
             "incomplete_reasons": (latest.incomplete_reasons if latest else None),
-            "identity_collection": state.to_dict() if state else None,
+            "identity_collection": identity_row.to_dict() if identity_row else None,
             "inventory_last_discovered": _iso(account.last_discovery if account else None),
             "gaps": gaps,
+            # What the last sweep read, scope by scope, and every permission
+            # that would let the next one read the rest.
+            "sweep": sweep,
+            "permissions": permissions_block(account.provider if account else None,
+                                             (sweep or {}).get("scope_summary"), sources),
             "note": (
                 "This is a data-availability metric, not a security score. It reports how "
                 "much of the information each check needs was actually present. Low "
                 "coverage means findings are missing, not that there are none."
             ),
         }
+
+    async def _last_sweep(self, account_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+        from app.models.discovery_job import DiscoveryJob
+
+        job = (await self.db.execute(
+            select(DiscoveryJob).where(
+                DiscoveryJob.account_id == account_id,
+                DiscoveryJob.status.in_(["COMPLETED", "FAILED"]))
+            .order_by(DiscoveryJob.started_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if job is None:
+            return None
+        return {"job_id": str(job.id), "status": job.status,
+                "finished_at": _iso(job.completed_at), "note": job.error_detail,
+                "scope_summary": job.scope_summary}
 
     async def trends(self, account_id: uuid.UUID, *, limit: int = 60) -> Dict[str, Any]:
         rows = await self.repo.assessment_history(account_id, limit=limit)
@@ -958,10 +1050,10 @@ class SecurityCenterService:
                 "findings_by_severity": counts,
                 "active_alerts": (alert_counts.get(STATE_OPEN, 0)
                                   + alert_counts.get(STATE_ACKNOWLEDGED, 0)),
-                # AWS and OCI keep identity data in cloud_resources, so there is
-                # no collection state row for them and "NeverRun" would be
-                # misleading — their identity review works. Only Azure needs a
-                # separate collection, and only Azure can fail it.
+                # AWS and OCI keep identity data in cloud_resources, so neither
+                # "NeverRun" nor their NotSupported row describes them — their
+                # identity review works. Only Azure needs a separate
+                # collection, and only Azure can fail it.
                 "identity_collection": _identity_status(
                     state, normalize_provider(a.provider)),
                 "resources": latest.resources_evaluated if latest else None,
@@ -1009,11 +1101,8 @@ class SecurityCenterService:
         return {
             "account_id": str(account_id),
             "provider": prov,
-            "inventory": {
-                "resources": len(resources),
-                "last_discovery": _iso(account.last_discovery if account else None),
-                "status": "Complete" if resources else "No resources collected",
-            },
+            "inventory": _inventory_diagnosis(
+                resources, account, await self._last_sweep(account_id)),
             "assessment": {
                 "status": latest.outcome if latest else "Never run",
                 "last_assessed_at": _iso(latest.finished_at) if latest else None,
@@ -1021,17 +1110,65 @@ class SecurityCenterService:
                 "rules_applicable_to_this_inventory": len(applicable),
                 "incomplete_reasons": latest.incomplete_reasons if latest else None,
             },
-            "identity": state.to_dict() if state else {
-                "status": COLLECT_NEVER_RUN,
-                "trustworthy": False,
-                "error_detail": "Identity collection has not been attempted.",
-            },
+            "identity": _identity_diagnosis(state, prov, resources),
             "coverage": latest.coverage if latest else None,
             "rules_not_applicable": sorted(set(reg.RULES) - applicable),
         }
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+# The IAM actions each AWS certificate / secret store's collector calls
+# (providers/aws/aws_credentials.py), so a denied store is fixed in one change.
+_AWS_CREDENTIAL_ACTIONS = {
+    "aws:acm": ("acm:ListCertificates", "acm:DescribeCertificate"),
+    "aws:secretsmanager": ("secretsmanager:ListSecrets",),
+    "aws:iam-server-certificates": ("iam:ListServerCertificates",),
+}
+
+
+def permissions_block(provider: Optional[str], scope_summary: Optional[Dict[str, Any]],
+                      sources: Sequence[Any]) -> Dict[str, Any]:
+    """Every permission missing for a complete read of the account, from the
+    two places a denial is recorded: the discovery sweep (per service) and the
+    certificate / secret stores (per store). For AWS, also the policy that
+    grants exactly those actions."""
+    from app.models.credential_inventory import COLLECT_PERMISSION_DENIED
+    from app.security.credentials import SOURCE_LABEL
+
+    prov = normalize_provider(provider)
+    areas: List[Dict[str, Any]] = []
+    for label, entry in sorted(((scope_summary or {}).get("denied") or {}).items()):
+        areas.append({"area": "Inventory", "item": label,
+                      "scopes": len(entry.get("regions") or []),
+                      "actions": sorted(entry.get("actions") or [])})
+    denied_stores: Dict[str, Dict[str, Any]] = {}
+    for s in sources:
+        if s.status != COLLECT_PERMISSION_DENIED:
+            continue
+        entry = denied_stores.setdefault(s.source, {"scopes": 0, "actions": set()})
+        entry["scopes"] += 1
+        if s.missing_permission:
+            entry["actions"].add(s.missing_permission)
+    for source, entry in sorted(denied_stores.items()):
+        actions = set(entry["actions"])
+        if prov == "AWS":
+            actions |= set(_AWS_CREDENTIAL_ACTIONS.get(source, ()))
+        areas.append({"area": "Certificates & secrets", "item": SOURCE_LABEL.get(source, source),
+                      "scopes": entry["scopes"], "actions": sorted(actions)})
+    missing = sorted({a for area in areas for a in area["actions"]})
+    block: Dict[str, Any] = {"provider": prov, "missing": missing, "areas": areas}
+    if prov == "AWS" and missing:
+        # List / Describe / Get only: read access, and nothing that returns a
+        # secret value (secretsmanager:GetSecretValue is never asked for).
+        block["aws_policy"] = {
+            "Version": "2012-10-17",
+            "Statement": [{"Sid": "ActmonReadAccess", "Effect": "Allow",
+                           "Action": missing, "Resource": "*"}],
+        }
+        block["managed_policy"] = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+    return block
+
 
 def _identity_status(state, provider: Optional[str]) -> str:
     """The honest collection status for an account's identity data.
@@ -1041,10 +1178,63 @@ def _identity_status(state, provider: Optional[str]) -> str:
     collection step to have "never run". Reporting NeverRun for them would
     imply a gap that does not exist, next to Azure's PermissionDenied, which is
     a gap that does.
+
+    Provider first, row second: every scan leaves AWS and OCI a NotSupported
+    row ("needs no separate call", from collect_identity), and reading that as
+    their status put "identity not collected" beside 39 escalation paths
+    derived from the very data it said was missing.
     """
+    if provider in (AWS, OCI):
+        return COLLECT_OK
+    return state.status if state is not None else COLLECT_NEVER_RUN
+
+
+def _identity_state(state, provider: Optional[str]):
+    """The collection-state row where it describes a real collection step —
+    Azure's. For AWS and OCI it only says there is no such step, so its
+    detail is not an error to show."""
+    return None if provider in (AWS, OCI) else state
+
+
+def _inventory_diagnosis(resources, account, sweep) -> Dict[str, Any]:
+    """The Scan status card's inventory row, from what the last finished sweep
+    read. It said "Complete" whenever any resource was on file — beside an
+    inventory coverage of 80.1%, because a partial sweep keeps what it could
+    not re-read rather than pruning it."""
+    out: Dict[str, Any] = {
+        "resources": len(resources),
+        "last_discovery": _iso(account.last_discovery if account else None),
+    }
+    if sweep is None:
+        return {**out, "status": ("No resources collected" if not resources
+                                  else "Unknown")}
+    if sweep["status"] == "FAILED":
+        return {**out, "status": "Failed"}
+    s = sweep.get("scope_summary") or {}
+    if s.get("attempted"):
+        out.update(scopes_read=s.get("read"), scopes_attempted=s["attempted"])
+    incomplete = bool(sweep.get("note")) or (
+        bool(s.get("attempted")) and (s.get("read") or 0) < s["attempted"]
+    ) or bool(s.get("regions_unknown"))
+    return {**out, "status": "Partial" if incomplete else "Complete"}
+
+
+def _identity_diagnosis(state, provider: Optional[str], resources) -> Dict[str, Any]:
+    """The Scan status card's identity row. For AWS and OCI: how many
+    identities the inventory holds, counted — not a grant count, which is an
+    Azure notion and read "0 grants" beside 39 escalation paths."""
+    if provider in (AWS, OCI):
+        kind = "IAMRole" if provider == AWS else "IAMPolicy"
+        n = sum(1 for r in resources if r.resource_type == kind)
+        noun = ("IAM role" if n == 1 else "IAM roles") if provider == AWS else (
+            "IAM policy" if n == 1 else "IAM policies")
+        return {"status": COLLECT_OK, "trustworthy": True, "error_detail": None,
+                "missing_permission": None, "identities": n,
+                "note": f"{n} {noun}, read with the inventory"}
     if state is not None:
-        return state.status
-    return COLLECT_OK if provider in (AWS, OCI) else COLLECT_NEVER_RUN
+        return state.to_dict()
+    return {"status": COLLECT_NEVER_RUN, "trustworthy": False,
+            "error_detail": "Identity collection has not been attempted."}
 
 
 _ESCALATION_RULES = frozenset({

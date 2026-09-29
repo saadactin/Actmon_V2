@@ -49,7 +49,8 @@ from app.security.model import (
     AWS, AZURE, CAT_CONFIGURATION, CAT_COST, CAT_DATA_PROTECTION, CAT_ENCRYPTION,
     CAT_EXPOSURE, CAT_GOVERNANCE, CAT_IAM, CAT_MAINTENANCE,
     CAT_NETWORKING, CAT_PERFORMANCE, CAT_RESILIENCE, CATEGORIES, CONF_HIGH,
-    CONF_LOW, CONF_UNKNOWN, COV_ENCRYPTION, COV_EXPOSURE, COV_IAM, COV_NETWORK,
+    CONF_LOW, CONF_MEDIUM, CONF_UNKNOWN, COV_CREDENTIALS, COV_ENCRYPTION, COV_EXPOSURE,
+    COV_IAM, COV_NETWORK,
     CRITICAL, HIGH, INFO, LOW, MEDIUM, NOT_SCANNED, OCI, SAFE,
     SEVERITIES, UNKNOWN, VULNERABLE,
 )
@@ -278,6 +279,53 @@ def _aws_sg_default(ctx: Ctx):
         unknown_reason="Security group name unavailable.",
         detail="This is the VPC's default security group.",
         group_name=name, vpc_id=ctx.config.get("vpc_id"),
+    )
+
+
+def _not_yet_collected(field_name: str) -> Outcome:
+    """The field this rule reads is collected by the current scanner but not by
+    the one that produced this row — the answer arrives with the next scan.
+    NOT_SCANNED rather than UNKNOWN: nothing is wrong with the provider data,
+    it simply has not been asked for yet."""
+    return Outcome(
+        verdict=NOT_SCANNED, confidence=CONF_UNKNOWN,
+        unknown_reason=(f"'{field_name}' is collected from the next discovery scan "
+                        "onward; this resource was last scanned before that."),
+    )
+
+
+def _aws_sg_default_allows_traffic(ctx: Ctx):
+    """CIS: the default security group of every VPC restricts all traffic —
+    i.e. has no inbound and no outbound rule at all. Different from
+    AWS_SG_DEFAULT_IN_USE, which asks whether anything is attached to it."""
+    if (ctx.resource.resource_name or "") != "default":
+        return None
+    inbound = ctx.raw.get("IpPermissions")
+    outbound = ctx.raw.get("IpPermissionsEgress")
+    if inbound is None or outbound is None:
+        return _unknown("The default security group's rules were not captured in the "
+                        "stored provider response.", vpc_id=ctx.config.get("vpc_id"))
+    return _flag_if(
+        bool(inbound) or bool(outbound), unknown_reason="",
+        detail=(f"The default security group has {len(inbound)} inbound and "
+                f"{len(outbound)} outbound rule(s); it should have none."),
+        vpc_id=ctx.config.get("vpc_id"), inbound_rules=len(inbound),
+        outbound_rules=len(outbound),
+    )
+
+
+def _aws_ec2_imdsv2(ctx: Ctx):
+    opts = ctx.raw.get("MetadataOptions")
+    if not isinstance(opts, dict) or "HttpTokens" not in opts:
+        return _unknown("The instance's metadata options were not captured.")
+    if str(opts.get("HttpEndpoint") or "").lower() == "disabled":
+        # No metadata service at all is stricter than IMDSv2 — nothing to flag.
+        return Outcome(verdict=SAFE, evidence={"http_endpoint": "disabled"})
+    tokens = str(opts.get("HttpTokens") or "").lower()
+    return _flag_if(
+        tokens != "required", unknown_reason="",
+        detail=f"HttpTokens is '{tokens or 'unset'}'; IMDSv1 requests are still accepted.",
+        http_tokens=tokens or None, http_endpoint=opts.get("HttpEndpoint"),
     )
 
 
@@ -520,6 +568,24 @@ def _aws_broad_access(ctx: Ctx) -> Optional[List[str]]:
     return [str(g) for g in ba] if isinstance(ba, list) else []
 
 
+def _aws_iam_full_admin(ctx: Ctx):
+    """`*:*` — every action on every resource. Owned by this rule alone; the
+    escalation and wildcard rules skip `*:full` so one administrator role is
+    one finding, not three."""
+    grants = _aws_broad_access(ctx)
+    if grants is None:
+        return _unknown(
+            "This role's policy documents were not collected, so its permissions could "
+            "not be analysed."
+        )
+    return _flag_if(
+        "*:full" in grants, unknown_reason="",
+        detail="The role is allowed every action on every resource (Action \"*\", "
+               "Resource \"*\") — full administrator access to the account.",
+        all_grants=sorted(grants),
+    )
+
+
 def _aws_iam_escalation(ctx: Ctx):
     grants = _aws_broad_access(ctx)
     if grants is None:
@@ -527,7 +593,11 @@ def _aws_iam_escalation(ctx: Ctx):
             "This role's policy documents were not collected, so its permissions could "
             "not be analysed."
         )
-    hits = sorted({g for g in grants if g.split(":")[0].lower() in _IAM_ESCALATION_SERVICES})
+    # "*:write" (write on every service) includes IAM; "*:full" is reported by
+    # the full-administrator rule instead.
+    hits = sorted({g for g in grants
+                   if g.split(":")[0].lower() in _IAM_ESCALATION_SERVICES
+                   or g.lower() == "*:write"})
     return _flag_if(
         bool(hits), unknown_reason="",
         detail=f"Wildcard grants over identity services: {', '.join(hits)}.",
@@ -544,8 +614,9 @@ def _aws_iam_wildcard_full(ctx: Ctx):
             "not be analysed."
         )
     full = sorted({g for g in grants if g.lower().endswith(":full")})
-    # Escalation is reported by its own rule; do not double-count it here.
-    full = [g for g in full if g.split(":")[0].lower() not in _IAM_ESCALATION_SERVICES]
+    # Escalation and `*:*` are reported by their own rules; do not double-count.
+    full = [g for g in full if g.split(":")[0].lower() not in _IAM_ESCALATION_SERVICES
+            and not g.startswith("*:")]
     if not full:
         return Outcome(verdict=SAFE, evidence={"all_grants": sorted(grants)})
     return Outcome(
@@ -569,6 +640,7 @@ def _aws_iam_wildcard_write(ctx: Ctx):
         g for g in grants
         if g.lower().endswith(":write")
         and g.split(":")[0].lower() not in _IAM_ESCALATION_SERVICES
+        and not g.startswith("*:")      # all-service write is escalation
     })
     return _flag_if(
         bool(write), unknown_reason="",
@@ -741,6 +813,32 @@ def _azure_storage_blob_public(ctx: Ctx):
                "in it may be set to anonymous read.",
         allow_blob_public_access=ctx.config.get("allow_blob_public_access"),
         kind=ctx.config.get("kind"),
+    )
+
+
+def _azure_storage_secure_transfer(ctx: Ctx):
+    if "enable_https_traffic_only" not in ctx.config:
+        return _not_yet_collected("enable_https_traffic_only")
+    v = _bool_field(ctx.config, "enable_https_traffic_only")
+    return _flag_if(
+        None if v is None else (v is False),
+        unknown_reason="The storage account did not report whether secure transfer is "
+                       "required.",
+        detail="Secure transfer is not required, so the account accepts plain HTTP.",
+        enable_https_traffic_only=v,
+    )
+
+
+def _azure_storage_min_tls(ctx: Ctx):
+    if "minimum_tls_version" not in ctx.config:
+        return _not_yet_collected("minimum_tls_version")
+    v = ctx.config.get("minimum_tls_version")
+    if not v:
+        return _unknown("The storage account did not report a minimum TLS version.")
+    return _flag_if(
+        str(v).upper().replace(".", "_") in ("TLS1_0", "TLS1_1"), unknown_reason="",
+        detail=f"The minimum TLS version is {v}; clients may still negotiate TLS 1.0/1.1.",
+        minimum_tls_version=v,
     )
 
 
@@ -1108,6 +1206,63 @@ def _oci_compute_public_ip(ctx: Ctx):
     )
 
 
+def _oci_default_seclist_open(ctx: Ctx):
+    """CIS OCI: the default security list restricts all traffic except ICMP.
+    A default list with a non-ICMP ingress rule from 0.0.0.0/0 fails (the
+    stock default list opens TCP 22 to the world, which is the usual hit)."""
+    if ctx.config.get("is_default") is not True:
+        return None
+    rules = ctx.config.get("ingress_rules")
+    if rules is None:
+        return _unknown("The default security list's ingress rules are not in the "
+                        "stored inventory.")
+    open_rules = [r for r in rules if isinstance(r, dict)
+                  and is_world_open(r.get("source"))
+                  and str(r.get("protocol") or "") != "1"]      # "1" = ICMP
+    return _flag_if(
+        bool(open_rules), unknown_reason="",
+        detail=(f"{len(open_rules)} non-ICMP ingress rule(s) from 0.0.0.0/0 on the VCN's "
+                "default security list."),
+        vcn_id=ctx.config.get("vcn_id"),
+        rules=[{"protocol": r.get("protocol"), "port_range": r.get("port_range"),
+                "source": r.get("source")} for r in open_rules[:20]],
+    )
+
+
+# The resource kinds Oracle's own CIS reference checker counts for "no
+# resources in the root compartment" (cis_reports.py, 3.1.1): networks,
+# compute, storage and databases. IAM objects live in the root by design.
+_OCI_ROOT_COMPARTMENT_TYPES = (
+    "VCN", "ComputeInstance", "BlockVolume", "BootVolume", "FileSystem",
+    "ObjectStorageBucket", "AutonomousDatabase", "DbSystem",
+)
+
+
+def _oci_in_root_compartment(ctx: Ctx):
+    meta = getattr(ctx.resource, "metadata_", None) or {}
+    cid = meta.get("compartment_id") if isinstance(meta, dict) else None
+    if not cid:
+        return _unknown("The resource's compartment was not recorded.")
+    return _flag_if(
+        str(cid).startswith("ocid1.tenancy."), unknown_reason="",
+        detail="The resource lives in the tenancy's root compartment.",
+        compartment_id=cid,
+    )
+
+
+def _oci_compute_legacy_imds(ctx: Ctx):
+    if "legacy_imds_disabled" not in ctx.config:
+        return _not_yet_collected("legacy_imds_disabled")
+    v = _bool_field(ctx.config, "legacy_imds_disabled")
+    return _flag_if(
+        None if v is None else (v is False),
+        unknown_reason="The instance did not report whether its legacy metadata "
+                       "endpoints are disabled.",
+        detail="The legacy (v1) instance metadata endpoints are still enabled.",
+        legacy_imds_disabled=v,
+    )
+
+
 def _oci_compute_large(ctx: Ctx):
     o = ctx.config.get("ocpus")
     if not isinstance(o, (int, float)):
@@ -1274,6 +1429,27 @@ _R: List[SecurityRule] = [
             "Create purpose-specific security groups per application tier and move "
             "workloads onto them. AWS Foundational Security Best Practices recommends "
             "leaving the default group with no rules at all."
+        ),
+    ),
+    SecurityRule(
+        rule_id="AWS_SG_DEFAULT_ALLOWS_TRAFFIC", version="1.0", provider=AWS,
+        resource_types=("SecurityGroup",), evaluate=_aws_sg_default_allows_traffic,
+        title="Default security group does not restrict all traffic",
+        severity=LOW, category=CAT_NETWORKING, coverage=COV_NETWORK, aggregate=True,
+        description="A VPC's default security group still has inbound or outbound rules.",
+        rationale=(
+            "Every VPC's default group ships allowing all traffic between its members and "
+            "all outbound traffic. Anything launched without an explicit group lands in it "
+            "and inherits that, so emptying it is what makes 'forgot to choose a group' "
+            "fail closed instead of open."
+        ),
+        remediation=(
+            "Remove every rule from the default group of each VPC (it cannot be deleted):\n"
+            "  aws ec2 revoke-security-group-ingress --group-id <sg> --ip-permissions "
+            "\"$(aws ec2 describe-security-groups --group-ids <sg> "
+            "--query SecurityGroups[0].IpPermissions)\"\n"
+            "and the same with revoke-security-group-egress. Move anything attached to it "
+            "onto a purpose-built group first."
         ),
     ),
     SecurityRule(
@@ -1484,6 +1660,26 @@ _R: List[SecurityRule] = [
         ),
     ),
     SecurityRule(
+        rule_id="AWS_EC2_IMDSV2_NOT_REQUIRED", version="1.0", provider=AWS,
+        resource_types=("EC2Instance",), evaluate=_aws_ec2_imdsv2,
+        title="EC2 instance does not require IMDSv2",
+        severity=MEDIUM, category=CAT_CONFIGURATION,
+        description="The instance metadata service still accepts IMDSv1 (session-less) "
+                    "requests.",
+        rationale=(
+            "IMDSv1 answers any HTTP GET from the instance, which is what lets a "
+            "server-side request forgery bug in an application read the instance role's "
+            "temporary credentials. IMDSv2 requires a session token obtained with a PUT, "
+            "which such bugs cannot usually issue."
+        ),
+        remediation=(
+            "  aws ec2 modify-instance-metadata-options --instance-id <id> "
+            "--http-tokens required --http-endpoint enabled\n"
+            "Check first that the software on the instance uses a current AWS SDK; very "
+            "old SDKs only speak IMDSv1."
+        ),
+    ),
+    SecurityRule(
         rule_id="AWS_EC2_PUBLIC_IP", version="2.0", provider=AWS,
         resource_types=("EC2Instance",),
         title="EC2 instance has a public IP address",
@@ -1608,6 +1804,39 @@ _R: List[SecurityRule] = [
             "  az storage account update -g <rg> -n <account> "
             "--allow-blob-public-access false\n"
             "Serve genuinely public content through a CDN or user-delegation SAS instead."
+        ),
+    ),
+    SecurityRule(
+        rule_id="AZURE_STORAGE_SECURE_TRANSFER_DISABLED", version="1.0", provider=AZURE,
+        resource_types=("StorageAccount",), evaluate=_azure_storage_secure_transfer,
+        title="Storage account does not require secure transfer",
+        severity=MEDIUM, category=CAT_ENCRYPTION, coverage=COV_ENCRYPTION,
+        description="'Secure transfer required' (supportsHttpsTrafficOnly) is disabled.",
+        rationale=(
+            "With secure transfer off the account accepts requests over plain HTTP, so an "
+            "account key or SAS token sent by a misconfigured client travels in clear "
+            "text and can be replayed by anyone on the path."
+        ),
+        remediation=(
+            "  az storage account update -g <rg> -n <account> --https-only true\n"
+            "Check first that no client still calls the account over http:// — they will "
+            "be refused once this is on."
+        ),
+    ),
+    SecurityRule(
+        rule_id="AZURE_STORAGE_MIN_TLS_BELOW_1_2", version="1.0", provider=AZURE,
+        resource_types=("StorageAccount",), evaluate=_azure_storage_min_tls,
+        title="Storage account accepts TLS older than 1.2",
+        severity=MEDIUM, category=CAT_ENCRYPTION, coverage=COV_ENCRYPTION,
+        description="The account's minimum TLS version is below 1.2.",
+        rationale=(
+            "TLS 1.0 and 1.1 have known weaknesses and are deprecated by the IETF; a floor "
+            "below 1.2 lets a client or an attacker in the path negotiate them."
+        ),
+        remediation=(
+            "  az storage account update -g <rg> -n <account> --min-tls-version TLS1_2\n"
+            "Azure Monitor's storage logs show whether any client still negotiates an "
+            "older version before the floor is raised."
         ),
     ),
     SecurityRule(
@@ -1920,6 +2149,62 @@ _R: List[SecurityRule] = [
         ),
     ),
     SecurityRule(
+        rule_id="OCI_DEFAULT_SECLIST_WORLD_OPEN", version="1.0", provider=OCI,
+        resource_types=("SecurityList",), evaluate=_oci_default_seclist_open,
+        title="Default security list allows non-ICMP traffic from the internet",
+        severity=LOW, category=CAT_NETWORKING, coverage=COV_NETWORK,
+        description="A VCN's default security list has an ingress rule from 0.0.0.0/0 for a "
+                    "protocol other than ICMP.",
+        rationale=(
+            "Every subnet created without an explicit security list inherits the default "
+            "one, and the stock default opens TCP 22 to the internet. Tightening it makes "
+            "an unconfigured subnet closed rather than open."
+        ),
+        remediation=(
+            "Remove the world-open non-ICMP ingress rules from each VCN's default security "
+            "list, and give subnets purpose-built security lists or NSGs:\n"
+            "  oci network security-list update --security-list-id <ocid> "
+            "--ingress-security-rules '<rules without 0.0.0.0/0 TCP/UDP>'"
+        ),
+    ),
+    SecurityRule(
+        rule_id="OCI_RESOURCE_IN_ROOT_COMPARTMENT", version="1.0", provider=OCI,
+        resource_types=_OCI_ROOT_COMPARTMENT_TYPES, evaluate=_oci_in_root_compartment,
+        title="Resources created in the root compartment",
+        severity=LOW, category=CAT_GOVERNANCE, aggregate=True,
+        description="Networks, compute, storage or databases sit directly in the tenancy's "
+                    "root compartment.",
+        rationale=(
+            "Compartments are OCI's unit of access control and isolation. Anything in the "
+            "root can only be governed by tenancy-wide policy, so granting a team access "
+            "to it means granting access to everything else there as well."
+        ),
+        remediation=(
+            "Create compartments per workload or environment and move the resources:\n"
+            "  oci <service> <resource> change-compartment --<resource>-id <ocid> "
+            "--compartment-id <target>\n"
+            "Then scope policies to those compartments rather than the tenancy."
+        ),
+    ),
+    SecurityRule(
+        rule_id="OCI_COMPUTE_LEGACY_IMDS_ENABLED", version="1.0", provider=OCI,
+        resource_types=("ComputeInstance",), evaluate=_oci_compute_legacy_imds,
+        title="Compute instance still serves the legacy metadata endpoint",
+        severity=MEDIUM, category=CAT_CONFIGURATION,
+        description="The instance's legacy (v1) instance metadata service endpoints are "
+                    "enabled.",
+        rationale=(
+            "The v1 metadata endpoints answer unauthenticated GET requests, the same "
+            "property that makes AWS IMDSv1 a target for server-side request forgery. "
+            "The v2 endpoints require a header such requests do not usually carry."
+        ),
+        remediation=(
+            "  oci compute instance update --instance-id <ocid> "
+            "--instance-options '{\"areLegacyImdsEndpointsDisabled\": true}'\n"
+            "Recent Oracle-provided images use v2 already; older agents may need updating."
+        ),
+    ),
+    SecurityRule(
         rule_id="OCI_COMPUTE_PUBLIC_IP", version="2.0", provider=OCI,
         resource_types=("ComputeInstance",),
         title="Compute instance has a public IP address",
@@ -2171,6 +2456,28 @@ _SYNTHETIC: List[SecurityRule] = [
         ),
     ),
     SecurityRule(
+        rule_id="AWS_IAM_ROLE_FULL_ADMIN", version="1.0", provider=AWS,
+        resource_types=("IAMRole",), evaluate=_aws_iam_full_admin,
+        title="IAM role has full administrator access (*:*)",
+        severity=CRITICAL, category=CAT_IAM, coverage=COV_IAM,
+        description="A policy attached to the role allows every action on every resource.",
+        rationale=(
+            "Action \"*\" on Resource \"*\" is the AdministratorAccess shape: it can read and "
+            "delete every resource, disable logging, and change IAM itself. Until this "
+            "rule existed such a role summarised to no grants at all and every IAM check "
+            "reported it clean — the one role that most needed a finding had none."
+        ),
+        remediation=(
+            "Confirm the role genuinely needs full administration. If not, replace the "
+            "policy with the specific services and actions in use — IAM Access Analyzer "
+            "can generate one from CloudTrail history:\n"
+            "  aws accessanalyzer start-policy-generation --policy-generation-details "
+            "principalArn=<role-arn>\n"
+            "If it does, restrict who may assume it (trust policy conditions, MFA) and "
+            "prefer short sessions."
+        ),
+    ),
+    SecurityRule(
         rule_id="AWS_IAM_ROLE_WILDCARD_FULL", version="1.0", provider=AWS,
         resource_types=("IAMRole",), evaluate=_aws_iam_wildcard_full,
         title="IAM role has full wildcard access to one or more services",
@@ -2320,6 +2627,246 @@ _SYNTHETIC: List[SecurityRule] = [
         ),
     ),
 ]
+
+# ── Certificates, secrets and keys ───────────────────────────────────────────
+# Synthetic: produced by security/credentials.py from the credential inventory,
+# not by a per-resource evaluator. Declared here so version, remediation and
+# control mapping work exactly as for every other finding.
+from app.security import credentials as _cx  # noqa: E402
+
+_CREDENTIAL_RULES: List[SecurityRule] = [
+    SecurityRule(
+        rule_id=_cx.CERT_EXPIRED, version="1.0", provider="*", resource_types=("*",),
+        synthetic=True, title="Certificate has expired",
+        severity=HIGH, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="A TLS certificate is past its validity end date.",
+        rationale=(
+            "An expired certificate that is still served breaks every client that "
+            "validates it — browsers, API clients, mobile apps — and teaches users to "
+            "click through certificate warnings. PCI-DSS 4.2.1 requires certificates used "
+            "to protect data in transit to be confirmed valid and not expired."
+        ),
+        remediation=(
+            "Renew or re-issue the certificate and redeploy it where it is used, then "
+            "delete the expired one. Per store:\n"
+            "  AWS ACM:        aws acm describe-certificate --certificate-arn <arn>  "
+            "(re-request or re-import)\n"
+            "  Azure Key Vault: az keyvault certificate create / import --vault-name <v>\n"
+            "  OCI:            renew in Certificates, or upload a new one to the load "
+            "balancer and switch the listener to it."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.CERT_EXPIRING_SOON, version="1.0", provider="*", resource_types=("*",),
+        synthetic=True, title="Certificate expires within 30 days",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="A TLS certificate is still valid but reaches its end date soon.",
+        rationale=(
+            "Operational, not a control failure: the certificate is valid today. It is "
+            "reported because renewal takes lead time (validation, change windows, "
+            "deploying to every listener) and because provider-managed renewal should "
+            "already have happened this close to expiry — if it has not, it is stuck."
+        ),
+        remediation=(
+            "Renew now and schedule the deployment. For a provider-managed certificate "
+            "that has not renewed, check why: ACM usually needs its DNS validation "
+            "record restored; a Key Vault certificate needs its issuer reachable.\n"
+            "To be paged ahead of time, add an alert rule on 'Certificate or secret "
+            "expiry' with the window your team needs."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AWS_IAM_SERVER_CERT_EXPIRED, version="1.0", provider=AWS,
+        resource_types=("*",), synthetic=True,
+        title="Expired SSL/TLS certificate stored in IAM",
+        severity=HIGH, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="An IAM server certificate is past its expiration date.",
+        rationale=(
+            "IAM server certificates are never renewed by AWS. One that is expired can be "
+            "deployed to a load balancer or CloudFront by mistake, and there is no reason "
+            "to keep it. CIS AWS Foundations recommends removing every expired one."
+        ),
+        remediation=(
+            "  aws iam list-server-certificates\n"
+            "  aws iam delete-server-certificate --server-certificate-name <name>\n"
+            "Prefer ACM for new certificates: it renews them."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.SECRET_EXPIRED, version="1.0", provider="*", resource_types=("*",),
+        synthetic=True, title="Secret or key has expired but is still enabled",
+        severity=MEDIUM, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="A secret or key is past the expiry date set on it and remains enabled.",
+        rationale=(
+            "An expiry date is a statement that the value should no longer be trusted. "
+            "Depending on the store, clients are then refused it (OCI can block retrieval; "
+            "Key Vault keys refuse operations) or keep using a credential everyone agreed "
+            "was retired — both are worse than rotating on time."
+        ),
+        remediation=(
+            "Rotate the value and set a new expiry, or disable the object if nothing uses "
+            "it:\n"
+            "  az keyvault secret set --vault-name <v> -n <name> --value <new> "
+            "--expires <date>\n"
+            "  OCI: create a new secret version, or update the secret's expiry rule."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.SECRET_EXPIRING_SOON, version="1.0", provider="*", resource_types=("*",),
+        synthetic=True, title="Secret or key expires within 30 days",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="A secret or key reaches the expiry date set on it soon.",
+        rationale=(
+            "Operational: nothing is wrong yet. Rotating before the date avoids an "
+            "application finding out at run time."
+        ),
+        remediation=(
+            "Rotate the value and move its expiry forward before the date, and update "
+            "every consumer to read the new version."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AZURE_KEYVAULT_RBAC_KEY_NO_EXPIRY, version="1.0", provider=AZURE,
+        resource_types=("*",), synthetic=True,
+        title="Key Vault keys without an expiration date (RBAC vault)",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="Enabled keys in a vault using Azure RBAC have no expiry set.",
+        rationale=(
+            "A key without an expiry is used indefinitely, so a compromised or "
+            "superseded key never ages out. CIS Azure recommends an expiration date on "
+            "every key."
+        ),
+        remediation=(
+            "  az keyvault key set-attributes --vault-name <v> -n <key> --expires <date>\n"
+            "Pair it with a rotation policy so a new version is created before the date."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AZURE_KEYVAULT_POLICY_KEY_NO_EXPIRY, version="1.0", provider=AZURE,
+        resource_types=("*",), synthetic=True,
+        title="Key Vault keys without an expiration date (access-policy vault)",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="Enabled keys in a vault using access policies have no expiry set.",
+        rationale=(
+            "A key without an expiry is used indefinitely, so a compromised or "
+            "superseded key never ages out. CIS Azure recommends an expiration date on "
+            "every key, and lists access-policy vaults separately."
+        ),
+        remediation=(
+            "  az keyvault key set-attributes --vault-name <v> -n <key> --expires <date>\n"
+            "Consider moving the vault to the Azure RBAC permission model."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AZURE_KEYVAULT_RBAC_SECRET_NO_EXPIRY, version="1.0", provider=AZURE,
+        resource_types=("*",), synthetic=True,
+        title="Key Vault secrets without an expiration date (RBAC vault)",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="Enabled secrets in a vault using Azure RBAC have no expiry set.",
+        rationale=(
+            "Secrets with no expiry are the ones nobody rotates. An expiration date makes "
+            "the rotation obligation visible and alertable. CIS Azure recommends one on "
+            "every secret."
+        ),
+        remediation=(
+            "  az keyvault secret set-attributes --vault-name <v> -n <secret> "
+            "--expires <date>"
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AZURE_KEYVAULT_POLICY_SECRET_NO_EXPIRY, version="1.0", provider=AZURE,
+        resource_types=("*",), synthetic=True,
+        title="Key Vault secrets without an expiration date (access-policy vault)",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="Enabled secrets in a vault using access policies have no expiry set.",
+        rationale=(
+            "Secrets with no expiry are the ones nobody rotates. CIS Azure recommends an "
+            "expiration date on every secret, and lists access-policy vaults separately."
+        ),
+        remediation=(
+            "  az keyvault secret set-attributes --vault-name <v> -n <secret> "
+            "--expires <date>"
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AZURE_KEYVAULT_NOT_RECOVERABLE, version="1.0", provider=AZURE,
+        resource_types=("*",), synthetic=True,
+        title="Key Vault is not protected against permanent deletion",
+        severity=MEDIUM, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="Purge protection is not enabled (or soft delete is off) on the vault.",
+        rationale=(
+            "Without purge protection a deleted vault or key can be purged immediately — "
+            "by an attacker or by mistake — and every disk or database encrypted with a "
+            "key in it becomes unreadable for good. Soft delete alone can be undone by "
+            "purging."
+        ),
+        remediation=(
+            "  az keyvault update -g <rg> -n <vault> --enable-purge-protection true\n"
+            "Purge protection cannot be turned off again once on, which is the point."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.AWS_SECRETSMANAGER_ROTATION_DISABLED, version="1.0", provider=AWS,
+        resource_types=("*",), synthetic=True,
+        title="Secrets Manager secret has automatic rotation disabled",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        confidence=CONF_MEDIUM,
+        description="Automatic rotation is not configured for a Secrets Manager secret.",
+        rationale=(
+            "A credential that never rotates stays valid for as long as anyone who ever "
+            "saw it keeps a copy. Secrets owned by another AWS service rotate through that "
+            "service and are not reported."
+        ),
+        remediation=(
+            "  aws secretsmanager rotate-secret --secret-id <arn> "
+            "--rotation-lambda-arn <fn> --rotation-rules AutomaticallyAfterDays=30\n"
+            "For RDS credentials, prefer managing the master password in Secrets Manager "
+            "through RDS, which rotates it for you."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.SECRET_ROTATION_OVERDUE, version="1.0", provider="*", resource_types=("*",),
+        synthetic=True, title="Secret rotation is enabled but overdue",
+        severity=MEDIUM, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description="Rotation is configured, but the last rotation is older than its "
+                    "interval allows.",
+        rationale=(
+            "A failing rotation is worse than none: everyone believes the credential is "
+            "rotated. It usually means the rotation function or the target system "
+            "rejected the change."
+        ),
+        remediation=(
+            "Check the rotation's last error and run it once by hand:\n"
+            "  AWS: aws secretsmanager describe-secret --secret-id <arn>; then "
+            "aws secretsmanager rotate-secret --secret-id <arn>\n"
+            "  OCI: check the secret's rotation status in Vault and the target system "
+            "details."
+        ),
+    ),
+    SecurityRule(
+        rule_id=_cx.CREDENTIAL_STORE_NOT_READ, version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Certificate or secret store could not be read",
+        severity=MEDIUM, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        confidence=CONF_UNKNOWN,
+        description="One or more certificate, secret or key stores refused or failed the "
+                    "listing, so their contents were not checked.",
+        rationale=(
+            "Reported as an explicit gap rather than an empty result: 'no certificate "
+            "expiring' over a vault that refused us is not a statement this product can "
+            "make. Objects read on an earlier successful attempt are kept, and their "
+            "findings stay open, until the store is readable again."
+        ),
+        remediation=(
+            "Grant the missing permission named in the finding — Key Vault Reader on the "
+            "vault (or 'List' in its access policy), acm:ListCertificates / "
+            "secretsmanager:ListSecrets on AWS, 'inspect certificate-family / "
+            "secret-family' on OCI — or allow this network through the vault firewall."
+        ),
+    ),
+]
+
+_SYNTHETIC.extend(_CREDENTIAL_RULES)
 
 RULES: Dict[str, SecurityRule] = {r.rule_id: r for r in (_R + _SYNTHETIC)}
 

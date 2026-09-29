@@ -5,12 +5,15 @@ the four *_report_email_service.py modules (smtplib + email.mime), adding
 what they don't support: Cc/Bcc, a plain-text alternative alongside the HTML
 part, and a caller-supplied subject/body instead of a hardcoded report body.
 """
+import base64
 import logging
+import re
 import smtplib
 import socket
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -41,6 +44,52 @@ def resolve_password(cfg: SmtpConfig) -> Optional[str]:
     return cfg.smtp_password
 
 
+_SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._ -]+")
+
+
+def build_message(cfg: Any, *, to: List[str], cc: List[str], subject: str,
+                  html_body: Optional[str], text_body: Optional[str],
+                  attachments: Optional[Sequence[Dict[str, Any]]] = None) -> MIMEMultipart:
+    """The MIME message, without sending it.
+
+    No attachments: multipart/alternative (text + HTML), exactly the shape
+    every alert e-mail has always had. With attachments: multipart/mixed
+    wrapping that same alternative part, plus one part per file. Raises
+    ValueError for an attachment whose content cannot be decoded.
+    """
+    alt = MIMEMultipart("alternative")
+    if text_body:
+        alt.attach(MIMEText(text_body, "plain", "utf-8"))
+    if html_body:
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
+
+    if attachments:
+        msg = MIMEMultipart("mixed")
+        msg.attach(alt)
+        for a in attachments:
+            name = _SAFE_FILENAME.sub("_", str(a.get("filename") or "attachment")).strip() \
+                or "attachment"
+            try:
+                data = base64.b64decode(a.get("content_b64") or "", validate=True)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"Attachment {name!r} could not be decoded: {exc}") from exc
+            subtype = (str(a.get("content_type") or "application/octet-stream")
+                       .split("/", 1)[-1] or "octet-stream")
+            part = MIMEApplication(data, _subtype=subtype, Name=name)
+            part["Content-Disposition"] = f'attachment; filename="{name}"'
+            msg.attach(part)
+    else:
+        msg = alt
+
+    msg["Subject"] = subject
+    msg["From"] = f"{cfg.sender_name} <{cfg.sender_email}>" if cfg.sender_name else cfg.sender_email
+    msg["To"] = ", ".join(to)
+    if cc:
+        msg["Cc"] = ", ".join(cc)
+    msg["X-Mailer"] = "ActMon Alert Notifications"
+    return msg
+
+
 def send_email(
     cfg: SmtpConfig,
     to: List[str],
@@ -50,6 +99,7 @@ def send_email(
     cc: Optional[List[str]] = None,
     bcc: Optional[List[str]] = None,
     timeout: int = 15,
+    attachments: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> dict:
     """Send one email through `cfg`. Returns {status: 'success'|'partial'|'error',
     message, response_code}. Mirrors the exception handling the report-email
@@ -62,23 +112,18 @@ def send_email(
     if not html_body and not text_body:
         text_body = ""
 
+    # Built before the network is touched, so a malformed attachment is a
+    # clean error rather than a half-sent message.
+    try:
+        msg = build_message(cfg, to=to, cc=cc, subject=subject, html_body=html_body,
+                            text_body=text_body, attachments=attachments)
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc), "response_code": None}
+
     try:
         socket.getaddrinfo(cfg.smtp_host, cfg.smtp_port)
     except socket.gaierror as e:
         return {"status": "error", "message": f"DNS lookup failed for '{cfg.smtp_host}'. ({e})", "response_code": None}
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"{cfg.sender_name} <{cfg.sender_email}>" if cfg.sender_name else cfg.sender_email
-    msg["To"] = ", ".join(to)
-    if cc:
-        msg["Cc"] = ", ".join(cc)
-    msg["X-Mailer"] = "ActMon Alert Notifications"
-
-    if text_body:
-        msg.attach(MIMEText(text_body, "plain", "utf-8"))
-    if html_body:
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     all_recipients = to + cc + bcc
     password = resolve_password(cfg)
@@ -125,6 +170,7 @@ def send_via_channel(
     recipients_override: Optional[List[str]] = None,
     cc_override: Optional[List[str]] = None,
     bcc_override: Optional[List[str]] = None,
+    attachments: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> dict:
     """Entry point used by the notification dispatcher. Who it sends to comes
     ENTIRELY from the firing alert rule's own To/Cc/Bcc — there is no
@@ -144,4 +190,5 @@ def send_via_channel(
             "message": "No recipient configured for this alert rule — add one under Notify via → Email recipients on the rule.",
             "response_code": None,
         }
-    return send_email(cfg, to=to, subject=subject, html_body=html_body, text_body=text_body, cc=cc, bcc=bcc)
+    return send_email(cfg, to=to, subject=subject, html_body=html_body, text_body=text_body,
+                      cc=cc, bcc=bcc, attachments=attachments)

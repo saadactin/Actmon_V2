@@ -244,8 +244,20 @@ COV_NETWORK = "network"
 COV_IAM = "iam"
 COV_EXPOSURE = "exposure"
 COV_ENCRYPTION = "encryption"
+COV_CREDENTIALS = "credentials"
 
 COVERAGE_DIMENSIONS: Tuple[str, ...] = (
+    COV_INVENTORY, COV_NETWORK, COV_IAM, COV_EXPOSURE, COV_ENCRYPTION, COV_CREDENTIALS,
+)
+
+# The dimensions averaged into the coverage figure that can withhold the score.
+# Certificate-store coverage is reported beside them but not averaged in: a
+# Key Vault the scanner may not open says nothing about whether the network is
+# exposed or the IAM is sound, and letting one refused vault withhold an
+# otherwise well-evidenced score would trade one kind of dishonesty (a score
+# over missing data) for another (no score over data we do have). The gap is
+# still visible — as this dimension, and as CREDENTIAL_STORE_NOT_READ findings.
+SCORING_COVERAGE_DIMENSIONS: Tuple[str, ...] = (
     COV_INVENTORY, COV_NETWORK, COV_IAM, COV_EXPOSURE, COV_ENCRYPTION,
 )
 
@@ -255,6 +267,7 @@ COVERAGE_LABEL: Dict[str, str] = {
     COV_IAM: "Identity & access",
     COV_EXPOSURE: "Internet exposure",
     COV_ENCRYPTION: "Encryption state",
+    COV_CREDENTIALS: "Certificates & secrets",
 }
 
 COVERAGE_MEANING: Dict[str, str] = {
@@ -263,6 +276,9 @@ COVERAGE_MEANING: Dict[str, str] = {
     COV_IAM: "Whether identity policy documents were collected and parseable.",
     COV_EXPOSURE: "Whether every public-facing resource resolved to a rule set.",
     COV_ENCRYPTION: "Whether encryption state was reported for encryptable resources.",
+    COV_CREDENTIALS: ("Whether every certificate, secret and key store that was tried "
+                      "could be read. Reported, but not averaged into the coverage "
+                      "that can withhold the score."),
 }
 
 

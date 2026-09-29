@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
@@ -13,17 +13,18 @@ import SecurityScoreCard from '../components/security/SecurityScoreCard';
 import SecurityFindings, { FindingDrawer } from '../components/security/SecurityFindings';
 import SecurityCompliance from '../components/security/SecurityCompliance';
 import SecurityAlerts, { SecurityPolicies } from '../components/security/SecurityAlerts';
+import SecurityCertificates from '../components/security/SecurityCertificates';
 import {
   CoveragePanel, ExposurePanel, IdentityPanel, Stat, TrendsPanel,
 } from '../components/security/SecurityPanels';
 import { useCloudScope } from '../hooks/useCloudScope';
 import {
-  useDiagnostics, useRunAssessment, useScoreExplanation, useSecurityMeta,
-  useSecurityOverview,
+  useDiagnostics, useScoreExplanation, useSecurityMeta, useSecurityOverview,
 } from '../hooks/useSecurityCenter';
+import RefreshAllButton from '../components/refresh/RefreshAllButton';
 import {
-  categoryIcon, coverageTone, formatAge, formatCount, formatDateTime, formatPct,
-  severityTone,
+  categoryIcon, coverageTone, dimensionLabel, formatAge, formatCount, formatDateTime,
+  formatPct, severityTone,
 } from '../utils/securityModel';
 
 const TABS = [
@@ -33,6 +34,7 @@ const TABS = [
   { id: 'compliance', label: 'Compliance', icon: 'report' },
   { id: 'exposure', label: 'Internet Exposure', icon: 'globe' },
   { id: 'identity', label: 'Identity & Access', icon: 'key' },
+  { id: 'certificates', label: 'Certificates & Secrets', icon: 'lock' },
   { id: 'coverage', label: 'Coverage', icon: 'gauge' },
   { id: 'trends', label: 'Trends', icon: 'chart-line' },
 ];
@@ -52,14 +54,21 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
   const accountId = accountIdProp || scope.accountId;
   const accounts = scope.scopedAccounts;
 
-  const [tab, setTab] = useState('overview');
+  // `?view=certificates` opens a tab directly — the estate Certificates page
+  // links here. Only a known tab id is honoured.
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const view = searchParams.get('view');
+    return TABS.some((t) => t.id === view) ? view : 'overview';
+  });
   const [findingFilters, setFindingFilters] = useState(null);
-  const [drawerFinding, setDrawerFinding] = useState(null);
+  // `?finding=<fingerprint>` opens that finding — the certificate drawer on
+  // pages without a finding drawer of their own links here.
+  const [drawerFinding, setDrawerFinding] = useState(() => searchParams.get('finding'));
 
   const { data: meta } = useSecurityMeta();
   const { data: overview, isLoading, isError, error } = useSecurityOverview(accountId);
   const { data: explanation } = useScoreExplanation(accountId, tab === 'overview');
-  const assess = useRunAssessment();
 
   const canManage = useMemo(
     () => (meta?.rbac?.permissions || []).includes('security:manage_policies')
@@ -93,19 +102,13 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
 
   return (
     <>
-      {embedded ? (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <FreshnessLine freshness={fresh} />
-          <Button
-            variant="primary"
-            icon="refresh"
-            loading={assess.isPending}
-            onClick={() => assess.mutate(accountId)}
-          >
-            {assess.isPending ? 'Assessing…' : 'Run assessment'}
-          </Button>
-        </div>
-      ) : (
+      {/* No button of its own. It had "Run assessment", which re-scored the
+          STORED inventory without contacting the provider — beside a header
+          whose refresh does contact it. Every refresh assesses as its last
+          step, so the one "Refresh all" covers this tab too, and "was this
+          just checked against the provider?" has one answer: the header's
+          Last refreshed. */}
+      {!embedded && (
         <CloudPageHeader
           backTo="/cloud"
           icon="shield"
@@ -119,43 +122,10 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
                 onSelect: (id) => id && scope.setAccountScope(id),
               }}
             >
-              <Button
-                variant="primary"
-                icon="refresh"
-                loading={assess.isPending}
-                onClick={() => assess.mutate(accountId)}
-              >
-                {assess.isPending ? 'Assessing…' : 'Run assessment'}
-              </Button>
+              <RefreshAllButton accountId={accountId} />
             </CloudToolbar>
           )}
         />
-      )}
-
-      {/* The two actions are deliberately distinct (§55). "Run assessment"
-          re-applies the current rules to the stored inventory and never touches
-          the provider; refreshing the inventory is a provider round-trip and
-          lives on Resources. Conflating them is how a user comes to believe a
-          70-day-old inventory was just verified. */}
-      {assess.isSuccess && assess.data && (
-        <div className="mb-4 flex items-start gap-2 rounded-control border border-success-soft bg-success-soft p-3 text-xs text-success-fg">
-          <Icon name="check" size={15} className="mt-0.5 shrink-0" />
-          <div>
-            <p className="font-semibold">
-              Assessment complete — outcome {assess.data.outcome}.
-            </p>
-            <p className="mt-0.5 leading-relaxed">
-              {assess.data.findings?.new ?? 0} new finding(s),{' '}
-              {assess.data.findings?.resolved ?? 0} resolved,{' '}
-              {assess.data.alerts?.created ?? 0} new alert(s).
-              {assess.data.outcome !== 'COMPLETE' && (
-                <> Nothing was resolved automatically, because the assessment was not
-                  complete — an absent finding may only mean its resource could not be
-                  enumerated.</>
-              )}
-            </p>
-          </div>
-        </div>
       )}
 
       <Tabs tabs={TABS} value={tab} onChange={setTab} className="mb-4" />
@@ -183,7 +153,10 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
                   <p className="font-semibold">
                     The inventory behind these findings is {formatAge(fresh.inventory_age_seconds)}.
                   </p>
-                  <p className="mt-0.5 leading-relaxed">{fresh.note}</p>
+                  <p className="mt-0.5 leading-relaxed">
+                    {fresh.note} Refresh all, at the top of the page, re-reads it from the
+                    provider and re-assesses.
+                  </p>
                 </div>
               </div>
             )}
@@ -374,6 +347,9 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
 
       {!isError && tab === 'exposure' && <ExposurePanel accountId={accountId} />}
       {!isError && tab === 'identity' && <IdentityPanel accountId={accountId} />}
+      {!isError && tab === 'certificates' && (
+        <SecurityCertificates accountId={accountId} onOpenFinding={setDrawerFinding} />
+      )}
       {!isError && tab === 'coverage' && <CoveragePanel accountId={accountId} />}
       {!isError && tab === 'trends' && <TrendsPanel accountId={accountId} />}
 
@@ -432,14 +408,22 @@ function ScanStatusPanel({ accountId }) {
   if (!data) return null;
   const rows = [
     ['Inventory', data.inventory?.status,
-      `${formatCount(data.inventory?.resources)} resources · ${formatDateTime(data.inventory?.last_discovery)}`],
+      [
+        `${formatCount(data.inventory?.resources)} resources`,
+        data.inventory?.scopes_attempted
+          ? `${formatCount(data.inventory.scopes_read)} of `
+            + `${formatCount(data.inventory.scopes_attempted)} scopes read`
+          : null,
+        formatDateTime(data.inventory?.last_discovery),
+      ].filter(Boolean).join(' · ')],
     ['Security assessment', data.assessment?.status,
       `${data.assessment?.rules_applicable_to_this_inventory} of `
       + `${data.assessment?.rules_available} checks apply to this inventory`],
     ['Identity', data.identity?.status,
-      data.identity?.missing_permission
-        ? `missing ${data.identity.missing_permission}`
-        : `${data.identity?.grant_count ?? 0} grants`],
+      data.identity?.note
+        || (data.identity?.missing_permission
+          ? `missing ${data.identity.missing_permission}`
+          : `${data.identity?.grant_count ?? 0} grants`)],
   ];
   return (
     <CloudSection
@@ -449,11 +433,12 @@ function ScanStatusPanel({ accountId }) {
         {rows.map(([label, status, detail]) => {
           const ok = ['Complete', 'COMPLETE', 'Collected'].includes(status);
           const partial = ['PARTIAL', 'Partial'].includes(status);
+          const unknown = !status || status === 'Unknown';
           return (
             <div key={label} className="rounded-control border border-border p-3">
               <div className="flex items-center justify-between">
                 <span className="text-[12px] font-semibold text-fg">{label}</span>
-                <Badge tone={ok ? 'success' : partial ? 'warning' : 'danger'}>
+                <Badge tone={ok ? 'success' : partial ? 'warning' : unknown ? 'neutral' : 'danger'}>
                   {status || 'Unknown'}
                 </Badge>
               </div>
@@ -466,7 +451,7 @@ function ScanStatusPanel({ accountId }) {
         <div className="mt-3 flex flex-wrap gap-2">
           {Object.entries(data.coverage).map(([dim, pct]) => (
             <Badge key={dim} tone={coverageTone(pct)}>
-              {dim}: {formatPct(pct, { nullLabel: 'n/a' })}
+              {dimensionLabel(dim)}: {formatPct(pct, { nullLabel: 'n/a' })}
             </Badge>
           ))}
         </div>

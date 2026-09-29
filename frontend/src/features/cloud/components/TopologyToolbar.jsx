@@ -104,8 +104,6 @@ export default function TopologyToolbar({
   onOpenDiagnostics,
   onOpenPathFinder,
   onExport,
-  onRefresh,
-  refreshing,
   displayMode,
   onChangeDisplayMode,
   fullscreen,
@@ -266,12 +264,8 @@ export default function TopologyToolbar({
             label={fullscreen ? 'Exit full screen' : 'Full screen'}
             onClick={onToggleFullscreen}
           />
-          <IconButton
-            icon="refresh"
-            label="Rebuild the topology from the inventory"
-            disabled={refreshing}
-            onClick={onRefresh}
-          />
+          {/* No rebuild button: every refresh drops the cached graph, and the
+              header's Refresh all re-reads this tab when it finishes. */}
         </div>
       </div>
 

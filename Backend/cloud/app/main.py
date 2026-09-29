@@ -58,6 +58,12 @@ from app.models.alert_rule import (                      # noqa: F401
 from app.models.account_refresh import (                 # noqa: F401
     CloudAccountRefresh, CloudAccountRefreshSchedule,
 )
+from app.models.client import (                          # noqa: F401
+    CloudClient, CloudClientReport, CloudClientReportSchedule,
+)
+from app.models.credential_inventory import (            # noqa: F401
+    CloudCredentialObject, CloudCredentialSource,
+)
 
 
 @asynccontextmanager
@@ -115,6 +121,32 @@ async def lifespan(app: FastAPI):
             ))
     except Exception as exc:  # never block startup on this housekeeping
         _log.warning("Could not reconcile cloud_resource_changes columns: %s", exc)
+
+    # Clients, organisation onboarding and the credential inventory added
+    # columns to cloud_accounts. Kept in one module so tests apply the same DDL.
+    try:
+        from app.core import schema_patches
+
+        async with engine.begin() as conn:
+            await schema_patches.apply(conn)
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not reconcile client / onboarding columns: %s", exc)
+
+    # Record the provider's own id (subscription id, tenancy OCID) for accounts
+    # created before provider_account_id existed, so organisation onboarding
+    # recognises them as already connected. Local decryption only; AWS accounts
+    # learn theirs from STS on the next discovery.
+    try:
+        from app.core.database import AsyncSessionLocal as _Session
+        from app.services.cloud_account_service import backfill_provider_account_ids
+
+        async with _Session() as _db:
+            filled, skipped = await backfill_provider_account_ids(_db)
+            await _db.commit()
+            if filled:
+                _log.info("Recorded the provider id of %d existing account(s).", filled)
+    except Exception as exc:  # never block startup
+        _log.warning("Could not backfill provider account ids: %s", exc)
 
     # cloud_resources predates the Resources workspace, so the normalized
     # projections it filters, sorts and facets on are added here. They are a
@@ -457,7 +489,30 @@ async def lifespan(app: FastAPI):
             "notification will be sent."
         )
 
+    # ── Monthly client reports ───────────────────────────────────────────────
+    # Schedules are created disabled; this loop only acts on ones an operator
+    # turned on. It can produce e-mail, so it has its own off switch.
+    report_task = None
+    from app.services import client_report_scheduler as _reports
+
+    if _reports.scheduler_enabled():
+        report_task = asyncio.create_task(_reports.scheduler_loop())
+        _log.info("Client report scheduler started.")
+    else:
+        _log.warning(
+            "Client report scheduler is DISABLED (CLIENT_REPORT_SCHEDULER_ENABLED=false). "
+            "Reports can still be generated and sent by hand."
+        )
+
     yield
+
+    if report_task is not None:
+        _reports.stop_scheduler()
+        report_task.cancel()
+        try:
+            await report_task
+        except BaseException:
+            pass
 
     if collector_task is not None:
         collector_task.cancel()
@@ -535,6 +590,10 @@ from app.api.routes.events import router as events_router
 # deliberate decision. Two endpoints on the security router are still genuinely
 # used and are NOT superseded: /{id}/exposure and /{id}/iam-review.
 from app.api.routes.security_center import router as security_center_router
+# Clients (portfolio, onboarding, reports) and certificates/secrets. Their paths
+# are all under their own prefixes, so order relative to the others is free.
+from app.api.routes.clients import router as clients_router
+from app.api.routes.certificates import router as certificates_router
 
 # Standard API routes under /api/v1/
 #
@@ -559,7 +618,7 @@ from app.api.routes.security_center import router as security_center_router
 # paths are all `/{account_id}/<literal>`, which do not collide with that
 # router's `/{account_id}` — but ordering it first means a future single-segment
 # route added there cannot start swallowing /refresh without anyone noticing.
-for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router]:
+for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router, clients_router, certificates_router]:
     app.include_router(router, prefix="/api/v1")
 
 

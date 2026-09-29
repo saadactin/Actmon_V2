@@ -209,6 +209,14 @@ DISCOVERY_FAILED = "discovery_failed"
 DISCOVERY_STALE = "discovery_stale"
 COST_DATA_UNAVAILABLE = "cost_data_unavailable"
 EVENT_COLLECTION_UNHEALTHY = "event_collection_unhealthy"
+CREDENTIAL_EXPIRY = "credential_expiry"
+
+_CREDENTIAL_KIND_CHOICES = [
+    {"value": "CERTIFICATE", "label": "Certificates"},
+    {"value": "SECRET_OR_KEY", "label": "Secrets and keys"},
+    {"value": "ANY", "label": "Certificates, secrets and keys"},
+]
+_YES_NO = [{"value": "yes", "label": "Yes"}, {"value": "no", "label": "No"}]
 
 CONDITIONS: Dict[str, Condition] = {c.key: c for c in (
     Condition(
@@ -384,6 +392,26 @@ CONDITIONS: Dict[str, Condition] = {c.key: c for c in (
         stateful=True,
         fields=(),
     ),
+    Condition(
+        key=CREDENTIAL_EXPIRY,
+        category=CAT_SECURITY,
+        label="Certificate or secret expiry",
+        summary="Trigger when certificates, secrets or keys expire within a window "
+                "you choose — read from each provider's own certificate and secret "
+                "stores.",
+        source="credential_inventory",
+        fields=(
+            Field("kind", "choice", "Watch", default="CERTIFICATE",
+                  choices=_CREDENTIAL_KIND_CHOICES),
+            Field("within_days", "number", "Expiring within (days)", default=30,
+                  minimum=0, maximum=365,
+                  help="0 watches only objects that have already expired."),
+            Field("include_expired", "choice", "Count already-expired objects",
+                  default="yes", choices=_YES_NO),
+            _op_field(_COUNT_OPERATORS, OP_GT),
+            Field("threshold", "number", "Objects", default=0, minimum=0),
+        ),
+    ),
 )}
 
 CATEGORY_LABELS = {
@@ -413,6 +441,7 @@ SCOPE_SUPPORT: Dict[str, Tuple[str, ...]] = {
     DISCOVERY_STALE: (),
     COST_DATA_UNAVAILABLE: (),
     EVENT_COLLECTION_UNHEALTHY: (),
+    CREDENTIAL_EXPIRY: (),
 }
 
 
@@ -613,6 +642,16 @@ def describe(condition_type: str, config: Optional[dict],
         return (f"Trigger when one or more audit-log collection scopes{where} "
                 "cannot be read, leaving a gap in the Event Log.")
 
+    if condition_type == CREDENTIAL_EXPIRY:
+        noun = {"CERTIFICATE": "certificates", "SECRET_OR_KEY": "secrets and keys"}.get(
+            cfg.get("kind", "CERTIFICATE"), "certificates, secrets and keys")
+        days = cfg.get("within_days", 30)
+        expired = cfg.get("include_expired", "yes") == "yes"
+        window = (f"that have expired" if str(days) in ("0", "0.0") else
+                  f"expiring within {_num(days)} day(s)"
+                  + (" or already expired" if expired else ""))
+        return f"Trigger when the number of {noun} {window}{where} {op} {_num(n)}."
+
     return get(condition_type).summary
 
 
@@ -802,6 +841,24 @@ async def account_support(db, account) -> Dict[str, Dict[str, Any]]:
                 "never run, so this rule will report UNKNOWN rather than zero.")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not probe event collection for %s: %s", account_id, exc)
+
+    # ── Certificates and secrets ─────────────────────────────────────────────
+    try:
+        from sqlalchemy import func, select
+
+        from app.models.credential_inventory import CloudCredentialSource
+
+        sources = (await db.execute(
+            select(func.count()).select_from(CloudCredentialSource)
+            .where(CloudCredentialSource.account_id == account_id)
+        )).scalar_one()
+        if not sources:
+            out[CREDENTIAL_EXPIRY].warning = (
+                "Certificates and secrets have not been collected for this account yet. "
+                "They are read during every discovery scan; until the next one, this "
+                "rule reports that it cannot be evaluated rather than zero.")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not probe credential collection for %s: %s", account_id, exc)
 
     # ── Drift ────────────────────────────────────────────────────────────────
     try:

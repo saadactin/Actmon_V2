@@ -37,8 +37,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.account_refresh import (
-    COMPONENT_FAILED, COMPONENT_PENDING, COMPONENT_RUNNING, COMPONENT_SKIPPED,
-    COMPONENT_SUCCEEDED, COMPONENTS, REFRESH_ACTIVE, REFRESH_CANCELLED,
+    COMPONENT_FAILED, COMPONENT_LABELS, COMPONENT_PENDING, COMPONENT_RUNNING,
+    COMPONENT_SKIPPED, COMPONENT_SUCCEEDED, COMPONENTS, REFRESH_ACTIVE, REFRESH_CANCELLED,
     REFRESH_FAILED, REFRESH_PARTIAL, REFRESH_QUEUED, REFRESH_RUNNING,
     REFRESH_SUCCEEDED, TRIGGER_MANUAL, TRIGGER_SCHEDULED, TRIGGER_TEST,
     CloudAccountRefresh, CloudAccountRefreshSchedule,
@@ -84,6 +84,13 @@ def _status_of(components: Dict[str, Any], name: str) -> str:
     return (value or {}).get("status", COMPONENT_PENDING)
 
 
+def _is_incomplete(components: Dict[str, Any], name: str) -> bool:
+    """A component that ran but could not read everything — see
+    `grade_components`. Only the stored dict shape can carry it."""
+    value = components.get(name)
+    return isinstance(value, dict) and bool(value.get("incomplete"))
+
+
 def unresolved_components(components: Dict[str, Any]) -> List[str]:
     """Components still PENDING or RUNNING when the refresh is being graded.
 
@@ -112,19 +119,42 @@ def grade_components(components: Dict[str, Any]) -> Tuple[str, List[str]]:
     A component that never reported counts as failed, never as absent. SKIPPED
     does not: a provider with no cost integration did not fail to refresh cost,
     it was never asked to.
+
+    A component that SUCCEEDED but is marked `incomplete` — a sweep that read
+    218 of 272 scopes — makes the run PARTIAL, never FAILED: what it read is
+    fresh. Grading it SUCCEEDED put "Successful" beside an inventory coverage
+    of 80.1%, which is the stale-data-looks-current failure again.
     """
     states = {n: _status_of(components, n) for n in COMPONENTS}
     failed = [n for n, s in states.items()
               if s in (COMPONENT_FAILED, COMPONENT_PENDING, COMPONENT_RUNNING)]
     succeeded = [n for n, s in states.items() if s == COMPONENT_SUCCEEDED]
+    incomplete = [n for n in succeeded if _is_incomplete(components, n)]
 
     if "connection" in failed or "resources" in failed:
         return REFRESH_FAILED, failed
-    if failed:
-        return REFRESH_PARTIAL, failed
+    if failed or incomplete:
+        return REFRESH_PARTIAL, failed + incomplete
     if not succeeded:
         return REFRESH_FAILED, failed
     return REFRESH_SUCCEEDED, failed
+
+
+def describe_shortfall(components: Dict[str, Any], counted: List[str]) -> Optional[str]:
+    """The refresh record's error line: what failed, and what ran but read
+    only part of the account — so a sweep that read 218 of 272 scopes is not
+    reported as "1 component(s) failed: resources"."""
+    if not counted:
+        return None
+    failed = [n for n in counted if _status_of(components, n) != COMPONENT_SUCCEEDED]
+    parts = []
+    if failed:
+        parts.append(f"{len(failed)} component(s) failed: {', '.join(failed)}.")
+    for name in (n for n in counted if n not in failed):
+        detail = str((components.get(name) or {}).get("detail") or "").strip().rstrip(".")
+        parts.append(f"{COMPONENT_LABELS.get(name, name)} was incomplete"
+                     + (f": {detail}." if detail else "."))
+    return " ".join(parts)
 
 
 class RefreshError(RuntimeError):
@@ -231,6 +261,7 @@ class AccountRefreshService:
         )).scalars().first()
 
         schedule = await self.get_schedule(account_id)
+        pulls = await self._data_pulls(account_id, current, last_success)
         return {
             "account_id": str(account_id),
             "current": current.to_dict() if current else None,
@@ -242,6 +273,76 @@ class AccountRefreshService:
             # disagree about what a schedule means.
             "schedule_summary": describe_schedule(schedule),
             "is_running": current is not None,
+            # A plain discovery scan changes the same data a refresh does, so
+            # the header treats it the same way: busy, and no second start.
+            "active_scan": pulls["active_scan"],
+            "current_scan": pulls["current_scan"],
+            "is_busy": current is not None or pulls["active_scan"] is not None,
+            "last_refreshed": pulls["last_refreshed"],
+            "data_version": pulls["data_version"],
+        }
+
+    async def _data_pulls(self, account_id: uuid.UUID, current,
+                          last_success) -> Dict[str, Any]:
+        """When this account's data last came from the provider, by any route
+        (a refresh, or a plain discovery scan), and whether a scan is running
+        outside a refresh.
+
+        `data_version` is the newest of every write that changes what the tabs
+        show — a finished refresh, a finished sweep, a security assessment
+        (which lands ~2 minutes after a plain sweep completes). The UI re-reads
+        every tab of the account when it changes, whichever tab started the
+        work, or none did.
+        """
+        from sqlalchemy import func
+
+        from app.models.discovery_job import DiscoveryJob
+        from app.models.security_finding import CloudSecurityAssessment
+
+        active = (await self.db.execute(
+            select(DiscoveryJob)
+            .where(DiscoveryJob.account_id == account_id,
+                   DiscoveryJob.status.in_(("PENDING", "RUNNING")))
+            .order_by(DiscoveryJob.started_at.desc().nullslast()).limit(1)
+        )).scalars().first()
+        own = None
+        if (active is not None and current is not None
+                and current.discovery_job_id == active.id):
+            # The refresh's own sweep: reported as the refresh, with how far
+            # it has got, rather than as a second scan.
+            own, active = active, None
+
+        scan = (await self.db.execute(
+            select(DiscoveryJob)
+            .where(DiscoveryJob.account_id == account_id,
+                   DiscoveryJob.status == "COMPLETED")
+            .order_by(DiscoveryJob.completed_at.desc().nullslast()).limit(1)
+        )).scalars().first()
+
+        refresh_at = (_aware(last_success.completed_at)
+                      if last_success is not None and last_success.completed_at else None)
+        scan_at = (_aware(scan.completed_at)
+                   if scan is not None and scan.completed_at else None)
+        last = None
+        if refresh_at and (scan_at is None or refresh_at >= scan_at):
+            job = scan if scan is not None and scan.id == last_success.discovery_job_id else (
+                await self.db.get(DiscoveryJob, last_success.discovery_job_id)
+                if last_success.discovery_job_id else None)
+            last = _pull_view("refresh", refresh_at, job, refresh=last_success)
+        elif scan_at:
+            last = _pull_view("scan", scan_at, scan)
+
+        assessed = (await self.db.execute(
+            select(func.max(CloudSecurityAssessment.finished_at))
+            .where(CloudSecurityAssessment.account_id == account_id)
+        )).scalar()
+        stamps = [t for t in (refresh_at, scan_at, _aware(assessed) if assessed else None)
+                  if t is not None]
+        return {
+            "active_scan": _scan_view(active),
+            "current_scan": _scan_view(own),
+            "last_refreshed": last,
+            "data_version": max(stamps).isoformat() if stamps else None,
         }
 
     # ── Start ────────────────────────────────────────────────────────────────
@@ -264,6 +365,18 @@ class AccountRefreshService:
             raise RefreshError(
                 "A refresh is already running for this account.",
                 code="already_running", existing=existing.to_dict())
+
+        # A plain discovery scan (onboarding starts those) is the same sweep a
+        # refresh would run. Two at once race the inventory prune — the reason
+        # Run Discovery already refuses a second scan — so a refresh waits too.
+        from app.repository.discovery_repo import DiscoveryRepository
+
+        scan = await DiscoveryRepository(self.db).get_active_for_account(account_id)
+        if scan is not None:
+            raise RefreshError(
+                "A discovery scan is already running for this account. It reads "
+                "the same data; refresh again once it finishes.",
+                code="scan_running", existing=_scan_view(scan))
 
         row = CloudAccountRefresh(
             account_id=account_id,
@@ -415,6 +528,39 @@ def _parse_hhmm(value: str) -> Optional[dtime]:
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _scan_view(job) -> Optional[Dict[str, Any]]:
+    if job is None:
+        return None
+    return {"job_id": str(job.id), "status": job.status,
+            "started_at": _aware(job.started_at).isoformat() if job.started_at else None,
+            "resources_found": job.resources_found}
+
+
+def _pull_view(source: str, at: datetime, job, *, refresh=None) -> Dict[str, Any]:
+    """The header's "Last refreshed" line: when, how well, and why not fully.
+
+    A sweep that left a partial note is PARTIAL whatever its refresh was
+    graded — refreshes graded before incomplete sweeps counted against them
+    are still on record as SUCCEEDED.
+    """
+    summary = (job.scope_summary or {}) if job is not None else {}
+    sweep_partial = bool(job is not None and job.error_detail)
+    status = refresh.status if refresh is not None else REFRESH_SUCCEEDED
+    if status == REFRESH_SUCCEEDED and sweep_partial:
+        status = REFRESH_PARTIAL
+    return {
+        "at": at.isoformat(),
+        "source": source,
+        "status": status,
+        "refresh_id": str(refresh.id) if refresh is not None else None,
+        "job_id": str(job.id) if job is not None else None,
+        "scopes_read": summary.get("read") if summary.get("attempted") else None,
+        "scopes_attempted": summary.get("attempted") or None,
+        "note": ((refresh.error if refresh is not None else None)
+                 or (job.error_detail if sweep_partial else None)),
+    }
 
 
 def compute_next_run(schedule: CloudAccountRefreshSchedule,
@@ -590,12 +736,11 @@ async def _run_refresh(refresh_id: uuid.UUID, account_id: uuid.UUID) -> None:
             await db.commit()
             row = await db.get(CloudAccountRefresh, refresh_id)
 
-        status, failed = grade_components(row.components or {})
+        status, counted = grade_components(row.components or {})
 
         await _finish(db, refresh_id, status, started,
-                      error=(f"{len(failed)} component(s) failed: "
-                             f"{', '.join(failed)}." if failed else None),
-                      error_code="partial" if failed else None)
+                      error=describe_shortfall(row.components or {}, counted),
+                      error_code="partial" if counted else None)
 
         row = await db.get(CloudAccountRefresh, refresh_id)
         schedule = (await db.execute(
@@ -638,12 +783,16 @@ async def _finish(db: AsyncSession, refresh_id: uuid.UUID, status: str,
 
 
 async def _set_component(db: AsyncSession, refresh_id: uuid.UUID, name: str,
-                         status: str, *, detail: Optional[str] = None) -> None:
+                         status: str, *, detail: Optional[str] = None,
+                         incomplete: Optional[bool] = None) -> None:
     """Stamp one component's outcome.
 
     Reassigns the whole dict rather than mutating in place: SQLAlchemy does not
     track mutation inside a JSONB column, so an in-place update would be
     silently dropped on flush and every component would stay PENDING.
+
+    `incomplete` marks a component that ran but could not read everything it
+    should have; `grade_components` makes the run PARTIAL for it.
     """
     row = await db.get(CloudAccountRefresh, refresh_id)
     if row is None:
@@ -653,6 +802,8 @@ async def _set_component(db: AsyncSession, refresh_id: uuid.UUID, name: str,
     entry["status"] = status
     if detail:
         entry["detail"] = detail
+    if incomplete is not None:
+        entry["incomplete"] = bool(incomplete)
     now = datetime.now(timezone.utc).isoformat()
     if status == COMPONENT_RUNNING:
         entry["started_at"] = now
@@ -663,7 +814,8 @@ async def _set_component(db: AsyncSession, refresh_id: uuid.UUID, name: str,
 
 
 async def set_component(refresh_id: Optional[uuid.UUID], name: str, status: str,
-                        *, detail: Optional[str] = None) -> None:
+                        *, detail: Optional[str] = None,
+                        incomplete: Optional[bool] = None) -> None:
     """Public helper for the discovery worker, which owns its own session.
 
     A no-op when the scan was not driven by a refresh — Run Discovery on its
@@ -675,7 +827,8 @@ async def set_component(refresh_id: Optional[uuid.UUID], name: str, status: str,
 
     try:
         async with AsyncSessionLocal() as db:
-            await _set_component(db, refresh_id, name, status, detail=detail)
+            await _set_component(db, refresh_id, name, status, detail=detail,
+                                 incomplete=incomplete)
             await db.commit()
     except Exception as exc:  # noqa: BLE001 — never fail a scan over bookkeeping
         logger.debug("Could not stamp refresh component %s: %s", name, exc)

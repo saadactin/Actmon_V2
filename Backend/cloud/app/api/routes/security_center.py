@@ -127,7 +127,7 @@ async def get_meta(
             }
             for r in sorted(reg.RULES.values(), key=lambda x: x.rule_id)
         ],
-        "frameworks": {fw: ctl.FRAMEWORK_META[fw] for fw in ctl.FRAMEWORKS},
+        "frameworks": {fw: ctl.framework_meta(fw) for fw in ctl.FRAMEWORKS},
         "control_catalog": ctl.catalog_summary(),
         "threshold_kinds": [{"value": k, "label": v} for k, v in THRESHOLD_LABEL.items()],
         "scoring": {
@@ -367,6 +367,8 @@ async def list_findings(
     framework: Optional[str] = Query(None, description="Narrow to one framework's rules"),
     control_id: Optional[str] = Query(None, description="Narrow to one control's rules"),
     search: Optional[str] = Query(None),
+    resource_key: Optional[str] = Query(
+        None, description="Exactly this resource — e.g. one certificate's provider id"),
     days: Optional[int] = Query(None, ge=1, le=3650),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -387,6 +389,7 @@ async def list_findings(
         "resource_types": _csv(resource_type),
         "rule_ids": _csv(rule_id),
         "search": search,
+        "resource_key": resource_key,
     }
     if days:
         filters["detected_after"] = datetime.now(timezone.utc) - timedelta(days=days)
@@ -395,14 +398,22 @@ async def list_findings(
     # "show me what fails PCI Req 1.3" is one request against the same index.
     if control_id or framework:
         wanted: set = set()
+        matched = []
         for c in ctl.CONTROLS:
             if framework and c.framework != framework:
                 continue
             if control_id and c.control_id != control_id:
                 continue
             wanted.update(c.rules)
+            matched.append(c)
         existing = set(filters.get("rule_ids") or [])
         filters["rule_ids"] = sorted(wanted & existing) if existing else sorted(wanted)
+        # One control scoped to particular resource types (CIS OCI 5.2.1 is
+        # block volumes only) lists only those, as its state was decided.
+        if len(matched) == 1 and matched[0].resource_types:
+            scoped = set(matched[0].resource_types)
+            asked = set(filters.get("resource_types") or [])
+            filters["resource_types"] = sorted(scoped & asked) if asked else sorted(scoped)
         if not filters["rule_ids"]:
             return {"findings": [], "total": 0, "limit": limit, "offset": offset,
                     "has_more": False,
@@ -484,7 +495,24 @@ async def get_compliance(
             status_code=400,
             detail=f"Unknown framework {framework!r}. Known: {', '.join(ctl.FRAMEWORKS)}",
         )
+    await _require_applicable(svc, account_id, framework)
     return await svc.compliance(account_id, framework=framework)
+
+
+async def _require_applicable(svc: SecurityCenterService, account_id: uuid.UUID,
+                              framework: Optional[str]) -> None:
+    """A provider benchmark asked of another cloud's account is a 400 that says
+    so — not an empty 200 that reads like "no controls failed"."""
+    if not framework:
+        return
+    account = await svc.accounts.get_by_id(account_id)
+    if account is not None and not ctl.applies_to(framework, account.provider):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"{ctl.FRAMEWORK_META[framework]['label']} applies to "
+                    f"{', '.join(ctl.FRAMEWORK_META[framework]['providers'])} accounts; "
+                    f"this is a {account.provider} account."),
+        )
 
 
 @router.get("/{account_id}/compliance/{framework}/{control_id:path}")
@@ -502,6 +530,7 @@ async def get_control(
     """
     if framework not in ctl.FRAMEWORKS:
         raise HTTPException(status_code=400, detail=f"Unknown framework {framework!r}")
+    await _require_applicable(svc, account_id, framework)
     data = await svc.compliance(account_id, framework=framework, include_diff=False)
     match = next((c for c in data["controls"] if c["control_id"] == control_id), None)
     if match is None:

@@ -90,6 +90,20 @@ $suites = @(
     # product never tells anyone they are "secure" or "compliant", and
     # "Not determined" never looks like "clear".
     @{ Name = "security model: never claims secure/compliant, unknown is not a pass"; Path = "tests/verify_security_model.mjs" },
+    # Clients, client reports and the certificate inventory. Money is never
+    # merged across currencies and NA is never 0; posture is the worst score,
+    # never an average; "nothing expiring" is green only when every store was
+    # read; and no delivery label says sent when the e-mail was only queued.
+    # The second half is parity with the backend PARSED FROM ITS SOURCE --
+    # sections, delivery states, buckets, collection states, kinds, the
+    # client-code rule, onboarding outcomes, scheduler statuses.
+    @{ Name = "clients model: per-currency money, worst-not-average, queued-not-sent, backend parity"; Path = "tests/verify_clients_model.mjs" },
+    # "What can I do" for one certificate / secret / key. Unknown use is never
+    # "unused" (nothing leads with a deletion until it has said how to find
+    # out), commands carry the object's real identifiers in an order that
+    # breaks nothing (switch listeners, THEN delete), and every store the
+    # backend collects -- parsed from its source -- has guidance.
+    @{ Name = "credential guidance: unknown-is-not-unused, real ids, safe order, store parity"; Path = "tests/verify_credential_guidance.mjs" },
     # Event Log vocabulary and time handling. TIME_RANGES and RANGE_HOURS are
     # checked in both directions -- add a range to the selector and forget the
     # hour mapping and "Collect now" fetches the wrong window under the right

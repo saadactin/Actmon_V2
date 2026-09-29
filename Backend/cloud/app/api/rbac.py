@@ -179,6 +179,27 @@ ALERT_MANAGE_RULES = "alerts:manage_rules"
 ALERT_MANAGE_RECIPIENTS = "alerts:manage_recipients"
 ALERT_TEST = "alerts:test"
 
+# ---- Clients, organisation onboarding and client reports ------------------
+#   clients:view     — the client list, the portfolio view, a client's accounts.
+#                      Every role: it is a grouping of data each role can
+#                      already read account by account.
+#   clients:manage   — create, rename, delete a client; assign accounts to it.
+#                      Administrator-only, because assignment decides whose
+#                      report an account's bill appears in.
+#   clients:onboard  — list an AWS organisation or Azure tenant and create
+#                      accounts from it. It stores new cloud credentials, so it
+#                      sits with resources:discover at the administrator level.
+#   reports:export   — generate and download a client's PDF. Its own
+#                      permission for the reason cost:export is: an itemized
+#                      report leaves the building the moment it is downloaded.
+#   reports:manage   — schedules and recipients. Decides whose inbox this
+#                      system writes to every month, like alerts:manage_recipients.
+CLIENT_VIEW = "clients:view"
+CLIENT_MANAGE = "clients:manage"
+CLIENT_ONBOARD = "clients:onboard"
+REPORT_EXPORT = "reports:export"
+REPORT_MANAGE = "reports:manage"
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "security_analyst"
 ROLE_ADMIN = "administrator"
@@ -193,7 +214,7 @@ ROLE_AUDIT_ADMIN = "audit_admin"
 # when/where — and the payload needs the analyst role.
 ROLE_PERMISSIONS = {
     ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW, RESOURCE_VIEW,
-                  ALERT_VIEW},
+                  ALERT_VIEW, CLIENT_VIEW},
     ROLE_ANALYST: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY,
         TOPOLOGY_VIEW, TOPOLOGY_VIEW_RAW, TOPOLOGY_EXPORT,
@@ -211,6 +232,9 @@ ROLE_PERMISSIONS = {
         # Works the alert queue and can test why a rule is quiet; cannot
         # change what is watched or whose inbox it reaches.
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST,
+        # Can produce and download a client's report; cannot schedule one or
+        # decide who receives it.
+        CLIENT_VIEW, REPORT_EXPORT,
     },
     ROLE_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -223,6 +247,7 @@ ROLE_PERMISSIONS = {
         RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
         ALERT_MANAGE_RECIPIENTS,
+        CLIENT_VIEW, CLIENT_MANAGE, CLIENT_ONBOARD, REPORT_EXPORT, REPORT_MANAGE,
     },
     ROLE_AUDIT_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -236,6 +261,7 @@ ROLE_PERMISSIONS = {
         RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
         ALERT_MANAGE_RECIPIENTS,
+        CLIENT_VIEW, CLIENT_MANAGE, CLIENT_ONBOARD, REPORT_EXPORT, REPORT_MANAGE,
     },
 }
 

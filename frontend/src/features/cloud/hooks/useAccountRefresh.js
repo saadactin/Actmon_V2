@@ -1,10 +1,12 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   cancelRefresh, getLatestRefresh, getRefresh, getRefreshCapabilities,
   getRefreshHistory, getRefreshSchedule, startRefresh, updateRefreshSchedule,
 } from '../api/refresh.api';
-import { isTerminal, shouldInvalidate } from '../utils/refreshModel';
+import {
+  busyRefusal, isBusy, isTerminal, shouldInvalidate, syncDecision,
+} from '../utils/refreshModel';
 
 /**
  * Account refresh hooks.
@@ -32,13 +34,14 @@ export const refreshKeys = {
   capabilities: (accountId) => [KEY, 'capabilities', accountId],
 };
 
-/** Current state for the header. Polls only while something is running. */
+/** Current state for the header. Polls fast only while the account's data is
+ *  being rewritten — by a refresh or by a plain discovery scan. */
 export const useLatestRefresh = (accountId) => useQuery({
   queryKey: refreshKeys.latest(accountId),
   queryFn: () => getLatestRefresh(accountId),
   enabled: !!accountId,
   staleTime: 10_000,
-  refetchInterval: (query) => (query.state.data?.is_running ? 3_000 : 30_000),
+  refetchInterval: (query) => (isBusy(query.state.data) ? 3_000 : 30_000),
   refetchIntervalInBackground: false,
 });
 
@@ -108,7 +111,62 @@ export const useStartRefresh = (accountId) => {
       qc.invalidateQueries({ queryKey: refreshKeys.latest(accountId) });
       qc.invalidateQueries({ queryKey: refreshKeys.history(accountId) });
     },
+    // A refusal means something IS running — re-read so the header shows it.
+    onError: () => qc.invalidateQueries({ queryKey: refreshKeys.latest(accountId) }),
   });
+};
+
+// The data version each account's tabs last re-read at, this session.
+// Module-level on purpose: it must outlive the header, so leaving the account
+// and coming back after a refresh finished still re-reads every tab.
+const syncedVersions = new Map();
+
+/**
+ * Re-read every tab of the account whenever its data version moves.
+ *
+ * Keyed on the server's `data_version`, not on this component having watched
+ * a refresh to the end. The old header only invalidated when the same mounted
+ * instance saw its own refresh finish — start one, switch tabs, and nothing
+ * re-read when it completed. This fires for a refresh started on any tab, in
+ * another browser, by the schedule, or for a plain scan.
+ */
+export const useAccountDataSync = (accountId, dataVersion) => {
+  const invalidate = useInvalidateAccountData(accountId);
+  useEffect(() => {
+    if (!accountId) return;
+    const { invalidate: stale, remember } = syncDecision(
+      syncedVersions.get(accountId), dataVersion);
+    if (remember) syncedVersions.set(accountId, dataVersion);
+    if (stale) invalidate();
+  }, [accountId, dataVersion, invalidate]);
+};
+
+/**
+ * Everything a "Refresh all" button needs: whether the account is busy, and a
+ * start that treats "already running" as the answer rather than an error.
+ */
+export const useRefreshAll = (accountId) => {
+  const latest = useLatestRefresh(accountId);
+  const { mutate, isPending } = useStartRefresh(accountId);
+  useAccountDataSync(accountId, latest.data?.data_version);
+
+  const run = useCallback(({ onStarted, onBusy, onError } = {}) => {
+    mutate({}, {
+      onSuccess: (data) => onStarted?.(data?.refresh_id),
+      onError: (err) => {
+        const refusal = busyRefusal(err);
+        if (refusal) onBusy?.(refusal);
+        else onError?.(err);
+      },
+    });
+  }, [mutate]);
+
+  return {
+    latest,
+    busy: isBusy(latest.data) || isPending,
+    scanRunning: !!latest.data?.active_scan && !latest.data?.is_running,
+    run,
+  };
 };
 
 export const useCancelRefresh = (accountId) => {

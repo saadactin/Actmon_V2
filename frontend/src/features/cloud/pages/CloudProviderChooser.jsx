@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Plus, Server, Settings } from 'lucide-react';
+import { Building2, ChevronRight, Lock, Plus, Server, Settings } from 'lucide-react';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAccountResourceCounts } from '../hooks/useResources';
 import CloudPageHeader from '../components/CloudPageHeader';
@@ -58,6 +58,18 @@ export default function CloudProviderChooser() {
             <span className="flex h-control items-center rounded-control border border-border px-3 text-[13px] font-semibold text-fg">
               {totalResources} resource{totalResources !== 1 ? 's' : ''}
             </span>
+            <button
+              onClick={() => navigate('/cloud/clients')}
+              className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
+            >
+              <Building2 size={13} /> Clients
+            </button>
+            <button
+              onClick={() => navigate('/cloud/certificates')}
+              className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
+            >
+              <Lock size={13} /> Certificates
+            </button>
             <button
               onClick={() => navigate('/cloud/accounts')}
               className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"

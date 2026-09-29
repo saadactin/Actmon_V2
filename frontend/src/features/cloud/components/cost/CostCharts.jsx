@@ -23,7 +23,7 @@ import {
 } from 'recharts';
 import { ChartEmpty, ChartTooltip } from './CostPrimitives';
 import {
-  axisTick, compact, exact, formatDateShort, isMissing, seriesColor, topNWithOther,
+  axisTick, compact, exact, formatDateShort, isMissing, NA, seriesColor, topNWithOther,
 } from '../../utils/costFormat';
 
 const GRID = 'var(--chart-grid)';
@@ -509,40 +509,97 @@ export function CostCalendarHeatmap({ days, currency, onSelectDay }) {
     return weeks;
   }, [days]);
 
+  const stats = useMemo(() => {
+    const priced = (days || []).filter((d) => !isMissing(d.amount));
+    const total = priced.reduce((s, d) => s + Number(d.amount), 0);
+    const top = priced.reduce((best, d) => (best && best.amount >= d.amount ? best : d), null);
+    return {
+      priced: priced.length,
+      total,
+      average: priced.length ? total / priced.length : null,
+      top,
+      anomalous: (days || []).filter((d) => d.anomalous).length,
+    };
+  }, [days]);
+
   if (!days?.length) {
     return <ChartEmpty height={160} reason="No stored billing facts for this period." />;
   }
 
+  // Cells sized to the range: a month gets cells big enough to read at a
+  // glance instead of a 100px-wide sliver in a 900px card; a year still fits.
+  const weeks = byWeek.length;
+  const cell = weeks <= 6 ? 34 : weeks <= 14 ? 24 : weeks <= 27 ? 18 : 14;
+  const box = { width: cell, height: cell };
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
   return (
     <div>
-      <div className="flex gap-1 overflow-x-auto pb-1">
-        {byWeek.map((week, wi) => (
-          <div key={wi} className="flex flex-col gap-1">
-            {week.map((day, di) => {
-              if (!day) return <span key={di} className="h-4 w-4" aria-hidden />;
-              const missing = isMissing(day.amount);
-              return (
-                <button
-                  key={day.date}
-                  type="button"
-                  onClick={() => onSelectDay?.(day)}
-                  title={`${day.date} — ${exact(day.amount, currency)}${day.anomalous ? ' (anomalous)' : ''}`}
-                  aria-label={`${day.date}, ${missing ? 'no data' : exact(day.amount, currency)}`}
-                  className={cn(
-                    'h-4 w-4 rounded-[3px] transition-transform hover:scale-125',
-                    missing && 'border border-dashed border-border',
-                    day.anomalous && 'ring-2 ring-danger ring-offset-1 ring-offset-[var(--surface)]',
-                  )}
-                  style={missing ? undefined : {
-                    // single hue, opacity carries magnitude
-                    background: seriesColor(0),
-                    opacity: 0.18 + 0.82 * (day.intensity ?? 0),
-                  }}
-                />
-              );
-            })}
+      <div className="flex flex-wrap items-start gap-6">
+        <div className="flex gap-1 overflow-x-auto pb-1">
+          <div className="flex flex-col gap-1 pr-1" aria-hidden>
+            {WEEKDAYS.map((d, i) => (
+              <span key={d} className="flex items-center text-[10px] text-subtle" style={{ height: cell }}>
+                {cell >= 18 || i % 2 === 1 ? d : ''}
+              </span>
+            ))}
           </div>
-        ))}
+          {byWeek.map((week, wi) => (
+            <div key={wi} className="flex flex-col gap-1">
+              {week.map((day, di) => {
+                if (!day) return <span key={di} style={box} aria-hidden />;
+                const missing = isMissing(day.amount);
+                return (
+                  <button
+                    key={day.date}
+                    type="button"
+                    onClick={() => onSelectDay?.(day)}
+                    title={`${day.date} — ${exact(day.amount, currency)}${day.anomalous ? ' (anomalous)' : ''}`}
+                    aria-label={`${day.date}, ${missing ? 'no data' : exact(day.amount, currency)}`}
+                    className={cn(
+                      'rounded-[3px] transition-transform hover:scale-110',
+                      missing && 'border border-dashed border-border',
+                      day.anomalous && 'ring-2 ring-danger ring-offset-1 ring-offset-[var(--surface)]',
+                    )}
+                    style={missing ? box : {
+                      ...box,
+                      // single hue, opacity carries magnitude
+                      background: seriesColor(0),
+                      opacity: 0.18 + 0.82 * (day.intensity ?? 0),
+                    }}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
+        {/* The same days, summarised — the numbers a reader otherwise hovers
+            every cell for. Missing days are left out, never counted as 0. */}
+        <dl className="grid min-w-[180px] flex-1 grid-cols-2 gap-x-6 gap-y-3 text-[12px]">
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-muted">Highest day</dt>
+            <dd className="mt-0.5 font-semibold text-fg">
+              {stats.top ? exact(stats.top.amount, currency) : NA}
+            </dd>
+            {stats.top && <dd className="text-[11px] text-subtle">{stats.top.date}</dd>}
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-muted">Daily average</dt>
+            <dd className="mt-0.5 font-semibold text-fg">{exact(stats.average, currency)}</dd>
+            <dd className="text-[11px] text-subtle">over days with data</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-muted">Days with data</dt>
+            <dd className="mt-0.5 font-semibold text-fg">{stats.priced} of {days.length}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-muted">Anomalous days</dt>
+            <dd className={cn('mt-0.5 font-semibold', stats.anomalous ? 'text-danger-fg' : 'text-fg')}>
+              {stats.anomalous}
+            </dd>
+          </div>
+        </dl>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-3 text-[11px] text-muted">
         <span className="flex items-center gap-1">

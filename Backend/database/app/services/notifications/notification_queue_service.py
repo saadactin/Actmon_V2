@@ -80,6 +80,10 @@ def _process_one(db, job: NotificationQueue):
             "subject": payload.get("subject"),
             "html": payload.get("html"),
             "text": payload.get("text"),
+            # Files to attach ({filename, content_type, content_b64}). Only the
+            # cloud service's client reports send these today; every other
+            # producer omits the key and mail is built exactly as before.
+            "attachments": payload.get("attachments") or None,
         }
     started = time.monotonic()
     try:

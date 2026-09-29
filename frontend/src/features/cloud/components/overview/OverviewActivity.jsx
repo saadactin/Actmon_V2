@@ -25,7 +25,7 @@ export function RecentlyDiscovered({ rows, isLoading, error, onOpenResource, onO
       loading={isLoading}
       error={error}
       empty={!isLoading && !error && (rows || []).length === 0}
-      emptyMessage="No resources have been discovered yet. Run a discovery scan."
+      emptyMessage="No resources have been discovered yet. Use Refresh all at the top of the page."
       dense
     >
       <div className="space-y-1">

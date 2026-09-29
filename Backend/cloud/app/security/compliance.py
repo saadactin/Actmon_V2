@@ -52,6 +52,19 @@ def _f(finding, name, default=None):
     return getattr(finding, name, default)
 
 
+def _rule_stats_for(control: ctl.Control, rid: str,
+                    rule_stats: Dict[str, Dict[str, int]]) -> Dict[str, int]:
+    """A rule's statistics as this control sees them — narrowed to the
+    control's resource types when it declares any."""
+    if not control.resource_types:
+        return rule_stats.get(rid) or {}
+    merged: Dict[str, int] = {}
+    for rtype in control.resource_types:
+        for verdict, n in (rule_stats.get(ctl.stat_key(rid, rtype)) or {}).items():
+            merged[verdict] = merged.get(verdict, 0) + n
+    return merged
+
+
 def _control_state(
     control: ctl.Control,
     findings_by_rule: Dict[str, List[Any]],
@@ -69,9 +82,10 @@ def _control_state(
     saw_safe = False
     saw_undetermined = False
     saw_applicable = False
+    stat_undetermined = 0
 
     for rid in control.rules:
-        stats = rule_stats.get(rid) or {}
+        stats = _rule_stats_for(control, rid, rule_stats)
         if stats:
             ran_any = True
         if stats.get(SAFE):
@@ -82,12 +96,20 @@ def _control_state(
         if stats.get(UNKNOWN) or stats.get(NOT_SCANNED):
             saw_undetermined = True
             saw_applicable = True
-        relevant.extend(findings_by_rule.get(rid, []))
+            stat_undetermined += (stats.get(UNKNOWN) or 0) + (stats.get(NOT_SCANNED) or 0)
+        found = findings_by_rule.get(rid, [])
+        if control.resource_types:
+            found = [f for f in found if _f(f, "resource_type") in control.resource_types]
+        relevant.extend(found)
 
     failing = [
         f for f in relevant
         if _f(f, "verdict") == VULNERABLE
-        and (_f(f, "severity") or "").upper() in FAILING_SEVERITIES
+        # A strict (benchmark) control is failed by ANY confirmed finding: its
+        # rules test the recommendation itself, and the recommendation has no
+        # severity threshold.
+        and (control.strict
+             or (_f(f, "severity") or "").upper() in FAILING_SEVERITIES)
         and _f(f, "status") in ACTIVE_FINDING_STATUSES
     ]
     undetermined = [
@@ -98,9 +120,12 @@ def _control_state(
 
     detail = {
         "rules": list(control.rules),
-        "rules_that_ran": [r for r in control.rules if rule_stats.get(r)],
+        "rules_that_ran": [r for r in control.rules
+                           if _rule_stats_for(control, r, rule_stats)],
         "failing_findings": len(failing),
         "undetermined_findings": len(undetermined),
+        "strict": control.strict,
+        "resource_types": list(control.resource_types),
     }
 
     if not ran_any:
@@ -119,6 +144,23 @@ def _control_state(
             f"{len(failing)} confirmed violation(s) of the checks covering this control."
         )
         return ctl.FAIL, relevant, detail
+
+    # A check can be undetermined without a finding of its own — a certificate
+    # rule whose vault refused the listing carries NOT_SCANNED in its
+    # statistics, and the store-level gap finding is not cited by the control.
+    # That is still "could not tell", and must not fall through to PASS.
+    if not undetermined and stat_undetermined:
+        detail["undetermined_checks"] = stat_undetermined
+        if saw_safe:
+            detail["reason"] = (
+                "No violation found, but some of the data these checks need could not be "
+                "read (for example a certificate store that refused the listing), so the "
+                "control cannot be confirmed as passing.")
+            return ctl.PARTIAL, relevant, detail
+        detail["reason"] = (
+            "The data these checks need could not be read, so the control could not be "
+            "assessed. This is not a pass.")
+        return ctl.UNKNOWN, relevant, detail
 
     if undetermined and saw_safe:
         # Some evidence, not all of it. PARTIAL is the honest middle: the
@@ -147,11 +189,14 @@ def build(
     rule_stats: Optional[Dict[str, Dict[str, int]]] = None,
     account_id: Optional[str] = None,
     framework: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The compliance view. Pure function of findings + rule statistics.
 
-    `framework` narrows to one framework's controls; omitted, all three are
-    returned with a per-framework summary.
+    `framework` narrows to one framework's controls; omitted, every framework
+    that applies to `provider` is returned with a per-framework summary. A
+    provider benchmark (CIS AWS, CIS Azure, CIS OCI) is included only for its
+    own cloud, and not at all when the provider is unknown.
     """
     rule_stats = rule_stats or {}
     findings_by_rule: Dict[str, List[Any]] = {}
@@ -159,7 +204,8 @@ def build(
         findings_by_rule.setdefault(_f(f, "rule_id"), []).append(f)
 
     frameworks = [framework] if framework else list(ctl.FRAMEWORKS)
-    frameworks = [fw for fw in frameworks if fw in ctl.FRAMEWORKS]
+    frameworks = [fw for fw in frameworks
+                  if fw in ctl.FRAMEWORKS and ctl.applies_to(fw, provider)]
 
     control_rows: List[Dict[str, Any]] = []
     summary: Dict[str, Dict[str, Any]] = {}
@@ -207,7 +253,7 @@ def build(
 
         summary[fw] = {
             "framework": fw,
-            **ctl.FRAMEWORK_META[fw],
+            **ctl.framework_meta(fw),
             "controls_declared": declared,
             "controls_assessed": rated,
             "controls_passed": counts[ctl.PASS],
@@ -223,6 +269,11 @@ def build(
             "assessment_coverage": (round(100.0 * rated / (rated + not_evaluated), 1)
                                     if (rated + not_evaluated) else None),
             "by_severity": _severity_counts(rows_for_fw, findings_by_rule),
+            # The framework's own caveat ("Not a CIS certification", "technical
+            # safeguards only"). The metadata spread above carries it as
+            # `note`, which the generic note below replaces — so it is kept
+            # under its own key rather than lost.
+            "framework_note": ctl.FRAMEWORK_META[fw].get("note"),
             "note": (
                 "control_pass_rate is the share of ASSESSED controls that passed; "
                 "assessment_coverage is the share of this catalog that was assessed at "
@@ -240,7 +291,7 @@ def build(
 
     # The deduplicated violation list: one row per finding that breaches at
     # least one control, with all its citations.
-    violations = _violations(findings)
+    violations = _violations(findings, provider)
 
     return {
         "account_id": account_id,
@@ -263,7 +314,8 @@ def build(
             if _f(f, "status") in ACTIVE_FINDING_STATUSES
             and _f(f, "verdict") in (UNKNOWN, NOT_SCANNED)
         ),
-        "catalog": ctl.catalog_summary(),
+        "catalog": ctl.catalog_summary(provider),
+        "provider": provider,
         "note": (
             "Control references are informative cross-walks to published control text, "
             "useful for pointing an auditor at the right clause. They are not a certified "
@@ -295,12 +347,14 @@ def _severity_counts(rows: List[Dict[str, Any]],
     return counts
 
 
-def _violations(findings: Sequence[Any]) -> List[Dict[str, Any]]:
+def _violations(findings: Sequence[Any],
+                provider: Optional[str] = None) -> List[Dict[str, Any]]:
     """One row per finding that breaches at least one control.
 
     Deliberately not per (finding, framework): that was the original bug, which
     rendered the same finding three times and made all three framework tiles
-    show identical counts.
+    show identical counts. A LOW or INFO finding is a violation only where a
+    strict (benchmark) control cites it.
     """
     out: List[Dict[str, Any]] = []
     for f in findings:
@@ -309,9 +363,20 @@ def _violations(findings: Sequence[Any]) -> List[Dict[str, Any]]:
         if _f(f, "verdict") != VULNERABLE:
             continue
         sev = (_f(f, "severity") or "").upper()
-        if sev not in FAILING_SEVERITIES:
+        if sev not in FAILING_SEVERITIES and not ctl.strict_for_rule(
+                _f(f, "rule_id"), provider):
             continue
         mappings = _f(f, "compliance") or {}
+        if provider:
+            mappings = {fw: refs for fw, refs in mappings.items()
+                        if ctl.applies_to(fw, provider)}
+        if sev not in FAILING_SEVERITIES:
+            # Below the principle-based bar, only a benchmark (strict) control
+            # was actually failed — so only benchmark citations are listed.
+            # Showing SOC 2 beside an INFO finding would claim a failure SOC 2
+            # never recorded.
+            mappings = {fw: refs for fw, refs in mappings.items()
+                        if ctl.FRAMEWORK_META.get(fw, {}).get("kind") == ctl.KIND_BENCHMARK}
         if not mappings:
             continue
         out.append({

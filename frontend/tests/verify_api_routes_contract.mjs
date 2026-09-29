@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url';
 
 import { cloudAxios } from '../src/features/cloud/api/axios.js';
 import * as accounts from '../src/features/cloud/api/cloudAccounts.api.js';
+import * as certificates from '../src/features/cloud/api/certificates.api.js';
+import * as clients from '../src/features/cloud/api/clients.api.js';
 import * as alerts from '../src/features/cloud/api/alerts.api.js';
 import * as cost from '../src/features/cloud/api/cost.api.js';
 import * as discovery from '../src/features/cloud/api/discovery.api.js';
@@ -60,6 +62,13 @@ function extractSignature(source, defIdx) {
   return source.slice(openParen + 1, i);
 }
 
+// Query(...) matches whose text spans a second parameter -- `a: T, b: U = Query(`
+// on one line. The pattern below then attributes b's Query to `a` and b's
+// real wire name is lost; the preview route's `period` was read as
+// `client_id` exactly this way. Collected here and failed loudly below
+// rather than silently mis-parsed.
+const AMBIGUOUS_QUERY = [];
+
 /** Every `name: ... = Query(...)` in a signature, mapped to its wire name
  *  (the `alias=` value when present, else the parameter name itself). */
 function extractQueryParams(sigText) {
@@ -68,6 +77,7 @@ function extractQueryParams(sigText) {
   let m;
   while ((m = re.exec(sigText))) {
     const varName = m[1];
+    if (/,\s*\w+\s*:/.test(m[0])) AMBIGUOUS_QUERY.push(m[0].replace(/\s+/g, ' '));
     // re.lastIndex sits right after the "(" the match already consumed, so
     // that character is at index (lastIndex - 1) -- depth starts at 1 to
     // account for it, and the scan begins on the NEXT character. Starting
@@ -161,6 +171,10 @@ check('every route file parsed without error (an unparseable file is a '
 // Three routes are declared directly on `app`, not any router, and no
 // frontend api module currently calls them -- named here so their absence
 // from BACKEND_ROUTES is a documented choice, not an oversight.
+check('no Query(...) parameter shares a line with the parameter before it -- '
+  + 'the parser would credit it to the wrong name (put each on its own line)',
+  AMBIGUOUS_QUERY.length === 0, AMBIGUOUS_QUERY.join(' | '));
+
 const KNOWN_UNPROBED_APP_ROUTES = [
   'GET /', 'GET /health', 'GET /api/v1/cloud/{provider}/{account_id}/inventory',
 ];
@@ -300,6 +314,9 @@ const PROBES = [
   // securityCenter.api.js -- fully covered by the security/topology wire
   // suite; one probe.
   ['securityCenter.getFindings', securityCenter.getFindings, ['ACC-1', {}]],
+  // The certificate drawer's "findings for this one object" call.
+  ['securityCenter.getFindings (one object)', securityCenter.getFindings,
+    ['ACC-1', { resource_key: 'ocid1.loadbalancer.x/certificates/y', status: 'OPEN,IN_PROGRESS', limit: 20 }]],
   ['securityCenter.getOverview', securityCenter.getOverview, ['ACC-1']],
 
   // topology.api.js -- fully covered by the security/topology wire suite;
@@ -313,9 +330,36 @@ const PROBES = [
   ['cost.getCostCapabilities', cost.getCostCapabilities, ['ACC-1']],
   ['drift.getDriftChanges', drift.getDriftChanges, ['ACC-1']],
   ['overview.getOverviewInventory', overview.getOverviewInventory, ['ACC-1']],
+
+  // Clients, organisation onboarding and client reports.
+  ['clients.getPortfolio', clients.getPortfolio, []],
+  ['clients.getClientOptions', clients.getClientOptions, []],
+  ['clients.getClient', clients.getClient, ['CL-1']],
+  ['clients.createClient', clients.createClient, [{ name: 'x' }]],
+  ['clients.updateClient', clients.updateClient, ['CL-1', { name: 'y' }]],
+  ['clients.deleteClient', clients.deleteClient, ['CL-1']],
+  ['clients.assignAccounts', clients.assignAccounts, ['CL-1', ['ACC-1']]],
+  ['clients.unassignAccount', clients.unassignAccount, ['CL-1', 'ACC-1']],
+  ['clients.discoverOrganization', clients.discoverOrganization, [{ provider: 'AWS' }]],
+  ['clients.onboardOrganization', clients.onboardOrganization, [{ provider: 'AWS', members: ['1'] }]],
+  ['clients.getReportSchedule', clients.getReportSchedule, ['CL-1']],
+  ['clients.saveReportSchedule', clients.saveReportSchedule, ['CL-1', { enabled: false }]],
+  ['clients.listReports', clients.listReports, ['CL-1']],
+  ['clients.previewReport', clients.previewReport, ['CL-1', '2026-08']],
+  ['clients.generateReport', clients.generateReport, ['CL-1', { period: '2026-08' }]],
+  ['clients.sendReport', clients.sendReport, ['CL-1', 'REP-1']],
+  ['clients.downloadReportPdf', clients.downloadReportPdf, ['CL-1', 'REP-1']],
+
+  // Certificates, secrets and keys.
+  ['certificates.getAccountCertificates', certificates.getAccountCertificates, ['ACC-1']],
+  ['certificates.getCertificateEstate (every filter)', certificates.getCertificateEstate,
+    [{ clientId: 'CL-1', withinDays: 30, kind: 'CERTIFICATE', includeNoExpiry: true }]],
+  ['certificates.getCertificateEstate (unassigned)', certificates.getCertificateEstate,
+    [{ unassigned: true, withinDays: 0 }]],
+  ['certificates.collectCertificates', certificates.collectCertificates, ['ACC-1']],
 ];
 
-check('the probe table covers all 13 api modules with a non-trivial number of calls',
+check('the probe table covers all 15 api modules with a non-trivial number of calls',
   PROBES.length >= 30, `probed ${PROBES.length}`);
 
 console.log(`\n1. Every probed request matches a real backend route (method + path)`);

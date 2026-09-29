@@ -137,12 +137,18 @@ class OCIScanner:
             ).data
             return [s.region_name for s in subscriptions if s.status == "READY"]
 
+        self._region_discovery_error = None
         try:
             regions = await loop.run_in_executor(scan_pool(), _fetch)
             logger.info("OCI subscribed regions: %s", regions)
             return regions or [self.auth.region]
         except Exception as exc:
             logger.warning("OCI region discovery failed, using home region: %s", exc)
+            # The home region alone is a SUBSET of the tenancy. Remembered so
+            # scan_all records the sweep as incomplete: otherwise the prune
+            # that follows a clean sweep deletes every resource in every other
+            # subscribed region because they were not in this listing.
+            self._region_discovery_error = str(exc)[:160]
             return [self.auth.region]
 
     # ── Compartment Discovery ─────────────────────────────────────────────────
@@ -328,6 +334,10 @@ class OCIScanner:
                             "memory_gb": inst.shape_config.memory_in_gbs if inst.shape_config else None,
                             "image_id": inst.image_id,
                             "fault_domain": inst.fault_domain,
+                            # CIS OCI 3.1. None when the API did not report it.
+                            "legacy_imds_disabled": getattr(
+                                getattr(inst, "instance_options", None),
+                                "are_legacy_imds_endpoints_disabled", None),
                             # Network placement, from the instance's primary VNIC.
                             "subnet_id": vnic_info.get("subnet_id"),
                             "nsg_ids": vnic_info.get("nsg_ids") or [],
@@ -1518,6 +1528,22 @@ class OCIScanner:
                                     if getattr(b, "ip_address", None)
                                 }),
                                 "listeners": list((lb.listeners or {}).keys()),
+                                # Which certificate each TLS listener serves, so
+                                # an expiring certificate can be reported as in
+                                # use (or not) instead of "use unknown".
+                                "listener_certificates": {
+                                    name: getattr(getattr(li, "ssl_configuration", None),
+                                                  "certificate_name", None)
+                                    for name, li in (lb.listeners or {}).items()
+                                    if getattr(li, "ssl_configuration", None)
+                                },
+                                "listener_certificate_ids": sorted({
+                                    cid
+                                    for li in (lb.listeners or {}).values()
+                                    for cid in (getattr(getattr(li, "ssl_configuration",
+                                                                None),
+                                                        "certificate_ids", None) or [])
+                                }),
                                 "lb_type": "LoadBalancer",
                             },
                             "metadata": {
@@ -1907,6 +1933,10 @@ class OCIScanner:
         self.scan_failures = []
         if not regions:
             self.scan_failures.append("region discovery returned nothing")
+        if getattr(self, "_region_discovery_error", None):
+            self.scan_failures.append(
+                f"Region discovery failed, only the home region was scanned: "
+                f"{self._region_discovery_error}")
         if not compartments:
             self.scan_failures.append("compartment discovery returned nothing")
 

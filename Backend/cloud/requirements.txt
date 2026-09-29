@@ -50,6 +50,10 @@ azure-mgmt-authorization>=4.0.0
 # OCI
 oci>=2.126.0
 
+# The monthly client report PDF (app/services/client_report_pdf.py). Built
+# with the standard fonts only, so it needs no font files installed.
+reportlab>=4.0
+
 # Timezone database. Windows ships no system tz data, so zoneinfo cannot
 # resolve "Asia/Kolkata" without this — alert emails would silently render
 # every timestamp in UTC while claiming to honour the configured zone.

@@ -4,11 +4,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.models import client as _client  # noqa: F401  (FK target must be registered)
 
 
 class CloudAccount(Base):
@@ -33,6 +34,23 @@ class CloudAccount(Base):
     last_discovery: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The client this account is run for. SET NULL, never CASCADE: removing a
+    # client label must not delete an account or anything collected for it.
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cloud_clients.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    # The provider's own identity for this account — AWS account id, Azure
+    # subscription id, OCI tenancy OCID. Stored in the clear (it is an
+    # identifier, not a credential) so organisation onboarding can tell which
+    # members are already connected without decrypting every stored secret.
+    provider_account_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    # How the account was added, when it came from an organisation listing:
+    # {"kind": "aws_organization", "organization_id": ..., "role_name": ...}.
+    # NULL for an account added by hand.
+    onboarding_source: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

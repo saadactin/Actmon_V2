@@ -19,7 +19,7 @@ import {
   useOverviewInventory, useRecentChanges, useRecentEvents, useRecentResources,
   useSecurityPosture, useTopCostResources, useTopologySummary,
 } from '../hooks/useCloudOverview';
-import { useTriggerDiscovery } from '../hooks/useDiscovery';
+import { useRefreshAll } from '../hooks/useAccountRefresh';
 import { slugForProvider } from '../utils/providerScope';
 
 /**
@@ -65,7 +65,7 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
   // panel here, so an alerting problem cannot blank the inventory or the
   // posture beside it.
   const alertSummary = useAlertSummary(accountId);
-  const triggerDiscovery = useTriggerDiscovery();
+  const { run: runRefresh } = useRefreshAll(accountId);
   const { data: diagnostics, isLoading: diagnosticsLoading } = useAccountDiagnostics(
     accountId, showDiagnostic,
   );
@@ -110,11 +110,12 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
   const onAttention = useCallback((item) => {
     if (item.action === 'discovery') {
       if (item.id === 'discovery-failed') setShowDiagnostic(true);
-      else triggerDiscovery.mutate(accountId);
+      // The same refresh the header button starts — never a plain scan.
+      else runRefresh();
       return;
     }
     go(item.action, item.filters);
-  }, [accountId, go, triggerDiscovery]);
+  }, [go, runRefresh]);
 
   // "Nothing needs attention" is only a true statement when the systems that
   // would have raised something actually ran.
@@ -125,7 +126,6 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
     <div className="space-y-4">
       <AccountIdentity
         account={account}
-        accountId={accountId}
         freshness={accountFreshness}
       />
 
@@ -313,7 +313,6 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
             isLoading={discovery.isLoading}
             error={discovery.isError ? discovery.error : null}
             onOpenDiagnostic={() => setShowDiagnostic(true)}
-            onRunDiscovery={() => triggerDiscovery.mutate(accountId)}
           />
         </div>
       </div>

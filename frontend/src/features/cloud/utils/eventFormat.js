@@ -298,8 +298,8 @@ export const SOURCE_STATUS_ADVICE = {
     'The provider could not be reached. This says nothing about the credentials — '
     + 'it is a network or provider-side failure, and collection will retry.',
   NeverRun:
-    'No collection has run for this source yet. Use "Collect now" to fetch the '
-    + 'first window.',
+    'No collection has run for this source yet. Refresh all collects it, along '
+    + 'with the rest of the account.',
   Delayed:
     'A collection stopped at its per-run page budget and will continue from where '
     + 'it left off. Recent events may not have arrived yet.',

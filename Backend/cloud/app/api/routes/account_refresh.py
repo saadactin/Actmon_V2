@@ -57,6 +57,13 @@ def _handle(exc: Exception):
                 "message": exc.message, "code": exc.code,
                 "refresh": exc.existing,
             })
+        if exc.code == "scan_running":
+            # Busy the same way, with a plain discovery scan rather than a
+            # refresh — returned so the UI can say which.
+            raise HTTPException(status_code=409, detail={
+                "message": exc.message, "code": exc.code,
+                "scan": exc.existing,
+            })
         if exc.code == "validation":
             raise HTTPException(status_code=422, detail={
                 "message": exc.message, "errors": exc.existing,

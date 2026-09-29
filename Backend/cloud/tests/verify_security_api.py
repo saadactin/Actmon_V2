@@ -44,6 +44,7 @@ from app.models.security_finding import (  # noqa: E402
     CloudAlertPolicy, CloudSecurityAssessment, CloudSecurityFinding,
 )
 from app.repository.security_repo import SecurityRepository  # noqa: E402
+from app.security import controls as ctl  # noqa: E402
 from app.services.security_center_service import SecurityCenterService  # noqa: E402
 
 BASE = "/api/v1/cloud/security-center"
@@ -241,8 +242,11 @@ async def run_checks(account_id: uuid.UUID) -> int:
         check("category budgets sum to 100",
               abs(sum(meta["scoring"]["category_budgets"].values()) - 100) < 0.01,
               str(sum(meta["scoring"]["category_budgets"].values())))
-        check("three frameworks are declared", set(meta["frameworks"]) ==
-              {"SOC2", "HIPAA", "PCI-DSS"})
+        check("all nine frameworks are declared, each with its cloud scope",
+              set(meta["frameworks"]) == set(ctl.FRAMEWORKS)
+              and meta["frameworks"]["CIS-OCI"]["providers"] == ["OCI"]
+              and meta["frameworks"]["SOC2"]["providers"] is None,
+              str(sorted(meta["frameworks"])))
         check("threshold kinds are published", len(meta["threshold_kinds"]) >= 8)
 
         # ── 2. Before any assessment ─────────────────────────────────────────
@@ -422,7 +426,9 @@ async def run_checks(account_id: uuid.UUID) -> int:
         r = await c.get(f"{BASE}/{aid}/compliance")
         eq("compliance returns 200", r.status_code, 200)
         comp = r.json()
-        eq("three frameworks are reported", len(comp["frameworks"]), 3)
+        eq("an AWS account reports every framework except the other clouds' benchmarks",
+           sorted(comp["frameworks"]),
+           sorted(fw for fw in ctl.FRAMEWORKS if fw not in ("CIS-AZURE", "CIS-OCI")))
         for fw, s in comp["frameworks"].items():
             rated = (s["controls_passed"] + s["controls_failed"] + s["controls_partial"]
                      + s["controls_unknown"])
@@ -451,8 +457,12 @@ async def run_checks(account_id: uuid.UUID) -> int:
         eq("a single framework can be requested", r.status_code, 200)
         check("...and only that framework is returned",
               set(r.json()["frameworks"]) == {"SOC2"})
-        r = await c.get(f"{BASE}/{aid}/compliance", params={"framework": "ISO27001"})
+        r = await c.get(f"{BASE}/{aid}/compliance", params={"framework": "NIST-800-53"})
         eq("an unknown framework returns 400", r.status_code, 400)
+        r = await c.get(f"{BASE}/{aid}/compliance", params={"framework": "CIS-OCI"})
+        eq("another cloud's benchmark returns 400, not an empty 200", r.status_code, 400)
+        r = await c.get(f"{BASE}/{aid}/compliance", params={"framework": "ISO27001"})
+        eq("ISO 27001 is now a real framework", r.status_code, 200)
 
         failing = next(c for c in comp["controls"] if c["state"] == "FAIL")
         r = await c.get(f"{BASE}/{aid}/compliance/{failing['framework']}/"

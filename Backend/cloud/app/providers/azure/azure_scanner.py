@@ -278,6 +278,13 @@ class AzureScanner:
                             "access_tier": acc.access_tier,
                             # Real setting from the API; None = not reported
                             "allow_blob_public_access": getattr(acc, "allow_blob_public_access", None),
+                            # CIS Azure 9.3.4 / 9.3.6. Enums are stored as their
+                            # value ("TLS1_2"), never their repr.
+                            "enable_https_traffic_only": getattr(
+                                acc, "enable_https_traffic_only", None),
+                            "minimum_tls_version": getattr(
+                                getattr(acc, "minimum_tls_version", None), "value",
+                                getattr(acc, "minimum_tls_version", None)),
                         },
                         "metadata": {},
                         "cost_monthly": None,

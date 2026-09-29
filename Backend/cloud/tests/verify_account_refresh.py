@@ -40,7 +40,7 @@ from app.models.account_refresh import (
     CloudAccountRefreshSchedule,
 )
 from app.services.account_refresh_service import (
-    ALLOWED_INTERVAL_HOURS, compute_next_run, describe_schedule,
+    ALLOWED_INTERVAL_HOURS, compute_next_run, describe_schedule, describe_shortfall,
     grade_components, unresolved_components,
 )
 
@@ -262,6 +262,33 @@ def test_grading():
     check("grading reads the stored component shape",
           status == REFRESH_PARTIAL and failed == ["cost"], (status, failed))
 
+    # ── A component that ran but read only part of the account ───────────────
+    # A sweep that read 218 of 272 scopes was stamped plain SUCCEEDED, so the
+    # refresh graded "Successful" beside an inventory coverage of 80.1%.
+    whole = {n: {"status": COMPONENT_SUCCEEDED, "label": n} for n in COMPONENTS}
+    sweep = {"status": COMPONENT_SUCCEEDED, "incomplete": True,
+             "detail": "223 resource(s) in inventory; 218 of 272 scopes read."}
+    part = {**whole, "resources": sweep}
+    status, counted = grade_components(part)
+    check("an incomplete sweep grades PARTIAL, never SUCCEEDED",
+          status == REFRESH_PARTIAL, status)
+    check("...and is named as the reason", counted == ["resources"], counted)
+    text = describe_shortfall(part, counted) or ""
+    check("the record says it was incomplete, not that it failed",
+          text.startswith("Resource discovery was incomplete") and "failed" not in text
+          and "218 of 272 scopes read" in text, text)
+    both = {**part, "cost": {"status": COMPONENT_FAILED}}
+    status, counted = grade_components(both)
+    text = describe_shortfall(both, counted) or ""
+    check("a failure and an incomplete sweep are each named for what they were",
+          status == REFRESH_PARTIAL and "1 component(s) failed: cost." in text
+          and "Resource discovery was incomplete" in text, text)
+    check("'incomplete' cannot rescue an inventory that FAILED",
+          grade_components({**whole, "resources": {"status": COMPONENT_FAILED,
+                                                   "incomplete": True}})[0]
+          == REFRESH_FAILED)
+    check("a clean run has no shortfall line", describe_shortfall(whole, []) is None)
+
 
 # ── DB-backed ─────────────────────────────────────────────────────────────────
 async def db_available() -> bool:
@@ -387,12 +414,109 @@ async def test_db():
                   and payload["last_run_at"].startswith("2026-09-18"),
                   f"success={payload['last_success_at']} run={payload['last_run_at']}")
 
+            from app.models.discovery_job import DiscoveryJob
+            from app.models.security_finding import CloudSecurityAssessment
+
+            now = datetime.now(timezone.utc).replace(microsecond=0)
+            own = DiscoveryJob(account_id=a1_id, status="RUNNING",
+                               started_at=now - timedelta(minutes=2), resources_found=40)
+            db.add(own)
+            await db.commit()
+            await db.refresh(own)
+            running.discovery_job_id = own.id
+            await db.commit()
+
             latest = await svc.latest(a1_id)
             check("latest() reports the running refresh separately",
                   latest["is_running"] and latest["current"])
+            check("...and calls the account busy", latest["is_busy"] is True)
+            check("the refresh's own sweep is its progress, not a second scan",
+                  latest["active_scan"] is None
+                  and (latest["current_scan"] or {}).get("resources_found") == 40,
+                  str(latest["current_scan"]))
+
+            # ── A plain discovery scan holds the account as well ─────────────
+            # Onboarding starts plain scans. A refresh launched beside one
+            # would run a second sweep and race the inventory prune.
+            scan = DiscoveryJob(account_id=a2_id, status="RUNNING",
+                                started_at=now - timedelta(minutes=5), resources_found=12)
+            db.add(scan)
+            await db.commit()
+            await db.refresh(scan)
+            refused_scan = None
+            try:
+                await svc.start(a2_id, actor="suite")
+            except RefreshError as exc:
+                refused_scan = exc
+            check("a refresh is refused while a plain discovery scan runs",
+                  refused_scan is not None and refused_scan.code == "scan_running",
+                  refused_scan.code if refused_scan else "not refused")
+            check("...and the refusal names the scan, so the UI can say what is running",
+                  bool(refused_scan) and (refused_scan.existing or {}).get("job_id")
+                  == str(scan.id))
+            busy = await svc.latest(a2_id)
+            check("latest() reports the running scan and calls the account busy",
+                  (busy["active_scan"] or {}).get("job_id") == str(scan.id)
+                  and busy["is_busy"] is True and busy["is_running"] is False,
+                  str(busy["active_scan"]))
+
+            finished = now - timedelta(minutes=1)
+            scan.status = "COMPLETED"
+            scan.completed_at = finished
+            scan.error_detail = "Incomplete sweep: 8 of 10 scopes read"
+            scan.scope_summary = {"provider": "OCI", "attempted": 10, "read": 8}
+            await db.commit()
+            done = await svc.latest(a2_id)
+            last = done["last_refreshed"] or {}
+            check("a finished scan is the last refresh when no refresh is newer",
+                  last.get("source") == "scan"
+                  and last.get("at") == finished.isoformat(), str(last))
+            check("...PARTIAL, because it read 8 of 10 scopes",
+                  last.get("status") == "PARTIAL"
+                  and (last.get("scopes_read"), last.get("scopes_attempted")) == (8, 10),
+                  str(last))
+            check("...and nothing is busy any more",
+                  done["is_busy"] is False and done["active_scan"] is None)
+            check("data_version is the newest write: the scan's finish",
+                  done["data_version"] == finished.isoformat(), done["data_version"])
+
+            # The security assessment lands ~2 minutes after a plain sweep; the
+            # tabs must re-read then too, but it is not a provider refresh.
+            assessed = now
+            db.add(CloudSecurityAssessment(account_id=a2_id, provider="OCI",
+                                           outcome="PARTIAL", started_at=assessed,
+                                           finished_at=assessed))
+            await db.commit()
+            after = await svc.latest(a2_id)
+            check("a later assessment moves data_version, so every tab re-reads",
+                  after["data_version"] == assessed.isoformat(), after["data_version"])
+            check("...but is not reported as a refresh",
+                  (after["last_refreshed"] or {}).get("at") == finished.isoformat())
+
+            # A refresh graded before incomplete sweeps counted against it is
+            # on record as SUCCEEDED over this partial sweep.
+            old = CloudAccountRefresh(
+                account_id=a2_id, provider="OCI", status="SUCCEEDED",
+                started_at=now - timedelta(minutes=6), completed_at=now,
+                discovery_job_id=scan.id,
+                components={n: {"status": "SUCCEEDED"} for n in COMPONENTS})
+            db.add(old)
+            await db.commit()
+            graded = (await svc.latest(a2_id))["last_refreshed"] or {}
+            check("a refresh newer than the scan becomes the last refresh",
+                  graded.get("source") == "refresh"
+                  and graded.get("refresh_id") == str(old.id), str(graded))
+            check("...and reads PARTIAL although it was recorded SUCCEEDED, "
+                  "because its sweep was incomplete",
+                  graded.get("status") == "PARTIAL", str(graded))
 
         finally:
             await db.rollback()
+            from app.models.discovery_job import DiscoveryJob
+            from app.models.security_finding import CloudSecurityAssessment
+
+            for model in (CloudSecurityAssessment, DiscoveryJob):
+                await db.execute(delete(model).where(model.account_id.in_([a1_id, a2_id])))
             await db.execute(delete(CloudAccountRefresh).where(
                 CloudAccountRefresh.account_id.in_([a1_id, a2_id])))
             await db.execute(delete(CloudAccountRefreshSchedule).where(

@@ -225,13 +225,16 @@ export default function AlertsPage({ embedded = false, accountId, account }) {
                     onChange={setDays} />
           )}
           {canManage && (
+            // Not a refresh, and deliberately not labelled like one: it runs
+            // the alert rules over the data already collected. Refresh all, in
+            // the account header, is what re-reads the provider.
             <Button
-              size="sm" variant="ghost" icon="refresh"
+              size="sm" variant="ghost" icon="zap"
               loading={runNow.isPending}
               onClick={() => runNow.mutate()}
-              title="Run an evaluation pass now instead of waiting for the next tick."
+              title="Evaluate the alert rules that are due now, over the data already collected, instead of waiting for the next evaluation tick. It does not re-read the provider — Refresh all does."
             >
-              Evaluate now
+              Run alert rules now
             </Button>
           )}
           {canManage && (tab === 'rules' || tab === 'dashboard') && (

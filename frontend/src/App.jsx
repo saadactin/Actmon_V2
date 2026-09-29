@@ -45,6 +45,9 @@ const CloudProviderAccountsPage = lazy(() => import('@/features/cloud/pages/Clou
 const CloudDashboard = lazy(() => import('@/features/cloud/pages/CloudDashboard').then((m) => ({ default: m.CloudDashboard })));
 const CloudResourceDetailPage = lazy(() => import('@/features/cloud/pages/ResourceDetailPage').then((m) => ({ default: m.ResourceDetailPage })));
 const CloudResourcesPage = lazy(() => import('@/features/cloud/pages/ResourcesPage').then((m) => ({ default: m.ResourcesPage })));
+const CloudClientsPage = lazy(() => import('@/features/cloud/pages/ClientsPage'));
+const CloudClientDetailPage = lazy(() => import('@/features/cloud/pages/ClientDetailPage'));
+const CloudCertificatesPage = lazy(() => import('@/features/cloud/pages/CertificatesPage'));
 
 // Infrastructure — ported verbatim from the existing module. All three routes
 // share one host abstraction (os_servers): the overview/grid, a per-host
@@ -212,6 +215,12 @@ export default function App() {
           <Route path="resources" element={<CloudResourcesPage />} />
           <Route path="resources/:resourceId" element={<CloudResourceDetailPage />} />
           <Route path="resources/:resourceId/:tab" element={<CloudResourceDetailPage />} />
+
+          {/* Cross-account views: clients (the all-clients portfolio and one
+              client's page) and the certificate / secret expiry inventory. */}
+          <Route path="clients" element={<CloudClientsPage />} />
+          <Route path="clients/:clientId" element={<CloudClientDetailPage />} />
+          <Route path="certificates" element={<CloudCertificatesPage />} />
 
           <Route path="aws-accounts" element={<CloudProviderAccountsPage provider="aws" />} />
           <Route path="aws-accounts/:accountId" element={<CloudDashboard provider="aws" />} />

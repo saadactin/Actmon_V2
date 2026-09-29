@@ -22,9 +22,9 @@ import {
   SEVERITY_ACCENT, SEVERITY_ORDER, SEVERITY_TONE, STATUS_META,
   STATUS_NEEDS_REASON, VERDICT_META,
   categoryIcon, confidenceMeta, controlStateMeta, coverageTone, exposureMeta,
-  formatAge, formatCount, formatDateTime, formatPct, gradeColor, isRealGrade,
-  providerLabel, severityAccent, severityRank, severityTone, statusMeta,
-  verdictMeta,
+  dimensionLabel, formatAge, formatCount, formatDateTime, formatPct, gradeColor,
+  groupFailedScopes, isRealGrade, providerLabel, severityAccent, severityRank,
+  severityTone, statusMeta, verdictMeta,
 } from '../src/features/cloud/utils/securityModel.js';
 
 let pass = 0; let fail = 0;
@@ -261,6 +261,38 @@ console.log('\n11. Provider labels (and a documented inconsistency)');
     + 'would give "OCI". The two disagree; asserted so the divergence is '
     + 'visible rather than latent',
     providerLabel('Oracle') === 'Oracle', providerLabel('Oracle'));
+}
+
+console.log('\n12. Coverage: what the last sweep did not read');
+{
+  check('the iam dimension reads IAM, not "Iam"', dimensionLabel('iam') === 'IAM');
+  check('other dimensions keep their words', dimensionLabel('internet_exposure') === 'internet exposure');
+  check('a missing dimension key is empty, not "undefined"', dimensionLabel(undefined) === '');
+
+  // Nine regions of one service dropping the connection, as a live sweep did.
+  const regions = ['r-1', 'r-2', 'r-3', 'r-4', 'r-5', 'r-6', 'r-7', 'r-8', 'r-9'];
+  const failed = [
+    ...regions.map((r) => ({ scope: `ElastiCache [${r}]`, error: 'reset', transient: true })),
+    { scope: 'ElastiCache [r-10]', error: 'InternalError: boom', transient: false },
+    { scope: 'DynamoDB [r-2]', error: 'reset', transient: true },
+    { scope: 'weird-scope', error: 'x', transient: false },
+  ];
+  const groups = groupFailedScopes(failed);
+  const ec = groups.find((g) => g.service === 'ElastiCache' && g.transient);
+  check('nine dropped regions of one service are one entry', ec && ec.regions.length === 9,
+    JSON.stringify(ec));
+  check('...listing every region, in order', ec && ec.regions.join() === regions.join());
+  const ecErr = groups.find((g) => g.service === 'ElastiCache' && !g.transient);
+  check('an error in the same service stays a separate entry, with its text',
+    ecErr && ecErr.regions.join() === 'r-10' && ecErr.error === 'InternalError: boom');
+  check('another service is its own entry',
+    groups.some((g) => g.service === 'DynamoDB' && g.regions.join() === 'r-2'));
+  check('a scope without a [region] is kept whole, not dropped',
+    groups.some((g) => g.service === 'weird-scope' && g.regions.length === 0));
+  check('every failure lands in exactly one entry',
+    groups.reduce((n, g) => n + Math.max(1, g.regions.length), 0) === failed.length);
+  check('null and empty lists give no entries',
+    groupFailedScopes(null).length === 0 && groupFailedScopes([]).length === 0);
 }
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);

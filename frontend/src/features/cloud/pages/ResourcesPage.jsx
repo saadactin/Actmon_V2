@@ -10,7 +10,7 @@ import CloudPageHeader from '../components/CloudPageHeader';
 import CloudToolbar from '../components/CloudToolbar';
 import { DiagnosticModal } from '../components/DiagnosticModal';
 import { DiscoveryStatus } from '../components/DiscoveryStatus';
-import { TriggerScanButton } from '../components/TriggerScanButton';
+import RefreshAllButton from '../components/refresh/RefreshAllButton';
 import ResourceDetailDrawer from '../components/ResourceDetailDrawer';
 import ResourceFacetRail from '../components/resources/ResourceFacetRail';
 import ResourceGroupPanel from '../components/resources/ResourceGroupPanel';
@@ -221,7 +221,7 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
             onAddAccount: () => navigate('/cloud/accounts'),
           }}
         >
-          {selectedAccountId ? <TriggerScanButton accountId={selectedAccountId} /> : undefined}
+          {selectedAccountId ? <RefreshAllButton accountId={selectedAccountId} /> : undefined}
         </CloudToolbar>
       ) : undefined}
     />
@@ -245,24 +245,20 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
       {header}
 
       <div className="space-y-4">
-        {embedded && selectedAccountId && (
-          <div className="flex justify-end">
-            <TriggerScanButton accountId={selectedAccountId} />
-          </div>
-        )}
-
+        {/* No scan button in the tab: inside an account the header above every
+            tab has the one Refresh all, and the standalone page carries it in
+            its own header. */}
         {selectedAccountId && !crossAccount && <DiscoveryStatus accountId={selectedAccountId} />}
 
         {/* Stale inventory must never look like fresh inventory. */}
         {dataQuality?.partial && (
           <div className="flex flex-wrap items-center gap-2 rounded-control border border-warning bg-warning-soft px-3 py-2 text-[12px] text-warning-fg">
             <Icon name="clock" size={14} />
-            <span>
+            <span className="min-w-0 flex-1">
               {dataQuality.accounts?.some((a) => a.freshness?.stale)
                 ? 'Some accounts in this view have not been re-scanned recently — these rows describe what discovery last saw, not necessarily what is running now.'
                 : `Cost is known for ${formatPct(dataQuality.coverage?.cost)} of these resources; the rest report no per-resource billing.`}
             </span>
-            {selectedAccountId && <TriggerScanButton accountId={selectedAccountId} />}
           </div>
         )}
 
@@ -314,7 +310,8 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
 
           <Select
             value={groupBy}
-            onChange={(e) => { setGroupBy(e.target.value); setPage(1); }}
+            // Select hands over the chosen value, not the DOM event.
+            onChange={(value) => { setGroupBy(value); setPage(1); }}
             options={GROUP_OPTIONS}
             width="auto"
             size="sm"

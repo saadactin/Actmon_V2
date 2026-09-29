@@ -10,6 +10,41 @@ import uuid
 
 logger = logging.getLogger("cloud_svc.discovery_runner")
 
+
+def partial_sweep_note(failures, scope) -> str:
+    """The job's note for an incomplete sweep: what share was read and what
+    kept the rest from being read, rather than only the first failure."""
+    if scope and scope.get("attempted"):
+        parts = [f"{scope.get('read', 0)} of {scope['attempted']} scopes read"]
+        denied = scope.get("denied") or {}
+        if denied:
+            parts.append("not permitted for these credentials: " + ", ".join(
+                f"{label} ({len(entry.get('regions') or [])} region"
+                f"{'' if len(entry.get('regions') or []) == 1 else 's'})"
+                for label, entry in sorted(denied.items())))
+        failed = scope.get("failed") or []
+        n_failed = int(scope.get("failed_count") or len(failed))  # the list is capped
+        if n_failed:
+            parts.append(f"{n_failed} did not answer"
+                         + (f" (first: {failed[0].get('scope')})" if failed else ""))
+        return ("Incomplete sweep: " + "; ".join(parts)
+                + ". Existing resources were kept rather than pruned.")
+    return (f"Incomplete sweep: {len(failures)} scope(s) failed to enumerate, so existing "
+            f"resources were kept rather than pruned. First failure: {failures[0]}")
+
+def resources_detail(count, failures, scope) -> str:
+    """The refresh's resources line: how many are on file and, when the sweep
+    was incomplete, how much of the account it actually read."""
+    line = f"{count} resource(s) in inventory"
+    if not failures:
+        return line + "."
+    if scope and scope.get("attempted"):
+        return (f"{line}; {scope.get('read', 0)} of {scope['attempted']} scopes read — "
+                "the rest was not permitted or did not answer (the Security "
+                "Center's Coverage tab says which).")
+    return f"{line}; {len(failures)} scope(s) could not be read."
+
+
 # Keep a strong reference to fire-and-forget cache-warming tasks so the event
 # loop doesn't garbage-collect them mid-run.
 _warm_tasks: set[asyncio.Task] = set()
@@ -91,6 +126,14 @@ async def run_discovery_scan(
             await _stamp(refresh_id, "connection", "RUNNING")
             await provider.authenticate()
             logger.info("Provider auth OK for job=%s", job_id)
+            # AWS keys do not say which account they belong to; STS just did.
+            # Recorded once so organisation onboarding can recognise this
+            # account as already connected.
+            if not account.provider_account_id:
+                learned = getattr(getattr(provider, "auth", None), "account_id", None)
+                if learned:
+                    account.provider_account_id = learned
+                    await db.commit()
             await _stamp(refresh_id, "connection", "SUCCEEDED",
                          detail=f"Authenticated to {provider_name}.")
             await _stamp(refresh_id, "resources", "RUNNING")
@@ -141,6 +184,20 @@ async def run_discovery_scan(
             # global IAM objects that happened to list successfully. Only a clean
             # sweep is authoritative enough to delete anything.
             failures = provider.scan_failures()
+            # What was read, scope by scope — kept on the job so coverage (and
+            # every later assessment of this inventory) reports the real share
+            # instead of 0% for any imperfect sweep.
+            # Optional, and never allowed to fail the sweep: a provider that
+            # does not count its scopes (or one whose count breaks) simply
+            # has no summary, and coverage falls back to complete / incomplete.
+            scope = None
+            try:
+                summary_fn = getattr(provider, "scope_summary", None)
+                scope = summary_fn() if callable(summary_fn) else None
+                await disco_repo.set_scope_summary(job_id, scope)
+            except Exception as scope_exc:  # noqa: BLE001
+                logger.warning("Scope summary unavailable for job=%s: %s", job_id, scope_exc)
+                scope = None
 
             if seen_ids and failures:
                 count = len(seen_ids)
@@ -150,12 +207,7 @@ async def run_discovery_scan(
                     "Stale rows (if any) will clear on the next clean scan. First: %s",
                     job_id, count, len(failures), failures[:3],
                 )
-                await disco_repo.set_partial(
-                    job_id,
-                    f"Incomplete sweep: {len(failures)} scope(s) failed to enumerate, so "
-                    f"existing resources were kept rather than pruned. First failure: "
-                    f"{failures[0]}",
-                )
+                await disco_repo.set_partial(job_id, partial_sweep_note(failures, scope))
                 # A partial sweep could not prune, but it DID observe what it
                 # enumerated. Those rows are fresh; the ones it never reached
                 # keep their old timestamp and correctly read as stale.
@@ -342,8 +394,12 @@ async def run_discovery_scan(
 
             await account_repo.update_last_discovery(account_id)
             await disco_repo.complete_job(job_id, count)
+            # An incomplete sweep refreshed what it could read and kept the
+            # rest, so it is SUCCEEDED-but-incomplete: the refresh grades
+            # PARTIAL, never "Successful" beside an 80% inventory.
             await _stamp(refresh_id, "resources", "SUCCEEDED",
-                         detail=f"{count} resource(s) in inventory.")
+                         detail=resources_detail(count, failures, scope),
+                         incomplete=bool(failures))
             # Drift rides on the same upsert, so it succeeds exactly when the
             # sweep does — except on the very first scan of an account, where
             # there is no previous state to diff against and nothing is logged.
@@ -418,11 +474,31 @@ async def run_discovery_scan(
                             "Identity collection failed for job=%s: %s",
                             job_id, ident_exc,
                         )
+                    # Certificates, secrets and keys, so the assessment below
+                    # sees fresh expiry data. Their stores have their own
+                    # permissions (a Key Vault's data plane is not covered by
+                    # ARM Reader), so a refusal is recorded per store and never
+                    # fails the scan — see models/credential_inventory.py.
+                    try:
+                        from app.services.credential_service import CredentialService
+
+                        cred_out = await CredentialService(sec_db).collect(
+                            account_id, account=account)
+                        logger.info(
+                            "Credential collection for job=%s: %s scope(s) read, "
+                            "%s failed, %s object(s)", job_id, cred_out["scopes_ok"],
+                            cred_out["scopes_failed"], cred_out["objects"])
+                    except Exception as cred_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Credential collection failed for job=%s: %s",
+                            job_id, cred_exc,
+                        )
                     result = await svc.assess(
                         account_id,
                         triggered_by=f"discovery:{job_id}",
                         sweep_complete=not failures,
                         failed_scopes=len(failures or ()),
+                        scope_summary=scope,
                         discovery_scan_id=job_id,
                     )
                     logger.info(

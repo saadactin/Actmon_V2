@@ -1,16 +1,17 @@
 import { useState } from 'react';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
+import CopyButton from '@/components/ui/CopyButton';
 import Icon from '@/components/ui/Icon';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
 import CloudSection from '../CloudSection';
 import {
-  coverageTone, exposureMeta, formatCount, formatDateTime, formatPct,
-  severityTone,
+  coverageTone, dimensionLabel, exposureMeta, formatCount, formatDateTime, formatPct,
+  groupFailedScopes, severityTone,
 } from '../../utils/securityModel';
 import {
-  useCollectIdentity, useCoverage, useExposure, useIdentity, useTrends,
+  useCoverage, useExposure, useIdentity, useTrends,
 } from '../../hooks/useSecurityCenter';
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -256,7 +257,6 @@ export function ExposurePanel({ accountId, enabled = true }) {
  */
 export function IdentityPanel({ accountId, enabled = true }) {
   const { data, isLoading, isError } = useIdentity(accountId, enabled);
-  const collect = useCollectIdentity();
 
   if (isLoading) return <PageLoading title="Reviewing identity grants…" minHeight={220} />;
   if (isError || !data) {
@@ -290,6 +290,11 @@ export function IdentityPanel({ accountId, enabled = true }) {
                 {' '}— granting the Reader role at subscription scope includes it.
               </p>
             )}
+            {/* Its own "Retry" is gone: every refresh collects role
+                assignments, so there is one way to re-read them. */}
+            <p className="mt-1.5">
+              Once it is granted, Refresh all at the top of the page collects them.
+            </p>
             {data.collection_error && (
               <details className="mt-1.5">
                 <summary className="cursor-pointer text-[11px] underline">
@@ -301,14 +306,6 @@ export function IdentityPanel({ accountId, enabled = true }) {
               </details>
             )}
           </div>
-          <Button
-            size="sm"
-            icon="refresh"
-            loading={collect.isPending}
-            onClick={() => collect.mutate(accountId)}
-          >
-            Retry
-          </Button>
         </div>
       )}
 
@@ -449,7 +446,7 @@ export function CoveragePanel({ accountId, enabled = true }) {
           {Object.entries(dims).map(([dim, pct]) => (
             <div key={dim}>
               <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="font-medium capitalize text-fg">{dim.replace(/_/g, ' ')}</span>
+                <span className="font-medium capitalize text-fg">{dimensionLabel(dim)}</span>
                 <Badge tone={coverageTone(pct)}>
                   {formatPct(pct, { nullLabel: 'Nothing to assess' })}
                 </Badge>
@@ -474,6 +471,9 @@ export function CoveragePanel({ accountId, enabled = true }) {
           )}
         </div>
       </CloudSection>
+
+      <SweepPanel sweep={data.sweep} />
+      <FixPermissions permissions={data.permissions} />
 
       {data.incomplete_reasons?.length > 0 && (
         <CloudSection title="Why the assessment was incomplete">
@@ -549,6 +549,144 @@ export function CoveragePanel({ accountId, enabled = true }) {
   );
 }
 
+/**
+ * What the last discovery scan actually read, service by service. Coverage
+ * is this share — not 0% because one scope of 272 failed.
+ */
+function SweepPanel({ sweep }) {
+  const s = sweep?.scope_summary;
+  if (!s || !s.attempted) return null;
+  const pct = Math.round((1000 * (s.read || 0)) / s.attempted) / 10;
+  const denied = Object.entries(s.denied || {});
+  const notOffered = Object.entries(s.not_offered || {});
+  const failed = s.failed || [];
+  const failedTotal = s.failed_count ?? failed.length; // the list is capped at 50
+  return (
+    <CloudSection
+      title="What the last scan read"
+      description={`${s.regions} region(s) × ${s.services} services · finished ${formatDateTime(sweep.finished_at)}`}
+      action={<Badge tone={coverageTone(pct)}>{formatCount(s.read)} of {formatCount(s.attempted)} scopes</Badge>}
+    >
+      <div className="space-y-3 text-[12px]">
+        {s.read >= s.attempted ? (
+          <p className="text-fg">Every scope that exists in this account was read.</p>
+        ) : (
+          <p className="text-muted">
+            {pct}% of the account was read. Everything below was not, so resources there may be
+            missing from the inventory — and findings are not resolved until a scan reads it all.
+          </p>
+        )}
+        {denied.length > 0 && (
+          <div>
+            <p className="mb-1 font-semibold text-fg">Not permitted for these credentials</p>
+            <ul className="space-y-1">
+              {denied.map(([label, e]) => (
+                <li key={label} className="flex flex-wrap items-center gap-1.5">
+                  <Badge tone="danger" size="xs">{label}</Badge>
+                  <span className="text-muted">{e.regions?.length || 0} region(s)</span>
+                  {(e.actions || []).map((a) => (
+                    <code key={a} className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-fg">{a}</code>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {failedTotal > 0 && (
+          <div>
+            <p className="mb-1 font-semibold text-fg">Did not answer ({formatCount(failedTotal)})</p>
+            <ul className="space-y-1 text-muted">
+              {groupFailedScopes(failed).map((g) => (
+                <li key={`${g.service}|${g.transient}`} className="flex flex-wrap items-center gap-1.5">
+                  <Badge tone="warning" size="xs">{g.service}</Badge>
+                  {g.regions.length > 0 && (
+                    <span title={g.regions.join(', ')}>
+                      {g.regions.length} region(s):{' '}
+                      <span className="font-mono text-[11px] text-fg">
+                        {g.regions.slice(0, 6).join(', ')}{g.regions.length > 6 ? ', …' : ''}
+                      </span>
+                    </span>
+                  )}
+                  <span className="min-w-0 break-words">
+                    — {g.transient ? 'the connection dropped; retried on the next scan' : (g.error || 'error')}
+                  </span>
+                </li>
+              ))}
+              {failedTotal > failed.length && (
+                <li>…and {formatCount(failedTotal - failed.length)} more not listed</li>
+              )}
+            </ul>
+          </div>
+        )}
+        {notOffered.length > 0 && (
+          <p className="text-subtle">
+            Not counted, because the service is not offered there:{' '}
+            {notOffered.map(([label, regions]) => `${label} in ${regions.length} region(s)`).join(', ')}.
+          </p>
+        )}
+      </div>
+    </CloudSection>
+  );
+}
+
+/**
+ * Every permission missing for a complete read, in one place: the scan's
+ * denied services and the certificate / secret stores that refused. For AWS,
+ * the policy that grants exactly those actions — read-only, nothing that
+ * returns a secret value.
+ */
+function FixPermissions({ permissions }) {
+  const missing = permissions?.missing || [];
+  if (!missing.length) return null;
+  const policy = permissions.aws_policy ? JSON.stringify(permissions.aws_policy, null, 2) : null;
+  return (
+    <CloudSection
+      title="Fix permissions"
+      description="Actmon reads only. Grant these to the identity whose credentials are stored for this account, then use Refresh all — coverage updates when it finishes."
+      action={<Badge tone="danger">{missing.length} missing</Badge>}
+    >
+      <div className="space-y-3">
+        <ul className="space-y-1.5 text-[12px]">
+          {(permissions.areas || []).map((a) => (
+            <li key={`${a.area}:${a.item}`} className="flex flex-wrap items-center gap-1.5">
+              <span className="font-semibold text-fg">{a.area}</span>
+              <span className="text-muted">· {a.item} · {a.scopes} scope(s) blocked</span>
+              {(a.actions || []).map((act) => (
+                <code key={act} className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-fg">{act}</code>
+              ))}
+            </li>
+          ))}
+        </ul>
+        {policy && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[12px] font-semibold text-fg">IAM policy granting exactly these actions</p>
+              <CopyButton text={policy} label="Copy policy" />
+            </div>
+            <pre className="max-h-64 overflow-auto rounded-control bg-sunken p-3 font-mono text-[11px] leading-relaxed text-fg">
+              {policy}
+            </pre>
+            {permissions.managed_policy && (
+              <p className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
+                Or attach the AWS managed policy
+                <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-fg">ReadOnlyAccess</code>
+                which includes them all.
+                <CopyButton text={permissions.managed_policy} label="Copy ARN" variant="ghost" />
+              </p>
+            )}
+          </div>
+        )}
+        {!policy && permissions.provider === 'AZURE' && (
+          <p className="text-[12px] text-muted">
+            Assign the Reader role to the service principal on the subscription — and Key Vault
+            Reader for the contents of Key Vaults.
+          </p>
+        )}
+      </div>
+    </CloudSection>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    Trends
    ══════════════════════════════════════════════════════════════════════════ */
@@ -573,7 +711,7 @@ export function TrendsPanel({ accountId, enabled = true }) {
           icon="chart-line"
           title="Not enough history yet"
           body={`${points.length} assessment(s) recorded. A trend needs at least two — `
-            + 'run another assessment, or wait for the next discovery scan.'}
+            + 'every refresh records one, so use Refresh all or wait for the next scheduled one.'}
         />
       </CloudSection>
     );

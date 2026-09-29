@@ -3,12 +3,12 @@ import cn from '@/lib/cn';
 import { useCloudAccounts, useDeleteCloudAccount } from '../hooks/useCloudAccounts';
 import { useCloudScope } from '../hooks/useCloudScope';
 import { useCloudStore } from '../state/cloudStore';
-import { useTriggerDiscovery } from '../hooks/useDiscovery';
 import { useAccountResourceCounts } from '../hooks/useResources';
 import { formatDate } from '../utils/formatters';
 import { providerKeyOf, slugForProvider } from '../utils/providerScope';
 import { accountLocation } from '../utils/regions';
 import ProviderLogo from './ProviderLogo';
+import RefreshAllButton from './refresh/RefreshAllButton';
 import { usePermissions } from '@/hooks/usePermissions';
 import Table, { EmptyState } from '@/components/ui/Table';
 import Button from '@/components/ui/Button';
@@ -77,8 +77,7 @@ export const CloudAccountList = ({
   const { isLoading } = useCloudAccounts();
   const { data: counts } = useAccountResourceCounts();
   const { mutate: deleteAccount } = useDeleteCloudAccount();
-  const { mutate: triggerScan } = useTriggerDiscovery();
-  const { selectedAccountId, setSelectedAccountId, activeDiscoveryJobs } = useCloudStore();
+  const { selectedAccountId, setSelectedAccountId } = useCloudStore();
   // Only list accounts for the provider currently scoped (all when unscoped).
   const scope = useCloudScope();
   const { canHere } = usePermissions();
@@ -103,7 +102,6 @@ export const CloudAccountList = ({
   // null, not 0, while the counts are still loading — an account whose count we
   // have not fetched yet has not been shown to be empty.
   const resourceCountOf = (accountId) => counts?.byAccount?.[accountId] ?? null;
-  const isScanningRow = (accountId) => !!activeDiscoveryJobs?.[accountId];
 
   if (isLoading) {
     return (
@@ -133,17 +131,10 @@ export const CloudAccountList = ({
 
   const rowActions = (acc) => (
     <div className="flex items-center justify-center gap-1">
-      {canHere('execute') && (
-        <Button
-          variant="ghost"
-          size="sm"
-          icon="refresh"
-          loading={isScanningRow(acc.id)}
-          aria-label="Run discovery scan"
-          title="Run discovery scan"
-          onClick={(e) => { e.stopPropagation(); triggerScan(acc.id); }}
-        />
-      )}
+      {/* The same Refresh all as inside the account — it used to start a
+          plain discovery under a third name. */}
+      <RefreshAllButton accountId={acc.id} variant="ghost" iconOnly />
+
       {canHere('delete') && (
         <Button
           variant="danger-ghost"
