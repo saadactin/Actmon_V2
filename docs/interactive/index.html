@@ -136,10 +136,11 @@ button,input{font-family:inherit}
 
 /* ── proximity readout ──────────────────────────────────────────────────── */
 #prox{position:fixed;left:50%;bottom:74px;transform:translateX(-50%) translateY(8px);z-index:30;
+  visibility:hidden;
   background:var(--surface-2);border:1px solid var(--line-str);border-radius:99px;padding:7px 16px;
   display:flex;align-items:baseline;gap:10px;opacity:0;pointer-events:none;
   transition:opacity .22s,transform .22s var(--ease);box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:80vw}
-#prox.show{opacity:1;transform:translateX(-50%)}
+#prox.show{opacity:1;visibility:visible;transform:translateX(-50%)}
 #prox b{font-size:var(--t-body);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #prox span{font-size:var(--t-micro);color:var(--dim);white-space:nowrap;letter-spacing:.04em;text-transform:uppercase}
 
@@ -273,11 +274,18 @@ pre.code{font-family:var(--fm);font-size:var(--t-meta);line-height:1.66;backgrou
 .wt-b{font-size:var(--t-ui);line-height:var(--lh-body);color:#d3e0f2;margin:0 0 9px}
 
 /* ── tour ───────────────────────────────────────────────────────────────── */
-#tour{position:fixed;left:50%;bottom:70px;transform:translateX(-50%) translateY(150%);z-index:45;
+/* Hidden by opacity and visibility, NOT by a percentage translate. A
+   percentage translate is relative to the element's own height, and before the
+   tour has ever been opened this panel has no chapter text in it — so it is
+   short, translateY(150%) moves it barely 150px, and a slice of it stayed
+   visible under the control bar. Height can no longer matter. */
+#tour{position:fixed;left:50%;bottom:70px;transform:translateX(-50%) translateY(24px);z-index:45;
   width:min(690px,calc(100vw - 32px));background:var(--surface-2);border:1px solid var(--line-str);
   border-radius:var(--r);padding:17px 20px;box-shadow:0 28px 70px rgba(0,0,0,.66);
-  transition:transform var(--dur) var(--ease)}
-#tour.open{transform:translateX(-50%)}
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:transform var(--dur) var(--ease),opacity var(--dur) var(--ease),visibility 0s linear var(--dur)}
+#tour.open{transform:translateX(-50%);opacity:1;visibility:visible;pointer-events:auto;
+  transition:transform var(--dur) var(--ease),opacity var(--dur) var(--ease),visibility 0s}
 .tour-top{display:flex;align-items:baseline;gap:12px;margin-bottom:8px;flex-wrap:wrap}
 .tour-n{font-family:var(--fm);font-size:var(--t-micro);color:var(--accent);letter-spacing:.1em;font-weight:500}
 .tour-t{font-size:var(--t-head);font-weight:600;margin:0;letter-spacing:-.005em}
