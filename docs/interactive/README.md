@@ -1,7 +1,11 @@
-# ACTMON — Interactive Platform Documentation
+# ACTMON Universe — Interactive Platform Documentation
 
-An explorable 3D map of the ACTMON platform, for customer demonstrations and
-internal technical documentation.
+A cinematic, explorable 3D map of the ACTMON platform, for customer
+demonstrations and internal technical documentation.
+
+**Every meaningful zoom reveals a new level of information.** There are six
+levels, and each builds a genuinely different scene rather than re-labelling
+its parent.
 
 ## Opening it
 
@@ -26,13 +30,41 @@ library and opens in the 2D view with the full content intact.
 
 | File | Purpose |
 |---|---|
-| `index.html` | Page shell, styles and all UI chrome |
-| `actmon-data.js` | The content model — every fact, with the source file it came from |
-| `actmon-app.js` | 3D scene, navigation, panels, search and the guided tour |
+| `index.html` | Page shell, type scale, all UI chrome |
+| `actmon-data.js` | Verified content — every fact, with the source file it came from |
+| `actmon-samples.js` | SAMPLE MODE — deterministic illustrative records |
+| `actmon-scene.js` | 3D substrate: camera controller, label LOD, geometry factory |
+| `actmon-envs.js` | One builder per explorable environment |
+| `actmon-app.js` | Level stack, panels, search, tour, 2D fallback, keyboard |
 | `README.md` | This file |
 
-To correct or extend the content, edit `actmon-data.js` only. It is plain data
-and needs no knowledge of the 3D code.
+To correct a **fact**, edit `actmon-data.js`. To change an **illustrative
+number**, edit `actmon-samples.js`. To add an **environment**, add one builder
+to `actmon-envs.js` — nothing else needs to know about it. None of the three
+requires touching the 3D engine.
+
+### The six levels
+
+| Level | What it is | Example |
+|---|---|---|
+| 0 | The ACTMON universe | Seven domains around the platform core |
+| 1 | Module environment | Database landscape · cloud bodies · datacentre floor · log river |
+| 2 | Technology | PostgreSQL inside its health arcs, 16 feature pathways |
+| 3 | Feature environment | Slow-query towers · privilege graph · replication topology |
+| 4–5 | A single record | One query's plan tree · one role's effective privileges |
+
+### Data drives the geometry
+
+Nothing in the scene is decorative arrangement:
+
+- A table's **volume** is its size on disk; the red cap is its dead-tuple share.
+- A query tower's **width** is cumulative cost, its **height** average duration
+  — which is why the most expensive statement is visibly *not* the slowest.
+- A standby's **particle speed** is the inverse of its lag; a lost slot has no
+  flow at all.
+- An index is drawn as a **B-tree**: fan-out is its column count, brightness is
+  its scan count, and an unused one is dark and struck through.
+- A permission bit's **height** is `log2(value)`, so the doubling is visible.
 
 ## Using it
 
@@ -42,35 +74,40 @@ you there.
 
 | Control | Does |
 |---|---|
-| Click a node | Zoom into it and open its panel |
+| Click a node | Select it — camera eases to it, panel opens |
+| **Enter** (or the panel's Enter button) | Descend into that object's own environment |
 | Drag | Orbit the camera |
-| Scroll | Zoom (clamped, so the camera cannot get lost) |
+| Shift-drag / right-drag | Pan |
+| Scroll | Zoom (clamped per level, so the camera cannot get lost) |
 | Breadcrumb | Jump back to any level |
 | Back / Forward | Step through history |
 | Reset / the ACTMON mark | Return to the overview |
 | Search | Every module, technology, section, provider and channel |
-| Guided tour | 11 chapters, pausable — explore freely at any point |
+| Guided tour | 10 cinematic chapters, pausable — explore freely at any point |
 | 2D view | The same content as a flat, keyboard-navigable list |
 | Reduce motion | Makes every transition instant |
 
-**Keyboard:** `0` reset · `Backspace` back · `T` tour · `F` 2D view ·
-`M` reduce motion · `/` search · `Esc` close · `?` key help.
+**Keyboard:** `0` reset · `Backspace` back · `Enter` descend · `T` tour ·
+`F` 2D view · `M` reduce motion · `/` search · arrows orbit · `+`/`-` zoom ·
+`Esc` close · `?` key help.
+
+Labels have three tiers driven by distance: a dot far away, the name at middle
+range, and name + purpose + action when you approach or hover. They de-overlap
+and demote when occluded, so nothing is permanently glued to anything.
 
 Honours `prefers-reduced-motion` automatically.
 
-## What is in it
+## Bespoke environments
 
-- **Level 0** — the seven monitoring domains
-- **Level 1** — each domain's own exploration (technologies, cloud providers,
-  host tabs, collection methods, alert tiers, the permission model)
-- **Level 2** — the eight database technology entries, with a capability
-  comparison
-- **Level 3** — all 16 PostgreSQL dashboard tabs plus the Query Analysis
-  detail page
-- **Level 4** — per feature: what it does, why it matters, what it monitors,
-  sample data, an operational scenario, how a DBA uses it, and its relations
-- **Three guided walkthroughs** — investigating a slow query, inspecting a
-  role's effective privileges, and the incident lifecycle
+Eleven PostgreSQL sections have a purpose-built 3D environment: Overview,
+Performance, Slow Queries, Query Analysis, Users, Replication, Storage, Locks,
+Error Logs, Tables and Indexes. The remaining six (Queries, Databases, Config,
+Maintenance, Reports and Diagnose) use a generic environment built from that
+section's *own* monitored-signal list, so it still differs per feature — the
+panel marks which sections have a bespoke scene.
+
+The **guided tour** is ten chapters with Pause, Resume, Next, Previous and
+Exit. It plays automatically and you can take control at any point.
 
 ## Accuracy
 
@@ -103,8 +140,22 @@ All metrics, hostnames, queries, log lines and topologies are illustrative.
 Nothing is read from a live ACTMON installation, and nothing in these files is
 or resembles a credential.
 
+## Testing
+
+Three suites, run with `node`:
+
+- `test_envs.js` — builds all 22 environments against a THREE stub: every one
+  has a camera pose, zoom limits, clickable objects, **and a provably distinct
+  composition** (object count, geometry mix and layout shape). Also checks that
+  data really drives geometry.
+- `test_doc.js` — 72 assertions driving the document in jsdom (2D fallback path)
+- `test_accept.js` — the 14 acceptance tests, with the 3D path active
+
 ## Known limitations
 
+- **The rendered result has not been seen.** There is no browser automation
+  available here and jsdom has no WebGL, so geometry, lighting, camera feel and
+  label placement are untested visually. Everything behind them is tested.
 - Verified against the `actmon_sept22` branch. It will drift as the product
   changes; `actmon-data.js` records a source path per node so re-checking is
   mechanical.
