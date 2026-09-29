@@ -29,11 +29,11 @@ const PerformanceTab = lazy(() => import('./PerformanceTab'));
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
-import { Paged } from '@/components/ui/Pagination';
 import DataTable, { EmptyState as TableEmptyState, nextSort, sortRows } from '@/components/ui/Table';
 import StatTile from '@/components/charts/StatTile';
 import RoleDetailDrawer from './RoleDetailDrawer';
 import Badge from '@/components/ui/Badge';
+import { Paged } from '@/components/ui/Pagination';
 import usePaged from '@/hooks/usePaged';
 import {
   DATABASE_COLUMNS, PG_DATABASE_EXTRAS, PG_DATABASE_HINTS, withExtras, withHints,
@@ -119,6 +119,7 @@ export default function PostgreSQLDashboard() {
   // rather than dropped, because a catalog lock CAN matter (a stuck DDL, an
   // ANALYZE holding pg_statistic), and an admin needs to be able to look.
   const [showSystemLocks, setShowSystemLocks] = useState(false);
+  const [lockSort, setLockSort] = useState({ key: 'state', dir: 'desc' });
   const { data: tablesDetail, isLoading: tablesLoading, refetch: refetchTables } = useQuery({
     queryKey: ['pgTablesDetail', id],
     queryFn:  () => client.get(`/connections/postgresql/${id}/tables-detail`).then(r => r.data),
@@ -648,76 +649,77 @@ export default function PostgreSQLDashboard() {
                   blocking locks are listed first, so nothing actionable is cut off.
                 </div>
               )}
-              <div className="overflow-x-auto">
-                <Paged rows={visible} unit="locks">{(pageRows, pager) => (<>
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-slate-50">
-                      {['PID','State','Lock Type','Object','Mode','Database','Query Age'].map(h=>(
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageRows.map((l,i)=>(
-                      <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${
-                        l.category==='waiting' ? 'bg-red-50'
-                        : l.category==='blocking' ? 'bg-orange-50' : ''}`}>
-                        <td className="px-3 py-2.5 font-mono text-xs text-slate-500">{l.pid}</td>
-                        <td className="px-3 py-2.5">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            l.category==='waiting'     ? 'bg-red-100 text-red-700'
-                          : l.category==='blocking'    ? 'bg-orange-100 text-orange-700'
-                          : l.category==='system'      ? 'bg-slate-100 text-slate-500'
-                          :                              'bg-green-100 text-green-700'}`}>
-                            {l.category==='waiting'  ? 'Waiting'
-                           : l.category==='blocking' ? 'Blocking'
-                           : l.category==='system'   ? 'System' : 'Granted'}
+              {(() => {
+                const LABEL = { waiting: 'Waiting', blocking: 'Blocking', system: 'System' };
+                const TONE = { waiting: 'danger', blocking: 'warning', system: 'neutral' };
+                const rows = visible.map((l, i) => ({
+                  key: `${l.pid}-${l.relation || l.locktype}-${i}`,
+                  sort: {
+                    pid: Number(l.pid) || 0,
+                    // Waiting first, then blocking: the two states an operator scans for.
+                    state: l.category === 'waiting' ? 3 : l.category === 'blocking' ? 2
+                      : l.category === 'system' ? 0 : 1,
+                    locktype: l.locktype || '',
+                    object: l.relation_label || '',
+                    mode: l.mode || '',
+                    database: l.database_name || l.database || '',
+                    age: Number(l.query_age_sec) || 0,
+                  },
+                  cells: {
+                    pid: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{l.pid}</span>,
+                    state: (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Badge tone={TONE[l.category] || 'success'} size="xs">
+                          {LABEL[l.category] || 'Granted'}
+                        </Badge>
+                        {l.category === 'waiting' && l.blocked_by?.length > 0 && (
+                          <span className="text-[11px] font-semibold" style={{ color: 'var(--danger-fg)' }}>
+                            &larr; {l.blocked_by.join(', ')}
                           </span>
-                          {l.category==='waiting' && l.blocked_by?.length > 0 && (
-                            <span className="ml-1.5 text-[10px] text-red-600 font-mono">
-                              ← {l.blocked_by.join(', ')}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5 text-xs">{l.locktype}</td>
-                        <td className="px-3 py-2.5 text-xs">
-                          <span className={l.is_system ? 'text-slate-400' : 'text-indigo-700 font-semibold'}>
-                            {l.relation_label || '—'}
-                          </span>
-                          {l.object_type && (
-                            <span className="ml-1.5 text-[10px] text-slate-400">{l.object_type}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full">{l.mode}</span>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-slate-400">{l.database_name||l.database||'—'}</td>
-                        {/* Query age of the holding/waiting backend — PostgreSQL does not
-                            record when a lock was acquired, so this is the honest proxy. */}
-                        <td className="px-3 py-2.5 text-xs font-mono" title="Age of this backend's current query. PostgreSQL does not record lock acquisition time.">
-                          {l.query_age_sec == null ? '—' : `${Number(l.query_age_sec).toFixed(1)}s`}
-                        </td>
-                      </tr>
-                    ))}
-                    {visible.length===0 && (
-                      <tr><td colSpan={7} className="text-center py-14">
-                        <CheckCircle2 className="mx-auto text-green-400 mb-3" size={36}/>
-                        <p className="text-slate-500 font-semibold">
-                          {hidden > 0 ? 'No application locks' : 'No locks detected'}
-                        </p>
-                        <p className="text-slate-400 text-xs mt-1">
-                          {hidden > 0
-                            ? `${hidden} system-catalog lock${hidden===1?'':'s'} hidden — mostly ACTMON's own monitoring queries reading pg_class / pg_stat_activity. Tick "Show System Objects" to inspect them.`
-                            : 'All connections are operating normally'}
-                        </p>
-                      </td></tr>
-                    )}
-                  </tbody>
-                </table>
-                {pager}
-                </>)}</Paged>
-              </div>
+                        )}
+                      </span>
+                    ),
+                    locktype: <Muted>{l.locktype}</Muted>,
+                    object: (
+                      <span className="inline-flex items-center gap-1.5">
+                        {l.is_system
+                          ? <Muted>{l.relation_label || '—'}</Muted>
+                          : <Strong>{l.relation_label || '—'}</Strong>}
+                        {l.object_type && <Badge tone="neutral" size="xs">{l.object_type}</Badge>}
+                      </span>
+                    ),
+                    mode: <Badge tone="neutral" size="xs">{l.mode}</Badge>,
+                    database: <Muted>{l.database_name || l.database || '—'}</Muted>,
+                    age: l.query_age_sec == null
+                      ? <Muted>—</Muted>
+                      : <span className={AG_CELL} style={AG_GRAY}
+                              title="Age of this backend's current query. PostgreSQL does not record lock acquisition time.">
+                          {Number(l.query_age_sec).toFixed(1)}s
+                        </span>,
+                  },
+                }));
+                return (
+                  <PgTable
+                    columns={[
+                      { key: 'pid',      label: 'PID',       sortable: true, align: 'center', width: 110 },
+                      { key: 'state',    label: 'State',     sortable: true, align: 'center', width: 210 },
+                      { key: 'locktype', label: 'Lock Type', sortable: true, align: 'center', width: 150 },
+                      { key: 'object',   label: 'Object',    sortable: true, width: 320 },
+                      { key: 'mode',     label: 'Mode',      sortable: true, align: 'center', width: 190 },
+                      { key: 'database', label: 'Database',  sortable: true, align: 'center', width: 150 },
+                      { key: 'age',      label: 'Query Age', sortable: true, align: 'center', width: 140 },
+                    ]}
+                    rows={sortRows(rows, lockSort)}
+                    sort={lockSort}
+                    onSort={(key) => setLockSort((cur) => nextSort(cur, key))}
+                    unit="locks" emptyIcon="lock"
+                    emptyTitle={hidden > 0 ? 'No application locks' : 'No locks detected'}
+                    emptyBody={hidden > 0
+                      ? `${hidden} system-catalog lock${hidden === 1 ? '' : 's'} hidden — mostly ACTMON's own monitoring queries. Tick "Show System Objects" to inspect them.`
+                      : 'All connections are operating normally.'}
+                  />
+                );
+              })()}
             </Panel>
               );
             })()}
@@ -932,6 +934,9 @@ function LSNCell({ label, value, accent }) {
    ADVANCED REPLICATION TAB
 ══════════════════════════════════════════════════════════════════════════ */
 const AdvancedReplicationTab = memo(function AdvancedReplicationTab({ connId, replDetail, replLoading, refetchRepl, replication, replication_slots, health_summary }) {
+  const [sndSort, setSndSort] = useState({ key: 'pid', dir: 'asc' });
+  const [repSort, setRepSort] = useState({ key: 'byte_lag', dir: 'desc' });
+  const [cflSort, setCflSort] = useState({ key: 'total', dir: 'desc' });
 
   // Same queryKey shape PatroniPanel's own internal usePatroniQuery('/status')
   // uses — shares its cache entry rather than firing a second request, and
@@ -1504,34 +1509,43 @@ const AdvancedReplicationTab = memo(function AdvancedReplicationTab({ connId, re
             <Radio size={14} className="text-indigo-500"/>
             <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">WAL Sender Processes ({senders.length})</h3>
           </div>
-          <div className="overflow-x-auto">
-            <Paged rows={senders} unit="replicas">{(pageRows, pager) => (<>
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="border-b border-slate-200">
-                  {['PID','User','Application','Client','State','Started'].map(h => (
-                    <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((s, i) => (
-                  <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/50">
-                    <td className="px-4 py-3 font-mono text-slate-500">{s.pid}</td>
-                    <td className="px-4 py-3 text-indigo-600 font-bold">{s.usename}</td>
-                    <td className="px-4 py-3 font-bold text-slate-700">{s.application_name||'—'}</td>
-                    <td className="px-4 py-3 font-mono text-slate-500">{s.client_addr||'local'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${stateBadge(s.state)}`}>{s.state||'—'}</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-400">{s.backend_start?new Date(s.backend_start).toLocaleString():'—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
-          </div>
+          {(() => {
+            const rows = senders.map((x, i) => ({
+              key: `${x.pid}-${i}`,
+              sort: {
+                pid: Number(x.pid) || 0, usename: x.usename || '',
+                application_name: x.application_name || '', client: x.client_addr || '',
+                state: x.state || '',
+                started: x.backend_start ? new Date(x.backend_start).getTime() : 0,
+              },
+              cells: {
+                pid: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{x.pid}</span>,
+                usename: <Strong>{x.usename}</Strong>,
+                application_name: <Muted>{x.application_name || '—'}</Muted>,
+                client: <Muted>{x.client_addr || 'local'}</Muted>,
+                state: <Badge tone={x.state === 'streaming' ? 'success' : 'warning'} size="xs">{x.state || '—'}</Badge>,
+                started: <Muted>{x.backend_start ? new Date(x.backend_start).toLocaleString() : '—'}</Muted>,
+              },
+            }));
+            return (
+              <div className="p-card">
+                <PgTable
+                  columns={[
+                    { key: 'pid',              label: 'PID',         sortable: true, align: 'center', width: 110 },
+                    { key: 'usename',          label: 'User',        sortable: true, width: 180 },
+                    { key: 'application_name', label: 'Application', sortable: true, width: 220 },
+                    { key: 'client',           label: 'Client',      sortable: true, align: 'center', width: 180 },
+                    { key: 'state',            label: 'State',       sortable: true, align: 'center', width: 160 },
+                    { key: 'started',          label: 'Started',     sortable: true, align: 'center', width: 230 },
+                  ]}
+                  rows={sortRows(rows, sndSort)}
+                  sort={sndSort}
+                  onSort={(k) => setSndSort((c) => nextSort(c, k))}
+                  unit="senders" emptyIcon="activity" emptyTitle="No WAL sender processes"
+                />
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1542,55 +1556,76 @@ const AdvancedReplicationTab = memo(function AdvancedReplicationTab({ connId, re
             <Database size={14} className="text-slate-400"/>
             <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">pg_stat_replication (raw)</h3>
           </div>
-          <div className="overflow-x-auto">
-            <Paged rows={replicas} unit="replicas">{(pageRows, pager) => (<>
-            <table className="w-full text-[11px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50">
-                  {['Application','Client','State','Sync','Sent LSN','Write LSN','Flush LSN','Replay LSN','Write Lag','Flush Lag','Apply Lag','Byte Lag'].map(h=>(
-                    <th key={h} className="px-3 py-2.5 text-left text-[9px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((r, i) => (
-                  <tr key={i} className="border-t border-slate-50 hover:bg-indigo-50/20">
-                    <td className="px-3 py-2.5 font-bold text-indigo-700">{r.application_name||'—'}</td>
-                    <td className="px-3 py-2.5 font-mono text-slate-500">{r.client_addr||'local'}</td>
-                    <td className="px-3 py-2.5">
-                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${stateBadge(r.state)}`}>{r.state||'streaming'}</span>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold border ${syncBadge(r.sync_state)}`}>{r.sync_state||'async'}</span>
-                    </td>
-                    {['sent_lsn','write_lsn','flush_lsn','replay_lsn'].map(f => (
-                      <td key={f} className="px-3 py-2.5">
-                        {r[f] ? (
-                          <div className="flex items-center gap-1">
-                            <span className="font-mono text-slate-700">{r[f]}</span>
-                            <CopyTip text={r[f]}/>
-                          </div>
-                        ) : <span className="text-slate-300">—</span>}
-                      </td>
-                    ))}
-                    {['write_lag','flush_lag','replay_lag'].map(f => {
-                      const v = r[f]; const hasV = v && v !== '0';
-                      return (
-                        <td key={f} className={`px-3 py-2.5 font-bold ${hasV?'text-orange-600':'text-emerald-600'}`}>
-                          {v && v !== '0' ? v.replace(/^00:/,'') : '0'}
-                        </td>
-                      );
-                    })}
-                    <td className={`px-3 py-2.5 font-bold ${lagColor(r.byte_lag||0).text}`}>
-                      {fmtBytes(r.byte_lag||0)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
-          </div>
+          {(() => {
+            const LSN = ['sent_lsn', 'write_lsn', 'flush_lsn', 'replay_lsn'];
+            const LAG = ['write_lag', 'flush_lag', 'replay_lag'];
+            const rows = replicas.map((r, i) => {
+              const cells = {
+                application_name: <Strong>{r.application_name || '—'}</Strong>,
+                client: <Muted>{r.client_addr || 'local'}</Muted>,
+                state: <Badge tone={r.state === 'streaming' ? 'success' : 'warning'} size="xs">{r.state || 'streaming'}</Badge>,
+                sync: <Badge tone={r.sync_state === 'sync' ? 'success' : 'neutral'} size="xs">{r.sync_state || 'async'}</Badge>,
+                byte_lag: (
+                  <span className="text-[1rem] leading-[1.125rem] font-semibold"
+                        style={{ color: (r.byte_lag || 0) > 0 ? 'var(--warning-fg)' : 'var(--success-fg)' }}>
+                    {fmtBytes(r.byte_lag || 0)}
+                  </span>
+                ),
+              };
+              LSN.forEach((f) => {
+                cells[f] = r[f]
+                  ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="font-mono text-[0.875rem] text-fg">{r[f]}</span>
+                      <CopyTip text={r[f]} />
+                    </span>
+                  )
+                  : <Muted>—</Muted>;
+              });
+              LAG.forEach((f) => {
+                const v = r[f];
+                const has = v && v !== '0';
+                cells[f] = (
+                  <span className="text-[1rem] leading-[1.125rem] font-semibold"
+                        style={{ color: has ? 'var(--warning-fg)' : 'var(--success-fg)' }}>
+                    {has ? String(v).replace(/^00:/, '') : '0'}
+                  </span>
+                );
+              });
+              const sort = {
+                application_name: r.application_name || '', client: r.client_addr || '',
+                state: r.state || '', sync: r.sync_state || '',
+                byte_lag: Number(r.byte_lag) || 0,
+              };
+              LSN.forEach((f) => { sort[f] = r[f] || ''; });
+              LAG.forEach((f) => { sort[f] = r[f] || ''; });
+              return { key: `${r.application_name}-${i}`, sort, cells };
+            });
+            return (
+              <div className="p-card">
+                <PgTable
+                  columns={[
+                    { key: 'application_name', label: 'Application', sortable: true, width: 200 },
+                    { key: 'client',     label: 'Client',     sortable: true, align: 'center', width: 160 },
+                    { key: 'state',      label: 'State',      sortable: true, align: 'center', width: 150 },
+                    { key: 'sync',       label: 'Sync',       sortable: true, align: 'center', width: 130 },
+                    { key: 'sent_lsn',   label: 'Sent LSN',   sortable: true, align: 'center', width: 180 },
+                    { key: 'write_lsn',  label: 'Write LSN',  sortable: true, align: 'center', width: 180 },
+                    { key: 'flush_lsn',  label: 'Flush LSN',  sortable: true, align: 'center', width: 180 },
+                    { key: 'replay_lsn', label: 'Replay LSN', sortable: true, align: 'center', width: 180 },
+                    { key: 'write_lag',  label: 'Write Lag',  sortable: true, align: 'center', width: 140 },
+                    { key: 'flush_lag',  label: 'Flush Lag',  sortable: true, align: 'center', width: 140 },
+                    { key: 'replay_lag', label: 'Apply Lag',  sortable: true, align: 'center', width: 140 },
+                    { key: 'byte_lag',   label: 'Byte Lag',   sortable: true, align: 'center', width: 150 },
+                  ]}
+                  rows={sortRows(rows, repSort)}
+                  sort={repSort}
+                  onSort={(k) => setRepSort((c) => nextSort(c, k))}
+                  unit="replicas" emptyIcon="activity" emptyTitle="No replicas connected"
+                />
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1688,36 +1723,48 @@ const AdvancedReplicationTab = memo(function AdvancedReplicationTab({ connId, re
               <p className="text-slate-400 text-[12px] mt-1">All databases are conflict-free</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Paged rows={confls} unit="conflicts">{(pageRows, pager) => (<>
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/50">
-                    {['Database','Tablespace','Lock','Snapshot','BufferPin','Deadlock','Total'].map(h => (
-                      <th key={h} className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((c, i) => {
-                    const total = (c.confl_tablespace||0)+(c.confl_lock||0)+(c.confl_snapshot||0)+(c.confl_bufferpin||0)+(c.confl_deadlock||0);
-                    return (
-                      <tr key={i} className="border-t border-slate-50 hover:bg-red-50/30">
-                        <td className="px-4 py-3 font-bold text-slate-800">{c.datname}</td>
-                        <td className="px-4 py-3 text-slate-500">{c.confl_tablespace||0}</td>
-                        <td className="px-4 py-3 text-slate-500">{c.confl_lock||0}</td>
-                        <td className="px-4 py-3 text-slate-500">{c.confl_snapshot||0}</td>
-                        <td className="px-4 py-3 text-slate-500">{c.confl_bufferpin||0}</td>
-                        <td className="px-4 py-3 text-slate-500">{c.confl_deadlock||0}</td>
-                        <td className="px-4 py-3 font-black text-red-600">{total.toLocaleString()}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {pager}
-              </>)}</Paged>
-            </div>
+            (() => {
+              const FIELDS = [
+                ['confl_tablespace', 'Tablespace'], ['confl_lock', 'Lock'],
+                ['confl_snapshot', 'Snapshot'], ['confl_bufferpin', 'BufferPin'],
+                ['confl_deadlock', 'Deadlock'],
+              ];
+              const rows = confls.map((c, i) => {
+                const total = FIELDS.reduce((a, [f]) => a + (c[f] || 0), 0);
+                const cells = { datname: <Strong>{c.datname}</Strong> };
+                const sort = { datname: c.datname || '', total };
+                FIELDS.forEach(([f]) => {
+                  cells[f] = (c[f] || 0) > 0
+                    ? <Badge tone="warning" size="xs">{c[f]}</Badge>
+                    : <Muted>0</Muted>;
+                  sort[f] = Number(c[f]) || 0;
+                });
+                cells.total = (
+                  <span className="text-[1rem] leading-[1.125rem] font-bold"
+                        style={{ color: total > 0 ? 'var(--danger-fg)' : 'var(--agent-gray)' }}>
+                    {total.toLocaleString()}
+                  </span>
+                );
+                return { key: `${c.datname}-${i}`, sort, cells };
+              });
+              return (
+                <div className="p-card">
+                  <PgTable
+                    columns={[
+                      { key: 'datname', label: 'Database', sortable: true, width: 240 },
+                      ...FIELDS.map(([f, label]) => ({
+                        key: f, label, sortable: true, align: 'center', width: 150,
+                      })),
+                      { key: 'total', label: 'Total', sortable: true, align: 'center', width: 140 },
+                    ]}
+                    rows={sortRows(rows, cflSort)}
+                    sort={cflSort}
+                    onSort={(k) => setCflSort((c) => nextSort(c, k))}
+                    unit="databases" emptyIcon="check" emptyTitle="No replication conflicts"
+                  />
+                </div>
+              );
+            })()
           )}
         </div>
       )}
@@ -1892,11 +1939,12 @@ function AiQueryAnalysis({ res }) {
 }
 
 const AdvancedQueriesTab = memo(function AdvancedQueriesTab({ connId, active: tabActive }) {
+  const [stmtSort, setStmtSort] = useState({ key: 'metric', dir: 'desc' });
+  const [runSort, setRunSort] = useState({ key: 'duration', dir: 'desc' });
   const [view,    setView]    = React.useState('mean');
   const [searchInput, setSearchInput] = React.useState('');
   const [search,  setSearch]  = React.useState('');   // debounced — server-side search param
   const [expand,  setExpand]  = React.useState(null);
-  const [showAll, setShowAll] = React.useState(false);
   const [modalQuery, setModalQuery] = React.useState(null);   // clicked statement → analysis window
 
   // Filters (§1B) — all server-side, combinable. Hide ActMon Queries is ON by
@@ -2126,75 +2174,98 @@ const AdvancedQueriesTab = memo(function AdvancedQueriesTab({ connId, active: ta
         )}
 
         {d.pg_ss_available && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="bg-slate-50/70 border-b border-slate-200">
-                  {['#','User','DB','Query Type',mv.label,'Calls','Total Time','Min','Max','Stddev','Rows/Call','Cache Hit%','Temp Blks','Query'].map(h=>(
-                    <th key={h} className={`px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap ${h===mv.label?'text-indigo-600':''}`}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {stmts.slice(0, showAll?999:25).map((s,i) => {
-                  const qt = s.query_type || 'OTHER';
-                  const qc = QTYPE_COLORS[qt] || QTYPE_COLORS.OTHER;
-                  const isSlow = s.mean_exec_time > 1000;
-                  return (
-                    <React.Fragment key={i}>
-                      <tr onClick={()=>setModalQuery(s)}
-                        className={`border-t border-slate-100 cursor-pointer transition-colors hover:bg-indigo-50/40
-                          ${isSlow?'bg-red-50/40':''}`}>
-                        <td className="px-3 py-2.5 text-slate-400 font-mono">{i+1}</td>
-                        <td className="px-3 py-2.5 font-bold text-indigo-700 truncate max-w-[80px]">{s.usename||'—'}</td>
-                        <td className="px-3 py-2.5 text-slate-500 font-mono">{s.datname||s.dbid||'—'}</td>
-                        <td className="px-3 py-2.5">
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black border" style={{background:qc.bg,borderColor:qc.border,color:qc.text}}>{qt}</span>
-                        </td>
-                        <td className={`px-3 py-2.5 font-black font-mono text-[12px]`} style={{color:mv.color}}>
-                          {mv.fmt(s[mv.field])}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono font-bold text-slate-700">{fmtNum(s.calls)}</td>
-                        <td className="px-3 py-2.5 font-mono text-slate-500">{fmtMs(s.total_exec_time)}</td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400">{fmtMs(s.min_exec_time)}</td>
-                        <td className={`px-3 py-2.5 font-mono font-bold ${s.max_exec_time>5000?'text-red-600':s.max_exec_time>1000?'text-orange-600':'text-slate-500'}`}>
-                          {fmtMs(s.max_exec_time)}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-slate-400">{fmtMs(s.stddev_exec_time)}</td>
-                        <td className="px-3 py-2.5 font-mono text-slate-600">{s.rows_per_call?.toFixed(1)??'—'}</td>
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center gap-1.5">
-                            <div className="h-1.5 w-12 bg-slate-100 rounded-full overflow-hidden">
-                              <div className={`h-full rounded-full ${s.cache_hit_pct>90?'bg-emerald-500':s.cache_hit_pct>70?'bg-yellow-400':'bg-red-500'}`} style={{width:`${s.cache_hit_pct||0}%`}}/>
-                            </div>
-                            <span className={`text-[10px] font-bold ${s.cache_hit_pct>90?'text-emerald-600':s.cache_hit_pct>70?'text-yellow-600':'text-red-600'}`}>{s.cache_hit_pct}%</span>
-                          </div>
-                        </td>
-                        <td className={`px-3 py-2.5 font-mono font-bold ${s.temp_blks_read>0?'text-red-600':'text-slate-300'}`}>
-                          {s.temp_blks_read > 0 ? fmtNum(s.temp_blks_read) : '—'}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-[10px] text-slate-400 max-w-[200px] truncate">
-                          {String(s.query||'').replace(/\s+/g,' ').slice(0,70)} <ChevronRight size={12} className="inline text-slate-300" />
-                        </td>
-                      </tr>
-                    </React.Fragment>
-                  );
-                })}
-                {stmts.length === 0 && (
-                  <tr><td colSpan={14} className="text-center py-12 text-slate-400">
-                    <Database size={32} className="mx-auto mb-2 text-slate-200"/>
-                    <p className="font-bold">No statements match</p>
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-            {stmts.length > 25 && !showAll && (
-              <div className="border-t border-slate-100 px-5 py-3 bg-slate-50/50">
-                <button onClick={()=>setShowAll(true)} className="text-[12px] font-bold text-indigo-600 hover:text-indigo-800">
-                  Show all {stmts.length} statements ↓
-                </button>
-              </div>
-            )}
+          <div className="p-card">
+            {(() => {
+              // The pager below is now the only paging control: the old
+              // "show 25, then Show all" button was a stand-in for one, and
+              // keeping both would cap the list at 25 *and* page it.
+              const rows = stmts.map((st, i) => {
+                const qt = st.query_type || 'OTHER';
+                const qc = QTYPE_COLORS[qt] || QTYPE_COLORS.OTHER;
+                const hit = st.cache_hit_pct;
+                return {
+                  key: i,
+                  onClick: () => setModalQuery(st),
+                  sort: {
+                    n: i, usename: st.usename || '', datname: st.datname || st.dbid || '',
+                    qtype: qt, metric: Number(st[mv.field]) || 0,
+                    calls: Number(st.calls) || 0, total: Number(st.total_exec_time) || 0,
+                    min: Number(st.min_exec_time) || 0, max: Number(st.max_exec_time) || 0,
+                    stddev: Number(st.stddev_exec_time) || 0,
+                    rpc: Number(st.rows_per_call) || 0, hit: Number(hit) || 0,
+                    temp: Number(st.temp_blks_read) || 0, query: String(st.query || ''),
+                  },
+                  cells: {
+                    n: <Muted>{i + 1}</Muted>,
+                    usename: <Strong>{st.usename || '—'}</Strong>,
+                    datname: <Muted>{st.datname || st.dbid || '—'}</Muted>,
+                    qtype: (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-bold border"
+                            style={{ background: qc.bg, borderColor: qc.border, color: qc.text }}>{qt}</span>
+                    ),
+                    metric: (
+                      <span className="text-[1rem] leading-[1.125rem] font-bold font-mono"
+                            style={{ color: mv.color }}>{mv.fmt(st[mv.field])}</span>
+                    ),
+                    calls: <Strong>{fmtNum(st.calls)}</Strong>,
+                    total: <Muted>{fmtMs(st.total_exec_time)}</Muted>,
+                    min: <Muted>{fmtMs(st.min_exec_time)}</Muted>,
+                    max: (
+                      <span className="text-[1rem] leading-[1.125rem] font-semibold"
+                            style={{ color: st.max_exec_time > 5000 ? 'var(--danger-fg)'
+                                     : st.max_exec_time > 1000 ? 'var(--warning-fg)' : 'var(--agent-gray)' }}>
+                        {fmtMs(st.max_exec_time)}
+                      </span>
+                    ),
+                    stddev: <Muted>{fmtMs(st.stddev_exec_time)}</Muted>,
+                    rpc: <Muted>{st.rows_per_call?.toFixed(1) ?? '—'}</Muted>,
+                    hit: (
+                      <span className="inline-flex items-center gap-2">
+                        <MiniBar pct={hit || 0} tone={hit > 90 ? 'success' : hit > 70 ? 'warning' : 'danger'} />
+                        <span className={AG_CELL} style={AG_GRAY}>{hit}%</span>
+                      </span>
+                    ),
+                    temp: st.temp_blks_read > 0
+                      ? <span className="text-[1rem] leading-[1.125rem] font-semibold" style={{ color: 'var(--danger-fg)' }}>{fmtNum(st.temp_blks_read)}</span>
+                      : <Muted>—</Muted>,
+                    query: (
+                      <span className="inline-flex items-center gap-1 max-w-[280px]">
+                        <span className="font-mono text-[0.875rem] truncate" style={AG_GRAY}>
+                          {String(st.query || '').replace(/\s+/g, ' ').slice(0, 70)}
+                        </span>
+                        <ChevronRight size={14} className="shrink-0" style={AG_GRAY} />
+                      </span>
+                    ),
+                  },
+                };
+              });
+              return (
+                <PgTable
+                  columns={[
+                    { key: 'n',       label: '#',          sortable: true, align: 'center', width: 80 },
+                    { key: 'usename', label: 'User',       sortable: true, width: 150 },
+                    { key: 'datname', label: 'DB',         sortable: true, width: 150 },
+                    { key: 'qtype',   label: 'Query Type', sortable: true, align: 'center', width: 150 },
+                    { key: 'metric',  label: mv.label,     sortable: true, align: 'center', width: 160 },
+                    { key: 'calls',   label: 'Calls',      sortable: true, align: 'center', width: 130 },
+                    { key: 'total',   label: 'Total Time', sortable: true, align: 'center', width: 150 },
+                    { key: 'min',     label: 'Min',        sortable: true, align: 'center', width: 120 },
+                    { key: 'max',     label: 'Max',        sortable: true, align: 'center', width: 130 },
+                    { key: 'stddev',  label: 'Stddev',     sortable: true, align: 'center', width: 130 },
+                    { key: 'rpc',     label: 'Rows/Call',  sortable: true, align: 'center', width: 140 },
+                    { key: 'hit',     label: 'Cache Hit%', sortable: true, align: 'center', width: 170 },
+                    { key: 'temp',    label: 'Temp Blks',  sortable: true, align: 'center', width: 140 },
+                    { key: 'query',   label: 'Query',      sortable: true, width: 320 },
+                  ]}
+                  rows={sortRows(rows, stmtSort)}
+                  sort={stmtSort}
+                  onSort={(k) => setStmtSort((c) => nextSort(c, k))}
+                  unit="statements"
+                  emptyIcon="search" emptyTitle="No statements match"
+                  emptyBody="Adjust the filters or the search text above."
+                />
+              );
+            })()}
           </div>
         )}
       </div>
@@ -2208,57 +2279,71 @@ const AdvancedQueriesTab = memo(function AdvancedQueriesTab({ connId, active: ta
             {longRun.length>0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold border border-red-200">{longRun.length} &gt;30s</span>}
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <Paged rows={active} unit="queries">{(pageRows, pager) => (<>
-          <table className="w-full text-[12px]">
-            <thead>
-              <tr className="bg-slate-50/70 border-b border-slate-200">
-                {['PID','User','DB','App','Backend','State','Wait Type','Wait Event','Duration','Query'].map(h=>(
-                  <th key={h} className="px-3 py-2.5 text-left text-[9px] font-black text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((q,i) => {
-                const isLong = q.duration_sec > 30;
-                const hasWait = q.wait_event_type && q.wait_event_type !== 'Client';
-                return (
-                  <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50/50 ${isLong?'bg-red-50/30':hasWait?'bg-yellow-50/30':''}`}>
-                    <td className="px-3 py-2.5 font-mono text-slate-500">{q.pid}</td>
-                    <td className="px-3 py-2.5 font-bold text-indigo-700">{q.usename||'—'}</td>
-                    <td className="px-3 py-2.5 text-slate-500">{q.datname||'—'}</td>
-                    <td className="px-3 py-2.5 text-slate-400 text-[11px] max-w-[80px] truncate">{q.application_name||'—'}</td>
-                    <td className="px-3 py-2.5">
-                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-bold">{q.backend_type||'client'}</span>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        q.state==='active'?'bg-emerald-100 text-emerald-700':
-                        q.state==='idle in transaction'?'bg-orange-100 text-orange-700':
-                        q.state==='idle in transaction (aborted)'?'bg-red-100 text-red-700':
-                        'bg-slate-100 text-slate-500'}`}>{q.state||'—'}</span>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {q.wait_event_type && <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${WAIT_COLORS[q.wait_event_type]||'bg-slate-100 text-slate-600'}`}>{q.wait_event_type}</span>}
-                    </td>
-                    <td className="px-3 py-2.5 text-slate-500 text-[11px]">{q.wait_event||'—'}</td>
-                    <td className={`px-3 py-2.5 font-mono font-black ${isLong?'text-red-600':q.duration_sec>5?'text-orange-600':'text-emerald-600'}`}>
-                      {q.duration_sec}s
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-[10px] text-slate-400 max-w-[220px] truncate">{String(q.query||'').replace(/\s+/g,' ').slice(0,80)}</td>
-                  </tr>
-                );
-              })}
-              {active.length === 0 && (
-                <tr><td colSpan={10} className="text-center py-10">
-                  <CheckCircle2 size={28} className="mx-auto mb-2 text-emerald-300"/>
-                  <p className="text-slate-400 text-[12px] font-semibold">No active queries — all systems idle</p>
-                </td></tr>
-              )}
-            </tbody>
-          </table>
-          {pager}
-          </>)}</Paged>
+        <div className="p-card">
+          {(() => {
+            const rows = active.map((q, i) => ({
+              key: i,
+              sort: {
+                pid: Number(q.pid) || 0, usename: q.usename || '', datname: q.datname || '',
+                app: q.application_name || '', backend: q.backend_type || '',
+                state: q.state || '', wtype: q.wait_event_type || '', wevent: q.wait_event || '',
+                duration: Number(q.duration_sec) || 0, query: String(q.query || ''),
+              },
+              cells: {
+                pid: <span className="text-[1rem] leading-[1.125rem] font-semibold text-fg">{q.pid}</span>,
+                usename: <Strong>{q.usename || '—'}</Strong>,
+                datname: <Muted>{q.datname || '—'}</Muted>,
+                app: <Muted>{q.application_name || '—'}</Muted>,
+                backend: <Badge tone="neutral" size="xs">{q.backend_type || 'client'}</Badge>,
+                state: (
+                  <Badge size="xs" tone={
+                    q.state === 'active' ? 'success'
+                    : q.state === 'idle in transaction' ? 'warning'
+                    : q.state === 'idle in transaction (aborted)' ? 'danger' : 'neutral'
+                  }>{q.state || '—'}</Badge>
+                ),
+                wtype: q.wait_event_type
+                  ? <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${WAIT_COLORS[q.wait_event_type] || 'bg-slate-100 text-slate-600'}`}>{q.wait_event_type}</span>
+                  : <Muted>—</Muted>,
+                wevent: <Muted>{q.wait_event || '—'}</Muted>,
+                duration: (
+                  <span className="text-[1rem] leading-[1.125rem] font-bold"
+                        style={{ color: q.duration_sec > 30 ? 'var(--danger-fg)'
+                                 : q.duration_sec > 5 ? 'var(--warning-fg)' : 'var(--success-fg)' }}>
+                    {q.duration_sec}s
+                  </span>
+                ),
+                query: (
+                  <span className="font-mono text-[0.875rem] truncate inline-block max-w-[280px]" style={AG_GRAY}>
+                    {String(q.query || '').replace(/\s+/g, ' ').slice(0, 80)}
+                  </span>
+                ),
+              },
+            }));
+            return (
+              <PgTable
+                columns={[
+                  { key: 'pid',      label: 'PID',        sortable: true, align: 'center', width: 110 },
+                  { key: 'usename',  label: 'User',       sortable: true, width: 150 },
+                  { key: 'datname',  label: 'DB',         sortable: true, width: 150 },
+                  { key: 'app',      label: 'App',        sortable: true, width: 170 },
+                  { key: 'backend',  label: 'Backend',    sortable: true, align: 'center', width: 160 },
+                  { key: 'state',    label: 'State',      sortable: true, align: 'center', width: 190 },
+                  { key: 'wtype',    label: 'Wait Type',  sortable: true, align: 'center', width: 150 },
+                  { key: 'wevent',   label: 'Wait Event', sortable: true, align: 'center', width: 160 },
+                  { key: 'duration', label: 'Duration',   sortable: true, align: 'center', width: 130 },
+                  { key: 'query',    label: 'Query',      sortable: true, width: 320 },
+                ]}
+                rows={sortRows(rows, runSort)}
+                sort={runSort}
+                onSort={(k) => setRunSort((c) => nextSort(c, k))}
+                unit="queries"
+                emptyIcon="check"
+                emptyTitle="No active queries"
+                emptyBody="All systems idle."
+              />
+            );
+          })()}
         </div>
       </div>
 
@@ -2802,6 +2887,40 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
    this page, so they cannot drift from each other or from the Agents list. */
 const AG_CELL = 'whitespace-nowrap text-[1rem] leading-[1.125rem] font-medium';
 const AG_GRAY = { color: 'var(--agent-gray)' };
+/**
+ * Every data table on this page. One wrapper so the Agents-list treatment —
+ * navy header, 64px floating row cards, 16px/18px cells in --agent-gray — is
+ * defined once and cannot drift table to table. Takes the same columns/rows
+ * contract as the shared <Table>; `sort`/`onSort` are optional.
+ */
+function PgTable({
+  columns, rows, sort, onSort, loading, unit = 'rows',
+  emptyIcon = 'boxes', emptyTitle, emptyBody,
+}) {
+  // Paged goes *outside* the table and its pager sits in its own card below —
+  // the exact arrangement AgentsPage.jsx uses. Rows arrive already sorted, so
+  // the page slice is taken from the sorted list, not the other way round.
+  return (
+    <Paged rows={rows} unit={unit}>
+      {(pageRows, pager) => (
+        <>
+          <DataTable
+            columns={columns}
+            rows={pageRows}
+            sort={sort}
+            onSort={onSort}
+            rowHeight={64}
+            darkHeader
+            loading={loading}
+            empty={<TableEmptyState icon={emptyIcon} title={emptyTitle} body={emptyBody} />}
+          />
+          {pager && <div className="card mt-4">{pager}</div>}
+        </>
+      )}
+    </Paged>
+  );
+}
+
 /** Default cell — grey unless the value means something. */
 const Muted = ({ children }) => <span className={AG_CELL} style={AG_GRAY}>{children}</span>;
 /** The identifier in a row, bold in --color-fg like Agents' Agent/Host column. */
@@ -3589,6 +3708,11 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
    ADVANCED STORAGE TAB
 ══════════════════════════════════════════════════════════════════════════ */
 const AdvancedStorageTab = memo(function AdvancedStorageTab({ detail, isLoading, refetch }) {
+  const [topSort, setTopSort] = useState({ key: 'total', dir: 'desc' });
+  const [bloatSort, setBloatSort] = useState({ key: 'dead', dir: 'desc' });
+  const [vacSort, setVacSort] = useState({ key: 'since', dir: 'desc' });
+  const [spcSort, setSpcSort] = useState({ key: 'size', dir: 'desc' });
+  const [toastSort, setToastSort] = useState({ key: 'size', dir: 'desc' });
   const [activeSection, setActiveSection] = React.useState('tables');
   const d           = detail || {};
   const dbSizes     = d.db_sizes           || [];
@@ -3695,53 +3819,73 @@ const AdvancedStorageTab = memo(function AdvancedStorageTab({ detail, isLoading,
         </div>
 
         {activeSection === 'tables' && (
-          <div className="overflow-x-auto">
-            <Paged rows={topTables} unit="tables">{(pageRows, pager) => (<>
-            <table className="w-full text-[11px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50">
-                  {['Schema.Table','Total','Table','Indexes','Live Rows','Dead Rows','Dead %','Last Vacuum','Seq/Idx Scans'].map(h => (
-                    <th key={h} className="px-3 py-2.5 text-left text-[9px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((t, i) => (
-                  <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50/50 ${t.dead_ratio>20?'bg-red-50/20':t.dead_ratio>10?'bg-amber-50/20':''}`}>
-                    <td className="px-3 py-2.5 font-bold text-indigo-700">
-                      <span className="text-slate-400">{t.schemaname}.</span>{t.relname}
-                    </td>
-                    <td className="px-3 py-2.5 font-bold text-slate-800">{t.total_size}</td>
-                    <td className="px-3 py-2.5 text-slate-600">{t.table_size}</td>
-                    <td className="px-3 py-2.5 text-slate-600">{t.index_size}</td>
-                    <td className="px-3 py-2.5 font-mono text-slate-600">{fmtNum(t.n_live_tup)}</td>
-                    <td className="px-3 py-2.5 font-mono">
-                      <span className={t.n_dead_tup>10000?'text-red-600 font-bold':t.n_dead_tup>1000?'text-amber-600':'text-slate-500'}>
-                        {fmtNum(t.n_dead_tup)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5"><DeadBar ratio={t.dead_ratio}/></td>
-                    <td className="px-3 py-2.5 text-slate-400 whitespace-nowrap">
-                      {t.last_autovacuum
-                        ? new Date(t.last_autovacuum).toLocaleDateString()
-                        : t.last_vacuum
-                        ? new Date(t.last_vacuum).toLocaleDateString()
-                        : <span className="text-red-500 font-bold text-[9px]">NEVER</span>}
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-slate-500">
-                      <span className="text-indigo-600">{fmtNum(t.seq_scan)}</span>
-                      <span className="text-slate-300"> / </span>
-                      <span className="text-emerald-600">{fmtNum(t.idx_scan)}</span>
-                    </td>
-                  </tr>
-                ))}
-                {topTables.length === 0 && (
-                  <tr><td colSpan={9} className="text-center py-14 text-slate-400">No table data</td></tr>
-                )}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
+          <div className="p-card">
+            {(() => {
+              const rows = topTables.map((t, i) => ({
+                key: `${t.schemaname}.${t.relname}-${i}`,
+                sort: {
+                  name: `${t.schemaname}.${t.relname}`,
+                  total: Number(t.total_bytes) || 0,
+                  table: Number(t.table_bytes) || 0,
+                  index: Number(t.index_bytes) || 0,
+                  live: Number(t.n_live_tup) || 0,
+                  dead: Number(t.n_dead_tup) || 0,
+                  ratio: Number(t.dead_ratio) || 0,
+                  vac: tsOf(t.last_autovacuum || t.last_vacuum),
+                  scans: Number(t.seq_scan) || 0,
+                },
+                cells: {
+                  name: (
+                    <span className="text-[1rem] leading-[1.125rem] font-bold text-fg">
+                      <span style={AG_GRAY}>{t.schemaname}.</span>{t.relname}
+                    </span>
+                  ),
+                  total: <Strong>{t.total_size}</Strong>,
+                  table: <Muted>{t.table_size}</Muted>,
+                  index: <Muted>{t.index_size}</Muted>,
+                  live: <Muted>{fmtNum(t.n_live_tup)}</Muted>,
+                  dead: (
+                    <span className="text-[1rem] leading-[1.125rem] font-semibold"
+                          style={{ color: t.n_dead_tup > 10000 ? 'var(--danger-fg)'
+                                   : t.n_dead_tup > 1000 ? 'var(--warning-fg)' : 'var(--agent-gray)' }}>
+                      {fmtNum(t.n_dead_tup)}
+                    </span>
+                  ),
+                  ratio: <DeadBar ratio={t.dead_ratio} />,
+                  vac: t.last_autovacuum
+                    ? <Muted>{new Date(t.last_autovacuum).toLocaleDateString()}</Muted>
+                    : t.last_vacuum
+                    ? <Muted>{new Date(t.last_vacuum).toLocaleDateString()}</Muted>
+                    : <span className="text-[0.875rem] font-bold" style={{ color: 'var(--danger-fg)' }}>NEVER</span>,
+                  scans: (
+                    <span className={AG_CELL}>
+                      <span style={{ color: 'var(--accent)' }}>{fmtNum(t.seq_scan)}</span>
+                      <span style={AG_GRAY}> / </span>
+                      <span style={{ color: 'var(--success-fg)' }}>{fmtNum(t.idx_scan)}</span>
+                    </span>
+                  ),
+                },
+              }));
+              return (
+                <PgTable
+                  columns={[
+                    { key: 'name',  label: 'Schema.Table',  sortable: true, width: 320 },
+                    { key: 'total', label: 'Total',         sortable: true, align: 'center', width: 130 },
+                    { key: 'table', label: 'Table',         sortable: true, align: 'center', width: 130 },
+                    { key: 'index', label: 'Indexes',       sortable: true, align: 'center', width: 130 },
+                    { key: 'live',  label: 'Live Rows',     sortable: true, align: 'center', width: 140 },
+                    { key: 'dead',  label: 'Dead Rows',     sortable: true, align: 'center', width: 140 },
+                    { key: 'ratio', label: 'Dead %',        sortable: true, align: 'center', width: 160 },
+                    { key: 'vac',   label: 'Last Vacuum',   sortable: true, align: 'center', width: 160 },
+                    { key: 'scans', label: 'Seq/Idx Scans', sortable: true, align: 'center', width: 170 },
+                  ]}
+                  rows={sortRows(rows, topSort)}
+                  sort={topSort}
+                  onSort={(k) => setTopSort((c) => nextSort(c, k))}
+                  unit="tables" emptyIcon="database" emptyTitle="No table data"
+                />
+              );
+            })()}
           </div>
         )}
 
@@ -3754,41 +3898,64 @@ const AdvancedStorageTab = memo(function AdvancedStorageTab({ detail, isLoading,
                 <p className="text-slate-400 text-sm mt-1">All tables have dead tuple ratios below threshold</p>
               </div>
             ) : (
-              <Paged rows={bloatTables} unit="tables">{(pageRows, pager) => (<>
-              <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/50">
-                    {['Table','Total Size','Live Tuples','Dead Tuples','Dead Ratio','Last Autovacuum','Action'].map(h => (
-                      <th key={h} className="px-3 py-2.5 text-left text-[9px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((t, i) => (
-                    <tr key={i} className="border-t border-slate-50 hover:bg-red-50/20">
-                      <td className="px-3 py-2.5 font-bold text-slate-800">
-                        <span className="text-slate-400 text-[10px]">{t.schemaname}.</span>{t.relname}
-                      </td>
-                      <td className="px-3 py-2.5 font-bold">{t.total_size}</td>
-                      <td className="px-3 py-2.5 font-mono text-emerald-700">{fmtNum(t.n_live_tup)}</td>
-                      <td className="px-3 py-2.5 font-mono font-bold text-red-600">{fmtNum(t.n_dead_tup)}</td>
-                      <td className="px-3 py-2.5"><DeadBar ratio={t.dead_ratio}/></td>
-                      <td className="px-3 py-2.5 text-slate-400">
-                        {t.last_autovacuum
-                          ? new Date(t.last_autovacuum).toLocaleString()
-                          : <span className="text-red-500 font-bold text-[9px]">NEVER</span>}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${t.dead_ratio>30?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'}`}>
-                          {t.dead_ratio > 30 ? 'VACUUM NOW' : 'VACUUM SOON'}
+              <div className="p-card">
+                {(() => {
+                  const rows = bloatTables.map((t, i) => ({
+                    key: `${t.schemaname}.${t.relname}-${i}`,
+                    sort: {
+                      name: `${t.schemaname}.${t.relname}`,
+                      total: Number(t.total_bytes) || 0,
+                      live: Number(t.n_live_tup) || 0,
+                      dead: Number(t.n_dead_tup) || 0,
+                      ratio: Number(t.dead_ratio) || 0,
+                      vac: tsOf(t.last_autovacuum),
+                      action: Number(t.dead_ratio) || 0,
+                    },
+                    cells: {
+                      name: (
+                        <span className="text-[1rem] leading-[1.125rem] font-bold text-fg">
+                          <span style={AG_GRAY}>{t.schemaname}.</span>{t.relname}
                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {pager}
-              </>)}</Paged>
+                      ),
+                      total: <Strong>{t.total_size}</Strong>,
+                      live: (
+                        <span className="text-[1rem] leading-[1.125rem] font-medium"
+                              style={{ color: 'var(--success-fg)' }}>{fmtNum(t.n_live_tup)}</span>
+                      ),
+                      dead: (
+                        <span className="text-[1rem] leading-[1.125rem] font-bold"
+                              style={{ color: 'var(--danger-fg)' }}>{fmtNum(t.n_dead_tup)}</span>
+                      ),
+                      ratio: <DeadBar ratio={t.dead_ratio} />,
+                      vac: t.last_autovacuum
+                        ? <Muted>{new Date(t.last_autovacuum).toLocaleString()}</Muted>
+                        : <span className="text-[0.875rem] font-bold" style={{ color: 'var(--danger-fg)' }}>NEVER</span>,
+                      action: (
+                        <Badge tone={t.dead_ratio > 30 ? 'danger' : 'warning'} size="xs">
+                          {t.dead_ratio > 30 ? 'VACUUM NOW' : 'VACUUM SOON'}
+                        </Badge>
+                      ),
+                    },
+                  }));
+                  return (
+                    <PgTable
+                      columns={[
+                        { key: 'name',   label: 'Table',           sortable: true, width: 320 },
+                        { key: 'total',  label: 'Total Size',      sortable: true, align: 'center', width: 140 },
+                        { key: 'live',   label: 'Live Tuples',     sortable: true, align: 'center', width: 150 },
+                        { key: 'dead',   label: 'Dead Tuples',     sortable: true, align: 'center', width: 150 },
+                        { key: 'ratio',  label: 'Dead Ratio',      sortable: true, align: 'center', width: 170 },
+                        { key: 'vac',    label: 'Last Autovacuum', sortable: true, align: 'center', width: 210 },
+                        { key: 'action', label: 'Action',          sortable: true, align: 'center', width: 170 },
+                      ]}
+                      rows={sortRows(rows, bloatSort)}
+                      sort={bloatSort}
+                      onSort={(k) => setBloatSort((c) => nextSort(c, k))}
+                      unit="tables" emptyIcon="check" emptyTitle="No table bloat"
+                    />
+                  );
+                })()}
+              </div>
             )}
           </div>
         )}
@@ -3802,79 +3969,101 @@ const AdvancedStorageTab = memo(function AdvancedStorageTab({ detail, isLoading,
                 <p className="text-slate-400 text-sm mt-1">No tables overdue for vacuum</p>
               </div>
             ) : (
-              <Paged rows={vacuumNeeded} unit="tables">{(pageRows, pager) => (<>
-              <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50/50">
-                    {['Table','Live Tuples','Dead Tuples','Last Autovacuum','Last Manual Vacuum','Autovacuum Runs','Since Last'].map(h => (
-                      <th key={h} className="px-3 py-2.5 text-left text-[9px] font-bold text-slate-400 uppercase tracking-wide whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((v, i) => (
-                    <tr key={i} className={`border-t border-slate-50 hover:bg-amber-50/20 ${v.secs_since_vacuum > 86400*30 ? 'bg-red-50/20' : ''}`}>
-                      <td className="px-3 py-2.5 font-bold text-slate-800">
-                        <span className="text-slate-400 text-[10px]">{v.schemaname}.</span>{v.relname}
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-slate-600">{fmtNum(v.n_live_tup)}</td>
-                      <td className="px-3 py-2.5 font-mono font-bold text-amber-600">{fmtNum(v.n_dead_tup)}</td>
-                      <td className="px-3 py-2.5 text-slate-400">
-                        {v.last_autovacuum
-                          ? new Date(v.last_autovacuum).toLocaleDateString()
-                          : <span className="text-red-500 font-bold text-[9px]">NEVER</span>}
-                      </td>
-                      <td className="px-3 py-2.5 text-slate-400">
-                        {v.last_vacuum
-                          ? new Date(v.last_vacuum).toLocaleDateString()
-                          : <span className="text-slate-300">-</span>}
-                      </td>
-                      <td className="px-3 py-2.5 font-mono text-slate-600">{v.autovacuum_count}</td>
-                      <td className="px-3 py-2.5">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                          v.secs_since_vacuum > 86400*30 ? 'bg-red-100 text-red-700' :
-                          v.secs_since_vacuum > 86400*7  ? 'bg-amber-100 text-amber-700' :
-                          'bg-slate-100 text-slate-500'}`}>
-                          {fmtAge(v.secs_since_vacuum)}
+              <div className="p-card">
+                {(() => {
+                  const rows = vacuumNeeded.map((v, i) => ({
+                    key: `${v.schemaname}.${v.relname}-${i}`,
+                    sort: {
+                      name: `${v.schemaname}.${v.relname}`,
+                      live: Number(v.n_live_tup) || 0,
+                      dead: Number(v.n_dead_tup) || 0,
+                      auto: tsOf(v.last_autovacuum),
+                      manual: tsOf(v.last_vacuum),
+                      runs: Number(v.autovacuum_count) || 0,
+                      since: Number(v.secs_since_vacuum) || 0,
+                    },
+                    cells: {
+                      name: (
+                        <span className="text-[1rem] leading-[1.125rem] font-bold text-fg">
+                          <span style={AG_GRAY}>{v.schemaname}.</span>{v.relname}
                         </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {pager}
-              </>)}</Paged>
+                      ),
+                      live: <Muted>{fmtNum(v.n_live_tup)}</Muted>,
+                      dead: (
+                        <span className="text-[1rem] leading-[1.125rem] font-bold"
+                              style={{ color: 'var(--warning-fg)' }}>{fmtNum(v.n_dead_tup)}</span>
+                      ),
+                      auto: v.last_autovacuum
+                        ? <Muted>{new Date(v.last_autovacuum).toLocaleDateString()}</Muted>
+                        : <span className="text-[0.875rem] font-bold" style={{ color: 'var(--danger-fg)' }}>NEVER</span>,
+                      manual: v.last_vacuum
+                        ? <Muted>{new Date(v.last_vacuum).toLocaleDateString()}</Muted>
+                        : <Muted>—</Muted>,
+                      runs: <Muted>{v.autovacuum_count}</Muted>,
+                      since: (
+                        <Badge size="xs" tone={
+                          v.secs_since_vacuum > 86400 * 30 ? 'danger'
+                          : v.secs_since_vacuum > 86400 * 7 ? 'warning' : 'neutral'
+                        }>{fmtAge(v.secs_since_vacuum)}</Badge>
+                      ),
+                    },
+                  }));
+                  return (
+                    <PgTable
+                      columns={[
+                        { key: 'name',   label: 'Table',               sortable: true, width: 320 },
+                        { key: 'live',   label: 'Live Tuples',         sortable: true, align: 'center', width: 150 },
+                        { key: 'dead',   label: 'Dead Tuples',         sortable: true, align: 'center', width: 150 },
+                        { key: 'auto',   label: 'Last Autovacuum',     sortable: true, align: 'center', width: 180 },
+                        { key: 'manual', label: 'Last Manual Vacuum',  sortable: true, align: 'center', width: 200 },
+                        { key: 'runs',   label: 'Autovacuum Runs',     sortable: true, align: 'center', width: 180 },
+                        { key: 'since',  label: 'Since Last',          sortable: true, align: 'center', width: 160 },
+                      ]}
+                      rows={sortRows(rows, vacSort)}
+                      sort={vacSort}
+                      onSort={(k) => setVacSort((c) => nextSort(c, k))}
+                      unit="tables" emptyIcon="check" emptyTitle="All tables vacuumed recently"
+                    />
+                  );
+                })()}
+              </div>
             )}
           </div>
         )}
 
         {activeSection === 'spaces' && (
-          <div className="overflow-x-auto">
-            <Paged rows={tablespaces} unit="tablespaces">{(pageRows, pager) => (<>
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50">
-                  {['Name','Owner','Location','Size'].map(h => (
-                    <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((ts, i) => (
-                  <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/50">
-                    <td className="px-4 py-3 font-bold text-indigo-700">{ts.spcname}</td>
-                    <td className="px-4 py-3 text-slate-500">{ts.owner || '-'}</td>
-                    <td className="px-4 py-3 font-mono text-[11px] text-slate-400">{ts.location || <span className="text-slate-300">default</span>}</td>
-                    <td className="px-4 py-3 font-bold text-slate-800">{ts.size_pretty}</td>
-                  </tr>
-                ))}
-                {tablespaces.length === 0 && (
-                  <tr><td colSpan={4} className="text-center py-10 text-slate-400">No tablespace data</td></tr>
-                )}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
+          <div className="p-card">
+            {(() => {
+              const rows = tablespaces.map((ts, i) => ({
+                key: `${ts.spcname}-${i}`,
+                sort: {
+                  name: ts.spcname || '', owner: ts.owner || '',
+                  location: ts.location || '', size: Number(ts.size_bytes) || 0,
+                },
+                cells: {
+                  name: <Strong>{ts.spcname}</Strong>,
+                  owner: <Muted>{ts.owner || '—'}</Muted>,
+                  location: ts.location
+                    ? <span className="font-mono text-[0.875rem]" style={AG_GRAY}>{ts.location}</span>
+                    : <Muted>default</Muted>,
+                  size: <Strong>{ts.size_pretty}</Strong>,
+                },
+              }));
+              return (
+                <PgTable
+                  columns={[
+                    { key: 'name',     label: 'Name',     sortable: true, width: 220 },
+                    { key: 'owner',    label: 'Owner',    sortable: true, width: 200 },
+                    { key: 'location', label: 'Location', sortable: true, width: 420 },
+                    { key: 'size',     label: 'Size',     sortable: true, align: 'center', width: 150 },
+                  ]}
+                  rows={sortRows(rows, spcSort)}
+                  sort={spcSort}
+                  onSort={(k) => setSpcSort((c) => nextSort(c, k))}
+                  unit="tablespaces" emptyIcon="hard-drive" emptyTitle="No tablespace data"
+                />
+              );
+            })()}
           </div>
         )}
 
@@ -3905,29 +4094,36 @@ const AdvancedStorageTab = memo(function AdvancedStorageTab({ detail, isLoading,
             <HardDrive size={14} className="text-slate-400"/>
             <h3 className="font-black text-slate-700 text-[13px] uppercase tracking-wide">TOAST Storage ({toastTables.length} tables)</h3>
           </div>
-          <div className="overflow-x-auto">
-            <Paged rows={toastTables} unit="tables">{(pageRows, pager) => (<>
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/50">
-                  {['Table','TOAST Size'].map(h => (
-                    <th key={h} className="px-4 py-2.5 text-left text-[9px] font-bold text-slate-400 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {pageRows.map((t, i) => (
-                  <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/50">
-                    <td className="px-4 py-2.5 font-bold text-indigo-700">
-                      <span className="text-slate-400">{t.schemaname}.</span>{t.tablename}
-                    </td>
-                    <td className="px-4 py-2.5 font-bold text-slate-800">{t.toast_size}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {pager}
-            </>)}</Paged>
+          <div className="p-card">
+            {(() => {
+              const rows = toastTables.map((t, i) => ({
+                key: `${t.schemaname}.${t.tablename}-${i}`,
+                sort: {
+                  name: `${t.schemaname}.${t.tablename}`,
+                  size: Number(t.toast_bytes) || 0,
+                },
+                cells: {
+                  name: (
+                    <span className="text-[1rem] leading-[1.125rem] font-bold text-fg">
+                      <span style={AG_GRAY}>{t.schemaname}.</span>{t.tablename}
+                    </span>
+                  ),
+                  size: <Strong>{t.toast_size}</Strong>,
+                },
+              }));
+              return (
+                <PgTable
+                  columns={[
+                    { key: 'name', label: 'Table',      sortable: true, width: 480 },
+                    { key: 'size', label: 'TOAST Size', sortable: true, align: 'center', width: 180 },
+                  ]}
+                  rows={sortRows(rows, toastSort)}
+                  sort={toastSort}
+                  onSort={(k) => setToastSort((c) => nextSort(c, k))}
+                  unit="tables" emptyIcon="hard-drive" emptyTitle="No TOAST storage"
+                />
+              );
+            })()}
           </div>
         </div>
       )}
