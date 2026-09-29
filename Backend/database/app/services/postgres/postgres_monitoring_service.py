@@ -3264,29 +3264,40 @@ def _role_detail_inner(conn_id: int, role: str, db: Session, database: str = Non
     out["schemas"] = section("schemas", _schemas, [])
 
     # ── 4. table access (tables, views, matviews, partitioned, foreign) ──────
+    # MATERIALIZED is load-bearing, not a hint: without it PostgreSQL may run
+    # has_table_privilege() before the relkind filter and be handed an index,
+    # which raises '"x" is not a table'. The fence guarantees only table-like
+    # relations ever reach the privilege function.
+    _TABLE_RELS = (
+        "WITH rels AS MATERIALIZED ("
+        "  SELECT c.oid, c.relname, c.relkind, c.relowner, n.nspname"
+        "    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+        "   WHERE c.relkind IN ('r','p','v','m','f')"
+        "     AND n.nspname <> 'information_schema'"
+        "     AND NOT starts_with(n.nspname, 'pg_')"
+        ") "
+    )
+
     def _tables():
         total = _rows(engine,
-            "SELECT count(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            " WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname <> 'information_schema' "
-            "   AND NOT starts_with(n.nspname, 'pg_') "
-            "   AND has_table_privilege(:r, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')",
+            _TABLE_RELS +
+            "SELECT count(*) AS n FROM rels "
+            " WHERE has_table_privilege(:r, oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')",
             {"r": role})[0]["n"]
         rows = _rows(engine,
-            "SELECT n.nspname AS schema, c.relname AS name, c.relkind::text AS relkind, "
-            "       pg_get_userbyid(c.relowner) AS owner, "
-            "       has_table_privilege(:r, c.oid, 'SELECT')     AS p_select, "
-            "       has_table_privilege(:r, c.oid, 'INSERT')     AS p_insert, "
-            "       has_table_privilege(:r, c.oid, 'UPDATE')     AS p_update, "
-            "       has_table_privilege(:r, c.oid, 'DELETE')     AS p_delete, "
-            "       has_table_privilege(:r, c.oid, 'TRUNCATE')   AS p_truncate, "
-            "       has_table_privilege(:r, c.oid, 'REFERENCES') AS p_references, "
-            "       has_table_privilege(:r, c.oid, 'TRIGGER')    AS p_trigger "
-            "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            " WHERE c.relkind IN ('r','p','v','m','f') "
-            "   AND n.nspname <> 'information_schema' "
-            "   AND NOT starts_with(n.nspname, 'pg_') "
-            "   AND has_table_privilege(:r, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
-            " ORDER BY n.nspname, c.relname "
+            _TABLE_RELS +
+            "SELECT nspname AS schema, relname AS name, relkind::text AS relkind, "
+            "       pg_get_userbyid(relowner) AS owner, "
+            "       has_table_privilege(:r, oid, 'SELECT')     AS p_select, "
+            "       has_table_privilege(:r, oid, 'INSERT')     AS p_insert, "
+            "       has_table_privilege(:r, oid, 'UPDATE')     AS p_update, "
+            "       has_table_privilege(:r, oid, 'DELETE')     AS p_delete, "
+            "       has_table_privilege(:r, oid, 'TRUNCATE')   AS p_truncate, "
+            "       has_table_privilege(:r, oid, 'REFERENCES') AS p_references, "
+            "       has_table_privilege(:r, oid, 'TRIGGER')    AS p_trigger "
+            "  FROM rels "
+            " WHERE has_table_privilege(:r, oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+            " ORDER BY nspname, relname "
             f" LIMIT {_ROLE_OBJECT_LIMIT}", {"r": role})
         items = [{**dict(x), **{k: bool(x[k]) for k in
                   ("p_select", "p_insert", "p_update", "p_delete",
@@ -3297,16 +3308,26 @@ def _role_detail_inner(conn_id: int, role: str, db: Session, database: str = Non
 
     # ── 5. sequence access ───────────────────────────────────────────────────
     def _sequences():
+        # Same fence as _tables(). This one is not hypothetical: without it the
+        # planner called has_sequence_privilege() on pg_stat_statements_info (a
+        # VIEW the extension creates outside a pg_ schema) and the whole section
+        # failed with '"pg_stat_statements_info" is not a sequence'.
         rows = _rows(engine,
-            "SELECT n.nspname AS schema, c.relname AS name, "
-            "       pg_get_userbyid(c.relowner) AS owner, "
-            "       has_sequence_privilege(:r, c.oid, 'USAGE')  AS p_usage, "
-            "       has_sequence_privilege(:r, c.oid, 'SELECT') AS p_select, "
-            "       has_sequence_privilege(:r, c.oid, 'UPDATE') AS p_update "
-            "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            " WHERE c.relkind = 'S' AND NOT starts_with(n.nspname, 'pg_') "
-            "   AND has_sequence_privilege(:r, c.oid, 'USAGE,SELECT,UPDATE') "
-            " ORDER BY n.nspname, c.relname "
+            "WITH seqs AS MATERIALIZED ("
+            "  SELECT c.oid, c.relname, c.relowner, n.nspname"
+            "    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+            "   WHERE c.relkind = 'S'"
+            "     AND n.nspname <> 'information_schema'"
+            "     AND NOT starts_with(n.nspname, 'pg_')"
+            ") "
+            "SELECT nspname AS schema, relname AS name, "
+            "       pg_get_userbyid(relowner) AS owner, "
+            "       has_sequence_privilege(:r, oid, 'USAGE')  AS p_usage, "
+            "       has_sequence_privilege(:r, oid, 'SELECT') AS p_select, "
+            "       has_sequence_privilege(:r, oid, 'UPDATE') AS p_update "
+            "  FROM seqs "
+            " WHERE has_sequence_privilege(:r, oid, 'USAGE,SELECT,UPDATE') "
+            " ORDER BY nspname, relname "
             f" LIMIT {_ROLE_OBJECT_LIMIT}", {"r": role})
         return [{**dict(x), **{k: bool(x[k]) for k in ("p_usage", "p_select", "p_update")}}
                 for x in rows]
@@ -3314,10 +3335,17 @@ def _role_detail_inner(conn_id: int, role: str, db: Session, database: str = Non
 
     # ── 6. function / procedure access ───────────────────────────────────────
     def _functions():
+        # pg_proc rows are all callable, so there is no type mismatch to guard
+        # against here — but fencing keeps the shape identical to the other two
+        # and costs nothing.
         total = _rows(engine,
-            "SELECT count(*) AS n FROM pg_proc pr JOIN pg_namespace n ON n.oid = pr.pronamespace "
-            " WHERE n.nspname <> 'information_schema' AND NOT starts_with(n.nspname, 'pg_') "
-            "   AND has_function_privilege(:r, pr.oid, 'EXECUTE')", {"r": role})[0]["n"]
+            "WITH fns AS MATERIALIZED ("
+            "  SELECT pr.oid FROM pg_proc pr JOIN pg_namespace n ON n.oid = pr.pronamespace"
+            "   WHERE n.nspname <> 'information_schema'"
+            "     AND NOT starts_with(n.nspname, 'pg_')"
+            ") "
+            "SELECT count(*) AS n FROM fns "
+            " WHERE has_function_privilege(:r, oid, 'EXECUTE')", {"r": role})[0]["n"]
         rows = _rows(engine,
             "SELECT n.nspname AS schema, pr.proname AS name, "
             "       pg_get_function_identity_arguments(pr.oid) AS args, "
