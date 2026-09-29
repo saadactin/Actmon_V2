@@ -3130,6 +3130,311 @@ def svc_config_detail(conn_id: int, db: Session):
 #  10. Users Detail
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  Role detail — "what can this role actually do?"
+# ═════════════════════════════════════════════════════════════════════════════
+# Everything here answers EFFECTIVE access, not direct grants, and it does so by
+# asking PostgreSQL rather than re-implementing its rules. has_*_privilege()
+# already folds in:
+#   * privileges granted directly to the role
+#   * privileges inherited through role membership (when rolinherit is set)
+#   * privileges granted to PUBLIC
+#   * superuser status
+# A hand-rolled ACL walk over pg_class.relacl would have to reproduce all four
+# and would drift from the server's own semantics the first time they changed.
+#
+# Two consequences the UI has to be told about, because silence would mislead:
+#
+#  1. A SUPERUSER passes every has_*_privilege() check. The result is correct but
+#     it is not a list of grants — it means "this role bypasses privilege checks
+#     entirely". `via_superuser` is returned so the UI can say that rather than
+#     implying somebody granted 400 tables one by one.
+#
+#  2. Schema, table, sequence and function privileges are PER-DATABASE and only
+#     visible from inside that database. Database-level CONNECT/CREATE/TEMP come
+#     from the shared pg_database catalog so they cover every database; the
+#     object sections describe ONE database, named in `inspected_database`. The
+#     caller can pass ?database= to inspect another, reusing the same
+#     _pg_engine_db() the Tables tab already uses.
+#
+# Security: rolpassword is never selected. pg_roles masks it anyway, but this
+# code also never touches pg_authid, so no hash or verifier can reach the API
+# even by accident.
+
+_ROLE_OBJECT_LIMIT = 500   # per object class; total is reported separately
+
+
+def _role_exists(engine, role: str) -> bool:
+    rows = _rows(engine, "SELECT 1 FROM pg_roles WHERE rolname = :r", {"r": role})
+    return bool(rows)
+
+
+def svc_pg_role_detail(conn_id: int, role: str, db: Session, database: str = None):
+    """Bounded wrapper — see _role_detail_inner."""
+    from app.services.common.query_timeout import run_with_timeout, timeout_error
+    return run_with_timeout(
+        _role_detail_inner, conn_id, role, db, database,
+        default={**timeout_error(), "role": role},
+        label="pg_role_detail",
+    )
+
+
+def _role_detail_inner(conn_id: int, role: str, db: Session, database: str = None):
+    rec = db.query(ConnectionMaster).filter(
+        ConnectionMaster.id == conn_id,
+        ConnectionMaster.db_type == "postgresql",
+    ).first()
+    if not rec:
+        raise HTTPException(404, "Connection not found")
+
+    target_db = (database or rec.database_name or "postgres").strip()
+    try:
+        engine = _pg_engine_db(rec, target_db)
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e), "role": role}
+
+    if not _role_exists(engine, role):
+        raise HTTPException(404, f"Role '{role}' not found on this server")
+
+    errors = []
+    out = {
+        "status": "success",
+        "role": role,
+        "inspected_database": target_db,
+    }
+
+    def section(name, fn, default):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{name}: {e}")
+            return default
+
+    # ── 1. attributes ────────────────────────────────────────────────────────
+    def _attrs():
+        r = _rows(engine,
+            "SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, "
+            "       rolcanlogin, rolreplication, rolbypassrls, rolconfig, "
+            "       CASE WHEN rolconnlimit < 0 THEN NULL ELSE rolconnlimit END AS rolconnlimit, "
+            "       rolvaliduntil::text AS rolvaliduntil, "
+            "       (rolvaliduntil IS NOT NULL AND rolvaliduntil < now()) AS expired "
+            "  FROM pg_roles WHERE rolname = :r", {"r": role})[0]
+        d = dict(r)
+        for k in ("rolsuper", "rolinherit", "rolcreaterole", "rolcreatedb",
+                  "rolcanlogin", "rolreplication", "rolbypassrls", "expired"):
+            d[k] = bool(d.get(k))
+        cfg = d.get("rolconfig")
+        d["rolconfig"] = list(cfg) if cfg else []
+        return d
+    out["attributes"] = section("attributes", _attrs, {})
+    is_super = bool(out["attributes"].get("rolsuper"))
+    out["via_superuser"] = is_super
+
+    # ── 2. database access (every database — pg_database is shared) ──────────
+    def _dbs():
+        rows = _rows(engine,
+            "SELECT d.datname, "
+            "       pg_get_userbyid(d.datdba) AS owner, "
+            "       d.datallowconn, "
+            "       has_database_privilege(:r, d.datname, 'CONNECT')  AS can_connect, "
+            "       has_database_privilege(:r, d.datname, 'CREATE')   AS can_create, "
+            "       has_database_privilege(:r, d.datname, 'TEMP')     AS can_temp "
+            "  FROM pg_database d "
+            " WHERE NOT d.datistemplate "
+            " ORDER BY d.datname", {"r": role})
+        return [{**dict(x),
+                 "datallowconn": bool(x["datallowconn"]),
+                 "can_connect": bool(x["can_connect"]),
+                 "can_create": bool(x["can_create"]),
+                 "can_temp": bool(x["can_temp"])} for x in rows]
+    out["databases"] = section("databases", _dbs, [])
+
+    # ── 3. schema access ─────────────────────────────────────────────────────
+    def _schemas():
+        rows = _rows(engine,
+            "SELECT n.nspname, pg_get_userbyid(n.nspowner) AS owner, "
+            "       has_schema_privilege(:r, n.nspname, 'USAGE')  AS usage, "
+            "       has_schema_privilege(:r, n.nspname, 'CREATE') AS create "
+            "  FROM pg_namespace n "
+            " WHERE n.nspname <> 'information_schema' "
+            "   AND NOT starts_with(n.nspname, 'pg_') "
+            " ORDER BY n.nspname", {"r": role})
+        return [{**dict(x), "usage": bool(x["usage"]), "create": bool(x["create"])}
+                for x in rows]
+    out["schemas"] = section("schemas", _schemas, [])
+
+    # ── 4. table access (tables, views, matviews, partitioned, foreign) ──────
+    def _tables():
+        total = _rows(engine,
+            "SELECT count(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            " WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname <> 'information_schema' "
+            "   AND NOT starts_with(n.nspname, 'pg_') "
+            "   AND has_table_privilege(:r, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')",
+            {"r": role})[0]["n"]
+        rows = _rows(engine,
+            "SELECT n.nspname AS schema, c.relname AS name, c.relkind::text AS relkind, "
+            "       pg_get_userbyid(c.relowner) AS owner, "
+            "       has_table_privilege(:r, c.oid, 'SELECT')     AS p_select, "
+            "       has_table_privilege(:r, c.oid, 'INSERT')     AS p_insert, "
+            "       has_table_privilege(:r, c.oid, 'UPDATE')     AS p_update, "
+            "       has_table_privilege(:r, c.oid, 'DELETE')     AS p_delete, "
+            "       has_table_privilege(:r, c.oid, 'TRUNCATE')   AS p_truncate, "
+            "       has_table_privilege(:r, c.oid, 'REFERENCES') AS p_references, "
+            "       has_table_privilege(:r, c.oid, 'TRIGGER')    AS p_trigger "
+            "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            " WHERE c.relkind IN ('r','p','v','m','f') "
+            "   AND n.nspname <> 'information_schema' "
+            "   AND NOT starts_with(n.nspname, 'pg_') "
+            "   AND has_table_privilege(:r, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+            " ORDER BY n.nspname, c.relname "
+            f" LIMIT {_ROLE_OBJECT_LIMIT}", {"r": role})
+        items = [{**dict(x), **{k: bool(x[k]) for k in
+                  ("p_select", "p_insert", "p_update", "p_delete",
+                   "p_truncate", "p_references", "p_trigger")}} for x in rows]
+        return {"total": int(total or 0), "items": items,
+                "truncated": int(total or 0) > len(items)}
+    out["tables"] = section("tables", _tables, {"total": 0, "items": [], "truncated": False})
+
+    # ── 5. sequence access ───────────────────────────────────────────────────
+    def _sequences():
+        rows = _rows(engine,
+            "SELECT n.nspname AS schema, c.relname AS name, "
+            "       pg_get_userbyid(c.relowner) AS owner, "
+            "       has_sequence_privilege(:r, c.oid, 'USAGE')  AS p_usage, "
+            "       has_sequence_privilege(:r, c.oid, 'SELECT') AS p_select, "
+            "       has_sequence_privilege(:r, c.oid, 'UPDATE') AS p_update "
+            "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            " WHERE c.relkind = 'S' AND NOT starts_with(n.nspname, 'pg_') "
+            "   AND has_sequence_privilege(:r, c.oid, 'USAGE,SELECT,UPDATE') "
+            " ORDER BY n.nspname, c.relname "
+            f" LIMIT {_ROLE_OBJECT_LIMIT}", {"r": role})
+        return [{**dict(x), **{k: bool(x[k]) for k in ("p_usage", "p_select", "p_update")}}
+                for x in rows]
+    out["sequences"] = section("sequences", _sequences, [])
+
+    # ── 6. function / procedure access ───────────────────────────────────────
+    def _functions():
+        total = _rows(engine,
+            "SELECT count(*) AS n FROM pg_proc pr JOIN pg_namespace n ON n.oid = pr.pronamespace "
+            " WHERE n.nspname <> 'information_schema' AND NOT starts_with(n.nspname, 'pg_') "
+            "   AND has_function_privilege(:r, pr.oid, 'EXECUTE')", {"r": role})[0]["n"]
+        rows = _rows(engine,
+            "SELECT n.nspname AS schema, pr.proname AS name, "
+            "       pg_get_function_identity_arguments(pr.oid) AS args, "
+            "       CASE pr.prokind WHEN 'p' THEN 'procedure' WHEN 'a' THEN 'aggregate' "
+            "            WHEN 'w' THEN 'window' ELSE 'function' END AS kind, "
+            "       pg_get_userbyid(pr.proowner) AS owner, "
+            "       has_function_privilege(:r, pr.oid, 'EXECUTE') AS p_execute "
+            "  FROM pg_proc pr JOIN pg_namespace n ON n.oid = pr.pronamespace "
+            " WHERE n.nspname <> 'information_schema' AND NOT starts_with(n.nspname, 'pg_') "
+            "   AND has_function_privilege(:r, pr.oid, 'EXECUTE') "
+            " ORDER BY n.nspname, pr.proname "
+            f" LIMIT {_ROLE_OBJECT_LIMIT}", {"r": role})
+        items = [{**dict(x), "p_execute": bool(x["p_execute"])} for x in rows]
+        return {"total": int(total or 0), "items": items,
+                "truncated": int(total or 0) > len(items)}
+    out["functions"] = section("functions", _functions, {"total": 0, "items": [], "truncated": False})
+
+    # ── 7. memberships, both directions ──────────────────────────────────────
+    def _member_of():
+        rows = _rows(engine,
+            "SELECT g.rolname AS role_name, am.admin_option, g.rolinherit AS grantor_inherits, "
+            "       g.rolsuper AS grantor_is_super "
+            "  FROM pg_auth_members am "
+            "  JOIN pg_roles g ON g.oid = am.roleid "
+            "  JOIN pg_roles m ON m.oid = am.member "
+            " WHERE m.rolname = :r ORDER BY g.rolname", {"r": role})
+        return [{**dict(x), "admin_option": bool(x["admin_option"]),
+                 "grantor_inherits": bool(x["grantor_inherits"]),
+                 "grantor_is_super": bool(x["grantor_is_super"])} for x in rows]
+
+    def _members():
+        rows = _rows(engine,
+            "SELECT m.rolname AS member_name, am.admin_option, m.rolinherit AS member_inherits, "
+            "       m.rolcanlogin AS member_can_login "
+            "  FROM pg_auth_members am "
+            "  JOIN pg_roles g ON g.oid = am.roleid "
+            "  JOIN pg_roles m ON m.oid = am.member "
+            " WHERE g.rolname = :r ORDER BY m.rolname", {"r": role})
+        return [{**dict(x), "admin_option": bool(x["admin_option"]),
+                 "member_inherits": bool(x["member_inherits"]),
+                 "member_can_login": bool(x["member_can_login"])} for x in rows]
+
+    out["member_of"] = section("member_of", _member_of, [])
+    out["members"] = section("members", _members, [])
+
+    # ── 8. object ownership ──────────────────────────────────────────────────
+    def _ownership():
+        rels = _rows(engine,
+            "SELECT c.relkind::text AS relkind, count(*) AS n "
+            "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            " WHERE pg_get_userbyid(c.relowner) = :r "
+            "   AND NOT starts_with(n.nspname, 'pg_') AND n.nspname <> 'information_schema' "
+            " GROUP BY c.relkind", {"r": role})
+        by_kind = {x["relkind"]: int(x["n"]) for x in rels}
+        dbs = _rows(engine,
+            "SELECT count(*) AS n FROM pg_database WHERE pg_get_userbyid(datdba) = :r "
+            "  AND NOT datistemplate", {"r": role})[0]["n"]
+        schemas = _rows(engine,
+            "SELECT count(*) AS n FROM pg_namespace WHERE pg_get_userbyid(nspowner) = :r "
+            "  AND NOT starts_with(nspname, 'pg_') AND nspname <> 'information_schema'",
+            {"r": role})[0]["n"]
+        funcs = _rows(engine,
+            "SELECT count(*) AS n FROM pg_proc pr JOIN pg_namespace n ON n.oid = pr.pronamespace "
+            " WHERE pg_get_userbyid(pr.proowner) = :r "
+            "   AND NOT starts_with(n.nspname, 'pg_') AND n.nspname <> 'information_schema'",
+            {"r": role})[0]["n"]
+        return {
+            "databases": int(dbs or 0),
+            "schemas": int(schemas or 0),
+            "tables": by_kind.get("r", 0) + by_kind.get("p", 0),
+            "views": by_kind.get("v", 0),
+            "materialized_views": by_kind.get("m", 0),
+            "sequences": by_kind.get("S", 0),
+            "indexes": by_kind.get("i", 0) + by_kind.get("I", 0),
+            "foreign_tables": by_kind.get("f", 0),
+            "functions": int(funcs or 0),
+        }
+    out["ownership"] = section("ownership", _ownership, {})
+
+    # ── 9. active sessions ───────────────────────────────────────────────────
+    def _sessions():
+        rows = _rows(engine,
+            "SELECT pid, datname, usename, client_addr::text AS client_addr, "
+            "       application_name, state, wait_event_type, wait_event, "
+            "       backend_start::text AS backend_start, query_start::text AS query_start, "
+            "       CASE WHEN query_start IS NULL THEN NULL ELSE "
+            "         GREATEST(EXTRACT(EPOCH FROM (clock_timestamp() - query_start)), 0)::int END AS query_age_s, "
+            "       left(query, 300) AS query "
+            "  FROM pg_stat_activity "
+            " WHERE usename = :r AND pid <> pg_backend_pid() "
+            " ORDER BY backend_start DESC NULLS LAST LIMIT 100", {"r": role})
+        return [dict(x) for x in rows]
+    out["sessions"] = section("sessions", _sessions, [])
+
+    # ── 10. one-line summary of what this role can actually do ───────────────
+    tbl = out["tables"]
+    out["effective_summary"] = {
+        "via_superuser": is_super,
+        "inherits": bool(out["attributes"].get("rolinherit")),
+        "can_login": bool(out["attributes"].get("rolcanlogin")),
+        "databases_connectable": sum(1 for d in out["databases"] if d.get("can_connect")),
+        "databases_total": len(out["databases"]),
+        "schemas_usable": sum(1 for x in out["schemas"] if x.get("usage")),
+        "schemas_total": len(out["schemas"]),
+        "tables_accessible": tbl.get("total", 0),
+        "sequences_accessible": len(out["sequences"]),
+        "functions_executable": out["functions"].get("total", 0),
+        "member_of_count": len(out["member_of"]),
+        "members_count": len(out["members"]),
+        "active_sessions": len(out["sessions"]),
+    }
+
+    if errors:
+        out["errors"] = errors
+    return out
+
+
 def svc_users_detail(conn_id: int, db: Session):
     from app.utils.agent_cache import get_snapshot as _get_snap
     _cached = _get_snap(conn_id, "pg_users_detail", db)

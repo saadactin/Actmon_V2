@@ -5,7 +5,7 @@ All business logic lives in app/services/postgres/postgres_monitoring_service.py
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.services.postgres.postgres_monitoring_service import (
     svc_table_structure,
     svc_config_detail,
     svc_users_detail,
+    svc_pg_role_detail,
     svc_storage_detail,
     # svc functions 12–15
     svc_analyze_slow_query_groq,
@@ -178,6 +179,24 @@ def route_config_detail(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/users-detail")
 def route_users_detail(conn_id: int, db: Session = Depends(get_db)):
     return svc_users_detail(conn_id, db)
+
+
+# ── 10b. Role Detail ──────────────────────────────────────────────────────────
+# One role, in depth: attributes, effective privileges, memberships, ownership
+# and live sessions. Separate from users-detail on purpose — it is far more
+# expensive and only wanted when somebody opens a specific role.
+#
+# `database` selects which database's schema/table/sequence/function privileges
+# to report; those are per-database and only visible from inside that database.
+# Database-level CONNECT/CREATE/TEMP always cover every database.
+@router.get("/{conn_id}/role-detail")
+def route_pg_role_detail(
+    conn_id: int,
+    role: str = Query(..., min_length=1, description="pg_roles.rolname to inspect"),
+    database: str = Query(None, description="Database whose object privileges to report"),
+    db: Session = Depends(get_db),
+):
+    return svc_pg_role_detail(conn_id, role, db, database)
 
 
 # ── 11. Storage Detail ────────────────────────────────────────────────────────

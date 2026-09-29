@@ -32,6 +32,7 @@ import Pagination from '@/components/ui/Pagination';
 import { Paged } from '@/components/ui/Pagination';
 import DataTable, { EmptyState as TableEmptyState, nextSort, sortRows } from '@/components/ui/Table';
 import StatTile from '@/components/charts/StatTile';
+import RoleDetailDrawer from './RoleDetailDrawer';
 import Badge from '@/components/ui/Badge';
 import usePaged from '@/hooks/usePaged';
 import {
@@ -738,7 +739,7 @@ export default function PostgreSQLDashboard() {
 
         {/* ══ USERS ══ */}
         {activeTab === 'users' && (
-          <AdvancedUsersTab detail={usersDetail} isLoading={usersLoading} refetch={refetchUsers} />
+          <AdvancedUsersTab detail={usersDetail} isLoading={usersLoading} refetch={refetchUsers} connId={id} />
         )}
 
         {/* ══ STORAGE ══ */}
@@ -3266,9 +3267,10 @@ const AdvancedConfigTab = memo(function AdvancedConfigTab({ detail, isLoading, r
 /* ══════════════════════════════════════════════════════════════════════════
    ADVANCED USERS TAB
 ══════════════════════════════════════════════════════════════════════════ */
-const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, refetch }) {
+const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, refetch, connId }) {
   const [activeSection, setActiveSection] = React.useState('roles');
   const [roleSort, setRoleSort] = React.useState({ key: 'rolname', dir: 'asc' });
+  const [openRole, setOpenRole] = React.useState(null);   // Role Details drawer
   const [actSort,  setActSort]  = React.useState({ key: 'total', dir: 'desc' });
   const [memSort,  setMemSort]  = React.useState({ key: 'role_name', dir: 'asc' });
   const [objSort,  setObjSort]  = React.useState({ key: 'total', dir: 'desc' });
@@ -3357,6 +3359,8 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
           ];
           const roleRows = roles.map((r, i) => ({
             key: `${r.rolname}-${i}`,
+            // Click a role to open its full effective-privilege breakdown.
+            onClick: () => setOpenRole(r.rolname),
             sort: {
               rolname: r.rolname || '',
               perms: FLAGS.filter(([, k]) => r[k]).length,
@@ -3422,6 +3426,10 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
                 loading={isLoading}
                 empty={<TableEmptyState icon="users" title="No roles found" />}
               />
+              <p className="mt-2 text-[11.5px] text-muted">
+                Select a role to see its effective access — databases, schemas, tables,
+                sequences, functions, memberships, ownership and live sessions.
+              </p>
             </div>
           );
         })()}
@@ -3561,6 +3569,17 @@ const AdvancedUsersTab = memo(function AdvancedUsersTab({ detail, isLoading, ref
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
           {d.errors.map((e,i) => <p key={i} className="text-[10px] font-mono text-amber-600">{e}</p>)}
         </div>
+      )}
+
+      {/* Role Details — opens on a row click in Roles & Permissions. Mounted
+          only while a role is selected, so its queries never run otherwise. */}
+      {openRole && (
+        <RoleDetailDrawer
+          connId={connId}
+          role={openRole}
+          open={!!openRole}
+          onClose={() => setOpenRole(null)}
+        />
       )}
     </div>
   );
