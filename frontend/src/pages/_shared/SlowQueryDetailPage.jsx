@@ -15,6 +15,7 @@ import { Panel, SqlBlock, StatCell } from '@/pages/_shared/enginePanels';
 import { fmtNumber, fmtDateTime } from '@/config/dbCatalog';
 import { engineFor, fmtMs, SEVERITY_TONES, SEVERITY_LABELS } from '@/config/slowQueryCatalog';
 import { SeverityBadge, AiAnalysisResult } from './SlowQueriesPage';
+import PgQueryAnalysis from '@/pages/postgresql/PgQueryAnalysis';
 import PlanDiagram from './PlanDiagram';
 import { pgTree, mysqlTree, oracleTree, mongoTree } from './planTree';
 
@@ -762,6 +763,9 @@ export default function SlowQueryDetailPage({ tech }) {
         )}
       />
 
+      {engine.hasPgWorkspace ? (
+        <PgQueryAnalysis engine={engine} id={id} row={row} />
+      ) : (
       <div className="space-y-gutter">
         <Step n={1} title="The query" subtitle="What it is and what it costs today">
           <div className="flex items-start gap-2">
@@ -813,6 +817,7 @@ export default function SlowQueryDetailPage({ tech }) {
           </>
         )}
       </div>
+      )}
     </>
   );
 }

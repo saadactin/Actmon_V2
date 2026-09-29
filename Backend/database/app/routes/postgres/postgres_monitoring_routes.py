@@ -3,13 +3,16 @@ PostgreSQL Monitoring routes — thin handlers only.
 All business logic lives in app/services/postgres/postgres_monitoring_service.py
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
+from app.services.postgres import postgres_slow_query_analysis_service as pg_analysis
 from app.services.postgres.postgres_monitoring_service import (
     # Pydantic models
     PgSlowQueryGroqRequest,
@@ -223,6 +226,76 @@ def route_explain_analyze(
     db:      Session = Depends(get_db),
 ):
     return svc_explain_analyze(conn_id, payload, db)
+
+
+# ── 13a. Query analysis workspace ─────────────────────────────────────────────
+
+class PgAnalyzeFullRequest(BaseModel):
+    sql_text:      str
+    db_name:       Optional[str] = None
+    # "estimate" plans without executing; "analyze" really runs the statement
+    # and is refused server-side for anything that is not a plain read,
+    # whatever the client sends.
+    mode:          str = "estimate"
+    count_calls:   Optional[int]   = 0
+    avg_exec_ms:   Optional[float] = 0.0
+    max_exec_ms:   Optional[float] = 0.0
+    total_exec_ms: Optional[float] = 0.0
+    rows_returned: Optional[int]   = 0
+
+
+class PgAnalyzeContextRequest(PgSlowQueryGroqRequest):
+    # The analyze-full response, passed back so the model reasons from the
+    # plan and the real catalogue rather than the statement text alone.
+    analysis: Dict[str, Any] = {}
+
+
+@router.post("/{conn_id}/pg-slow-queries/analyze-full")
+def route_pg_analyze_full(
+    conn_id: int,
+    payload: PgAnalyzeFullRequest,
+    db:      Session = Depends(get_db),
+):
+    """The deterministic half of the Query Analysis page: EXPLAIN (plain by
+    default — it executes nothing), the query's own tables' catalogue
+    metadata, an index-coverage check and a rule-based diagnosis. Read-only.
+    No LLM call, so opening a query never waits on an external service."""
+    if payload.mode not in ("estimate", "analyze"):
+        raise HTTPException(status_code=400, detail="mode must be 'estimate' or 'analyze'.")
+    if not (payload.sql_text or "").strip():
+        raise HTTPException(status_code=400, detail="sql_text is required.")
+
+    metrics = {
+        "count_calls":   payload.count_calls,
+        "avg_exec_ms":   payload.avg_exec_ms,
+        "max_exec_ms":   payload.max_exec_ms,
+        "total_exec_ms": payload.total_exec_ms,
+        "rows_returned": payload.rows_returned,
+    }
+    return pg_analysis.analyze_query_full(
+        conn_id, payload.sql_text, payload.db_name, metrics, db, mode=payload.mode,
+    )
+
+
+@router.post("/{conn_id}/pg-slow-queries/analyze-context")
+def route_pg_analyze_context(
+    conn_id: int,
+    payload: PgAnalyzeContextRequest,
+    db:      Session = Depends(get_db),
+):
+    """The AI half — the same Groq call as /analyze-groq, but handed the
+    evidence bundle from /analyze-full. /analyze-groq is left untouched and
+    still backs the simpler AI panels elsewhere."""
+    analysis = payload.analysis or {}
+    base = PgSlowQueryGroqRequest(**{
+        k: v for k, v in payload.dict().items() if k != "analysis"
+    })
+    # The plan rows are what the existing prompt already knows how to read;
+    # handing it the flattened nodes means no second prompt to maintain.
+    explain = analysis.get("explain") or {}
+    if explain.get("nodes") and not base.explain_rows:
+        base.explain_rows = explain["nodes"]
+    return svc_analyze_slow_query_groq(conn_id, base, db)
 
 
 # ── 14. Error Logs ────────────────────────────────────────────────────────────

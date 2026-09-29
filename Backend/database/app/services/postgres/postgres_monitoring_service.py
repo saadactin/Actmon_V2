@@ -650,6 +650,10 @@ class PgSlowQueryGroqRequest(BaseModel):
 class PgExplainRequest(BaseModel):
     sql_text: str
     database: Optional[str] = None
+    # EXPLAIN ANALYZE executes the statement for real. It is therefore opt-in,
+    # and the server re-checks that the statement is a plain read before
+    # honouring it — a client cannot talk its way into running a DELETE.
+    analyze: bool = False
 
 
 class ErrorAnalysisRequest(BaseModel):
@@ -3976,9 +3980,22 @@ def svc_explain_analyze(conn_id: int, payload: PgExplainRequest, db: Session):
     if default_db not in dbs_to_try:
         dbs_to_try.append(default_db)
 
+    # Plain EXPLAIN unless ANALYZE was explicitly requested *and* the statement
+    # is safe to run. Previously this tried ANALYZE first for everything, which
+    # meant "show me the plan" silently re-executed writes.
+    from app.services.postgres.postgres_slow_query_analysis_service import is_safe_to_execute
+    want_analyze = bool(getattr(payload, "analyze", False))
+    declined = ""
+    if want_analyze:
+        safe, reason = is_safe_to_execute(sql_clean)
+        if not safe:
+            want_analyze, declined = False, reason
+
     for db_name in dbs_to_try:
         eng = _pg_engine_db(rec, db_name) if db_name != default_db else engine
-        if _try_explain(eng, True) or _try_explain(eng, False):
+        # A failed ANALYZE still falls back to the estimated plan, so a user who
+        # asked for the real thing on an unrunnable statement still sees one.
+        if (want_analyze and _try_explain(eng, True)) or _try_explain(eng, False):
             used_db = db_name
             break
 
@@ -4014,6 +4031,8 @@ def svc_explain_analyze(conn_id: int, payload: PgExplainRequest, db: Session):
         return {
             "status":         "success",
             "analyzed":       analyzed,
+            "mode":           "analyze" if analyzed else "estimate",
+            "analyze_declined_reason": declined,
             "planning_time":  planning_time,
             "execution_time": execution_time,
             "nodes":          nodes,

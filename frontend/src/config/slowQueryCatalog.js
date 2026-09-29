@@ -55,9 +55,20 @@ export const SLOW_QUERY_ENGINES = {
       byId: (id, qid) => `/connections/postgresql/${id}/pg-slow-queries/${encodeURIComponent(qid)}`,
       analyzeGroq: (id) => `/connections/postgresql/${id}/pg-slow-queries/analyze-groq`,
       explainSql: (id) => `/connections/postgresql/${id}/pg-slow-queries/explain-analyze`,
+      // Query Analysis workspace: the deterministic pass (EXPLAIN + the
+      // query's own tables/indexes + coverage + diagnosis), then a separate
+      // Groq call fed that evidence — see
+      // postgres_slow_query_analysis_service.py.
+      analyzeFull: (id) => `/connections/postgresql/${id}/pg-slow-queries/analyze-full`,
+      analyzeContext: (id) => `/connections/postgresql/${id}/pg-slow-queries/analyze-context`,
       enableExtension: (id) => `/connections/postgresql/${id}/enable-pg-stat-statements`,
     },
     hasExplain: true,
+    // PostgreSQL has its own Query Analysis workspace (PgQueryAnalysis.jsx).
+    // Distinct from MySQL's `hasFullAnalysis` because the two render entirely
+    // different plan shapes — a PG node tree versus MySQL's per-table access
+    // rows — and sharing one component would mean neither fits.
+    hasPgWorkspace: true,
     setupGuide: 'pg_stat_statements',
     sourceLabel: (data) => (data?.pg_stat_statements_available === false
       ? 'pg_stat_activity — live sessions (limited; enable pg_stat_statements for full history)'
