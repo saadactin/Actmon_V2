@@ -35,7 +35,7 @@ window.matchMedia = window.matchMedia || (q => ({ matches: false, media: q,
 // but only once the document has finished parsing — injecting mid-parse leaves
 // readyState at 'loading', so the app's DOMContentLoaded listener never fires.
 function inject() {
-  for (const f of ['actmon-data.js', 'actmon-samples.js', 'actmon-scene.js', 'actmon-envs.js', 'actmon-app.js']) {
+  for (const f of ['actmon-data.js', 'actmon-samples.js', 'actmon-engines.js', 'actmon-scene.js', 'actmon-envs.js', 'actmon-app.js']) {
     const s = doc.createElement('script');
     s.textContent = fs.readFileSync(path.join(DIR, f), 'utf8');
     doc.body.appendChild(s);

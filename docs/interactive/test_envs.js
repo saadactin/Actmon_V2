@@ -109,7 +109,7 @@ const sandbox = {
 sandbox.window.document = sandbox.document;
 vm.createContext(sandbox);
 
-['actmon-data.js', 'actmon-samples.js', 'actmon-scene.js', 'actmon-envs.js'].forEach(f => {
+['actmon-data.js', 'actmon-samples.js', 'actmon-engines.js', 'actmon-scene.js', 'actmon-envs.js'].forEach(f => {
   vm.runInContext(fs.readFileSync(path.join(DIR, f), 'utf8'), sandbox, { filename: f });
 });
 

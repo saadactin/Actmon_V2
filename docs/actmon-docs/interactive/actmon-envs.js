@@ -607,6 +607,104 @@ E.engine_postgresql = function (ctx) {
   };
 };
 
+/** Any engine other than PostgreSQL. Built from that engine's OWN tab list,
+    so the scene's size and shape follow the product: Oracle's twenty sections
+    fill two rings, Cosmos DB's nine fill one. The central structure differs by
+    engine family — a document store is not drawn as stacked relational
+    platters — so entering MySQL and entering MongoDB do not look alike. */
+E.engine_generic = function (ctx) {
+  var eng = ctx.level.engineData || {};
+  var tabs = (ctx.level.engineTabs || []);
+  var col = eng.color != null ? eng.color : 0x35c3f3;
+
+  floor(ctx, col, 280, 54, -13);
+  horizon(ctx, col, 124, -12.7);
+
+  // Central identity, by family rather than one shape recoloured.
+  var core;
+  if (eng.id === 'mongodb') {
+    // A document store: loose leaves, not fixed platters.
+    // Loose faceted documents, deliberately not a neat stack — a document
+    // store has no fixed row shape, and using the same primitive as
+    // ClickHouse's columns would make the two engines look alike.
+    core = new THREE.Group();
+    for (var d = 0; d < 9; d++) {
+      var doc = new THREE.Mesh(new THREE.OctahedronGeometry(0.95, 0), AS.G.mat(col, { emissiveIntensity: 0.26, flat: true }));
+      var da = (d / 9) * Math.PI * 2;
+      doc.position.set(Math.cos(da) * (1.6 + (d % 3) * 0.9), (d - 4) * 0.8, Math.sin(da) * (1.6 + (d % 3) * 0.9));
+      doc.rotation.set(d * 0.5, d * 0.31, d * 0.17);
+      core.add(doc);
+    }
+    core.add(AS.G.glow(col, 5.8, 0.05));
+  } else if (eng.id === 'clickhouse') {
+    // Columnar: vertical columns of differing height, which is the point.
+    core = new THREE.Group();
+    for (var c2 = 0; c2 < 9; c2++) {
+      var a2 = (c2 / 9) * Math.PI * 2;
+      var h2 = 3 + ((c2 * 5) % 7);
+      var colm = new THREE.Mesh(new THREE.BoxGeometry(0.75, h2, 0.75), AS.G.mat(col, { emissiveIntensity: 0.22 }));
+      colm.position.set(Math.cos(a2) * 2.4, h2 / 2 - 3, Math.sin(a2) * 2.4);
+      core.add(colm);
+    }
+    core.add(AS.G.glow(col, 5.4, 0.05));
+  } else if (eng.id === 'cosmosdb') {
+    core = G.cloud(col, 1.5);
+  } else {
+    core = G.database(col, 2.1);            // relational engines
+  }
+  core.position.y = 2;
+  ctx.group.add(core);
+  ctx.spinners.push({ obj: core, speed: 0.06 });
+  ctx.labels.add(core, { name: eng.label || 'Engine', sub: eng.note || '', nearAt: 999, midAt: 999, tone: 'accent' });
+
+  // A partial engine keeps its amber ring here too, so the caveat travels
+  // with the reader into the level rather than living only in a panel.
+  if (eng.status === 'partial') {
+    var warn = new THREE.Mesh(new THREE.TorusGeometry(6.2, 0.09, 6, 56),
+      new THREE.MeshBasicMaterial({ color: 0xf2b23c, transparent: true, opacity: 0.8 }));
+    warn.rotation.x = Math.PI / 2; warn.position.y = -2;
+    ctx.group.add(warn);
+  }
+
+  // One ring up to twelve sections, two beyond — Oracle's twenty would be
+  // unreadable on a single circle.
+  var split = tabs.length > 12;
+  var inner = split ? tabs.slice(0, Math.ceil(tabs.length / 2)) : tabs;
+  var outer = split ? tabs.slice(Math.ceil(tabs.length / 2)) : [];
+
+  function placeRing(list, radius, y) {
+    var pts = ring(list.length, radius, y);
+    list.forEach(function (t, i) {
+      var g = G.slab(col, 3.8, 1.1, 3, { emissiveIntensity: 0.16 });
+      g.position.copy(pts[i]);
+      g.rotation.y = -Math.atan2(pts[i].z, pts[i].x) + Math.PI / 2;
+      var post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 5, 8),
+        new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.45 }));
+      post.position.y = 3.1; g.add(post);
+      if (t.conditional) {
+        // A tab that only appears on some instances is drawn as an outline,
+        // not a solid — it is not always there.
+        var dash = new THREE.Mesh(new THREE.TorusGeometry(2.4, 0.05, 6, 32),
+          new THREE.MeshBasicMaterial({ color: 0xf2b23c, transparent: true, opacity: 0.7 }));
+        dash.rotation.x = Math.PI / 2; dash.position.y = 0.6; g.add(dash);
+      }
+      pick(ctx, g, { kind: 'enginetab', id: t.id, label: t.label, color: col, focus: pts[i], data: t, engine: eng },
+        { name: t.label, sub: t.what, cta: 'Click for detail', lift: 6, nearAt: 44, midAt: 124, hitRadius: 3.4,
+          tone: t.conditional ? 'warn' : undefined });
+      spoke(ctx, V(0, 2, 0), pts[i], col, { opacity: 0.16, lift: 3 });
+    });
+  }
+  placeRing(inner, split ? 30 : 34, 0);
+  if (outer.length) placeRing(outer, 48, 8);
+
+  return {
+    pose: { az: 0.55, el: 0.4, dist: split ? 126 : 104, tx: 0, ty: 2, tz: 0 },
+    limits: [28, 250], fog: 0.0044,
+    title: eng.label || 'Engine',
+    subtitle: tabs.length + ' dashboard sections' + (eng.status === 'partial' ? ' — via the MySQL path' : ''),
+  };
+};
+
 /* ═══════════════════════════════════════════════════════════════════════
    LEVEL 4 — feature environments
    ═══════════════════════════════════════════════════════════════════════ */

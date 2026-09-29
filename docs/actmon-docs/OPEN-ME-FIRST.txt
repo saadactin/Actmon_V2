@@ -45,9 +45,21 @@ picture with a new title:
     -> inside a domain (databases, cloud, infrastructure, agents, alerts,
        logs, access control)
       -> inside a database technology
-        -> inside PostgreSQL, with all 16 of its dashboard sections
+        -> inside its dashboard sections
           -> inside one section, such as Slow Queries or Replication
             -> inside one record: a single query, role or log event
+
+All eight database technologies are explorable, each with the sections its
+own dashboard actually has, in its own wording:
+
+  PostgreSQL       16 sections   (+ a Query Analysis detail page)
+  Oracle           20 sections   (five appear only on RAC, ASM or CDB)
+  SQL Server       16 sections   ("Logins" and "Always On", its own terms)
+  MySQL            15 sections   (including Binary Logs)
+  MariaDB          15 sections   (through the MySQL path — see below)
+  MongoDB          14 sections   (Collections, Oplog, Sharding, WiredTiger)
+  ClickHouse       13 sections   (Partitions, Merges, Replicas)
+  Azure Cosmos DB   9 sections   (Containers, Indexing, Request Units)
 
 The shapes carry meaning. A table's size is its real size on disk. A slow
 query's width is its total cost, so the most expensive statement is visibly
@@ -75,6 +87,10 @@ Points that the document states plainly rather than glossing over:
   * Google Cloud is not supported. Only AWS, Azure and Oracle Cloud are.
   * Redis is not a monitored database. It is used inside ACTMON itself.
   * MariaDB works through the MySQL path and has no screen of its own.
+  * PostgreSQL is the one technology traced section by section. For the
+    others the section LIST is verified from the product, and each entry
+    explains what that section is for — but not every control inside it.
+    The document says this on every screen where it applies.
   * 25 of the 43 alert rule types cannot fire yet. That is ACTMON's own
     assessment, taken from its source code.
 

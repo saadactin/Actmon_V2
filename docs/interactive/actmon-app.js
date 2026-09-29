@@ -18,9 +18,17 @@
 
 var D = window.ACTMON;
 var SM = window.ACTMON_SAMPLES;
+var EN = window.ACTMON_ENGINES;
 var AS = window.AScene;
 var ENV = window.AEnvs;
 var HAS3D = typeof THREE !== 'undefined' && !!AS && !!ENV;
+
+/** That engine's own dashboard sections, or [] if it has none recorded. */
+function tabsFor(engineId) {
+  var e = EN && EN.ENGINE_TABS[engineId];
+  return e ? e.tabs : [];
+}
+function engineMeta(engineId) { return (EN && EN.ENGINE_TABS[engineId]) || null; }
 var GS = typeof gsap !== 'undefined' ? gsap : null;
 
 /* ── state ─────────────────────────────────────────────────────────────── */
@@ -165,7 +173,12 @@ function envKeyFor(level) {
   if (!level) return null;
   if (level.type === 'overview') return 'universe';
   if (level.type === 'module') return ENV.MODULE_ENVS[level.id] || null;
-  if (level.type === 'engine') return level.id === 'postgresql' ? 'engine_postgresql' : null;
+  if (level.type === 'engine') {
+    // PostgreSQL has its own hand-built environment; every other engine
+    // gets one composed from its own tab list.
+    return level.id === 'postgresql' ? 'engine_postgresql'
+      : tabsFor(level.id).length ? 'engine_generic' : null;
+  }
   if (level.type === 'feature') {
     if (level.kind !== 'pgtab') return null;
     return ENV.FEATURE_ENVS[level.id] || 'feat_generic';
@@ -287,6 +300,7 @@ function renderProximity() {
 function kindLabel(k) {
   return {
     module: 'Monitoring domain', engine: 'Database technology', pgtab: 'PostgreSQL section',
+    enginetab: 'Dashboard section',
     provider: 'Cloud provider', infratab: 'Host tab', collect: 'Collection method',
     alerttier: 'Alert tier', channel: 'Notification channel', bit: 'Permission bit',
     query: 'Illustrative query', table: 'Illustrative table', index: 'Illustrative index',
@@ -352,6 +366,7 @@ function titleOf(l) {
   if (l.type === 'module') { var m = byId(D.MODULES, l.id); return m ? m.label : l.id; }
   if (l.type === 'engine') { var e = byId(D.ENGINES, l.id); return e ? e.label : l.id; }
   if (l.type === 'feature') {
+    if (l.kind === 'enginetab') return (l.featureData && l.featureData.label) || l.label || l.id;
     var f = byId(D.PG_TABS, l.id) || byId(D.PROVIDERS, l.id) || byId(D.INFRA_TABS, l.id)
       || byId(D.ENGINES, l.id) || byId(D.CHANNELS, l.id);
     return f ? f.label : (l.label || l.id);
@@ -394,10 +409,10 @@ function enterNode(node) {
 function childLevelFor(node) {
   switch (node.kind) {
     case 'module': return { type: 'module', id: node.id };
-    case 'engine': return node.id === 'postgresql'
-      ? { type: 'engine', id: 'postgresql' }
-      : { type: 'feature', id: node.id, kind: 'engine' };
+    case 'engine': return engineLevel(node.id);
     case 'pgtab': return { type: 'feature', id: node.id, kind: 'pgtab', featureData: node.data };
+    case 'enginetab': return { type: 'feature', id: node.id, kind: 'enginetab',
+      featureData: node.data, engineId: node.engine && node.engine.id, label: node.label };
     case 'provider': return { type: 'feature', id: node.id, kind: 'provider' };
     case 'infratab': return { type: 'feature', id: node.id, kind: 'infratab' };
     case 'collect': return { type: 'feature', id: node.id, kind: 'collect', label: node.label };
@@ -417,6 +432,15 @@ function childLevelFor(node) {
     case 'host': return recordLevel('host', node, node.data, node.data.name, 'Illustrative host');
     default: return null;
   }
+}
+
+/** A level-2 engine level, carrying what its environment needs to build. */
+function engineLevel(id) {
+  var e = byId(D.ENGINES, id);
+  if (id === 'postgresql') return { type: 'engine', id: id };
+  var tabs = tabsFor(id);
+  if (!tabs.length) return { type: 'feature', id: id, kind: 'engine' };
+  return { type: 'engine', id: id, engineData: e, engineTabs: tabs };
 }
 
 function recordLevel(kind, node, rec, title, subtitle) {
@@ -542,7 +566,9 @@ function renderPanel() {
     renderModulePanel(body, m); head = { k: 'Module · ' + m.route, t: m.label, s: m.blurb };
   } else if (lv.type === 'engine') {
     var e = byId(D.ENGINES, lv.id);
-    renderEnginePanel(body, e); head = { k: 'Technology · ' + e.route, t: e.label, s: e.note };
+    if (lv.id === 'postgresql') renderEnginePanel(body, e);
+    else renderOtherEnginePanel(body, e, lv);
+    head = { k: 'Technology · ' + e.route, t: e.label, s: e.note };
   } else if (lv.type === 'feature') head = renderFeaturePanel(body, lv);
   else if (lv.type === 'record') head = renderRecordPanel(body, lv);
   else if (lv.type === 'walkthrough') {
@@ -568,7 +594,8 @@ function renderNodePanel(body, n) {
   var chips = illustrative ? sampleChip() : (d.status ? statusChip(d.status) : '');
   if (chips) body.appendChild(sec(null, '<div class="chips">' + chips + '</div>'));
 
-  if (n.kind === 'module' || n.kind === 'engine' || n.kind === 'pgtab' || n.kind === 'provider' || n.kind === 'infratab') {
+  if (n.kind === 'module' || n.kind === 'engine' || n.kind === 'pgtab' || n.kind === 'provider'
+    || n.kind === 'infratab' || n.kind === 'enginetab') {
     body.appendChild(sec('What it is', '<p>' + esc(d.what || d.blurb || d.note || '') + '</p>'));
     if (d.why) body.appendChild(sec('Why it matters', '<p>' + esc(d.why) + '</p>'));
   } else if (n.kind === 'query') {
@@ -648,11 +675,7 @@ function renderModulePanel(body, m) {
   if (m.children === 'engines') {
     body.appendChild(sec('Database technologies', navList(D.ENGINES.map(function (e) {
       return { label: e.label, sub: e.note, color: e.color, status: e.status, _e: e };
-    }), function (it) {
-      selected = null;
-      if (it._e.id === 'postgresql') go({ type: 'engine', id: 'postgresql' });
-      else go({ type: 'feature', id: it._e.id, kind: 'engine' });
-    })));
+    }), function (it) { selected = null; go(engineLevel(it._e.id)); })));
     body.appendChild(sec('Capability comparison', comparison()));
     body.appendChild(sec('Explicitly not supported', D.NOT_ENGINES.map(function (n) {
       return '<div class="note bad" style="margin-bottom:8px"><b>' + esc(n.label) + ' — ' + esc(n.verdict) + '</b><br />' + esc(n.detail) + '</div>';
@@ -751,7 +774,73 @@ function renderEnginePanel(body, e) {
   body.appendChild(sec('Source', '<p class="srcline">' + esc(e.src) + '</p>'));
 }
 
+/** Any engine other than PostgreSQL. Same structure as its PostgreSQL
+    equivalent, with the depth caveat stated rather than implied. */
+function renderOtherEnginePanel(body, e, lv) {
+  var meta = engineMeta(e.id) || {};
+  var tabs = lv.engineTabs || tabsFor(e.id);
+
+  body.appendChild(sec(null, '<div class="chips">' + statusChip(e.status)
+    + '<span class="chip">' + esc(e.route) + '</span>'
+    + '<span class="chip info">' + tabs.length + ' dashboard sections</span>'
+    + '<span class="chip ' + (e.direct ? 'ok' : 'info') + '">' + (e.direct ? 'agent or direct' : 'agent only') + '</span>'
+    + '</div>'));
+  body.appendChild(sec('What is implemented', '<p>' + esc(e.note) + '</p>'));
+  if (meta.shared) body.appendChild(sec(null, '<div class="note warn"><b>Shared path.</b> ' + esc(meta.shared) + '</div>'));
+  if (meta.note) body.appendChild(sec('Worth knowing', '<div class="note">' + esc(meta.note) + '</div>'));
+
+  body.appendChild(sec('Dashboard sections', navList(tabs.map(function (t) {
+    return {
+      label: t.label + (t.conditional ? '  (conditional)' : ''), sub: t.what,
+      color: e.color, _t: t,
+    };
+  }), function (it) {
+    selected = null;
+    go({ type: 'feature', id: it._t.id, kind: 'enginetab', featureData: it._t, engineId: e.id, label: it._t.label });
+  })));
+
+  if (meta.conditional && meta.conditional.length) {
+    body.appendChild(sec('Sections that appear only on some instances',
+      meta.conditional.map(function (c) {
+        return '<div class="privrow"><code>' + esc(c.label) + '</code><span>' + esc(c.when) + '</span></div>';
+      }).join('')
+      + '<p class="srcline">Drawn with an amber outline in the scene, because they are not always there.</p>'));
+  }
+
+  body.appendChild(sec('Compare', comparison()));
+  body.appendChild(sec(null, '<div class="note warn"><b>Depth.</b> ' + esc(EN.ENGINE_DEPTH_NOTE) + '</div>'));
+  body.appendChild(sec('Source', '<p class="srcline">' + esc(e.src) + '</p>'));
+}
+
 function renderFeaturePanel(body, lv) {
+  if (lv.kind === 'enginetab') {
+    var et = lv.featureData || {};
+    var eng = byId(D.ENGINES, lv.engineId) || {};
+    body.appendChild(sec(null, '<div class="chips">' + statusChip(eng.status || 'implemented')
+      + '<span class="chip">' + esc(eng.label || '') + '</span>'
+      + (et.conditional ? '<span class="chip warn">Conditional section</span>' : '') + '</div>'));
+    body.appendChild(sec('What it does', '<p>' + esc(et.what || '') + '</p>'));
+    if (et.why) body.appendChild(sec('Why it matters', '<p>' + esc(et.why) + '</p>'));
+    if (et.conditional) body.appendChild(sec('When it appears', '<div class="note warn">' + esc(et.conditional) + '</div>'));
+    if (et.note) body.appendChild(sec('Worth knowing', '<div class="note warn">' + esc(et.note) + '</div>'));
+
+    // Where this engine's section has a PostgreSQL counterpart with a full
+    // environment, offer it — the concept transfers even when the wording
+    // does not, and that is the deepest material available.
+    var twin = byId(D.PG_TABS, lv.id) || byId(D.PG_TABS, String(lv.id).replace('index-analysis', 'indexes'));
+    if (twin && ENV.FEATURE_ENVS[twin.id]) {
+      body.appendChild(sec('The same idea, explored in depth', navList([{
+        label: 'PostgreSQL · ' + twin.label, sub: 'A full 3D environment for this concept', color: 0x4a9fd8, _t: twin,
+      }], function (it) {
+        selected = null;
+        stack = [{ type: 'overview' }, { type: 'module', id: 'database' }, { type: 'engine', id: 'postgresql' }];
+        go({ type: 'feature', id: it._t.id, kind: 'pgtab', featureData: it._t });
+      })));
+    }
+    body.appendChild(sec(null, '<div class="note warn"><b>Depth.</b> ' + esc(EN.ENGINE_DEPTH_NOTE) + '</div>'));
+    return { k: (eng.label || 'Engine') + ' · dashboard tab', t: et.label || lv.label || lv.id, s: et.what || '' };
+  }
+
   var t = byId(D.PG_TABS, lv.id);
   if (t && lv.kind === 'pgtab') {
     body.appendChild(sec(null, '<div class="chips">' + statusChip(t.status)
@@ -1014,6 +1103,22 @@ function buildIndex() {
       pre: [{ type: 'module', id: 'database' }, { type: 'engine', id: 'postgresql' }],
     });
   });
+  // Every other engine's sections are searchable too, labelled with the
+  // engine so "Always On" and "Replication" stay distinguishable.
+  if (EN) {
+    Object.keys(EN.ENGINE_TABS).forEach(function (eid) {
+      var eng = byId(D.ENGINES, eid);
+      if (!eng) return;
+      EN.ENGINE_TABS[eid].tabs.forEach(function (t) {
+        INDEX.push({
+          label: t.label, ctx: eng.label, kw: t.what + ' ' + (t.why || '') + ' ' + eng.label,
+          go: { type: 'feature', id: t.id, kind: 'enginetab', featureData: t, engineId: eid, label: t.label },
+          pre: [{ type: 'module', id: 'database' }, null],   // filled below
+          engineId: eid,
+        });
+      });
+    });
+  }
   D.PROVIDERS.forEach(function (p) {
     INDEX.push({
       label: p.label, ctx: 'Cloud provider', kw: p.resources.join(' ') + ' ' + (ALIASES[p.id] || ''),
@@ -1063,7 +1168,10 @@ function runSearch(q) {
 }
 
 function jump(h) {
-  stack = [{ type: 'overview' }].concat(h.pre || []);
+  // An engine-tab hit carries a placeholder for its engine level, because the
+  // level object has to be built at navigation time rather than at index time.
+  var pre = (h.pre || []).map(function (p) { return p === null ? engineLevel(h.engineId) : p; });
+  stack = [{ type: 'overview' }].concat(pre);
   future = []; selected = null;
   stack.push(h.go);
   render();
@@ -1185,6 +1293,19 @@ function renderFlat() {
     });
   group('PostgreSQL sections', D.PG_TABS.map(function (t) { return { label: t.label, sub: t.what, status: t.status, _t: t }; }),
     function (it) { selected = null; pgFeature(it._t.id); render(); });
+  if (EN) {
+    Object.keys(EN.ENGINE_TABS).forEach(function (eid) {
+      var eng = byId(D.ENGINES, eid);
+      if (!eng) return;
+      group(eng.label + ' sections', EN.ENGINE_TABS[eid].tabs.map(function (t) {
+        return { label: t.label, sub: t.what, _t: t };
+      }), function (it) {
+        selected = null;
+        stack = [{ type: 'overview' }, { type: 'module', id: 'database' }, engineLevel(eid)];
+        go({ type: 'feature', id: it._t.id, kind: 'enginetab', featureData: it._t, engineId: eid, label: it._t.label });
+      });
+    });
+  }
   group('Cloud providers', D.PROVIDERS.map(function (p) { return { label: p.label, sub: p.resources.length + ' resource types', status: p.status, _p: p }; }),
     function (it) { stack = [{ type: 'overview' }, { type: 'module', id: 'cloud' }]; selected = null; go({ type: 'feature', id: it._p.id, kind: 'provider' }); });
   group('Infrastructure host tabs', D.INFRA_TABS.map(function (t) { return { label: t.label, sub: t.what, _t: t }; }),

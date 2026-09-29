@@ -33,6 +33,7 @@ library and opens in the 2D view with the full content intact.
 | `index.html` | Page shell, type scale, all UI chrome |
 | `actmon-data.js` | Verified content — every fact, with the source file it came from |
 | `actmon-samples.js` | SAMPLE MODE — deterministic illustrative records |
+| `actmon-engines.js` | Every non-PostgreSQL engine's dashboard sections |
 | `actmon-scene.js` | 3D substrate: camera controller, label LOD, geometry factory |
 | `actmon-envs.js` | One builder per explorable environment |
 | `actmon-app.js` | Level stack, panels, search, tour, 2D fallback, keyboard |
@@ -97,6 +98,33 @@ and demote when occluded, so nothing is permanently glued to anything.
 
 Honours `prefers-reduced-motion` automatically.
 
+## All eight database technologies
+
+Each engine gets its own level-2 environment built from **its own** dashboard
+sections, read from that engine's nav config — so the vocabulary is the
+product's, not normalised:
+
+| Engine | Sections | Notable |
+|---|---|---|
+| PostgreSQL | 16 (+1 detail page) | The one traced section by section |
+| Oracle | 20 | Five appear only on RAC / ASM / CDB; Data Guard only when detected |
+| SQL Server | 16 | Says **Logins** and **Always On**, not Users and Replication |
+| MySQL | 15 | Includes **Binary Logs** — no PostgreSQL equivalent |
+| MariaDB | 15 | Partial: rides the MySQL path, no route of its own |
+| MongoDB | 14 | Collections, Oplog, Sharding, WiredTiger |
+| ClickHouse | 13 | Partitions, Merges, Replicas |
+| Azure Cosmos DB | 9 | Containers, Indexing, Request Units |
+
+The scene follows the product: Oracle's twenty sections need two rings,
+Cosmos DB's nine fit on one, and a conditional section is drawn as an amber
+outline because it is not always there. Central structures differ by family —
+MongoDB is loose faceted documents, ClickHouse is uneven columns, the
+relational engines are stacked platters.
+
+**Depth is disclosed, not implied.** The section *inventory* is verified for
+every engine. Per-section internals were traced exhaustively for PostgreSQL
+only, and every other engine's panels say so.
+
 ## Bespoke environments
 
 Eleven PostgreSQL sections have a purpose-built 3D environment: Overview,
@@ -150,6 +178,9 @@ Three suites, run with `node`:
   data really drives geometry.
 - `test_doc.js` — 72 assertions driving the document in jsdom (2D fallback path)
 - `test_accept.js` — the 14 acceptance tests, with the 3D path active
+- `test_engines.js` — per-engine: tab counts match the nav configs, vocabulary
+  is preserved, every section explains itself, each engine builds a distinct
+  environment, conditional sections are marked
 
 ## Known limitations
 
@@ -159,8 +190,9 @@ Three suites, run with `node`:
 - Verified against the `actmon_sept22` branch. It will drift as the product
   changes; `actmon-data.js` records a source path per node so re-checking is
   mechanical.
-- Per-engine depth was traced exhaustively for PostgreSQL. The other six
-  engines are documented at dashboard level.
+- Per-engine depth was traced exhaustively for PostgreSQL. The other seven are
+  documented at section level: the list is verified, the descriptions explain
+  what each section is for rather than every control inside it.
 - `Reports` and `Diagnose` are confirmed as registered PostgreSQL tabs; their
   internal depth was not exhaustively traced, and the document says so.
 - Cost-API coverage is described from each provider's capability declaration

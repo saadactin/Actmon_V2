@@ -92,7 +92,7 @@ const rawRaf = window.requestAnimationFrame.bind(window);
 window.requestAnimationFrame = cb => (frames++ < 4 ? rawRaf(cb) : 0);
 
 function inject() {
-  for (const f of ['actmon-data.js', 'actmon-samples.js', 'actmon-scene.js', 'actmon-envs.js', 'actmon-app.js']) {
+  for (const f of ['actmon-data.js', 'actmon-samples.js', 'actmon-engines.js', 'actmon-scene.js', 'actmon-envs.js', 'actmon-app.js']) {
     const s = doc.createElement('script');
     s.textContent = fs.readFileSync(path.join(DIR, f), 'utf8');
     doc.body.appendChild(s);
