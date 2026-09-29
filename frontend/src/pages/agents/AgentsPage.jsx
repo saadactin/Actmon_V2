@@ -9,7 +9,9 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Badge from '@/components/ui/Badge';
-import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import Table, {
+  EmptyState, nextSort, sortRows, CELL_SIZE, CELL_TEXT, CELL_TEXT_STYLE,
+} from '@/components/ui/Table';
 import Pagination, { pageCountOf, paginate } from '@/components/ui/Pagination';
 import { useThemeStore } from '@/theme/themeStore';
 import { bandFor } from '@/components/charts/status';
@@ -41,21 +43,6 @@ const STATUS_BADGE_COLORS = {
   danger: { bg: 'var(--agent-red-soft)', fg: 'var(--agent-red-fg)' },
   warning: { bg: 'var(--agent-yellow-soft)', fg: 'var(--agent-yellow-fg)' },
 };
-
-/** The list view's shared 16px/18px-lh cell size (Figma "Cell"). Font-weight
-    and colour are layered on top separately per column rather than folded
-    in here — same-specificity Tailwind weight classes (font-medium vs
-    font-semibold) aren't guaranteed to override one another by JSX order,
-    so a column that needs its own weight (Utilisation's font-semibold) adds
-    it alongside this rather than fighting a baked-in one. */
-const CELL_SIZE = 'whitespace-nowrap text-[1rem] leading-[1.125rem]';
-/** Default cell text — 16px/500/#6B7280 — for columns with no more specific
-    typography of their own (the bold Agent/Host name, the coloured Status
-    pill, and the banded CPU/Memory percentages each carry their own). */
-const CELL_TEXT = cn(CELL_SIZE, 'font-medium');
-/** `var(--agent-gray)` is the same #6B7280 pinned for the Environment
-    column, so one token drives both. */
-const CELL_TEXT_STYLE = { color: 'var(--agent-gray)' };
 
 /**
  * Monitored systems.

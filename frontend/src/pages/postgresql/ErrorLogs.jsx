@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Paged } from '@/components/ui/Pagination';
+import cn from '@/lib/cn';
+import Table, {
+  EmptyState, nextSort, sortRows, CELL_SIZE, CELL_TEXT, CELL_TEXT_STYLE,
+} from '@/components/ui/Table';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -18,6 +22,10 @@ import {
 import client from '@/api/client';
 import PageHeader from '@/components/layout/PageHeader';
 import { PageLoading } from '@/components/ui/Loading';
+
+/** Agents-list cell metrics, monospaced — timestamps and PIDs are read
+    digit by digit but still sit on the list's 16px/18px baseline. */
+const CELL_MONO = 'whitespace-nowrap font-mono text-[1rem] leading-[1.125rem]';
 
 const REFRESH_MS  = 10000;
 const SEVS        = ['ALL', 'FATAL', 'ERROR', 'WARNING', 'LOG', 'INFO', 'DEBUG'];
@@ -51,6 +59,7 @@ export default function ErrorLogs() {
   const [sev, setSev]                   = useState('ALL');
   const [search, setSearch]             = useState('');
   const [expanded, setExpanded]         = useState(null);
+  const [logSort, setLogSort] = useState({ key: 'timestamp', dir: 'desc' });
   const [lastRefresh, setLastRefresh]   = useState(Date.now());
   const [sinceStr, setSinceStr]         = useState('0s ago');
   const [aiEntry, setAiEntry]           = useState(null);   // log entry being analyzed
@@ -558,123 +567,100 @@ log_min_error_statement = error`}</pre>
               <p className="text-slate-400 text-sm">No entries match the current filter</p>
             </div>
           ) : (
-            <div className="overflow-auto max-h-[680px]">
-              <Paged rows={filtered} unit="log entries">{(pageRows, pager) => (<>
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
-                  <tr>
-                    <th className="w-8" />
-                    <th className="px-4 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Timestamp</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Severity</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">DB · User</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">PID</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400">Message</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">AI</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((log, i) => {
-                    const cfg  = SEV_CFG[log.severity] || SEV_CFG.INFO;
-                    const Icon = cfg.icon;
-                    const isExp = expanded === i;
-                    const hasDetail = log.detail || log.hint || log.query || log.context || log.location || log.sql_state;
-                    return (
-                      <React.Fragment key={i}>
-                        <tr
-                          onClick={() => hasDetail && setExpanded(isExp ? null : i)}
-                          className={`border-t border-slate-100 ${cfg.row} ${hasDetail ? 'cursor-pointer hover:brightness-95' : ''} ${isExp ? 'border-l-2 border-l-blue-400' : ''}`}>
-                          <td className="w-8 pl-3 text-slate-300">
-                            {hasDetail && (isExp ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}
-                          </td>
-                          <td className="px-4 py-2.5 font-mono text-slate-500 whitespace-nowrap text-[11px]">
-                            {fmtTs(log.timestamp)}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${cfg.badge}`}>
-                              <Icon size={9} />{log.raw_severity || log.severity}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 whitespace-nowrap">
-                            {log.database && <span className="text-blue-700 font-semibold">{log.database}</span>}
-                            {log.database && log.user && <span className="text-slate-300 mx-1">·</span>}
-                            {log.user && <span className="text-slate-500">{log.user}</span>}
-                            {!log.database && !log.user && <span className="text-slate-300">—</span>}
-                          </td>
-                          <td className="px-3 py-2.5 font-mono text-slate-400 text-[11px]">{log.pid || '—'}</td>
-                          <td className="px-3 py-2.5 text-slate-700 max-w-xl">
-                            <p className="truncate max-w-[360px]">{log.message || '—'}</p>
-                            {log.detail && !isExp && (
-                              <p className="text-slate-400 text-[10px] truncate max-w-[360px] mt-0.5">Detail: {log.detail}</p>
-                            )}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <button
-                              onClick={e => { e.stopPropagation(); analyzeError(log); }}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-[10px] font-bold hover:from-violet-600 hover:to-indigo-700 transition-all shadow-sm whitespace-nowrap"
-                              title="Analyze with Actmon AI">
-                              <Sparkles size={9} /> Analyze
-                            </button>
-                          </td>
-                        </tr>
-                        {isExp && (
-                          <tr className="border-t border-blue-100 bg-slate-900">
-                            <td colSpan={6} className="px-5 py-4">
-                              <div className="space-y-3">
-                                {/* Meta row */}
-                                <div className="flex flex-wrap gap-2 text-[10px]">
-                                  {log.sql_state && (
-                                    <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300 font-mono">
-                                      SQL State: {log.sql_state}
-                                    </span>
-                                  )}
-                                  {log.command_tag && (
-                                    <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300">
-                                      Cmd: {log.command_tag}
-                                    </span>
-                                  )}
-                                  {log.application && (
-                                    <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300">
-                                      App: {log.application}
-                                    </span>
-                                  )}
-                                  {log.session_id && (
-                                    <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300 font-mono">
-                                      Session: {log.session_id}
-                                    </span>
-                                  )}
-                                </div>
-
-                                {/* Message */}
-                                <DetailBlock label="Message" color="text-white" content={log.message} />
-                                {log.detail   && <DetailBlock label="Detail"   color="text-blue-300"  content={log.detail} />}
-                                {log.hint     && <DetailBlock label="Hint"     color="text-green-300" content={log.hint} />}
-                                {log.context  && <DetailBlock label="Context"  color="text-amber-300" content={log.context} />}
-                                {log.location && <DetailBlock label="Location" color="text-slate-400" content={log.location} />}
-                                {log.query    && (
-                                  <div>
-                                    <div className="flex items-center justify-between mb-1">
-                                      <span className="text-[10px] font-bold text-slate-400 uppercase">Query</span>
-                                      <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(log.query); }}
-                                        className="flex items-center gap-1 px-2 py-0.5 bg-slate-700 rounded text-[10px] text-slate-300 hover:bg-slate-600">
-                                        <Copy size={9} /> Copy
-                                      </button>
-                                    </div>
-                                    <pre className="font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all bg-slate-800 rounded-lg p-3 max-h-40 overflow-y-auto">
-                                      {log.query}
-                                    </pre>
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-              {pager}
-              </>)}</Paged>
+            <div className="px-card pb-card">
+              {(() => {
+                const rows = filtered.map((log, i) => {
+                  const cfg = SEV_CFG[log.severity] || SEV_CFG.INFO;
+                  const SevIcon = cfg.icon;
+                  const isExp = expanded === i;
+                  const hasDetail = log.detail || log.hint || log.query || log.context
+                    || log.location || log.sql_state;
+                  return {
+                    key: i,
+                    onClick: hasDetail ? () => setExpanded(isExp ? null : i) : undefined,
+                    sort: {
+                      timestamp: log.timestamp ? new Date(log.timestamp).getTime() : 0,
+                      severity: log.raw_severity || log.severity || '',
+                      who: `${log.database || ''} ${log.user || ''}`.trim(),
+                      pid: Number(log.pid) || 0,
+                      message: log.message || '',
+                    },
+                    cells: {
+                      chevron: hasDetail
+                        ? (isExp ? <ChevronUp size={14} style={CELL_TEXT_STYLE} />
+                                 : <ChevronDown size={14} style={CELL_TEXT_STYLE} />)
+                        : null,
+                      timestamp: (
+                        <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>
+                          {fmtTs(log.timestamp)}
+                        </span>
+                      ),
+                      severity: (
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[0.8125rem] font-bold border ${cfg.badge}`}>
+                          <SevIcon size={11} />{log.raw_severity || log.severity}
+                        </span>
+                      ),
+                      who: (log.database || log.user) ? (
+                        <span className={CELL_SIZE}>
+                          {log.database && <span className="font-bold text-fg">{log.database}</span>}
+                          {log.database && log.user && <span style={CELL_TEXT_STYLE}> · </span>}
+                          {log.user && <span className="font-medium" style={CELL_TEXT_STYLE}>{log.user}</span>}
+                        </span>
+                      ) : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
+                      pid: (
+                        <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>
+                          {log.pid || '—'}
+                        </span>
+                      ),
+                      message: (
+                        <div className="min-w-0">
+                          <p className="truncate max-w-[520px] text-[1rem] leading-[1.125rem] font-medium text-fg">
+                            {log.message || '—'}
+                          </p>
+                          {log.detail && !isExp && (
+                            <p className="truncate max-w-[520px] mt-1 text-[0.8125rem]" style={CELL_TEXT_STYLE}>
+                              Detail: {log.detail}
+                            </p>
+                          )}
+                        </div>
+                      ),
+                      ai: (
+                        <button
+                          onClick={e => { e.stopPropagation(); analyzeError(log); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-[0.8125rem] font-bold hover:from-violet-600 hover:to-indigo-700 transition-all shadow-sm whitespace-nowrap"
+                          title="Analyze with Actmon AI">
+                          <Sparkles size={11} /> Analyze
+                        </button>
+                      ),
+                    },
+                    // Only the open row builds its panel; the rest pass nothing,
+                    // so Table renders one <tr> for them exactly as before.
+                    expanded: isExp ? <ErrorLogDetail log={log} /> : null,
+                  };
+                });
+                return (
+                  <Paged rows={rows} unit="log entries">{(pageRows, pager) => (<>
+                    <Table
+                      columns={[
+                        { key: 'chevron',   label: '',          width: 48 },
+                        { key: 'timestamp', label: 'Timestamp', sortable: true, width: 230 },
+                        { key: 'severity',  label: 'Severity',  sortable: true, align: 'center', width: 150 },
+                        { key: 'who',       label: 'DB \u00B7 User', sortable: true, width: 220 },
+                        { key: 'pid',       label: 'PID',       sortable: true, align: 'center', width: 130 },
+                        { key: 'message',   label: 'Message',   sortable: true, width: 560 },
+                        { key: 'ai',        label: 'AI',        align: 'center', width: 150 },
+                      ]}
+                      rows={sortRows(pageRows, logSort)}
+                      sort={logSort}
+                      onSort={(k) => setLogSort((c) => nextSort(c, k))}
+                      rowHeight={64}
+                      darkHeader
+                      empty={<EmptyState icon="file" title="No entries match the current filter" />}
+                    />
+                    {pager && <div className="card mt-4">{pager}</div>}
+                  </>)}</Paged>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -704,6 +690,55 @@ log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '`}</pre>
           </div>
         )}
 
+      </div>
+    </div>
+  );
+}
+
+/** The opened row's detail panel — the same content the old second <tr> held,
+    now a component so the row builder stays readable. */
+function ErrorLogDetail({ log }) {
+  return (
+    <div className="bg-slate-900 rounded-b-[0.5rem] px-5 py-4">
+      <div className="space-y-3">
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          {log.sql_state && (
+            <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300 font-mono">
+              SQL State: {log.sql_state}
+            </span>
+          )}
+          {log.command_tag && (
+            <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300">Cmd: {log.command_tag}</span>
+          )}
+          {log.application && (
+            <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300">App: {log.application}</span>
+          )}
+          {log.session_id && (
+            <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300 font-mono">
+              Session: {log.session_id}
+            </span>
+          )}
+        </div>
+
+        <DetailBlock label="Message" color="text-white" content={log.message} />
+        {log.detail   && <DetailBlock label="Detail"   color="text-blue-300"  content={log.detail} />}
+        {log.hint     && <DetailBlock label="Hint"     color="text-green-300" content={log.hint} />}
+        {log.context  && <DetailBlock label="Context"  color="text-amber-300" content={log.context} />}
+        {log.location && <DetailBlock label="Location" color="text-slate-400" content={log.location} />}
+        {log.query && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase">Query</span>
+              <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(log.query); }}
+                className="flex items-center gap-1 px-2 py-0.5 bg-slate-700 rounded text-[10px] text-slate-300 hover:bg-slate-600">
+                <Copy size={9} /> Copy
+              </button>
+            </div>
+            <pre className="font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all bg-slate-800 rounded-lg p-3 max-h-40 overflow-y-auto">
+              {log.query}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );

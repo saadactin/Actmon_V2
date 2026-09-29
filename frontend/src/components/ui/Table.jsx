@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import cn from '@/lib/cn';
 import Icon from './Icon';
 
@@ -8,12 +8,35 @@ import Icon from './Icon';
     class strings. */
 const DARK_HEADER_TEXT = 'text-[1.125rem] leading-[1.25rem] font-semibold text-center text-white';
 
+/** The list view's shared 16px/18px-lh cell size (Figma "Cell"). Font-weight
+    and colour are layered on top separately per column rather than folded
+    in here — same-specificity Tailwind weight classes (font-medium vs
+    font-semibold) aren't guaranteed to override one another by JSX order,
+    so a column that needs its own weight adds it alongside this rather than
+    fighting a baked-in one.
+
+    Exported because `darkHeader` is only half the Agents-list format: the
+    navy header band is this component's, but the 16px/500/#6B7280 body text
+    used to be re-typed in every page that adopted the look. One definition
+    means a page matches by importing it, not by copying three lines. */
+export const CELL_SIZE = 'whitespace-nowrap text-[1rem] leading-[1.125rem]';
+/** Default cell text — 16px/500/#6B7280 — for columns with no more specific
+    typography of their own (a bold name, a coloured pill and a banded
+    percentage each carry their own). */
+export const CELL_TEXT = cn(CELL_SIZE, 'font-medium');
+/** `var(--agent-gray)` is the same #6B7280 pinned for the Agents list's
+    Environment column, so one token drives every adopter. */
+export const CELL_TEXT_STYLE = { color: 'var(--agent-gray)' };
+
 /**
  * The app's data table.
  *
  *   columns  [{ key, label, align, width, sortable, sortKey }]
  *   rows     [{ key, cells: { [columnKey]: ReactNode }, sort: { [key]: primitive },
- *              onClick, tone, disabled }]
+ *              onClick, expanded, disabled }]
+ *              `expanded` is an optional node rendered in a full-width
+ *              row underneath this one — the caller owns the open/closed
+ *              state and simply passes the node, or nothing.
  *
  * `cells` is what's displayed; `sort` (optional) supplies the raw comparable value
  * for a column, so a cell can render "78%" or a badge while still sorting
@@ -188,7 +211,7 @@ export default function Table({
           )}
           {(isVirtual ? rows.slice(startIndex, endIndex) : rows).map((row) => {
             const selected = selectedKeys.includes(row.key);
-            return (
+            const tr = (
               <tr
                 key={row.key}
                 onClick={row.onClick}
@@ -260,6 +283,31 @@ export default function Table({
                   </td>
                 ))}
               </tr>
+            );
+
+            /* A row with `expanded` gets a second full-width <tr> beneath it.
+               It is deliberately NOT part of the row's own <tr>: a detail
+               panel that spans every column cannot live inside a cell without
+               breaking the column widths above it. In darkHeader mode the
+               panel is the same floating card as the row, minus the top
+               corners, so the pair reads as one opened card rather than two
+               stacked ones. */
+            if (row.expanded == null) return tr;
+            return (
+              <Fragment key={row.key}>
+                {tr}
+                <tr>
+                  <td
+                    colSpan={columns.length + (selectable ? 1 : 0)}
+                    className={cn(
+                      'p-0 align-top',
+                      darkHeader && 'rounded-b-[0.5rem] shadow-[0_2px_4px_rgba(0,0,0,0.08)]',
+                    )}
+                  >
+                    {row.expanded}
+                  </td>
+                </tr>
+              </Fragment>
             );
           })}
           {bottomSpacerHeight > 0 && (

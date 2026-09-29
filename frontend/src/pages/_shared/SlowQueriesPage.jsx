@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import client from '@/api/client';
+import cn from '@/lib/cn';
 import IconButton from '@/components/ui/IconButton';
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import Badge from '@/components/ui/Badge';
@@ -10,7 +11,9 @@ import Icon from '@/components/ui/Icon';
 import Input from '@/components/ui/Input';
 import Notice from '@/components/ui/Notice';
 import Select from '@/components/ui/Select';
-import Table, { EmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import Table, {
+  EmptyState, nextSort, sortRows, CELL_TEXT, CELL_TEXT_STYLE,
+} from '@/components/ui/Table';
 import { InlineLoading } from '@/components/ui/Loading';
 import Pagination, { Paged, pageCountOf } from '@/components/ui/Pagination';
 import CopyButton from '@/components/ui/CopyButton';
@@ -48,6 +51,11 @@ const QUERY_TYPE_FILTER_OPTIONS = [
   { id: 'system', label: 'System queries' },
   { id: 'actmon', label: 'ActMon queries' },
 ];
+
+/** Agents-list cell metrics, monospaced — for values compared digit by
+    digit (durations, counts, user names) that still have to sit on the
+    list's 16px/18px baseline rather than the old 11-12px. */
+const CELL_MONO = 'whitespace-nowrap font-mono text-[1rem] leading-[1.125rem]';
 
 const NOT_CONFIGURED_MESSAGE = 'Slow query data is unavailable or not configured.';
 
@@ -415,26 +423,29 @@ function MysqlSlowQueryExplorer({ engine, id }) {
         : <Badge tone="neutral" size="xs">No Database</Badge>,
       query: <SlowQuerySqlCell sql={r.query_text} />,
       avg: (
-        <span className={
-          r.severity === 'critical' ? 'font-mono font-bold text-danger-fg'
-            : r.severity === 'high' ? 'font-mono font-bold text-warning-fg' : 'font-mono font-semibold'
-        }>
+        <span
+          className={cn(CELL_MONO,
+            r.severity === 'critical' ? 'font-bold text-danger-fg'
+              : r.severity === 'high' ? 'font-bold text-warning-fg' : 'font-semibold text-fg')}
+        >
           {fmtMs(r.average_execution_time)}
         </span>
       ),
-      max: r.max_execution_time != null ? <span className="font-mono text-muted">{fmtMs(r.max_execution_time)}</span> : null,
-      execs: <span className="font-mono">{fmtNumber(r.execution_count)}</span>,
-      rows_sent: <span className="font-mono text-muted">{fmtNumber(r.rows_returned)}</span>,
-      rows_examined: <span className="font-mono text-muted">{fmtNumber(r.rows_affected)}</span>,
-      last: r.last_seen ? (
-        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
-      ) : null,
+      max: r.max_execution_time != null
+        ? <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>{fmtMs(r.max_execution_time)}</span>
+        : null,
+      execs: <span className={cn(CELL_MONO, 'font-semibold text-fg')}>{fmtNumber(r.execution_count)}</span>,
+      rows_sent: <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>{fmtNumber(r.rows_returned)}</span>,
+      rows_examined: <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>{fmtNumber(r.rows_affected)}</span>,
+      last: r.last_seen
+        ? <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{fmtDateTime(r.last_seen) || r.last_seen}</span>
+        : null,
       who: (r.user_name || r.host) ? (
-        <span className="whitespace-nowrap font-mono text-[11px]">
+        <span className={cn(CELL_MONO, 'font-semibold text-fg')}>
           {r.user_name || '—'}
-          {r.host && <span className="text-subtle"> @ {r.host}</span>}
+          {r.host && <span className="font-medium" style={CELL_TEXT_STYLE}> @ {r.host}</span>}
         </span>
-      ) : <span className="text-subtle">—</span>,
+      ) : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
     },
   }));
 
@@ -496,6 +507,8 @@ function MysqlSlowQueryExplorer({ engine, id }) {
           rows={tableRows}
           sort={sort}
           onSort={(key) => setSort((cur) => nextSort(cur, key))}
+          rowHeight={64}
+          darkHeader
           loading={isFetching}
           empty={
             <EmptyState icon="zap" title="No slow queries match these filters"
@@ -504,7 +517,9 @@ function MysqlSlowQueryExplorer({ engine, id }) {
           }
         />
         {total > 0 && (
-          <Pagination page={page} pageCount={pageCount} total={total} pageSize={pageSize} onPage={setPage} unit="queries" />
+          <div className="card mt-4">
+            <Pagination page={page} pageCount={pageCount} total={total} pageSize={pageSize} onPage={setPage} unit="queries" />
+          </div>
         )}
       </TablePanel>
     </div>
@@ -648,25 +663,32 @@ function SlowQueryExplorer({ engine, id }) {
         : <Badge tone="neutral" size="xs">No Database</Badge>,
       query: <SlowQuerySqlCell sql={r.query_text} />,
       avg: (
-        <span className={
-          r.severity === 'critical' ? 'font-mono font-bold text-danger-fg'
-            : r.severity === 'high' ? 'font-mono font-bold text-warning-fg' : 'font-mono font-semibold'
-        }>
+        <span
+          className={cn(CELL_MONO,
+            r.severity === 'critical' ? 'font-bold text-danger-fg'
+              : r.severity === 'high' ? 'font-bold text-warning-fg' : 'font-semibold text-fg')}
+        >
           {fmtMs(r.average_execution_time)}
         </span>
       ),
-      max: r.max_execution_time != null ? <span className="font-mono text-muted">{fmtMs(r.max_execution_time)}</span> : <span className="text-subtle">—</span>,
-      execs: r.execution_count != null ? <span className="font-mono">{fmtNumber(r.execution_count)}</span> : <span className="text-subtle">—</span>,
+      max: r.max_execution_time != null
+        ? <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>{fmtMs(r.max_execution_time)}</span>
+        : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
+      execs: r.execution_count != null
+        ? <span className={cn(CELL_MONO, 'font-semibold text-fg')}>{fmtNumber(r.execution_count)}</span>
+        : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
       rows: (r.rows_returned ?? r.rows_affected) != null
-        ? <span className="font-mono text-muted">{fmtNumber(r.rows_returned ?? r.rows_affected)}</span>
-        : <span className="text-subtle">—</span>,
-      first_seen: r.first_seen ? (
-        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.first_seen) || r.first_seen}</span>
-      ) : <span className="text-subtle">—</span>,
-      last: r.last_seen ? (
-        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
-      ) : <span className="text-subtle">—</span>,
-      user: r.user_name ? <span className="font-mono text-[12px]">{r.user_name}</span> : <span className="text-subtle">—</span>,
+        ? <span className={cn(CELL_MONO, 'font-medium')} style={CELL_TEXT_STYLE}>{fmtNumber(r.rows_returned ?? r.rows_affected)}</span>
+        : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
+      first_seen: r.first_seen
+        ? <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{fmtDateTime(r.first_seen) || r.first_seen}</span>
+        : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
+      last: r.last_seen
+        ? <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{fmtDateTime(r.last_seen) || r.last_seen}</span>
+        : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
+      user: r.user_name
+        ? <span className={cn(CELL_MONO, 'font-semibold text-fg')}>{r.user_name}</span>
+        : <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>—</span>,
       actions: (
         <span onClick={(e) => e.stopPropagation()}>
           <IconButton
@@ -742,6 +764,8 @@ function SlowQueryExplorer({ engine, id }) {
           rows={tableRows}
           sort={sort}
           onSort={(key) => setSort((cur) => nextSort(cur, key))}
+          rowHeight={64}
+          darkHeader
           loading={isFetching}
           empty={
             notConfigured ? (
@@ -754,7 +778,9 @@ function SlowQueryExplorer({ engine, id }) {
           }
         />
         {total > 0 && (
-          <Pagination page={page} pageCount={pageCount} total={total} pageSize={pageSize} onPage={setPage} unit="queries" />
+          <div className="card mt-4">
+            <Pagination page={page} pageCount={pageCount} total={total} pageSize={pageSize} onPage={setPage} unit="queries" />
+          </div>
         )}
       </TablePanel>
     </div>

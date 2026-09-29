@@ -29,7 +29,9 @@ const PerformanceTab = lazy(() => import('./PerformanceTab'));
 import EngineDashboardHeader from '@/components/layout/EngineDashboardHeader';
 import ObjectTable from '@/pages/_shared/ObjectTable';
 import Pagination from '@/components/ui/Pagination';
-import DataTable, { EmptyState as TableEmptyState, nextSort, sortRows } from '@/components/ui/Table';
+import DataTable, {
+  EmptyState as TableEmptyState, nextSort, sortRows, CELL_TEXT, CELL_TEXT_STYLE,
+} from '@/components/ui/Table';
 import StatTile from '@/components/charts/StatTile';
 import RoleDetailDrawer from './RoleDetailDrawer';
 import Badge from '@/components/ui/Badge';
@@ -2885,8 +2887,11 @@ const AdvancedTablesTab = memo(function AdvancedTablesTab({ detail, isLoading, r
 /* Agents-list cell typography (AgentsPage CELL_SIZE / CELL_TEXT_STYLE):
    16px on an 18px line, weight 500, #6B7280. One definition for every table on
    this page, so they cannot drift from each other or from the Agents list. */
-const AG_CELL = 'whitespace-nowrap text-[1rem] leading-[1.125rem] font-medium';
-const AG_GRAY = { color: 'var(--agent-gray)' };
+// Aliases for the Agents list's cell tokens, which now live in Table.jsx
+// beside darkHeader. Kept as short local names because they appear in
+// almost every cell on this page.
+const AG_CELL = CELL_TEXT;
+const AG_GRAY = CELL_TEXT_STYLE;
 /**
  * Every data table on this page. One wrapper so the Agents-list treatment —
  * navy header, 64px floating row cards, 16px/18px cells in --agent-gray — is
