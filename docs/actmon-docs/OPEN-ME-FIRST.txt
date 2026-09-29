@@ -1,0 +1,81 @@
+ACTMON UNIVERSE — INTERACTIVE PLATFORM DOCUMENTATION
+====================================================
+
+HOW TO OPEN
+-----------
+Double-click  actmon-doc.html
+
+That is all. There is nothing to install and nothing to run. It opens in any
+modern browser (Chrome, Edge, Firefox).
+
+Keep the "interactive" folder next to actmon-doc.html. The page loads its
+content from there, so moving or renaming that folder will break it. If you
+want to pass this on, send the whole actmon-docs folder (or the .zip).
+
+The 3D view loads two libraries from the internet on first open. If there is
+no connection, the document still works — it detects this and opens in a
+plain 2D view with exactly the same content.
+
+
+HOW TO USE IT
+-------------
+Start at the ACTMON platform and click into whatever you want to see.
+
+  Click an object      select it — its details open on the right
+  Enter, or the        go INSIDE that object, into its own environment
+  "Enter" button
+  Drag                 look around
+  Shift + drag         move sideways
+  Scroll               zoom in and out
+  Breadcrumb (top)     jump back to any earlier level
+  Guided tour          a 10-chapter walkthrough; pause it any time
+  2D view              the same content as a plain, readable list
+  Search (top right)   jump straight to any feature
+
+Keyboard: 0 = back to the start, Backspace = back one step,
+Enter = go deeper, T = tour, F = 2D view, / = search, ? = full key list.
+
+
+WHAT YOU ARE LOOKING AT
+-----------------------
+Six levels of depth. Each one is a different environment, not the same
+picture with a new title:
+
+  The ACTMON platform and its seven monitoring domains
+    -> inside a domain (databases, cloud, infrastructure, agents, alerts,
+       logs, access control)
+      -> inside a database technology
+        -> inside PostgreSQL, with all 16 of its dashboard sections
+          -> inside one section, such as Slow Queries or Replication
+            -> inside one record: a single query, role or log event
+
+The shapes carry meaning. A table's size is its real size on disk. A slow
+query's width is its total cost, so the most expensive statement is visibly
+the biggest — even when it is not the slowest. A replica's particles move
+slower when it is lagging, and stop entirely when it has fallen too far
+behind.
+
+
+ABOUT THE NUMBERS
+-----------------
+Every metric, hostname, query and log line in this document is an
+ILLUSTRATIVE EXAMPLE. Nothing is read from a live ACTMON installation, and
+no passwords, keys or connection details appear anywhere.
+
+Each feature is marked with what is actually built today:
+
+  Implemented          it exists and was checked in the source code
+  Partial              it works, but through another feature's path
+  No data source yet   the screen accepts it; the backend cannot supply it
+  Illustrative         an example, so the document is explorable offline
+  Not implemented      confirmed absent
+
+Points that the document states plainly rather than glossing over:
+
+  * Google Cloud is not supported. Only AWS, Azure and Oracle Cloud are.
+  * Redis is not a monitored database. It is used inside ACTMON itself.
+  * MariaDB works through the MySQL path and has no screen of its own.
+  * 25 of the 43 alert rule types cannot fire yet. That is ACTMON's own
+    assessment, taken from its source code.
+
+Built by reading the ACTMON source code directly, on branch actmon_sept22.
