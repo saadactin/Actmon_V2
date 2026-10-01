@@ -1,14 +1,26 @@
 ACTMON UNIVERSE — INTERACTIVE PLATFORM DOCUMENTATION
 ====================================================
 
+WHAT IS IN HERE
+---------------
+  actmon-doc.html              The Knowledge Centre -- START HERE
+  actmon-3d-explorer.html      The 3D explorer (an alternative way in)
+  ACTMON_Product_Overview.pptx An 18-slide presentation for meetings
+
+
 HOW TO OPEN
 -----------
 Double-click  actmon-doc.html
 
+A 3D view of the platform fills the first screen. Click any domain in it and
+the page scrolls down to that domain's full documentation. Everything is on
+one long page -- there is no side panel and nothing is hidden behind a second
+click.
+
 That is all. There is nothing to install and nothing to run. It opens in any
 modern browser (Chrome, Edge, Firefox).
 
-Keep the "interactive" folder next to actmon-doc.html. The page loads its
+Keep the "interactive" folder next to the two .html files. The page loads its
 content from there, so moving or renaming that folder will break it. If you
 want to pass this on, send the whole actmon-docs folder (or the .zip).
 
