@@ -282,6 +282,56 @@ async def start_cost_backfill(
     return await svc.start_backfill(account_id, days)
 
 
+@router.post("/refresh/{account_id}")
+async def refresh_account_cost(
+    account_id: uuid.UUID,
+    svc: CostService = Depends(get_cost_service),
+    _: rbac.Principal = Depends(rbac.require(rbac.RESOURCE_DISCOVER)),
+):
+    """The Cost tab's own refresh: re-read this account's billing now.
+
+    The same two steps a discovery scan does for cost, without the inventory
+    sweep: re-query the billing APIs (the page's cached totals, daily series
+    and per-resource spend) and re-ingest the last 30 days into the fact table
+    the trend, forecast and budgets read. Synchronous, because the answer —
+    written, corrected, or why the provider refused — is what the button is for.
+
+    Same permission as "Refresh all", which does this as one of its steps.
+    409 while a refresh or discovery scan is running for the account: that
+    work is already ingesting cost, and two ingestions of the same window race.
+    """
+    from app.repository.cloud_account_repo import CloudAccountRepository
+    from app.repository.discovery_repo import DiscoveryRepository
+    from app.services.account_refresh_service import AccountRefreshService
+    from app.services.cost_ingestion import ingest_recent
+    from app.services.cost_service import (
+        expire_account_cost_cache, get_cost_diagnostic, prewarm_cost_cache,
+    )
+
+    account = await CloudAccountRepository(svc.db).get_by_id(account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if (await AccountRefreshService(svc.db).active_refresh(account_id)
+            or await DiscoveryRepository(svc.db).get_active_for_account(account_id)):
+        raise HTTPException(status_code=409, detail={
+            "code": "account_busy",
+            "message": ("A refresh or discovery scan is running for this account and "
+                        "is already re-reading its cost. The Cost tab updates when it "
+                        "finishes."),
+        })
+
+    expire_account_cost_cache(account_id)
+    await prewarm_cost_cache(account)
+    ingestion = await ingest_recent(svc.db, account, days=30)
+    return {
+        "account_id": str(account_id),
+        "ingestion": ingestion,
+        # None when the billing queries above succeeded.
+        "diagnostic": get_cost_diagnostic(account_id),
+    }
+
+
 @router.get("/backfill/status/{account_id}")
 async def get_cost_backfill_status(
     account_id: uuid.UUID,

@@ -1,12 +1,22 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   cancelRefresh, getLatestRefresh, getRefresh, getRefreshCapabilities,
   getRefreshHistory, getRefreshSchedule, startRefresh, updateRefreshSchedule,
 } from '../api/refresh.api';
+import { triggerDiscovery } from '../api/discovery.api';
+import { refreshCost } from '../api/cost.api';
+import { collectIdentity, runAssessment } from '../api/securityCenter.api';
+import { collectCertificates } from '../api/certificates.api';
+import { collectEvents } from '../api/events.api';
+import { runAnalysis } from '../api/intelligence.api';
 import {
   busyRefusal, isBusy, isTerminal, shouldInvalidate, syncDecision,
 } from '../utils/refreshModel';
+import {
+  tabRefreshError, tabRefreshOutcome, tabRefreshPlan,
+} from '../utils/tabRefreshModel';
 
 /**
  * Account refresh hooks.
@@ -189,4 +199,75 @@ export const useUpdateRefreshSchedule = (accountId) => {
       qc.invalidateQueries({ queryKey: refreshKeys.latest(accountId) });
     },
   });
+};
+
+/**
+ * One tab's own refresh — the narrow counterpart of "Refresh all".
+ *
+ * What it does for each tab is declared in `utils/tabRefreshModel.js`, not
+ * here, so the button can never do more (or less) than its caption says.
+ * Provider work that finishes in a request (certificates, identity, billing,
+ * events, an assessment) is awaited and then this account's data is re-read.
+ * The inventory scan runs for minutes, so it is started and handed to the
+ * header, whose data-version sync re-reads every tab when it lands.
+ */
+export const useTabRefresh = (accountId, tabKey) => {
+  const qc = useQueryClient();
+  const { canHere } = usePermissions();
+  const latest = useLatestRefresh(accountId);
+  const plan = tabRefreshPlan(tabKey, {
+    canExecute: canHere('execute'),
+    busy: isBusy(latest.data),
+  });
+  const [outcome, setOutcome] = useState(null);
+
+  // A caption belongs to the tab it was earned on.
+  useEffect(() => { setOutcome(null); }, [accountId, tabKey]);
+
+  const reread = useCallback(() => Promise.all([
+    qc.invalidateQueries({ predicate: (q) => shouldInvalidate(q.queryKey, accountId) }),
+    qc.invalidateQueries({ queryKey: refreshKeys.latest(accountId) }),
+  ]), [qc, accountId]);
+
+  const { mutate, isPending } = useMutation({
+    mutationFn: async (action) => {
+      switch (action) {
+        case 'reload': return {};
+        case 'discovery': return triggerDiscovery(accountId);
+        case 'cost': return refreshCost(accountId);
+        case 'assess': return runAssessment(accountId);
+        case 'identity': {
+          const identity = await collectIdentity(accountId);
+          return { identity, ...(await runAssessment(accountId)) };
+        }
+        case 'certificates': return collectCertificates(accountId);
+        case 'events': return collectEvents(accountId);
+        case 'analysis': return runAnalysis(accountId);
+        default: throw new Error(`No refresh is defined for ${action}`);
+      }
+    },
+  });
+
+  const run = useCallback(() => {
+    if (!plan || plan.disabled || !accountId) return;
+    const { action } = plan;
+    setOutcome(null);
+    mutate(action, {
+      onSuccess: async (result) => {
+        await reread();
+        setOutcome({ ok: true, text: tabRefreshOutcome(action, result), at: Date.now() });
+      },
+      onError: async (err) => {
+        // A 409 means other work is rewriting the account — show it.
+        await qc.invalidateQueries({ queryKey: refreshKeys.latest(accountId) });
+        setOutcome({
+          ok: err?.response?.status === 409,
+          text: tabRefreshError(err),
+          at: Date.now(),
+        });
+      },
+    });
+  }, [plan, accountId, mutate, reread, qc]);
+
+  return { plan, run, pending: isPending, outcome };
 };

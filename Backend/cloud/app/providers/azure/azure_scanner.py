@@ -673,6 +673,17 @@ class AzureScanner:
                             "attached_to_id": (
                                 pip.ip_configuration.id if pip.ip_configuration else None
                             ),
+                            # A NAT gateway holds its IPs through `nat_gateway`,
+                            # not an ip-configuration, so without this a NAT
+                            # gateway's address reads as unattached — and an
+                            # "unused IP" rule would recommend releasing the
+                            # egress address of a live subnet. The key is always
+                            # written (None when unassociated) so a reader can
+                            # tell "checked, none" from "not collected".
+                            "nat_gateway_id": (
+                                pip.nat_gateway.id
+                                if getattr(pip, "nat_gateway", None) else None
+                            ),
                             "fqdn": (
                                 pip.dns_settings.fqdn if pip.dns_settings else None
                             ),
@@ -808,15 +819,22 @@ class AzureScanner:
         # Generic catch-all — captures every OTHER resource type in the
         # subscription (App Services, Key Vaults, Cosmos DB, VNets, NSGs, disks…).
         # Dedupe against the detailed results so enriched records win.
-        seen_ids = {r["provider_resource_id"] for r in all_resources}
+        #
+        # Case-insensitively: ARM resource ids ARE case-insensitive, and the
+        # generic resources.list() returns some with a differently-cased
+        # resource group than the compute/network APIs ("resourceGroups/n8n"
+        # vs ".../N8N"). An exact match let 8 of TOR's 18 VMs through twice —
+        # a second, config-less row per VM that inflated the count to 26 and
+        # left analyses judging a copy with no size or power state.
+        seen_ids = {(r["provider_resource_id"] or "").lower() for r in all_resources}
         try:
             generic = await self._scan_generic()
             added = 0
             new_batch = []
             for r in generic:
-                if r["provider_resource_id"] not in seen_ids:
+                if (r["provider_resource_id"] or "").lower() not in seen_ids:
                     all_resources.append(r)
-                    seen_ids.add(r["provider_resource_id"])
+                    seen_ids.add((r["provider_resource_id"] or "").lower())
                     new_batch.append(r)
                     added += 1
             logger.info("Azure Generic: found %d resources (%d new)", len(generic), added)

@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import Tabs from '@/components/ui/Tabs';
@@ -29,7 +29,7 @@ import {
   useSetRecipientEnabled, useSetRuleEnabled, useSilenceAlert, useSilenceRule,
   useTestRule, useUpdateAlertSettings, useUpdateRule,
 } from '../hooks/useAlerts';
-import { statesFor } from '../utils/alertModel';
+import { seedFromLink, statesFor } from '../utils/alertModel';
 import { slugForProvider } from '../utils/providerScope';
 
 /**
@@ -154,6 +154,24 @@ export default function AlertsPage({ embedded = false, accountId, account }) {
     setDraft(null);
     setBuilderOpen(true);
   };
+
+  // "Create alert" from a finding lands here as ?newRule=<condition>&config=…:
+  // open the builder seeded with it once the catalog is loaded, then drop the
+  // parameters so a reload does not open it again.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const condition = searchParams.get('newRule');
+    if (!condition || !capabilities.data) return;
+    const seed = seedFromLink(condition, searchParams.get('config'), capabilities.data);
+    const next = new URLSearchParams(searchParams);
+    next.delete('newRule');
+    next.delete('config');
+    setSearchParams(next, { replace: true });
+    if (seed) {
+      setTab('rules');
+      openBuilder({ template: seed });
+    }
+  }, [searchParams, capabilities.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const closeBuilder = () => {
     setBuilderOpen(false);

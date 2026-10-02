@@ -336,7 +336,18 @@ class AccountRefreshService:
             select(func.max(CloudSecurityAssessment.finished_at))
             .where(CloudSecurityAssessment.account_id == account_id)
         )).scalar()
-        stamps = [t for t in (refresh_at, scan_at, _aware(assessed) if assessed else None)
+        # The resource-intelligence analysis lands after the assessment, and
+        # also runs on its own from the Intelligence tab — either way the tabs
+        # showing its findings must re-read when it finishes.
+        from app.models.optimization import CloudOptimizationRun
+
+        analysed = (await self.db.execute(
+            select(func.max(CloudOptimizationRun.finished_at))
+            .where(CloudOptimizationRun.account_id == account_id)
+        )).scalar()
+        stamps = [t for t in (refresh_at, scan_at,
+                              _aware(assessed) if assessed else None,
+                              _aware(analysed) if analysed else None)
                   if t is not None]
         return {
             "active_scan": _scan_view(active),

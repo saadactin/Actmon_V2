@@ -512,15 +512,18 @@ console.log('\n10. Every page is reachable, with the export shape its route expe
   problems.length === 0, problems.join(' | '));
 }
 
-console.log('\n11. One refresh control, one name, on every tab');
+console.log('\n11. Two refresh names: "Refresh all" in the header, "Refresh <tab>" per tab');
 {
   // There were six controls with six names — Refresh Account, Run Discovery
   // Scan, Run, Run assessment, Collect now, Retry — each re-reading a slice of
   // the same account, so nobody could tell which one made which tab current.
+  // Now there are exactly two: the header's "Refresh all", and each tab's own
+  // "Refresh <tab>", whose behaviour is declared in utils/tabRefreshModel.js.
   const rel = (f) => relative(CLOUD, f).replace(/\\/g, '/');
   const usersOf = (pattern, allowed) => [...SOURCES]
     .filter(([f, s]) => !allowed.includes(rel(f)) && pattern.test(s))
     .map(([f]) => rel(f));
+  const rawOf = (file) => RAW.get([...RAW.keys()].find((f) => rel(f) === file)) || '';
 
   const starters = usersOf(/\b(useStartRefresh|startRefresh)\s*\(/,
     ['hooks/useAccountRefresh.js', 'api/refresh.api.js']);
@@ -528,16 +531,30 @@ console.log('\n11. One refresh control, one name, on every tab');
     + 'RefreshAllButton / useRefreshAll', starters.length === 0, starters.join(', '));
 
   const plainScans = usersOf(/\buseTriggerDiscovery\b/, ['hooks/useDiscovery.js']);
-  check('no component starts a plain discovery scan — a subset of Refresh all '
-    + 'under another name', plainScans.length === 0, plainScans.join(', '));
+  check('no component starts a plain discovery scan by hand — the Resources tab '
+    + 'refresh does it through useTabRefresh', plainScans.length === 0, plainScans.join(', '));
 
+  // EventLogPage keeps its empty-state "Load events for the last Nh" window
+  // backfill: a refresh collects forward from the checkpoint and never
+  // reaches back, so that one is a different operation, not a refresh.
   const sliceRefreshers = usersOf(
-    /\b(useRunAssessment|useCollectCertificates|useCollectIdentity)\b/,
-    ['hooks/useSecurityCenter.js', 'hooks/useCertificates.js'],
+    /\b(useRunAssessment|useCollectCertificates|useCollectIdentity|useCollectEvents)\b/,
+    ['hooks/useSecurityCenter.js', 'hooks/useCertificates.js', 'hooks/useEvents.js',
+      'pages/EventLogPage.jsx'],
   );
-  check('no tab re-reads its own slice (assessment, certificate stores, identity) '
-    + '— every refresh does all three', sliceRefreshers.length === 0,
+  check('no component re-reads a slice with its own ad-hoc button — slice '
+    + 'refreshes go through TabRefreshButton', sliceRefreshers.length === 0,
   sliceRefreshers.join(', '));
+
+  const hookFiles = ['hooks/useAccountRefresh.js', 'hooks/useDiscovery.js',
+    'hooks/useSecurityCenter.js', 'hooks/useCertificates.js', 'hooks/useEvents.js'];
+  const apiFiles = [...SOURCES.keys()].map(rel).filter((f) => f.startsWith('api/'));
+  const sliceCalls = usersOf(
+    /\b(triggerDiscovery|refreshCost|runAssessment|collectIdentity|collectCertificates|collectEvents|runAnalysis)\s*\(/,
+    [...hookFiles, ...apiFiles],
+  );
+  check('the slice APIs are called only by hooks — a component calling one is a '
+    + 'seventh refresh under a new name', sliceCalls.length === 0, sliceCalls.join(', '));
 
   const OLD_NAMES = ['Run Discovery Scan', 'Run assessment', 'Refresh Account',
     'Collect now', 'Re-check account', 'Scan Running'];
@@ -554,6 +571,36 @@ console.log('\n11. One refresh control, one name, on every tab');
   const bars = [...SOURCES].filter(([, s]) => /<AccountRefreshBar\b/.test(s)).map(([f]) => rel(f));
   check('the bar is rendered once, by the account header every tab shares',
     bars.length === 1 && bars[0] === 'pages/CloudDashboard.jsx', bars.join(', '));
+
+  const tabButtons = [...SOURCES].filter(([, s]) => /<TabRefreshButton\b/.test(s))
+    .map(([f]) => rel(f)).sort();
+  check('tab refreshes render in exactly the two tab strips (account tabs, '
+    + 'Security Center sub-tabs)',
+  tabButtons.join(',') === 'pages/CloudDashboard.jsx,pages/SecurityCenterPage.jsx',
+  tabButtons.join(', '));
+
+  // Every tab a user can open must have a declared refresh — a tab missing
+  // from the table silently renders no button.
+  const model = rawOf('utils/tabRefreshModel.js');
+  const tabIds = (file) => {
+    const src = rawOf(file);
+    const from = src.indexOf('const TABS = [');
+    const body = from < 0 ? '' : src.slice(from, src.indexOf('];', from));
+    return [...body.matchAll(/\bid:\s*'([^']+)'/g)].map((m) => m[1]);
+  };
+  const declared = (k) => model.includes(`  ${k}: {`) || model.includes(`  '${k}': {`);
+  const delegated = ['security', 'compliance'];
+  const mainIds = tabIds('pages/CloudDashboard.jsx');
+  const subIds = tabIds('pages/SecurityCenterPage.jsx');
+  const missing = [
+    ...mainIds.filter((id) => !delegated.includes(id) && !declared(id)),
+    ...subIds.map((id) => `security.${id}`).filter((k) => !declared(k)),
+  ];
+  // 9 since the Intelligence tab (Resource Intelligence) was added.
+  check('the tab tables were read (9 account tabs, 9 Security Center sub-tabs)',
+    mainIds.length === 9 && subIds.length === 9, `${mainIds.length} / ${subIds.length}`);
+  check('every account tab and Security Center sub-tab declares its refresh in '
+    + 'tabRefreshModel.js', missing.length === 0, missing.join(', '));
 }
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);

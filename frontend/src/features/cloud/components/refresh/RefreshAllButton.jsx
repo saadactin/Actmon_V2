@@ -7,14 +7,15 @@ import {
 } from '../../utils/refreshModel';
 
 /**
- * The only control that re-reads an account from its provider.
+ * Re-reads the whole account from its provider.
  *
  * It replaced six buttons with six names — Refresh Account, Run Discovery
  * Scan, Run, Run assessment, Collect now and Retry — each refreshing a
  * different slice of the same account, so nobody could tell which one made
  * which tab current. This starts the account refresh, which does all of it in
  * one provider pass: resources, cost, security (with certificates and
- * identity), drift and events.
+ * identity), drift and events. The only other refresh is each tab's own
+ * "Refresh <tab>" (TabRefreshButton), declared in utils/tabRefreshModel.js.
  *
  * Wherever it is rendered it also keeps that account's tabs in sync
  * (`useRefreshAll` → `useAccountDataSync`), so the data re-reads when the

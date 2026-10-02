@@ -232,11 +232,11 @@ export default function CostKpiCards({
           value={savings}
           currency={savingsCurrency || currency}
           size="lg"
-          reason="No savings could be priced from a provider price list."
+          reason="No open saving is supported by provider billing or a provider price list in this currency."
         />
         <p className="mt-1 text-[10.5px] text-subtle">
           {optimizationCount || 0} opportunities
-          {!isMissing(savings) && ' · priced from list rates'}
+          {!isMissing(savings) && ' · from billing and list rates'}
         </p>
       </Kpi>
 

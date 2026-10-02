@@ -145,6 +145,8 @@ export const REFRESHED_ROOTS = [
   'topology', 'cloudAlerts',
   // Per-account diagnostics.
   'accountDiagnostics',
+  // Resource Intelligence: every refresh ends with an analysis.
+  'intelligence',
 ];
 
 const ROOT_SET = new Set(REFRESHED_ROOTS);

@@ -7,13 +7,17 @@
  * with one somebody guessed, and drops everything that could not be priced at
  * all. Verified, estimated and unquantified stay apart, and each currency
  * stays apart from the others.
+ *
+ * The recommendations are Resource Intelligence findings (the same rows, the
+ * same evidence and status), so each one links to its full drawer there.
  */
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Badge from '@/components/ui/Badge';
 import CloudSection from '../CloudSection';
 import {
-  AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, Gauge, Info,
+  AlertTriangle, ArrowUpRight, CheckCircle2, ChevronRight, CircleDashed, Gauge, Info,
   PiggyBank, ShieldQuestion,
 } from 'lucide-react';
 import { compact, exact, isMissing } from '../../utils/costFormat';
@@ -53,7 +57,7 @@ export function SavingsSummary({ summary }) {
           <p className="mt-1.5 text-[19px] font-bold text-muted">NA</p>
         )}
         <p className="mt-1 text-[10.5px] text-subtle">
-          priced from a provider price list
+          from provider billing or a provider price list
         </p>
       </div>
 
@@ -124,7 +128,7 @@ export function SavingsByCategory({ categories }) {
 }
 
 /** One recommendation row, expandable into its full actionability block. */
-function RecommendationRow({ r, onOpen }) {
+function RecommendationRow({ r, accountRoute }) {
   const [open, setOpen] = useState(false);
   const act = r.actionability || {};
   return (
@@ -244,7 +248,18 @@ function RecommendationRow({ r, onOpen }) {
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] text-subtle">
-            <span>Last checked {new Date(r.last_verified).toLocaleString('en-GB')}</span>
+            <span>
+              {r.analysed === false ? 'Previewed' : 'Last checked'}{' '}
+              {r.last_verified ? new Date(r.last_verified).toLocaleString('en-GB') : 'NA'}
+            </span>
+            {r.source === 'optimization' && r.analysed !== false && accountRoute && (
+              <Link
+                to={`${accountRoute}/intelligence?finding=optimization:${r.fingerprint}`}
+                className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+              >
+                Evidence in Resource Intelligence <ArrowUpRight size={11} aria-hidden />
+              </Link>
+            )}
             <span title={r.priority_formula} className="cursor-help underline decoration-dotted">
               How is the score calculated?
             </span>
@@ -255,8 +270,28 @@ function RecommendationRow({ r, onOpen }) {
   );
 }
 
+/** Accounts whose recommendations are a preview, or could not be read. */
+function SourceNotice({ sources }) {
+  const partial = (sources || []).filter((s) => s.mode !== 'analysed');
+  if (!partial.length) return null;
+  return (
+    <div className="rounded-control border border-warning bg-warning-soft p-2.5 text-[11.5px] leading-relaxed text-fg">
+      {partial.map((s) => (
+        <p key={s.account_id} className="flex gap-1.5">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warning-fg" aria-hidden />
+          <span>
+            <span className="font-semibold">{s.account_name}</span>
+            {' — '}
+            {s.reason || 'Recommendations for this account are unavailable.'}
+          </span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export default function CostRecommendations({
-  recommendations, savingsSummary, savingsByCategory,
+  recommendations, savingsSummary, savingsByCategory, sources, accountRoute,
 }) {
   const [showClosed, setShowClosed] = useState(false);
   const rows = (recommendations || []).filter(
@@ -265,6 +300,7 @@ export default function CostRecommendations({
 
   return (
     <div className="space-y-4">
+      <SourceNotice sources={sources} />
       <SavingsSummary summary={savingsSummary} />
 
       {savingsSummary?.note && (
@@ -298,7 +334,7 @@ export default function CostRecommendations({
         {rows.length ? (
           <ul className="space-y-2">
             {rows.map((r) => (
-              <RecommendationRow key={r.recommendation_id || r.id} r={r} />
+              <RecommendationRow key={r.recommendation_id || r.id} r={r} accountRoute={accountRoute} />
             ))}
           </ul>
         ) : (
@@ -308,7 +344,8 @@ export default function CostRecommendations({
               No open optimization opportunities
             </p>
             <p className="mt-1 text-[11.5px] text-muted">
-              Nothing in the current inventory matches an optimization rule.
+              No finding from the latest Resource Intelligence analysis would reduce spend.
+              Findings that need more data before they can be decided are listed there.
             </p>
           </div>
         )}

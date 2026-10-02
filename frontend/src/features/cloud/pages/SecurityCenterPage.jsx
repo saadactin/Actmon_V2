@@ -14,6 +14,7 @@ import SecurityFindings, { FindingDrawer } from '../components/security/Security
 import SecurityCompliance from '../components/security/SecurityCompliance';
 import SecurityAlerts, { SecurityPolicies } from '../components/security/SecurityAlerts';
 import SecurityCertificates from '../components/security/SecurityCertificates';
+import TabRefreshButton from '../components/refresh/TabRefreshButton';
 import {
   CoveragePanel, ExposurePanel, IdentityPanel, Stat, TrendsPanel,
 } from '../components/security/SecurityPanels';
@@ -102,12 +103,10 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
 
   return (
     <>
-      {/* No button of its own. It had "Run assessment", which re-scored the
-          STORED inventory without contacting the provider — beside a header
-          whose refresh does contact it. Every refresh assesses as its last
-          step, so the one "Refresh all" covers this tab too, and "was this
-          just checked against the provider?" has one answer: the header's
-          Last refreshed. */}
+      {/* Each sub-tab has its own "Refresh <tab>" beside the sub-tab strip:
+          certificates and identity re-read the provider, the rest re-evaluate
+          the stored inventory, and the caption says which happened. The
+          header's "Refresh all" re-reads everything. */}
       {!embedded && (
         <CloudPageHeader
           backTo="/cloud"
@@ -128,7 +127,10 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
         />
       )}
 
-      <Tabs tabs={TABS} value={tab} onChange={setTab} className="mb-4" />
+      <div className="mb-4 flex items-center gap-3">
+        <Tabs tabs={TABS} value={tab} onChange={setTab} className="min-w-0 flex-1" />
+        <TabRefreshButton accountId={accountId} tabKey={`security.${tab}`} />
+      </div>
 
       {isError && (
         <CloudSection>

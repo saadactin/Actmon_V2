@@ -68,8 +68,10 @@ async def main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    print("1. Every emitted rule has metadata -- gaps are reported, not hidden")
-    # The real rule names the engine emits, kept in sync by this assertion.
+    print("1. Legacy rule metadata is intact -- gaps are reported, not hidden")
+    # The 17 rule names the Cost tab derived inline before it read the
+    # optimization engine. Recommendations without engine metadata, and
+    # decisions recorded under these names, still resolve through them.
     real_rules = [
         "Terminate Stopped EC2 Instance", "Upgrade Legacy EC2 Generation",
         "Enable S3 Bucket Versioning", "Missing S3 Lifecycle Policies",
@@ -82,7 +84,7 @@ async def main():
         "Idle OCI API Gateway (No Deployments)", "Idle AKS Cluster (No Nodes)",
     ]
     missing = [r for r in real_rules if r not in reco.RULES]
-    check("all 17 engine rules are described", not missing, str(missing))
+    check("all 17 legacy rules are described", not missing, str(missing))
     check("unclassified_rules() reports a genuinely new rule",
           reco.unclassified_rules([opt("Brand New Rule")]) == ["Brand New Rule"])
     check("...and reports nothing when all are known",
@@ -262,6 +264,109 @@ async def main():
     check("implemented and dismissed are the closed states",
           CLOSED_STATES == {"IMPLEMENTED", "DISMISSED"}, str(CLOSED_STATES))
 
+    print("\n14b. The Cost tab reads the optimization engine")
+    from app.optimization import rules as opt_rules
+    from app.optimization.model import Savings
+
+    on_tab = [r for r in opt_rules.RULES.values() if r.signal in reco.COST_TAB_SIGNALS]
+    from app.optimization.model import CATEGORY_LABEL
+    check("every engine rule that can reach the Cost tab has a labelled category",
+          bool(on_tab) and all(r.category in CATEGORY_LABEL for r in on_tab),
+          str([r.rule_id for r in on_tab if r.category not in CATEGORY_LABEL]))
+    constrained = [r.rule_id for r in opt_rules.RULES.values() if r.signal == "CONSTRAINED"]
+    check("an upsize (CONSTRAINED) never lands on the savings list",
+          all(not reco.on_cost_tab({"signal": "CONSTRAINED", "status": "OPEN", "rule_id": x})
+              for x in constrained) and bool(constrained))
+
+    def finding(**kw):
+        base = {
+            "fingerprint": "f" * 40, "id": str(uuid.uuid4()), "rule_id": "VOLUME_UNATTACHED",
+            "account_id": str(ACCOUNT), "resource_id": str(uuid.uuid4()),
+            "resource_name": "vol-1", "resource_type": "BlockVolume", "provider": "OCI",
+            "title": "Block volume is not attached", "description": "d", "severity": "MEDIUM",
+            "category": "STORAGE",
+            "signal": "UNUSED", "effort": "LOW", "risk": "MEDIUM", "confidence": "HIGH",
+            "rationale": "why", "recommendation": "delete it", "remediation": "console steps",
+            "risk_notes": ["irreversible"], "impact": {"cost": "Ends the storage charge."},
+            "evidence": [], "metrics_used": [], "status": "OPEN",
+            "savings": Savings(method="BILLED", amount=812.5, currency="INR",
+                               basis="What it was billed over the last 30 days (OCI Usage API).",
+                               breakdown=[{"component": "vol-1 (BlockVolume)", "monthly_cost": 812.5,
+                                           "note": "billed, last 30 days"}]).to_dict(),
+        }
+        base.update(kw)
+        return base
+
+    f = finding()
+    rec = reco.enrich([reco.from_finding(f)], account_id=ACCOUNT)[0]
+    check("a finding keeps its own fingerprint as the recommendation id",
+          rec["recommendation_id"] == "f" * 40, rec["recommendation_id"])
+    check("...its category is the engine's, in the Intelligence tab's words",
+          rec["category"] == "Storage", rec["category"])
+    check("...its confidence and risk are the finding's",
+          (rec["confidence"], rec["risk"]) == ("HIGH", "MEDIUM"))
+    check("...and actionability is the finding's own rationale / remediation",
+          rec["actionability"]["why"] == "why" and rec["actionability"]["how"] == "console steps")
+    check("a billed saving is carried with its arithmetic",
+          rec["potential_savings"] == 812.5 and rec["savings_breakdown"][0]["amount"] == 812.5)
+    check("...and counts as VERIFIED (it is the provider's own bill)",
+          reco.savings_summary([rec])["verified_by_currency"].get("INR") == 812.5,
+          str(reco.savings_summary([rec])))
+    check("the internal meta block is not sent to the client", "meta" not in rec)
+    check("an engine finding is never reported as an unclassified rule",
+          reco.unclassified_rules([rec]) == [], str(reco.unclassified_rules([rec])))
+    check("no utilization is claimed for a configuration finding",
+          rec["utilization"]["available"] is False)
+
+    unpriced = reco.from_finding(finding(
+        fingerprint="e" * 40,
+        savings=Savings(reason="OCI does not publish this rate.").to_dict()))
+    check("an unpriced finding is NA, never 0", unpriced["potential_savings"] is None)
+    check("...and says why there is no figure",
+          any("OCI does not publish" in a for a in unpriced["savings_assumptions"]))
+
+    measured = reco.from_finding(finding(
+        fingerprint="d" * 40, rule_id="COMPUTE_UNDERUTILIZED", signal="UNDERUTILIZED",
+        metrics_used=["cpu_percent"],
+        evidence=[{"label": "CPU P95", "value": 3.1, "display": "3.1%", "kind": "telemetry",
+                   "source": "OCI Monitoring"}]))
+    check("a telemetry-backed finding says what it measured",
+          measured["utilization"]["available"] is True
+          and "CPU P95 3.1%" in measured["utilization"]["reason"], measured["utilization"]["reason"])
+
+    print("\n14c. One state across both tabs -- the latest human word wins")
+    t0 = "2026-09-01T10:00:00+00:00"
+    t1 = "2026-09-02T10:00:00+00:00"
+    check("no decision: the finding's status speaks",
+          reco.resolve_state("SUPPRESSED", t0, None) == STATE_DISMISSED)
+    check("a finer decision in the same group wins (ACCEPTED is acknowledged)",
+          reco.resolve_state("ACKNOWLEDGED", t1, {"state": "ACCEPTED", "decided_at": t0}) == "ACCEPTED")
+    check("a decision newer than the finding's last change wins",
+          reco.resolve_state("OPEN", t0, {"state": "DISMISSED", "decided_at": t1}) == STATE_DISMISSED)
+    check("a finding reopened AFTER the decision is open again",
+          reco.resolve_state("OPEN", t1, {"state": "IMPLEMENTED", "decided_at": t0}) == STATE_NEW)
+    check("a decision on a never-touched finding applies (preview -> first analysis)",
+          reco.resolve_state("OPEN", None, {"state": "DISMISSED", "decided_at": t0}) == STATE_DISMISSED)
+    check("an analysis-resolved finding leaves the list; a person-resolved one stays",
+          not reco.on_cost_tab({"signal": "UNUSED", "status": "RESOLVED",
+                                "resolution": {"kind": "condition_cleared"}})
+          and reco.on_cost_tab({"signal": "UNUSED", "status": "RESOLVED",
+                                "resolution": {"kind": "marked_by_user"}}))
+    legacy_rid = str(uuid.uuid4())
+    legacy_fp = recommendation_fingerprint(account_id=ACCOUNT, rule="Stopped OCI Compute Instance",
+                                           resource_id=legacy_rid)
+    carried = reco.from_finding(
+        finding(fingerprint="c" * 40, rule_id="COMPUTE_STOPPED_STILL_BILLING", resource_id=legacy_rid),
+        decisions={legacy_fp: {"state": STATE_DISMISSED, "decided_at": t0, "reason": "warm spare"}},
+        legacy_rules=opt_rules.by_id("COMPUTE_STOPPED_STILL_BILLING").supersedes)
+    check("a decision recorded under the OLD rule name still applies",
+          carried["state"] == STATE_DISMISSED and carried["decision"]["reason"] == "warm spare",
+          carried["state"])
+    for state, status in (("REVIEWED", "ACKNOWLEDGED"), ("IN_PROGRESS", "ACKNOWLEDGED"),
+                          ("IMPLEMENTED", "RESOLVED"), ("DISMISSED", "SUPPRESSED")):
+        check(f"a Cost-tab {state} moves the finding to {status}",
+              reco.finding_status_for(state) == status)
+
     print("\n15. HTTP surface + permissions")
     async with AsyncSessionLocal() as db:
         acc = CloudAccount(
@@ -311,6 +416,36 @@ async def main():
         check("exactly one current decision (not a row per change)",
               r.json()["count"] == 1, str(r.json()["count"]))
 
+        # A decision about an engine finding moves the finding too.
+        from app.models.optimization import CloudOptimizationFinding
+        async with AsyncSessionLocal() as db:
+            row = CloudOptimizationFinding(
+                account_id=account_id, provider="OCI", fingerprint="a" * 40,
+                rule_id="VOLUME_UNATTACHED", rule_version="1.0", resource_key="ocid1.volume.zz",
+                resource_name="zz-vol", resource_type="BlockVolume", category="STORAGE",
+                severity="MEDIUM", signal="UNUSED", title="t", description="d",
+                confidence="HIGH", savings_method="NONE", risk="MEDIUM", status="OPEN")
+            db.add(row)
+            await db.commit()
+        r = await c.post(f"{BASE}/recommendations/{'a' * 40}/state",
+                         json={"state": "DISMISSED", "reason": "kept for DR",
+                               "account_id": str(account_id)})
+        check("dismissing an engine finding's recommendation -> 200", r.status_code == 200,
+              str(r.status_code))
+        check("...and the finding is suppressed in Resource Intelligence",
+              r.json().get("finding_status") == "SUPPRESSED", str(r.json().get("finding_status")))
+        r = await c.post(f"{BASE}/recommendations/{'a' * 40}/state",
+                         json={"state": "ACCEPTED"})
+        check("without an account id the finding is found by fingerprint",
+              r.json().get("finding_status") == "ACKNOWLEDGED", str(r.json().get("finding_status")))
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(CloudOptimizationFinding).where(
+                CloudOptimizationFinding.fingerprint == "a" * 40))).scalar_one()
+            check("...with the reason and the actor on the finding",
+                  row.status_changed_by is not None and any(
+                      h.get("event") == "suppressed" for h in (row.history or [])),
+                  str(row.history))
+
     print("\n16. Permission split")
     from app.api import rbac
     check("viewer cannot dismiss a recommendation",
@@ -322,6 +457,11 @@ async def main():
 
     print("\n17. Cleanup")
     async with AsyncSessionLocal() as db:
+        from app.models.optimization import CloudOptimizationFinding
+        await db.execute(delete(CloudCostRecommendationDecision).where(
+            CloudCostRecommendationDecision.fingerprint == "a" * 40))
+        await db.execute(delete(CloudOptimizationFinding).where(
+            CloudOptimizationFinding.account_id == account_id))
         await db.execute(delete(CloudCostRecommendationDecision).where(
             CloudCostRecommendationDecision.account_id == account_id))
         target = await db.get(CloudAccount, account_id)

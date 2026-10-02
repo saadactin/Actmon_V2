@@ -81,7 +81,7 @@ function rangeDates(days) {
   return { start: fmt(start), end: fmt(end) };
 }
 
-export default function CostIntelligencePage({ embedded = false, accountId }) {
+export default function CostIntelligencePage({ embedded = false, accountId, providerSlug }) {
   const scope = useCloudScope();
   const accounts = scope.scopedAccounts;
   const scopedAccountId = scope.accountId;
@@ -674,6 +674,8 @@ export default function CostIntelligencePage({ embedded = false, accountId }) {
           recommendations={a?.optimizations}
           savingsSummary={a?.savings_summary}
           savingsByCategory={a?.savings_by_category}
+          sources={a?.optimizations_source}
+          accountRoute={providerSlug && accountId ? `/cloud/${providerSlug}-accounts/${accountId}` : null}
         />
       )}
 

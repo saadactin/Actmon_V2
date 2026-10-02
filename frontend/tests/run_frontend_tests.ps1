@@ -134,7 +134,15 @@ $suites = @(
     # of "run the frontend suite". A wrong predicate here fails silently: cost
     # or security data just keeps showing pre-refresh numbers, with no error
     # anywhere to notice.
-    @{ Name = "account refresh model: invalidation predicate, outcome messages"; Path = "src/features/cloud/utils/__tests__/refreshModel.test.mjs" }
+    @{ Name = "account refresh model: invalidation predicate, outcome messages"; Path = "src/features/cloud/utils/__tests__/refreshModel.test.mjs" },
+    # Per-tab refresh: which tabs re-read the provider vs stored data, viewers
+    # never offered provider work, provider work held while Refresh all runs,
+    # and captions that never claim more than the response confirmed.
+    @{ Name = "tab refresh model: source honesty, permissions, busy hold, captions"; Path = "src/features/cloud/utils/__tests__/tabRefreshModel.test.mjs" },
+    # Resource Intelligence: unknown is never zero (N/A with the backend's
+    # reason), filters survive the URL, and a summary card opens exactly the
+    # list it counted.
+    @{ Name = "intelligence model: N/A discipline, URL round trip, card filters"; Path = "src/features/cloud/utils/__tests__/intelligenceModel.test.mjs" }
 )
 
 # ---- Discovery guard: catch the NEXT orphaned suite, not just this one ----

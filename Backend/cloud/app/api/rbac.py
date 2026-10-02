@@ -200,6 +200,21 @@ CLIENT_ONBOARD = "clients:onboard"
 REPORT_EXPORT = "reports:export"
 REPORT_MANAGE = "reports:manage"
 
+# ---- Resource Intelligence ---------------------------------------------------
+#   intelligence:view     — the findings workspace, evidence, telemetry, health.
+#                           Every role, like security:view and cost:view: it
+#                           reads what those two already expose.
+#   intelligence:triage   — acknowledge, reopen, mark resolved. Analyst-level,
+#                           beside security:triage.
+#   intelligence:suppress — suppress a finding so it stops counting. Admin-only,
+#                           for the reason security:suppress is.
+# Running an analysis contacts the provider's monitoring API, so it needs
+# resources:discover — the same permission as "Refresh all", which runs it.
+# A SECURITY finding shown here keeps the Security Center's own permissions.
+INTELLIGENCE_VIEW = "intelligence:view"
+INTELLIGENCE_TRIAGE = "intelligence:triage"
+INTELLIGENCE_SUPPRESS = "intelligence:suppress"
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "security_analyst"
 ROLE_ADMIN = "administrator"
@@ -214,7 +229,7 @@ ROLE_AUDIT_ADMIN = "audit_admin"
 # when/where — and the payload needs the analyst role.
 ROLE_PERMISSIONS = {
     ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW, RESOURCE_VIEW,
-                  ALERT_VIEW, CLIENT_VIEW},
+                  ALERT_VIEW, CLIENT_VIEW, INTELLIGENCE_VIEW},
     ROLE_ANALYST: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY,
         TOPOLOGY_VIEW, TOPOLOGY_VIEW_RAW, TOPOLOGY_EXPORT,
@@ -235,6 +250,8 @@ ROLE_PERMISSIONS = {
         # Can produce and download a client's report; cannot schedule one or
         # decide who receives it.
         CLIENT_VIEW, REPORT_EXPORT,
+        # Works the findings queue; cannot suppress.
+        INTELLIGENCE_VIEW, INTELLIGENCE_TRIAGE,
     },
     ROLE_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -248,6 +265,7 @@ ROLE_PERMISSIONS = {
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
         ALERT_MANAGE_RECIPIENTS,
         CLIENT_VIEW, CLIENT_MANAGE, CLIENT_ONBOARD, REPORT_EXPORT, REPORT_MANAGE,
+        INTELLIGENCE_VIEW, INTELLIGENCE_TRIAGE, INTELLIGENCE_SUPPRESS,
     },
     ROLE_AUDIT_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -262,6 +280,7 @@ ROLE_PERMISSIONS = {
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
         ALERT_MANAGE_RECIPIENTS,
         CLIENT_VIEW, CLIENT_MANAGE, CLIENT_ONBOARD, REPORT_EXPORT, REPORT_MANAGE,
+        INTELLIGENCE_VIEW, INTELLIGENCE_TRIAGE, INTELLIGENCE_SUPPRESS,
     },
 }
 

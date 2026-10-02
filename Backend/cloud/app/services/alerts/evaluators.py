@@ -1012,6 +1012,46 @@ async def _eval_credential_expiry(ctx: EvalContext, cfg: dict, scope: dict) -> E
     )
 
 
+async def _eval_intelligence_finding_count(ctx: EvalContext, cfg: dict,
+                                           scope: dict) -> Evaluation:
+    """Open optimization findings, from the table the analysis writes. An
+    account never analysed is UNKNOWN — its finding count is not zero."""
+    from app.repository.optimization_repo import OptimizationRepository
+
+    repo = OptimizationRepository(ctx.db)
+    run = await repo.latest_run(ctx.account_id)
+    if run is None:
+        return result.unknown(
+            "This account has not been analysed by Resource Intelligence yet, so the "
+            "number of open findings is unknown. It is NOT zero. Refresh intelligence "
+            "(or Refresh all) runs the analysis.")
+    rows = await repo.for_accounts([ctx.account_id], statuses=["OPEN", "ACKNOWLEDGED"])
+    category = cfg.get("category_filter", "ANY")
+    severity = cfg.get("severity_filter", "ANY")
+    if category != "ANY":
+        rows = [r for r in rows if r.category == category]
+    if severity != "ANY":
+        rows = [r for r in rows if r.severity == severity]
+    observed = len(rows)
+    threshold = float(cfg.get("threshold", 0))
+    operator = cfg.get("operator", catalog.OP_GT)
+    fired = catalog.compare(observed, operator, threshold)
+    detail = f"{observed} open finding(s) match this rule."
+    if run.outcome != "COMPLETE":
+        detail += (" The latest analysis was partial: findings it could not re-check "
+                   "stay open, so this count may include some it could not re-verify.")
+    return result.compared(
+        fired, observed, threshold, operator, detail=detail,
+        as_of=run.finished_at.isoformat() if run.finished_at else None,
+        samples=[{"name": r.resource_name or r.resource_key, "type": r.resource_type,
+                  "severity": r.severity, "detail": r.title}
+                 for r in sorted(rows, key=lambda x: (_sev_rank(x.severity),
+                                                      -(x.estimated_savings or 0)))[:MAX_SAMPLES]],
+        context={"category_filter": category, "severity_filter": severity,
+                 "analysis_outcome": run.outcome},
+    )
+
+
 def _int(value: Any, default: int) -> int:
     try:
         return int(float(value))
@@ -1050,6 +1090,7 @@ EVALUATORS: Dict[str, Callable] = {
     catalog.COST_DATA_UNAVAILABLE: _eval_cost_data_unavailable,
     catalog.EVENT_COLLECTION_UNHEALTHY: _eval_event_collection_unhealthy,
     catalog.CREDENTIAL_EXPIRY: _eval_credential_expiry,
+    catalog.INTELLIGENCE_FINDING_COUNT: _eval_intelligence_finding_count,
 }
 
 _MISSING = set(catalog.CONDITIONS) - set(EVALUATORS)

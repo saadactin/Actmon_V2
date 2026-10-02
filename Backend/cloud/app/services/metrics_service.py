@@ -445,7 +445,10 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
             }
 
     elif rtype == "LambdaFunction":
-        fn_name = resource.provider_resource_id
+        # The dimension is the function NAME. provider_resource_id is the ARN,
+        # which matches no CloudWatch series, so every Lambda used to chart as
+        # "no datapoints" whether or not it was being invoked.
+        fn_name = resource.resource_name
         dims = [{"Name": "FunctionName", "Value": fn_name}]
         if cw_client:
             inv_data = await asyncio.to_thread(_get_cw_stats, cw_client, "AWS/Lambda", "Invocations", dims, start, now, 3600, "Sum")

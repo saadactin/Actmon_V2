@@ -101,6 +101,94 @@ async def get_prices(currency: str = "INR") -> Dict[str, Dict[str, Any]]:
     return prices
 
 
+# ── Compute and other tiered parts (Resource Intelligence) ───────────────────
+# Flex shapes bill OCPUs and memory separately, per hour. The part numbers were
+# confirmed against this same public API on 2026-09-30 (display names below),
+# and every lookup re-checks the display name, so a part that is renumbered or
+# repurposed yields NA instead of a price for the wrong thing.
+FLEX_SHAPE_PARTS: Dict[str, Dict[str, Any]] = {
+    # The token is the family as OCI names it — "Standard - X9" and
+    # "Optimized - X9" are different price lines, so a bare "X9" would let one
+    # family's part verify against the other's.
+    "VM.Standard.E3.Flex": {"ocpu": "B92306", "memory": "B92307", "token": "Standard - E3"},
+    "VM.Standard.E4.Flex": {"ocpu": "B93113", "memory": "B93114", "token": "Standard - E4"},
+    "VM.Standard.E5.Flex": {"ocpu": "B97384", "memory": "B97385", "token": "Standard - E5"},
+    "VM.Standard3.Flex": {"ocpu": "B94176", "memory": "B94177", "token": "Standard - X9"},
+    "VM.Optimized3.Flex": {"ocpu": "B93311", "memory": "B93312", "token": "Optimized - X9"},
+    "VM.Standard.A1.Flex": {"ocpu": "B93297", "memory": "B93298", "token": "Standard - A1"},
+}
+# Hours in an average month (8,760 / 12). Stated wherever it is used.
+HOURS_PER_MONTH = 730
+
+_tier_cache: Dict[Tuple[str, str], Tuple[float, Optional[Dict[str, Any]]]] = {}
+
+
+async def get_part(part: str, currency: str = "INR") -> Optional[Dict[str, Any]]:
+    """One part at its PAID pay-as-you-go rate, with its published name.
+
+    Several parts list a free-tier price of 0 before the paid rate (A1
+    compute, Object Storage, the first load balancer). The first-listed price
+    — what `_fetch_part` returns, correctly, for the single-rate block storage
+    parts — would price those at zero. This returns the highest PAYG rate and
+    says a free allowance exists, so a saving is never computed at 0.
+    """
+    currency = (currency or "INR").upper()
+    cached = _tier_cache.get((currency, part))
+    if cached and time.time() - cached[0] < _CACHE_TTL_SECONDS:
+        return cached[1]
+    info: Optional[Dict[str, Any]] = None
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(_PRICE_API, params={"currencyCode": currency,
+                                                        "partNumber": part})
+            resp.raise_for_status()
+            items = resp.json().get("items") or []
+        if items:
+            item = items[0]
+            loc = next((c for c in item.get("currencyCodeLocalizations", [])
+                        if c.get("currencyCode") == currency), None)
+            payg = [p for p in ((loc or {}).get("prices") or [])
+                    if p.get("model") == "PAY_AS_YOU_GO" and p.get("value") is not None]
+            if payg:
+                paid = max(payg, key=lambda p: float(p["value"]))
+                info = {
+                    "part": part,
+                    "value": float(paid["value"]),
+                    "display_name": item.get("displayName"),
+                    "metric": item.get("metricName"),
+                    "currency": currency,
+                    "free_tier": any(float(p["value"]) == 0 for p in payg),
+                }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OCI price lookup failed for %s (%s): %s", part, currency, exc)
+        return None   # not cached: retried next time
+    _tier_cache[(currency, part)] = (time.time(), info)
+    return info
+
+
+async def flex_rates(shape: str, currency: str = "INR") -> Optional[Dict[str, Any]]:
+    """OCPU-hour and GB-hour list rates for a Flex shape, verified by name.
+
+    None when the shape is not a known Flex family or a part's published name
+    does not match it — never a rate borrowed from a neighbouring family.
+    """
+    spec = FLEX_SHAPE_PARTS.get(shape)
+    if not spec:
+        return None
+    ocpu = await get_part(spec["ocpu"], currency)
+    mem = await get_part(spec["memory"], currency)
+    token = spec["token"]
+
+    def verified(info, kind):
+        name = (info or {}).get("display_name") or ""
+        return bool(info) and token in name and kind in name
+
+    if not (verified(ocpu, "OCPU") and verified(mem, "Memory")):
+        return None
+    return {"shape": shape, "ocpu": ocpu, "memory": mem, "currency": currency.upper(),
+            "hours_per_month": HOURS_PER_MONTH}
+
+
 # ── Breakdown builders ────────────────────────────────────────────────────────
 # Each returns (monthly_total | None, [line-item dicts]). Line items feed the
 # "show the math" table in the recommendation detail popup.

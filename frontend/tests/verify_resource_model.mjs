@@ -80,6 +80,13 @@ check('null percent is not 0%', formatPct(null) === 'Not applicable');
 check('a real 0 percent prints as 0%', formatPct(0) === '0%');
 check('null timestamp is null, not "just now"', relativeTime(null) === null);
 check('a real timestamp formats', /ago|just now/.test(relativeTime(new Date(Date.now() - 6e4).toISOString())));
+const ago = (ms) => relativeTime(new Date(Date.now() - ms).toISOString());
+const H = 3600e3;
+check('2 hours reads "2 hours ago"', ago(2 * H) === '2 hours ago', ago(2 * H));
+check('30 hours rolls over into a day', ago(30 * H) === '1 day ago', ago(30 * H));
+check('12 days reads "12 days ago", not "5 days ago"', ago(12 * 24 * H) === '12 days ago', ago(12 * 24 * H));
+check('45 days reads "1 month ago"', ago(45 * 24 * H) === '1 month ago', ago(45 * 24 * H));
+check('400 days reads "1 year ago"', ago(400 * 24 * H) === '1 year ago', ago(400 * 24 * H));
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 process.exit(fail ? 1 : 0);

@@ -28,6 +28,7 @@ import * as cost from '../src/features/cloud/api/cost.api.js';
 import * as discovery from '../src/features/cloud/api/discovery.api.js';
 import * as drift from '../src/features/cloud/api/drift.api.js';
 import * as events from '../src/features/cloud/api/events.api.js';
+import * as intelligence from '../src/features/cloud/api/intelligence.api.js';
 import * as overview from '../src/features/cloud/api/overview.api.js';
 import * as refresh from '../src/features/cloud/api/refresh.api.js';
 import * as resources from '../src/features/cloud/api/resources.api.js';
@@ -357,6 +358,22 @@ const PROBES = [
   ['certificates.getCertificateEstate (unassigned)', certificates.getCertificateEstate,
     [{ unassigned: true, withinDays: 0 }]],
   ['certificates.collectCertificates', certificates.collectCertificates, ['ACC-1']],
+
+  // Resource Intelligence.
+  ['intelligence.getMeta', intelligence.getMeta, []],
+  ['intelligence.getSummary', intelligence.getSummary, ['ACC-1']],
+  ['intelligence.getFindings (every filter)', intelligence.getFindings, ['ACC-1', {
+    category: ['RIGHTSIZING', 'COMPLIANCE'], severity: ['HIGH'], provider: ['OCI'],
+    status: ['OPEN', 'ACKNOWLEDGED'], source: ['optimization'], signal: ['UNUSED'],
+    search: 'vm', has_savings: true, sort: 'savings', limit: 25, offset: 25 }]],
+  ['intelligence.getFinding', intelligence.getFinding, ['ACC-1', 'optimization', 'fp1']],
+  ['intelligence.setFindingStatus', intelligence.setFindingStatus,
+    ['ACC-1', 'security', 'fp1', { status: 'ACKNOWLEDGED' }]],
+  ['intelligence.runAnalysis', intelligence.runAnalysis, ['ACC-1']],
+  ['intelligence.getResourceHealth', intelligence.getResourceHealth, ['ACC-1', 'RES-1']],
+  ['intelligence.getResourceTelemetry', intelligence.getResourceTelemetry, ['ACC-1', 'RES-1']],
+  ['intelligence.getCoverage', intelligence.getCoverage, ['ACC-1']],
+  ['intelligence.getRuns', intelligence.getRuns, ['ACC-1', 10]],
 ];
 
 check('the probe table covers all 15 api modules with a non-trivial number of calls',

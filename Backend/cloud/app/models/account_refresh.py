@@ -80,13 +80,15 @@ COMPONENT_STATES = (
 # The components a refresh reports on, in the order they actually execute
 # inside the discovery worker. The UI renders this order, so it matches what
 # is really happening rather than an arbitrary list.
-COMPONENTS = ("connection", "resources", "drift", "cost", "security", "events")
+COMPONENTS = ("connection", "resources", "drift", "cost", "security", "intelligence",
+              "events")
 COMPONENT_LABELS = {
     "connection": "Account connection",
     "resources": "Resource discovery",
     "drift": "Configuration drift",
     "cost": "Cost data",
     "security": "Security assessment",
+    "intelligence": "Resource intelligence",
     "events": "Event collection",
 }
 

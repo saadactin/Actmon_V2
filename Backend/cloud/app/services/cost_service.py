@@ -17,89 +17,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.pricing import oci_pricing
 from app.providers import capabilities as provider_caps
 from app.repository.resource_repo import ResourceRepository
 from app.services import cost_errors, cost_metrics, cost_money
 
 logger = logging.getLogger("cloud_svc.cost")
 
-
-def _attach_oci_savings(opt: Dict[str, Any], resource, prices, currency: str) -> None:
-    """Enrich one OCI optimization with a real monthly-savings estimate and the
-    math behind it (from OCI's public list prices). Leaves potential_savings as
-    None (NA) whenever we cannot price it honestly — never guesses."""
-    opt.setdefault("savings_currency", None)
-    opt.setdefault("savings_breakdown", [])
-    opt.setdefault("savings_assumptions", [])
-    opt.setdefault("savings_basis", None)
-
-    if resource is None:
-        return
-    cfg = resource.config or {}
-    rule = opt.get("rule")
-    total: Optional[float] = None
-    lines: List[Dict[str, Any]] = []
-    assumptions: List[str] = []
-
-    if rule == "Stopped OCI Compute Instance":
-        gb = cfg.get("attached_storage_gb")
-        total, lines = oci_pricing.block_volume_breakdown(gb, prices, label="Attached storage")
-        if total is not None:
-            boot = cfg.get("boot_volume_gb")
-            blk = cfg.get("block_volume_gb")
-            detail = []
-            if boot is not None:
-                detail.append(f"boot volume {boot} GB")
-            if blk is not None:
-                detail.append(f"block volumes {blk} GB")
-            assumptions = [
-                "Stopping the instance already ends OCPU and RAM billing; the remaining "
-                "waste is its boot + block-volume storage, which keeps billing until the "
-                "volumes are deleted (terminating the instance deletes the boot volume).",
-                "Balanced performance tier (10 VPU/GB) assumed — OCI's default for boot "
-                "and most block volumes.",
-            ]
-            if detail:
-                assumptions.append("Provisioned storage measured from the OCI Block "
-                                   "Storage API: " + ", ".join(detail) + ".")
-        else:
-            assumptions = [
-                "Volume sizes were not captured for this instance (older scan), so the "
-                "storage saving cannot be quantified yet — re-run discovery to populate it.",
-            ]
-
-    elif rule == "Stopped Autonomous Database":
-        tbs = cfg.get("data_storage_size_tbs")
-        total, lines = oci_pricing.adb_storage_breakdown(tbs, prices, label="Autonomous DB storage")
-        if total is not None:
-            assumptions = [
-                "A stopped Autonomous Database stops CPU billing but keeps billing its "
-                "provisioned storage until the database is terminated.",
-                "Storage billed at 1 TB = 1024 GB.",
-            ]
-
-    elif rule == "Enable Autonomous Database Auto-Scaling":
-        # Honesty: enabling auto-scaling does NOT yield a fixed monthly saving — it adds
-        # burst capacity and can raise cost at peak. The saving only exists if the BASE
-        # capacity is lowered, which needs usage data we don't collect. So: NA.
-        assumptions = [
-            "No fixed monthly saving. Auto-scaling matches capacity to demand and can "
-            "increase cost during peaks — the cost win only comes from reducing the BASE "
-            "ECPU/OCPU count if the database is over-provisioned, which requires usage "
-            "metrics this tool does not yet collect.",
-        ]
-
-    opt["potential_savings"] = total
-    opt["savings_breakdown"] = lines
-    opt["savings_assumptions"] = assumptions
-    if total is not None:
-        opt["savings_currency"] = currency
-        opt["savings_basis"] = (
-            "OCI public Price List API — PAY_AS_YOU_GO list price. This is the public "
-            "list rate, not your account's negotiated or committed-use discount, so the "
-            "actual saving may be lower."
-        )
 
 # Real billing-API lookups are slow (2-10s) and rate-limited, so cache per account.
 # Cache entries are (stored_at, rows, errored). A transient failure (timeout,
@@ -1010,6 +933,32 @@ async def prewarm_cost_cache(account) -> None:
     )
 
 
+def expire_account_cost_cache(account_id) -> int:
+    """Expire this account's cached billing results without discarding them.
+
+    Used by the Cost tab's own refresh, which must re-ask the provider rather
+    than re-serve a 14-minute-old answer. The VALUES are kept and only the
+    timestamp is zeroed: if the provider then fails (a 429, a dropped TLS
+    handshake), `_cached_fetch` still serves the last good numbers as stale,
+    exactly as it would at the natural end of the TTL. Deleting the entries
+    instead would turn one throttled refresh into an NA page.
+
+    Returns how many cache slots were expired.
+    """
+    aid = str(account_id)
+    expired = 0
+    for cache in (_real_cost_cache, _daily_cost_cache,
+                  _real_cost_by_resource_cache, _cost_report_cache):
+        for key in [k for k in cache
+                    if k == aid or (isinstance(k, tuple) and k and k[0] == aid)]:
+            entry = cache[key]
+            stored_at, rows, errored = entry[0], entry[1], entry[2]
+            last_good = entry[3] if len(entry) > 3 else (None if errored else stored_at)
+            cache[key] = (0.0, rows, errored, last_good)
+            expired += 1
+    return expired
+
+
 #: Where a provider gave us a charge with no region attached. A real label
 #: rather than None so it can be rendered, sorted and clicked like any other
 #: row — and so nobody mistakes it for a bug in the breakdown.
@@ -1841,407 +1790,54 @@ class CostService:
             t["cost"] = round(t["cost"], 4)
         trend_currency = _single_currency(trend_currencies) if trends else None
 
-        # ── Optimization recommendations from real scanned configuration ─────
-        # potential_savings is None (NA) — no real pricing source is wired up,
-        # so no dollar figure is ever invented.
-        optimizations: List[Dict[str, Any]] = []
-
-        for r in resources:
-            config = r.config or {}
-            rtype = r.resource_type
-            rid = str(r.id)
-
-            if rtype == "EC2Instance":
-                if r.status == "stopped":
-                    sub_resources = []
-                    if isinstance(r.raw_data, dict):
-                        for bd in r.raw_data.get("BlockDeviceMappings", []):
-                            vid = bd.get("Ebs", {}).get("VolumeId")
-                            if vid:
-                                sub_resources.append({"name": f"EBS Volume {vid}", "cost": None})
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Terminate Stopped EC2 Instance",
-                        "description": (
-                            f"Instance '{r.resource_name}' is stopped (state from the EC2 API). "
-                            "Stopped instances keep incurring EBS storage charges."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "LOW",
-                        "recommendation": "If no longer needed, snapshot the volumes and terminate the instance.",
-                        "sub_resources": sub_resources,
-                    })
-
-                instance_type = config.get("instance_type") or ""
-                if instance_type.startswith(("t2.", "m4.", "c4.")):
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Upgrade Legacy EC2 Generation",
-                        "description": (
-                            f"Instance '{r.resource_name}' runs a previous-generation type "
-                            f"({instance_type}). Current generations (t3/t4g, m5/m6, c5/c6) offer "
-                            "better price/performance."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": f"Migrate {instance_type} to its current-generation equivalent.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "S3Bucket":
-                # Only when the S3 API explicitly reported versioning state
-                versioning = config.get("versioning")
-                if versioning in ("Disabled", "Suspended"):
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Enable S3 Bucket Versioning",
-                        "description": (
-                            f"Bucket '{r.resource_name}' has versioning '{versioning}' "
-                            "(from get_bucket_versioning). Versioning protects against "
-                            "accidental deletion and overwrites."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "LOW",
-                        "recommendation": "Enable bucket versioning in the S3 console or via the API.",
-                        "sub_resources": [],
-                    })
-
-                # Only when the S3 API explicitly confirmed there are zero rules
-                if config.get("lifecycle_rules") == []:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Missing S3 Lifecycle Policies",
-                        "description": (
-                            f"Bucket '{r.resource_name}' has no lifecycle rules "
-                            "(confirmed via get_bucket_lifecycle_configuration). Objects stay "
-                            "in their original storage class indefinitely."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Add a lifecycle rule to transition or expire old objects.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "DynamoDBTable" and config.get("billing_mode") == "PROVISIONED":
-                item_count = config.get("item_count")
-                if item_count is not None and item_count < 1000:
-                    rcu = config.get("read_capacity")
-                    wcu = config.get("write_capacity")
-                    sub_resources = []
-                    if rcu is not None:
-                        sub_resources.append({"name": f"Provisioned RCU ({rcu})", "cost": None})
-                    if wcu is not None:
-                        sub_resources.append({"name": f"Provisioned WCU ({wcu})", "cost": None})
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Convert DynamoDB to On-Demand Billing",
-                        "description": (
-                            f"Table '{r.resource_name}' uses provisioned throughput but holds only "
-                            f"{item_count} items (from DescribeTable). On-demand billing usually "
-                            "costs less for low-traffic tables."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Switch the table's billing mode to PAY_PER_REQUEST.",
-                        "sub_resources": sub_resources,
-                    })
-
-            if rtype == "LambdaFunction":
-                memory_mb = config.get("memory_mb")
-                runtime = config.get("runtime") or ""
-
-                if memory_mb is not None and memory_mb > 1024:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Review Lambda Memory Size",
-                        "description": (
-                            f"Function '{r.resource_name}' is configured with {memory_mb} MB "
-                            "(from the Lambda API). Oversized memory increases per-invocation cost."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "LOW",
-                        "effort": "MEDIUM",
-                        "recommendation": "Profile the function and right-size its memory allocation.",
-                        "sub_resources": [],
-                    })
-
-                outdated_runtimes = ["nodejs10.x", "nodejs12.x", "nodejs14.x",
-                                     "python3.6", "python3.7", "ruby2.5"]
-                if runtime in outdated_runtimes:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Upgrade Deprecated Runtime",
-                        "description": (
-                            f"Function '{r.resource_name}' uses runtime '{runtime}' (from the "
-                            "Lambda API), which no longer receives security patches."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "CRITICAL",
-                        "effort": "HIGH",
-                        "recommendation": "Upgrade to a supported runtime (e.g. nodejs20.x, python3.12).",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "RDSInstance":
-                if r.status == "stopped":
-                    storage_gb = config.get("storage_gb")
-                    sub_resources = (
-                        [{"name": f"Provisioned Storage ({storage_gb} GB)", "cost": None}]
-                        if storage_gb is not None else []
-                    )
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Review Stopped RDS Database",
-                        "description": (
-                            f"RDS instance '{r.resource_name}' is stopped (state from the RDS "
-                            "API) but its provisioned storage continues to be billed."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "MEDIUM",
-                        "recommendation": "Take a final snapshot and delete the instance if unused.",
-                        "sub_resources": sub_resources,
-                    })
-
-                is_prod = any(
-                    str(v).lower() in ("prod", "production")
-                    for v in (r.tags or {}).values()
-                )
-                if config.get("multi_az") is True and not is_prod:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Disable Multi-AZ on Non-Prod RDS",
-                        "description": (
-                            f"Database '{r.resource_name}' has Multi-AZ enabled (from the RDS "
-                            "API) but carries no production tag. Multi-AZ roughly doubles "
-                            "instance and storage charges."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Convert to Single-AZ if high availability is not required.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "EKSCluster":
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Review EKS Control Plane Utilization",
-                    "description": (
-                        f"Cluster '{r.resource_name}' incurs AWS's flat hourly control-plane "
-                        "charge regardless of workload. Verify the cluster is still needed."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "LOW",
-                    "effort": "HIGH",
-                    "recommendation": "Delete test clusters; use kind/minikube for local development.",
-                    "sub_resources": [],
-                })
-
-            # ── OCI (Oracle Cloud) ────────────────────────────────────────────
-            if rtype == "ComputeInstance" and (r.status or "").upper() == "STOPPED":
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Stopped OCI Compute Instance",
-                    "description": (
-                        f"Instance '{r.resource_name}' is STOPPED (lifecycle state from the "
-                        "OCI Compute API). A stopped instance is not billed for OCPUs, but its "
-                        "boot volume and any attached block volumes keep incurring storage charges."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "HIGH",
-                    "effort": "LOW",
-                    "recommendation": "If the instance is no longer needed, back up and terminate it (with its volumes) to stop the ongoing storage charges.",
-                    "sub_resources": [],
-                })
-
-            if rtype == "AutonomousDatabase":
-                if (r.status or "").upper() == "STOPPED":
-                    storage_tb = config.get("data_storage_size_tbs")
-                    sub = (
-                        [{"name": f"Provisioned Storage ({storage_tb} TB)", "cost": None}]
-                        if storage_tb is not None else []
-                    )
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Stopped Autonomous Database",
-                        "description": (
-                            f"Autonomous Database '{r.resource_name}' is STOPPED (from the OCI "
-                            "Database API). A stopped ADB is not billed for CPU, but its "
-                            "provisioned storage continues to be billed."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "LOW",
-                        "recommendation": "If it is no longer needed, take a manual backup and terminate the database to stop storage charges.",
-                        "sub_resources": sub,
-                    })
-                elif config.get("is_auto_scaling_enabled") is False:
-                    # ECPU-model ADBs report cpu_core_count=0; the real capacity is
-                    # compute_count. Use whichever matches the billing model so the
-                    # message never shows a misleading "0".
-                    is_ecpu = config.get("compute_model") == "ECPU"
-                    cores = config.get("compute_count") if is_ecpu else config.get("cpu_core_count")
-                    unit = "ECPU" if is_ecpu else "OCPU"
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Enable Autonomous Database Auto-Scaling",
-                        "description": (
-                            f"Autonomous Database '{r.resource_name}' has auto-scaling disabled"
-                            + (f" (base {unit} count = {cores})" if cores is not None else "")
-                            + " (from the OCI Database API). Without auto-scaling it always bills "
-                            f"for its full base {unit}s even when idle."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Enable auto-scaling so the database matches OCPUs to demand instead of paying for peak capacity continuously.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "OKECluster" and config.get("node_pool_count") == 0:
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle OKE Cluster (No Node Pools)",
-                    "description": (
-                        f"Kubernetes cluster '{r.resource_name}' has no node pools "
-                        "(node_pool_count=0, from the OCI Container Engine API). An empty cluster "
-                        "runs no workloads yet can still incur cluster management charges."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "Confirm the cluster is still needed; if it was left over from testing, delete it.",
-                    "sub_resources": [],
-                })
-
-            # OCI classic Load Balancer — disambiguate from AWS 'LoadBalancer' via lb_type
-            if (rtype == "LoadBalancer"
-                    and config.get("lb_type") == "LoadBalancer"
-                    and config.get("backend_sets") == []):
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle OCI Load Balancer (No Backend Sets)",
-                    "description": (
-                        f"Load balancer '{r.resource_name}' has no backend sets configured "
-                        "(from the OCI Load Balancer API). A load balancer with no backends serves "
-                        "no traffic but is still billed per hour for its provisioned shape."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "If this load balancer is unused, delete it to stop the hourly shape charge.",
-                    "sub_resources": [],
-                })
-
-            # OCI API Gateway — disambiguate from AWS 'APIGateway' via endpoint_type
-            if (rtype == "APIGateway"
-                    and "endpoint_type" in config
-                    and config.get("deployment_count") == 0):
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle OCI API Gateway (No Deployments)",
-                    "description": (
-                        f"API Gateway '{r.resource_name}' has no deployments (deployment_count=0, "
-                        "from the OCI API Gateway service). A gateway with no deployments routes no "
-                        "APIs but is still billed while it exists."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "If this gateway is no longer used, delete it to stop its charges.",
-                    "sub_resources": [],
-                })
-
-            # ── Azure ─────────────────────────────────────────────────────────
-            if rtype == "AKSCluster" and config.get("node_count") == 0:
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle AKS Cluster (No Nodes)",
-                    "description": (
-                        f"AKS cluster '{r.resource_name}' has 0 nodes across its node pools "
-                        "(from the Azure Container Service API). An empty cluster runs no workloads "
-                        "but can still incur control-plane / management charges."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "Confirm the cluster is still needed; if it was left over from testing, delete it.",
-                    "sub_resources": [],
-                })
-
-        # ── Attach real list-price savings to OCI recommendations ────────────
-        # Fetch OCI public list prices once (cached ~24h) and price each rec from
-        # the resource's real config. Only done when an OCI account is in view.
-        has_oci = any((a.provider or "").upper() in ("ORACLE", "OCI") for a in accounts)
-        if has_oci:
-            price_currency = currency or "INR"
-            prices = await oci_pricing.get_prices(price_currency)
-            res_by_id = {str(r.id): r for r in resources}
-            for o in optimizations:
-                _attach_oci_savings(o, res_by_id.get(o.get("resource_id")), prices, price_currency)
-
-        # Sum the real savings figures we were able to price (all same currency).
-        known_savings = [
-            o["potential_savings"] for o in optimizations
-            if isinstance(o.get("potential_savings"), (int, float))
-        ]
-        potential_savings = round(sum(known_savings), 2) if known_savings else None
-
-        # ── Structure, score and lifecycle for the findings above ────────────
-        # The rules stay where they are; this adds category, confidence,
-        # actionability, a published priority score and any human decision,
-        # joined back by a fingerprint that survives re-derivation.
+        # ── Optimization recommendations ─────────────────────────────────────
+        # Read from the Resource Intelligence engine: the same findings the
+        # Intelligence tab lists, with the same evidence, savings and status,
+        # so the two tabs can never disagree about a resource. (This block
+        # used to derive its own 17 rules inline; each one is now an engine
+        # rule, a security-engine control, or was retired for firing on every
+        # resource of a type with no evidence.) Savings stay NA unless billing
+        # or a provider price list supports a figure.
+        from app.models.cost_recommendation import CLOSED_STATES
+        from app.optimization import rules as opt_rules
         from app.repository.cost_reco_repo import CostRecommendationRepository
         from app.services import cost_recommendation_service as reco
+        from app.services.intelligence_service import IntelligenceService
 
         decisions = await CostRecommendationRepository(self.db).decisions_for(
             [a.id for a in accounts]
         )
+        engine_view = await IntelligenceService(self.db).cost_findings(accounts, resources)
+        optimizations = [
+            reco.from_finding(
+                f, decisions=decisions,
+                legacy_rules=getattr(opt_rules.by_id(f.get("rule_id")), "supersedes", ()),
+            )
+            for f in engine_view["findings"] if reco.on_cost_tab(f)
+        ]
+
+        # ── Structure, score and lifecycle ───────────────────────────────────
+        # Category, confidence, actionability, a published priority score and
+        # the human decision, joined by the finding's fingerprint.
         optimizations = reco.enrich(
             optimizations, account_id=account_id, decisions=decisions,
         )
         savings_breakdown = reco.savings_summary(optimizations)
         savings_by_category = reco.by_category(optimizations)
+
+        # The headline saving is shown in the account's billing currency, so
+        # it is only a number when every open priced saving is in that
+        # currency. Closed (dismissed/implemented) ones are not counted.
+        open_priced = [
+            o for o in optimizations
+            if o.get("state") not in CLOSED_STATES
+            and isinstance(o.get("potential_savings"), (int, float))
+        ]
+        codes = {o.get("savings_currency") for o in open_priced}
+        potential_savings = (
+            round(sum(o["potential_savings"] for o in open_priced), 2)
+            if open_priced and currency and codes == {currency} else None
+        )
 
         stopped_instances = await build_stopped_instances(resources, accounts)
 
@@ -2264,6 +1860,10 @@ class CostService:
             "trends": trends,
             "trend_currency": trend_currency,
             "optimizations": optimizations,
+            # Per account: analysed (findings from the latest Resource
+            # Intelligence run) or preview (configuration and billing only,
+            # before the first analysis).
+            "optimizations_source": engine_view["sources"],
             # Split by how well each saving is known (85) and grouped by
             # currency (86) — never one combined number.
             "savings_summary": savings_breakdown,

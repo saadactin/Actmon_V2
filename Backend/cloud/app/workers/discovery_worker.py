@@ -523,6 +523,37 @@ async def run_discovery_scan(
                 await _stamp(refresh_id, "security", "FAILED",
                              detail=str(sec_exc)[:400])
 
+            # ── Resource intelligence ────────────────────────────────────────
+            # Last, because it reads everything above: the inventory this sweep
+            # wrote, the billed cost, and the security findings it shows beside
+            # its own. It also reads 30 days of telemetry from the provider's
+            # monitoring API. Its own session and swallowed, like security: an
+            # analysis failure must not turn a successful scan into a failed one.
+            # `sweep_complete` decides whether findings for resources this sweep
+            # did not see may be resolved — the same guard as the prune.
+            await _stamp(refresh_id, "intelligence", "RUNNING")
+            try:
+                async with AsyncSessionLocal() as intel_db:
+                    from app.services.intelligence_service import IntelligenceService
+
+                    intel = await IntelligenceService(intel_db).analyze(
+                        account_id, triggered_by=f"discovery:{job_id}",
+                        sweep_complete=not failures, discovery_scan_id=job_id)
+                    logger.info("Resource intelligence for job=%s: %s", job_id, intel["findings"])
+                    await _stamp(
+                        refresh_id, "intelligence", "SUCCEEDED",
+                        detail=(f"{intel['open']} open finding(s), "
+                                f"{intel['findings'].get('new', 0)} new, "
+                                f"{intel['findings'].get('resolved', 0)} resolved; "
+                                f"{intel['resources_analyzed']} of {intel['resources_total']} "
+                                "resources analysed."),
+                        incomplete=intel["outcome"] != "COMPLETE")
+            except Exception as intel_exc:  # noqa: BLE001
+                logger.warning("Resource intelligence failed for job=%s: %s",
+                               job_id, intel_exc, exc_info=True)
+                await _stamp(refresh_id, "intelligence", "FAILED",
+                             detail=str(intel_exc)[:400])
+
             logger.info(
                 "Discovery complete: job=%s account=%s resources=%d",
                 job_id, account_id, count,
@@ -538,7 +569,7 @@ async def run_discovery_scan(
             # failed did not itself fail, and calling it a failure would send
             # somebody looking at the wrong subsystem.
             await _stamp(refresh_id, "resources", "FAILED", detail=str(exc)[:400])
-            for _later in ("drift", "cost", "security"):
+            for _later in ("drift", "cost", "security", "intelligence"):
                 await _stamp(refresh_id, _later, "SKIPPED",
                              detail="Not reached — the inventory sweep failed first.")
             await disco_repo.fail_job(job_id, str(exc))
