@@ -316,3 +316,41 @@ class CloudCostBackfillJob(Base):
                 if self.error_category else None
             ),
         }
+
+
+class CloudCostSnapshot(Base):
+    """The last billing-API answer a refresh saved, for a provider that is read
+    only during a refresh (AWS — see app/services/fetch_policy.py).
+
+    Page views for such a provider never call it, so what they show has to
+    outlive the process: without this, every restart of the service would
+    blank the AWS cost pages until the next refresh. One row per
+    (account, kind, window): `kind` is which query it answers ("summary",
+    "daily", "by_resource", "report") and `window_days` is its lookback, 0 for
+    the fixed 30-day queries. `payload` is exactly the list/dict the provider
+    method returned, so serving it is indistinguishable from the original call.
+    """
+
+    __tablename__ = "cloud_cost_snapshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("cloud_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    window_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payload: Mapped[Any] = mapped_column(JSONB, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "kind", "window_days",
+                         name="uq_cost_snapshot_account_kind_window"),
+    )

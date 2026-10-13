@@ -14,6 +14,10 @@ import SecurityFindings, { FindingDrawer } from '../components/security/Security
 import SecurityCompliance from '../components/security/SecurityCompliance';
 import SecurityAlerts, { SecurityPolicies } from '../components/security/SecurityAlerts';
 import SecurityCertificates from '../components/security/SecurityCertificates';
+import AttackPathsPanel from '../components/security/AttackPaths';
+import VulnerabilitiesPanel from '../components/security/Vulnerabilities';
+import ThreatsPanel from '../components/security/Threats';
+import RansomwarePanel from '../components/security/Ransomware';
 import TabRefreshButton from '../components/refresh/TabRefreshButton';
 import {
   CoveragePanel, ExposurePanel, IdentityPanel, Stat, TrendsPanel,
@@ -34,6 +38,10 @@ const TABS = [
   { id: 'alerts', label: 'Alerts', icon: 'bell' },
   { id: 'compliance', label: 'Compliance', icon: 'report' },
   { id: 'exposure', label: 'Internet Exposure', icon: 'globe' },
+  { id: 'attack-paths', label: 'Attack Paths', icon: 'route' },
+  { id: 'vulnerabilities', label: 'Vulnerabilities', icon: 'shield' },
+  { id: 'threats', label: 'Threats & Incidents', icon: 'activity' },
+  { id: 'ransomware', label: 'Ransomware Resilience', icon: 'lock' },
   { id: 'identity', label: 'Identity & Access', icon: 'key' },
   { id: 'certificates', label: 'Certificates & Secrets', icon: 'lock' },
   { id: 'coverage', label: 'Coverage', icon: 'gauge' },
@@ -176,7 +184,7 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
                     displays as having nothing wrong. */}
                 <div>
                   <div className="mb-1.5 flex items-center gap-2">
-                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted">
+                    <h3 className="text-meta font-bold uppercase tracking-wider text-muted">
                       Confirmed findings
                     </h3>
                     <Badge tone="neutral" size="xs">{formatCount(findings?.confirmed)}</Badge>
@@ -189,7 +197,7 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
                         onClick={() => openFindings({ severity: sev, verdict: 'VULNERABLE' })}
                         className="card px-3 py-2.5 text-left transition-colors hover:border-strong"
                       >
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                        <div className="text-micro font-bold uppercase tracking-wider text-muted">
                           {sev}
                         </div>
                         <div className="mt-0.5 text-2xl font-bold text-fg">
@@ -214,7 +222,7 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
                         {formatCount(findings.undetermined)} check
                         {findings.undetermined === 1 ? '' : 's'} could not be determined
                       </div>
-                      <div className="text-[11px] leading-relaxed text-muted">
+                      <div className="text-meta leading-relaxed text-muted">
                         These are findings that are <em>missing</em>, not findings that are
                         absent. Coverage is {formatPct(overview?.coverage_pct, { nullLabel: 'unknown' })}.
                       </div>
@@ -296,7 +304,7 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
                             {f.title}
                           </div>
                           {f.affected_count > 1 && (
-                            <div className="text-[11px] text-subtle">
+                            <div className="text-meta text-subtle">
                               {formatCount(f.affected_count)} resources affected
                             </div>
                           )}
@@ -348,6 +356,10 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
       )}
 
       {!isError && tab === 'exposure' && <ExposurePanel accountId={accountId} />}
+      {!isError && tab === 'attack-paths' && <AttackPathsPanel accountId={accountId} />}
+      {!isError && tab === 'vulnerabilities' && <VulnerabilitiesPanel accountId={accountId} />}
+      {!isError && tab === 'threats' && <ThreatsPanel accountId={accountId} />}
+      {!isError && tab === 'ransomware' && <RansomwarePanel accountId={accountId} />}
       {!isError && tab === 'identity' && <IdentityPanel accountId={accountId} />}
       {!isError && tab === 'certificates' && (
         <SecurityCertificates accountId={accountId} onOpenFinding={setDrawerFinding} />
@@ -376,7 +388,7 @@ export default function SecurityCenterPage({ embedded = false, accountId: accoun
 function FreshnessLine({ freshness }) {
   if (!freshness) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-meta text-muted">
       <span className="inline-flex items-center gap-1.5">
         <Icon name="cloud" size={13} />
         Inventory collected{' '}
@@ -444,7 +456,7 @@ function ScanStatusPanel({ accountId }) {
                   {status || 'Unknown'}
                 </Badge>
               </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted">{detail}</p>
+              <p className="mt-1 text-meta leading-relaxed text-muted">{detail}</p>
             </div>
           );
         })}
@@ -473,13 +485,13 @@ function ClickStat({ label, value, tone, icon, onClick, caption, raw }) {
         <Icon name={icon} size={18} />
       </div>
       <div className="min-w-0">
-        <div className="truncate-safe text-[11px] font-semibold uppercase tracking-wider text-muted">
+        <div className="truncate-safe text-meta font-semibold uppercase tracking-wider text-muted">
           {label}
         </div>
         <div className="mt-0.5 text-2xl font-bold text-fg">
           {raw ? (value ?? '—') : formatCount(value)}
         </div>
-        {caption && <div className="truncate-safe text-[10px] text-warning-fg">{caption}</div>}
+        {caption && <div className="truncate-safe text-micro text-warning-fg">{caption}</div>}
       </div>
     </button>
   );

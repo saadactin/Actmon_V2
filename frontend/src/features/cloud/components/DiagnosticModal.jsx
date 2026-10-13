@@ -24,6 +24,9 @@ const CATEGORY_META = {
   provider_unavailable: { label: 'Provider Unavailable', Icon: CloudOff, tone: 'bg-info-soft text-info-fg' },
   invalid_request: { label: 'Invalid Query', Icon: AlertTriangle, tone: 'bg-danger-soft text-danger-fg' },
   partial: { label: 'Partial Data', Icon: AlertTriangle, tone: 'bg-warning-soft text-warning-fg' },
+  // AWS is read only during a refresh, because it bills per query. Nothing is
+  // wrong; the account simply has nothing saved yet.
+  awaiting_refresh: { label: 'Waiting For Refresh', Icon: Clock, tone: 'bg-info-soft text-info-fg' },
 };
 
 const SUGGESTED_FIX = {
@@ -41,11 +44,12 @@ const SUGGESTED_FIX = {
   provider_unavailable: 'This is a server-side error on the provider, not a problem with your account or credentials. It is usually transient.',
   invalid_request: 'This is a defect in the query this product sent, not a problem with your account. It needs a code fix — please report it with the raw error below.',
   partial: 'Some sub-queries succeeded and others did not, so the totals shown are incomplete. They are labelled PARTIAL rather than presented as final.',
+  awaiting_refresh: 'Nothing is broken. AWS charges for every billing and metrics query, so ActMon reads AWS only when the account is refreshed. Click Refresh on this account, or wait for its scheduled refresh.',
 };
 
 export const DiagnosticModal = ({ title, items, onClose }) => (
   <div
-    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
     onClick={onClose}
   >
     <div
@@ -104,7 +108,7 @@ export const DiagnosticModal = ({ title, items, onClose }) => (
                       {item.required_permission && (
                         <div className="flex flex-col gap-1 sm:col-span-2">
                           <dt className="font-semibold text-muted">Permission required</dt>
-                          <dd className="break-all rounded bg-surface px-2 py-1 font-mono text-[11px] text-fg">
+                          <dd className="break-all rounded bg-surface px-2 py-1 font-mono text-meta text-fg">
                             {item.required_permission}
                           </dd>
                         </div>
@@ -114,7 +118,7 @@ export const DiagnosticModal = ({ title, items, onClose }) => (
 
                   {fix && (
                     <div className="bg-info-soft rounded-control p-3">
-                      <div className="text-[11px] font-bold text-info-fg uppercase tracking-wider mb-1">
+                      <div className="text-meta font-bold text-info-fg uppercase tracking-wider mb-1">
                         What to do
                       </div>
                       <p className="text-xs text-fg">{fix}</p>

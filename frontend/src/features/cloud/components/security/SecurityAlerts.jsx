@@ -68,7 +68,7 @@ export default function SecurityAlerts({ accountId, onOpenFinding }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 text-[11px] font-bold uppercase tracking-wider text-subtle">
+        <span className="mr-1 text-meta font-bold uppercase tracking-wider text-subtle">
           State
         </span>
         {FILTERS.map((f) => {
@@ -88,7 +88,7 @@ export default function SecurityAlerts({ accountId, onOpenFinding }) {
               }`}
             >
               {f.label}
-              <span className="rounded-full bg-neutral-soft px-1.5 text-[10px] text-muted">{n}</span>
+              <span className="rounded-full bg-neutral-soft px-1.5 text-micro text-muted">{n}</span>
             </button>
           );
         })}
@@ -127,7 +127,7 @@ export default function SecurityAlerts({ accountId, onOpenFinding }) {
                     )}
                   </div>
                   <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{a.details}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-subtle">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-meta text-subtle">
                     <span>First seen {formatDateTime(a.created_at)}</span>
                     <span>Last seen {formatDateTime(a.last_seen_at)}</span>
                     <span>{a.occurrence_count}× detected</span>
@@ -142,7 +142,7 @@ export default function SecurityAlerts({ accountId, onOpenFinding }) {
                     {a.resolved_by && <span>resolved by {a.resolved_by}</span>}
                   </div>
                   {a.resolution_reason && (
-                    <p className="mt-1 text-[11px] italic text-muted">{a.resolution_reason}</p>
+                    <p className="mt-1 text-meta italic text-muted">{a.resolution_reason}</p>
                   )}
                 </div>
 
@@ -216,7 +216,7 @@ export default function SecurityAlerts({ accountId, onOpenFinding }) {
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
-            {err && <p className="text-[11px] text-danger">{err}</p>}
+            {err && <p className="text-meta text-danger">{err}</p>}
           </div>
         )}
       </Dialog>
@@ -292,7 +292,7 @@ export function SecurityPolicies({ accountId, canManage }) {
                   {p.builtin && <Badge tone="outline" size="xs">built-in</Badge>}
                   {!p.notify && <Badge tone="neutral" size="xs">record only</Badge>}
                 </div>
-                <div className="line-clamp-2 text-[11px] leading-relaxed text-subtle">
+                <div className="line-clamp-2 text-meta leading-relaxed text-subtle">
                   {p.description}
                 </div>
               </div>
@@ -324,17 +324,17 @@ export function SecurityPolicies({ accountId, canManage }) {
               </div>
             ),
             threshold: (
-              <span className="text-[11px] text-muted">
+              <span className="text-meta text-muted">
                 {p.threshold_label} ≥ {p.threshold_value}
               </span>
             ),
             sev: p.alert_severity
               ? <Badge tone={severityTone(p.alert_severity)}>{p.alert_severity}</Badge>
-              : <span className="text-[11px] text-subtle">from finding</span>,
+              : <span className="text-meta text-subtle">from finding</span>,
             fired: (
               <div className="text-right">
                 <div className="text-[12px] text-fg">{p.trigger_count}×</div>
-                <div className="text-[10px] text-subtle">
+                <div className="text-micro text-subtle">
                   {p.last_triggered_at ? formatDateTime(p.last_triggered_at) : 'never'}
                 </div>
               </div>
@@ -489,7 +489,7 @@ function PolicyDrawer({ policy, meta, accountId, onClose, onSave, onDelete, erro
             value={current.cooldown_minutes ?? 60}
             onChange={(e) => set({ cooldown_minutes: Number(e.target.value) })}
           />
-          <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+          <p className="mt-1 text-meta leading-relaxed text-subtle">
             A persisting condition is re-notified at most this often. Without a cooldown, a
             problem seen on every scan notifies on every scan.
           </p>
@@ -498,7 +498,7 @@ function PolicyDrawer({ policy, meta, accountId, onClose, onSave, onDelete, erro
         <Labeled label="Send notifications">
           <Switch checked={current.notify !== false}
             onChange={(v) => set({ notify: v })} label="Send notifications" />
-          <p className="mt-1 text-[11px] leading-relaxed text-subtle">
+          <p className="mt-1 text-meta leading-relaxed text-subtle">
             Off records the alert in the feed without routing it to a channel.
           </p>
         </Labeled>
@@ -516,7 +516,7 @@ function PolicyDrawer({ policy, meta, accountId, onClose, onSave, onDelete, erro
 function Labeled({ label, children }) {
   return (
     <div>
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">{label}</div>
+      <div className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">{label}</div>
       {children}
     </div>
   );

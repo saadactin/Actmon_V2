@@ -37,6 +37,7 @@ from app.models.credential_inventory import (
 from app.models.discovery_job import DiscoveryJob
 from app.models.resource import CloudResource
 from app.models.security_finding import CloudSecurityAssessment, CloudSecurityFinding
+from app.security import credentials as credx
 from app.security.model import (
     ACTIVE_FINDING_STATUSES, NOT_SCANNED, SEVERITIES, UNKNOWN, VULNERABLE,
     normalize_provider,
@@ -87,6 +88,7 @@ async def account_summaries(db, account_ids: Sequence[uuid.UUID], *,
             "findings_undetermined": 0,
             "open_alerts": 0,
             "certificates": {"expired": 0, "expiring_soon": 0, "expiring_horizon": 0,
+                             "replaced": 0,
                              "tracked": 0, "sources_total": 0, "sources_failing": 0,
                              "window_days": EXPIRY_SOON_DAYS,
                              "horizon_days": EXPIRY_HORIZON_DAYS},
@@ -149,25 +151,28 @@ async def account_summaries(db, account_ids: Sequence[uuid.UUID], *,
             .group_by(CloudAlert.account_id))).all():
         out[aid]["open_alerts"] = int(n)
 
-    # Certificates, secrets and keys. `enabled IS DISTINCT FROM false` keeps
-    # objects whose enabled flag was not reported: unknown is not "disabled".
+    # Certificates, secrets and keys. An unreported enabled flag is not
+    # "disabled". Counted in Python, not SQL, because a certificate renewed as
+    # a new object and no longer used ("replaced") depends on its siblings —
+    # see credentials.supersession — and is not an expiry anyone must act on.
     soon = now + timedelta(days=EXPIRY_SOON_DAYS)
     horizon = now + timedelta(days=EXPIRY_HORIZON_DAYS)
-    live = CloudCredentialObject.enabled.is_distinct_from(False)
-    for aid, tracked, expired, expiring, within in (await db.execute(
-            select(
-                CloudCredentialObject.account_id,
-                func.count(),
-                func.count().filter(and_(live, CloudCredentialObject.expires_at < now)),
-                func.count().filter(and_(live, CloudCredentialObject.expires_at >= now,
-                                         CloudCredentialObject.expires_at < soon)),
-                func.count().filter(and_(live, CloudCredentialObject.expires_at >= now,
-                                         CloudCredentialObject.expires_at < horizon)),
-            ).where(CloudCredentialObject.account_id.in_(ids))
-            .group_by(CloudCredentialObject.account_id))).all():
-        c = out[aid]["certificates"]
-        c.update(tracked=int(tracked), expired=int(expired),
-                 expiring_soon=int(expiring), expiring_horizon=int(within))
+    cred_objects = (await db.execute(select(CloudCredentialObject).where(
+        CloudCredentialObject.account_id.in_(ids)))).scalars().all()
+    successors = credx.supersession(cred_objects, now)
+    for o in cred_objects:
+        c = out[o.account_id]["certificates"]
+        c["tracked"] += 1
+        if o.enabled is False or o.expires_at is None:
+            continue
+        if o.expires_at < horizon and credx.is_retired(o, successors.get(o.object_key)):
+            c["replaced"] += 1
+        elif o.expires_at < now:
+            c["expired"] += 1
+        elif o.expires_at < horizon:
+            c["expiring_horizon"] += 1
+            if o.expires_at < soon:
+                c["expiring_soon"] += 1
     for aid, total, failing in (await db.execute(
             select(
                 CloudCredentialSource.account_id, func.count(),
@@ -215,7 +220,8 @@ def roll_up(summaries: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     by_provider: Dict[str, int] = {}
     mtd: Dict[str, float] = {}
     prev: Dict[str, float] = {}
-    certs = {"expired": 0, "expiring_soon": 0, "expiring_horizon": 0, "tracked": 0,
+    certs = {"expired": 0, "expiring_soon": 0, "expiring_horizon": 0, "replaced": 0,
+             "tracked": 0,
              "sources_failing": 0, "sources_total": 0}
     worst = None
     unassessed = 0

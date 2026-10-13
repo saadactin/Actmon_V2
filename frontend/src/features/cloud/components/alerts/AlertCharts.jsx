@@ -231,7 +231,7 @@ export function NotificationOutcomes({ data, loading, error }) {
           the mail server at all — suppressed, no recipient, not configured. */}
       {Object.keys(decided).length > 0 && (
         <div className="mt-3 border-t border-border pt-2">
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-subtle">
+          <p className="mb-1.5 text-micro font-semibold uppercase tracking-wider text-subtle">
             Decided by the alert engine
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -273,7 +273,7 @@ export function TopRules({ data, loading, error, onSelect }) {
               <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
                 {r.rule_name}
               </span>
-              <span className="shrink-0 text-[11px] text-muted">
+              <span className="shrink-0 text-meta text-muted">
                 <Count value={r.alerts} /> alert{r.alerts === 1 ? '' : 's'}
                 {' · '}
                 <Count value={r.notifications} /> email
@@ -284,7 +284,7 @@ export function TopRules({ data, loading, error, onSelect }) {
         ))}
       </ul>
 
-      <p className="mt-3 border-t border-border pt-2 text-[11px] text-muted">
+      <p className="mt-3 border-t border-border pt-2 text-meta text-muted">
         Mean time to resolve:{' '}
         <span className="font-semibold text-fg">
           {mttr == null

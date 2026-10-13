@@ -10,72 +10,49 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Cloud, Globe, Plus, Search } from 'lucide-react';
 import ProviderLogo from './ProviderLogo';
+import { providerBadgeStyle, providerColor, providerInkStyle, providerTileStyle } from '../utils/providerTheme';
 import { usePermissions } from '@/hooks/usePermissions';
 
 // ─── Provider metadata ────────────────────────────────────────────────────────
-// Brand colours are pinned (not theme tokens) — external provider identity,
-// same rationale as the Agents module's pinned --agent-* palette.
+// Brand hues stay pinned — external provider identity, the same rationale as the
+// Agents module's pinned --agent-* palette — but they now come from the one
+// brand registry (`utils/providerTheme`) and are applied as theme-mixed tints.
+// The four class maps that used to live here (badge, header ink, active pill,
+// count chip) were fixed light-palette swatches, so every one of them painted a
+// near-white block on the dim / dark / midnight themes.
 
 export const PROVIDER_META = {
-  AWS: {
-    label: 'Amazon Web Services',
-    color: '#FF9900',
-    accent: 'rgba(255,153,0,0.18)',
-    bg: 'rgba(255,153,0,0.07)',
-    logo: '🟡',
-  },
-  Azure: {
-    label: 'Microsoft Azure',
-    color: '#0078D4',
-    accent: 'rgba(0,120,212,0.18)',
-    bg: 'rgba(0,120,212,0.07)',
-    logo: '🔵',
-  },
-  OCI: {
-    label: 'Oracle Cloud',
-    color: '#C74634',
-    accent: 'rgba(199,70,52,0.18)',
-    bg: 'rgba(199,70,52,0.07)',
-    logo: '🔴',
-  },
+  AWS: { label: 'Amazon Web Services', color: providerColor('AWS') },
+  Azure: { label: 'Microsoft Azure', color: providerColor('Azure') },
+  OCI: { label: 'Oracle Cloud', color: providerColor('OCI') },
 };
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export function getProviderColor(provider) {
-  return PROVIDER_META[provider]?.color ?? '#94a3b8';
+  return providerColor(provider);
 }
 
-export function getProviderDot(provider) {
-  return PROVIDER_META[provider]?.logo ?? '⚪';
-}
+// ─── Presentation-only styling (brand hue, theme-mixed surfaces) ──────────────
 
-// ─── Presentation-only styling maps (pinned brand colours) ────────────────────
+const BADGE_BASE = 'inline-flex items-center px-2 py-0.5 rounded-full text-meta font-bold border';
 
-const BADGE_BASE = 'inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border';
-
-const PROVIDER_BADGE_CLASS = {
-  AWS: 'bg-orange-50 text-orange-700 border-orange-200',
-  Azure: 'bg-sky-50 text-sky-700 border-sky-200',
-  OCI: 'bg-red-50 text-red-700 border-red-200',
+/** The selected provider pill — a wash of its own hue instead of `bg-sky-50`. */
+const providerPillStyle = (provider) => {
+  const color = providerColor(provider);
+  return {
+    backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`,
+    borderColor: `color-mix(in srgb, ${color} 38%, transparent)`,
+  };
 };
 
-const PROVIDER_HEADER_TEXT = {
-  AWS: 'text-orange-700',
-  Azure: 'text-sky-700',
-  OCI: 'text-red-700',
-};
-
-const PROVIDER_ACTIVE_PILL = {
-  AWS: 'border-orange-300 bg-orange-50',
-  Azure: 'border-sky-300 bg-sky-50',
-  OCI: 'border-red-300 bg-red-50',
-};
-
-const PROVIDER_COUNT_ACTIVE = {
-  AWS: 'bg-orange-100 text-orange-700',
-  Azure: 'bg-sky-100 text-sky-700',
-  OCI: 'bg-red-100 text-red-700',
+/** The count chip on an active pill — a touch stronger than the pill behind it. */
+const providerCountStyle = (provider) => {
+  const color = providerColor(provider);
+  return {
+    backgroundColor: `color-mix(in srgb, ${color} 22%, transparent)`,
+    color: `color-mix(in srgb, ${color} 72%, var(--fg))`,
+  };
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -202,13 +179,13 @@ export const CloudProviderSelector = ({
                     {/* Provider header */}
                     <div className="flex items-center gap-2 px-3 pt-3 pb-1">
                       <ProviderLogo provider={provider} size={16} />
-                      <span className={`${BADGE_BASE} ${PROVIDER_BADGE_CLASS[provider]}`}>
+                      <span className={BADGE_BASE} style={providerBadgeStyle(provider)}>
                         {provider}
                       </span>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider ${PROVIDER_HEADER_TEXT[provider]}`}>
+                      <span className="text-micro font-bold uppercase tracking-wider" style={providerInkStyle(provider)}>
                         {meta.label}
                       </span>
-                      <span className="ml-auto text-[10px] font-semibold text-subtle">
+                      <span className="ml-auto text-micro font-semibold text-subtle">
                         {provAccounts.length} acct{provAccounts.length !== 1 ? 's' : ''}
                       </span>
                     </div>
@@ -303,7 +280,7 @@ export const ProviderSummaryBar = ({
           <div className={`text-xs font-bold tracking-wide ${!selectedProvider ? 'text-accent-text' : 'text-fg'}`}>
             All Clouds
           </div>
-          <div className="mt-0.5 text-[11px] text-muted">
+          <div className="mt-0.5 text-meta text-muted">
             {accounts.length} accounts
           </div>
         </div>
@@ -318,32 +295,41 @@ export const ProviderSummaryBar = ({
             key={provider}
             onClick={() => onSelectProvider(provider === selectedProvider ? null : provider)}
             className={`flex items-center gap-3 rounded-card border px-4 py-2.5 transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-              isActive
-                ? PROVIDER_ACTIVE_PILL[provider]
-                : 'border-border bg-surface hover:bg-sunken'
+              isActive ? '' : 'border-border bg-surface hover:bg-sunken'
             }`}
+            style={isActive ? providerPillStyle(provider) : undefined}
             disabled={count === 0}
           >
-            {/* Brand mark on a white plate. It replaces a text badge that just
-                repeated the provider name shown immediately to its right. */}
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-border bg-white">
+            {/* Brand mark on a plate tinted with its own hue. It used to be a
+                pinned white plate, which was the one shape still glowing on a
+                midnight page; it replaces a text badge that just repeated the
+                provider name shown immediately to its right. */}
+            <span
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control border"
+              style={providerTileStyle(provider)}
+            >
               <ProviderLogo provider={provider} size={24} />
             </span>
 
             <div className="text-left">
-              <div className={`text-[13px] font-bold tracking-wide ${isActive ? PROVIDER_HEADER_TEXT[provider] : 'text-fg'}`}>
+              <div
+                className={`text-[13px] font-bold tracking-wide ${isActive ? '' : 'text-fg'}`}
+                style={isActive ? providerInkStyle(provider) : undefined}
+              >
                 {provider}
               </div>
-              <div className="mt-0.5 text-[11px] text-muted">
+              <div className="mt-0.5 text-meta text-muted">
                 {count} account{count !== 1 ? 's' : ''}
               </div>
             </div>
 
             {/* Account count badge */}
             {count > 0 && (
-              <span className={`ml-1 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
-                isActive ? PROVIDER_COUNT_ACTIVE[provider] : 'bg-sunken text-muted'
-              }`}
+              <span
+                className={`ml-1 flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-meta font-bold ${
+                  isActive ? '' : 'bg-sunken text-muted'
+                }`}
+                style={isActive ? providerCountStyle(provider) : undefined}
               >
                 {count}
               </span>

@@ -36,7 +36,10 @@ from app.security.model import AWS, AZURE, OCI, normalize_provider
 
 logger = logging.getLogger("cloud_svc.credentials")
 
-BUCKETS = ("expired", "within_7", "within_30", "within_90", "later", "no_expiry")
+# "replaced": renewed as a new certificate and no longer used (see
+# credentials.supersession). Filed apart so "expired" keeps meaning "act on it".
+BUCKETS = ("expired", "within_7", "within_30", "within_90", "later", "no_expiry",
+           "replaced")
 
 
 def _oci_load_balancers(rows: Sequence[CloudResource]) -> Dict[str, Any]:
@@ -165,9 +168,14 @@ class CredentialService:
 
     # ── Reads ───────────────────────────────────────────────────────────────
     @staticmethod
-    def _row(obj, now: datetime, account_names: Dict[uuid.UUID, str]) -> Dict[str, Any]:
+    def _row(obj, now: datetime, account_names: Dict[uuid.UUID, str],
+             successors: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
         d = obj.to_dict()
-        d["bucket"] = credx.expiry_bucket(obj.expires_at, now)
+        succ = (successors or {}).get(obj.object_key)
+        d["superseded_by"] = succ
+        d["retired"] = credx.is_retired(obj, succ)
+        d["bucket"] = ("replaced" if d["retired"]
+                       else credx.expiry_bucket(obj.expires_at, now))
         d["days_left"] = (round((obj.expires_at - now).total_seconds() / 86400.0, 1)
                           if obj.expires_at else None)
         d["account_name"] = account_names.get(obj.account_id)
@@ -182,7 +190,8 @@ class CredentialService:
         objects = await self.repo.objects([account_id])
         sources = await self.repo.sources([account_id])
         names = {account.id: account.account_name}
-        rows = [self._row(o, now, names) for o in objects]
+        successors = credx.supersession(objects, now)
+        rows = [self._row(o, now, names, successors) for o in objects]
         analysis = credx.analyse(provider=normalize_provider(account.provider) or "",
                                  objects=objects, sources=sources, now=now)
         return {
@@ -206,7 +215,8 @@ class CredentialService:
 
     async def estate_view(self, *, account_ids: Optional[Sequence[uuid.UUID]] = None,
                           within_days: int = 90, kinds: Optional[Sequence[str]] = None,
-                          include_no_expiry: bool = False) -> Dict[str, Any]:
+                          include_no_expiry: bool = False,
+                          include_replaced: bool = False) -> Dict[str, Any]:
         stmt = select(CloudAccount)
         if account_ids is not None:
             stmt = stmt.where(CloudAccount.id.in_(list(account_ids)))
@@ -217,16 +227,20 @@ class CredentialService:
         objects = await self.repo.objects(ids)
         sources = await self.repo.sources(ids)
         wanted = set(k.upper() for k in (kinds or KINDS))
+        successors = credx.supersession(objects, now)
         rows = []
         for o in objects:
             if o.kind not in wanted or o.enabled is False:
                 continue
             if o.expires_at is None:
                 if include_no_expiry:
-                    rows.append(self._row(o, now, names))
+                    rows.append(self._row(o, now, names, successors))
+                continue
+            if (credx.is_retired(o, successors.get(o.object_key))
+                    and not include_replaced):
                 continue
             if (o.expires_at - now).total_seconds() / 86400.0 <= within_days:
-                rows.append(self._row(o, now, names))
+                rows.append(self._row(o, now, names, successors))
         rows.sort(key=lambda r: (r["days_left"] is None, r["days_left"] or 0))
         per_account = []
         for a in accounts:
@@ -243,7 +257,8 @@ class CredentialService:
             })
         for p in per_account:
             p["last_attempt_at"] = p["last_attempt_at"].isoformat() if p["last_attempt_at"] else None
-        all_rows = [self._row(o, now, names) for o in objects if o.enabled is not False]
+        all_rows = [self._row(o, now, names, successors)
+                    for o in objects if o.enabled is not False]
         return {
             "within_days": within_days,
             "objects": rows[:2000],
@@ -267,6 +282,10 @@ def _summary(rows: Sequence[Dict[str, Any]], sources: Sequence[Any]) -> Dict[str
         "by_bucket": by_bucket,
         "by_kind": by_kind,
         "certificates": by_kind.get(KIND_CERTIFICATE, 0),
+        # Certificates a valid renewal already covers, whatever their use — the
+        # ones still bound stay in their expiry bucket and are counted here too.
+        "superseded": sum(1 for r in rows if r.get("superseded_by")
+                          and r.get("enabled") is not False),
         "sources_total": len(sources),
         "sources_ok": sum(1 for s in sources if s.status == COLLECT_OK),
         "sources_failing": len(failing),

@@ -97,7 +97,7 @@ export default function NoisyRulesPanel({
                   r.resolution_rate_note || 'Share of its alerts that cleared.'],
               ].map(([label, value, help]) => (
                 <div key={label} title={help}>
-                  <dt className="text-[10px] uppercase tracking-wider text-subtle">
+                  <dt className="text-micro uppercase tracking-wider text-subtle">
                     {label}
                   </dt>
                   <dd className="text-[13px] font-semibold tabular-nums text-fg">
@@ -110,7 +110,7 @@ export default function NoisyRulesPanel({
             {!!r.reasons?.length && (
               <ul className="mt-2 space-y-0.5 border-t border-border pt-2">
                 {r.reasons.map((reason) => (
-                  <li key={reason} className="flex gap-1.5 text-[11px] leading-snug text-muted">
+                  <li key={reason} className="flex gap-1.5 text-meta leading-snug text-muted">
                     <Icon name="info" size={11} className="mt-0.5 shrink-0 text-subtle" />
                     {reason}
                   </li>
@@ -122,7 +122,7 @@ export default function NoisyRulesPanel({
       </ul>
 
       {data?.threshold_note && (
-        <p className="mt-3 border-t border-border pt-2 text-[11px] leading-snug text-subtle">
+        <p className="mt-3 border-t border-border pt-2 text-meta leading-snug text-subtle">
           {data.threshold_note}
         </p>
       )}

@@ -92,6 +92,61 @@ export const getIdentity = async (accountId) => {
   return data;
 };
 
+// ── Attack paths ────────────────────────────────────────────────────────────
+// Routes from a confirmed internet entry point to a resource worth reaching,
+// walked over the same topology graph the Topology tab draws. The server ranks
+// them, so `limit` is a display cap on an already-ordered list rather than an
+// arbitrary slice the client then has to re-sort.
+export const getAttackPaths = async (accountId, { maxDepth, limit, refresh } = {}) => {
+  const { data } = await cloudAxios.get(
+    `/security-center/${accountId}/attack-paths${toQuery({
+      max_depth: maxDepth, limit, refresh,
+    })}`,
+  );
+  return data;
+};
+
+// Software identity per compute resource, joined to reachability. Read
+// `source_configured` before `resources`: with no CVE feed wired up an empty
+// vulnerability list means "not assessed", not "not vulnerable".
+export const getVulnerabilities = async (accountId) => {
+  const { data } = await cloudAxios.get(`/security-center/${accountId}/vulnerabilities`);
+  return data;
+};
+
+// Behavioural detections over the Event Log. Read `availability` before
+// concluding anything from an empty list: a detector whose required field is
+// never populated reports as unavailable, not as finding nothing.
+export const getThreats = async (accountId, { days } = {}) => {
+  const { data } = await cloudAxios.get(
+    `/security-center/${accountId}/threats${toQuery({ days })}`,
+  );
+  return data;
+};
+
+// Signals from every subsystem grouped by the resource or principal they
+// concern. An incident needs two DIFFERENT kinds of signal.
+export const getIncidents = async (accountId, { days } = {}) => {
+  const { data } = await cloudAxios.get(
+    `/security-center/${accountId}/incidents${toQuery({ days })}`,
+  );
+  return data;
+};
+
+// Recovery-control posture per data store. A configuration review, not malware
+// detection — `unassessable_controls` is why there is no score.
+export const getRansomware = async (accountId) => {
+  const { data } = await cloudAxios.get(`/security-center/${accountId}/ransomware`);
+  return data;
+};
+
+export const getAttackPath = async (accountId, pathId, { maxDepth } = {}) => {
+  const { data } = await cloudAxios.get(
+    `/security-center/${accountId}/attack-paths/${pathId}${toQuery({ max_depth: maxDepth })}`,
+  );
+  return data;
+};
+
 export const getCoverage = async (accountId) => {
   const { data } = await cloudAxios.get(`/security-center/${accountId}/coverage`);
   return data;

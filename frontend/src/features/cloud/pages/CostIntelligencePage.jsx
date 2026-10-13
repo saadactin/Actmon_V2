@@ -37,7 +37,7 @@ import {
   useBudgetStatus, useCostAnalytics, useCostAnomalies, useCostBackfillStatus,
   useCostCapabilities, useCostCoverage, useCostForecast, useCostHistory,
   useCostAllocation, useCostGovernance, useCostQuality, useCostTrends,
-  useStartBackfill,
+  useDeleteBudget, useStartBackfill,
 } from '../hooks/useCost';
 
 import { CostExplorerPanel } from '../components/CostExplorerPanel';
@@ -59,6 +59,8 @@ import CostRecommendations from '../components/cost/CostRecommendations';
 import CostAllocation, { FinOpsHealth } from '../components/cost/CostAllocation';
 import { InsufficientHistory, PanelHeading } from '../components/cost/CostPrimitives';
 import RegionBreakdown from '../components/cost/RegionBreakdown';
+import BudgetFormDialog from '../components/cost/BudgetFormDialog';
+import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import { groupByCurrency, isMissing } from '../utils/costFormat';
 
 /** Date presets. Exact dates are always shown alongside — "last 30 days" on its
@@ -133,6 +135,8 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
 
   const [activeOpt, setActiveOpt] = useState(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [budgetDialog, setBudgetDialog] = useState(null); // null | 'new' | a budget object
+  const [deletingBudget, setDeletingBudget] = useState(null);
 
   const analytics = useCostAnalytics(accountView);
   const quality = useCostQuality(accountView);
@@ -149,6 +153,11 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
   const budgets = useBudgetStatus(accountView !== 'ALL' ? accountView : undefined);
   const backfill = useCostBackfillStatus(accountView !== 'ALL' ? accountView : null);
   const startBackfill = useStartBackfill(accountView);
+  // Creating/editing a budget needs ONE concrete account to scope it to, so
+  // management is offered only when a specific account is selected — the same
+  // guard useBudgetStatus above already applies to reading them.
+  const canManageBudgets = accountView !== 'ALL';
+  const deleteBudget = useDeleteBudget(canManageBudgets ? accountView : undefined);
   const allocationDimension = params.get('dim') || 'environment';
   const allocation = useCostAllocation(accountView, allocationDimension);
   const governance = useCostGovernance(accountView);
@@ -319,8 +328,8 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
               aria-pressed={!customRange && days === r.days}
               className={
                 !customRange && days === r.days
-                  ? 'rounded-[6px] bg-accent-soft px-2.5 py-1 text-[11.5px] font-semibold text-accent-text'
-                  : 'rounded-[6px] px-2.5 py-1 text-[11.5px] font-medium text-muted hover:text-fg'
+                  ? 'rounded-[6px] bg-accent-soft px-2.5 py-1 text-meta font-semibold text-accent-text'
+                  : 'rounded-[6px] px-2.5 py-1 text-meta font-medium text-muted hover:text-fg'
               }
             >
               {r.label}
@@ -334,8 +343,8 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
             aria-pressed={customRange}
             className={
               customRange
-                ? 'rounded-[6px] bg-accent-soft px-2.5 py-1 text-[11.5px] font-semibold text-accent-text'
-                : 'rounded-[6px] px-2.5 py-1 text-[11.5px] font-medium text-muted hover:text-fg'
+                ? 'rounded-[6px] bg-accent-soft px-2.5 py-1 text-meta font-semibold text-accent-text'
+                : 'rounded-[6px] px-2.5 py-1 text-meta font-medium text-muted hover:text-fg'
             }
           >
             Custom
@@ -349,22 +358,22 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
               value={startDate || ''}
               max={endDate || undefined}
               onChange={(e) => setParam({ start: e.target.value || null })}
-              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[11.5px] text-fg"
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-meta text-fg"
               aria-label="Start date"
             />
-            <span className="text-[11.5px] text-subtle">→</span>
+            <span className="text-meta text-subtle">→</span>
             <input
               type="date"
               value={endDate || ''}
               min={startDate || undefined}
               onChange={(e) => setParam({ end: e.target.value || null })}
-              className="h-control-sm rounded-control border border-border bg-surface px-2 text-[11.5px] text-fg"
+              className="h-control-sm rounded-control border border-border bg-surface px-2 text-meta text-fg"
               aria-label="End date"
             />
-            <span className="text-[11.5px] text-subtle">(UTC)</span>
+            <span className="text-meta text-subtle">(UTC)</span>
           </div>
         ) : (
-          <span className="text-[11.5px] text-muted">
+          <span className="text-meta text-muted">
             {dates.start} → {dates.end}
             <span className="ml-1.5 text-subtle">(UTC)</span>
           </span>
@@ -453,7 +462,7 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
             onWhy={() => setShowDiagnostics(true)}
           />
           {days !== 30 && (
-            <p className="-mt-2 text-[11px] text-subtle">
+            <p className="-mt-2 text-meta text-subtle">
               The headline total is a fixed 30-day billing-API window. The{' '}
               {days}-day range you selected applies to the trend, forecast,
               anomalies and history below.
@@ -491,7 +500,7 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
                 historyByCurrency.map(({ currency, items }) => (
                   <div key={currency} className="mb-4 last:mb-0">
                     {historyByCurrency.length > 1 && (
-                      <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                      <p className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">
                         {currency}
                       </p>
                     )}
@@ -585,7 +594,7 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
               historyByCurrency.map(({ currency, items }) => (
                 <div key={currency} className="mb-4 last:mb-0">
                   {historyByCurrency.length > 1 && (
-                    <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                    <p className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">
                       {currency}
                     </p>
                   )}
@@ -695,8 +704,17 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
       {tab === 'budgets' && (
         <CloudSection
           title="Budgets"
+          description={!canManageBudgets
+            ? 'Select a single account to create or edit a budget.'
+            : undefined}
         >
-          <BudgetPanel budgets={budgets.data} canManage />
+          <BudgetPanel
+            budgets={budgets.data}
+            canManage={canManageBudgets}
+            onCreate={() => setBudgetDialog('new')}
+            onEdit={(b) => setBudgetDialog(b)}
+            onDelete={(b) => setDeletingBudget(b)}
+          />
         </CloudSection>
       )}
 
@@ -731,7 +749,7 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
                 ['Currencies', (coverage.data?.currencies || []).join(', ') || '—'],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-control border border-border bg-sunken p-3">
-                  <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+                  <p className="text-meta font-bold uppercase tracking-wider text-muted">
                     {label}
                   </p>
                   <p className="mt-1 text-[16px] font-bold tabular-nums text-fg">{value}</p>
@@ -769,7 +787,7 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
                     : 'Backfill 90 days'}
                 </Button>
                 {backfill.data?.job && (
-                  <span className="text-[11.5px] text-muted">
+                  <span className="text-meta text-muted">
                     Last run: {backfill.data.job.status} ·{' '}
                     {backfill.data.job.records_written.toLocaleString()} written,{' '}
                     {backfill.data.job.records_updated.toLocaleString()} corrected
@@ -792,6 +810,28 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
       )}
       {activeOpt && (
         <RecommendationDetailModal opt={activeOpt} onClose={() => setActiveOpt(null)} />
+      )}
+
+      {budgetDialog && (
+        <BudgetFormDialog
+          open
+          budget={budgetDialog === 'new' ? null : budgetDialog}
+          accountId={accountView !== 'ALL' ? accountView : undefined}
+          onClose={() => setBudgetDialog(null)}
+          onSaved={() => setBudgetDialog(null)}
+        />
+      )}
+      {deletingBudget && (
+        <ConfirmDialog
+          open
+          title={`Delete "${deletingBudget.name}"?`}
+          message="This removes the budget and its notification history. It does not affect any cloud resource."
+          confirmLabel="Delete budget"
+          tone="danger"
+          icon="trash"
+          onConfirm={() => { deleteBudget.mutate(deletingBudget.id); setDeletingBudget(null); }}
+          onCancel={() => setDeletingBudget(null)}
+        />
       )}
     </>
   );

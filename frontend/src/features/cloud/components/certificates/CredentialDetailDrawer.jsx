@@ -71,7 +71,7 @@ function Section({ title, icon, children, action }) {
     <section className="space-y-2">
       <div className="flex items-center gap-2">
         {icon && <Icon name={icon} size={14} className="text-subtle" />}
-        <h3 className="text-[11px] font-bold uppercase tracking-[0.07em] text-subtle">{title}</h3>
+        <h3 className="text-meta font-bold uppercase tracking-[0.07em] text-subtle">{title}</h3>
         <span className="h-px flex-1 bg-border" />
         {action}
       </div>
@@ -86,7 +86,7 @@ function Row({ label, children, mono = false, copy }) {
     <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 py-1 text-[12px]">
       <span className="text-muted">{label}</span>
       <div className="flex min-w-0 items-start gap-2">
-        <span className={`min-w-0 break-all text-fg ${mono ? 'font-mono text-[11px]' : ''}`}>{children}</span>
+        <span className={`min-w-0 break-all text-fg ${mono ? 'font-mono text-meta' : ''}`}>{children}</span>
         {copy && <CopyButton text={copy} label="Copy" size="sm" variant="ghost" />}
       </div>
     </div>
@@ -114,7 +114,7 @@ function Step({ step, onAction }) {
   return (
     <li className="rounded-control border border-border p-3">
       <div className="flex items-start gap-2.5">
-        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-bold text-accent-text">
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-soft text-meta font-bold text-accent-text">
           {step.n}
         </span>
         <div className="min-w-0 flex-1 space-y-1.5">
@@ -128,7 +128,7 @@ function Step({ step, onAction }) {
           )}
           {step.command && (
             <div className="relative">
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control bg-sunken p-2.5 pr-16 font-mono text-[11px] leading-relaxed text-fg">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-control bg-sunken p-2.5 pr-16 font-mono text-meta leading-relaxed text-fg">
                 {step.command}
               </pre>
               <div className="absolute top-1.5 right-1.5">
@@ -137,7 +137,7 @@ function Step({ step, onAction }) {
             </div>
           )}
           {step.caution && (
-            <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-warning-fg">
+            <p className="flex items-start gap-1.5 text-meta leading-relaxed text-warning-fg">
               <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
               <span>{step.caution}</span>
             </p>
@@ -201,7 +201,7 @@ export default function CredentialDetailDrawer({ object: o, missing = false, onC
         <div className="flex items-center justify-between gap-3">
           {/* The same Refresh all as the account header — it was "Re-check
               account" here, a fourth name for re-reading the provider. */}
-          <p className="text-[11px] leading-snug text-muted">
+          <p className="text-meta leading-snug text-muted">
             Fixed it? Refresh all re-reads the whole account — every certificate and secret
             store included — and re-assesses. It takes as long as a full scan.
           </p>
@@ -243,7 +243,7 @@ export default function CredentialDetailDrawer({ object: o, missing = false, onC
               </ol>
             )}
             {guidance.steps.some((s) => s.command) && (
-              <p className="text-[11px] leading-relaxed text-subtle">
+              <p className="text-meta leading-relaxed text-subtle">
                 Commands carry this item&apos;s real identifiers. Replace the &lt;…&gt; placeholders and the
                 file names with your own, and review before running — they change live resources.
               </p>
@@ -257,7 +257,7 @@ export default function CredentialDetailDrawer({ object: o, missing = false, onC
             {guidance.usage.items.length > 0 && (
               <ul className="space-y-1">
                 {guidance.usage.items.map((u) => (
-                  <li key={u} className="flex items-start gap-2 rounded-control bg-sunken px-2.5 py-1.5 font-mono text-[11px] text-fg">
+                  <li key={u} className="flex items-start gap-2 rounded-control bg-sunken px-2.5 py-1.5 font-mono text-meta text-fg">
                     <Icon name="link" size={12} className="mt-0.5 shrink-0 text-subtle" />
                     <span className="break-all">{u}</span>
                   </li>
@@ -265,7 +265,7 @@ export default function CredentialDetailDrawer({ object: o, missing = false, onC
               </ul>
             )}
             {o.details?.usage_source && (
-              <p className="text-[11px] text-subtle">
+              <p className="text-meta text-subtle">
                 Read from {USAGE_SOURCE[o.details.usage_source] || o.details.usage_source} ·
                 collected {formatDateTime(o.last_seen_at)}
               </p>
@@ -303,7 +303,7 @@ export default function CredentialDetailDrawer({ object: o, missing = false, onC
               </ul>
             )}
             {findings.length > 0 && (
-              <p className="text-[11px] text-subtle">
+              <p className="text-meta text-subtle">
                 Open a finding to mark it in progress, suppress it, or accept the risk — the last two
                 ask for a reason, so the decision is on record.
               </p>

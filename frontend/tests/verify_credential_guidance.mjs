@@ -269,6 +269,56 @@ console.log('\n5. Helpers');
   eq('lifecycle reads no_expiry for a secret with no date', lifecycleOf({ bucket: 'no_expiry' }).noExpiry, true);
 }
 
+console.log('\n5b. Renewed under a new name (the Azure TOR toriotcom-26 -> toriotcom-27 case)');
+{
+  const RENEWAL = {
+    object_key: '/subscriptions/s/resourcegroups/tor-rg/providers/microsoft.web/certificates/toriotcom-27',
+    name: 'toriotcom-27', expires_at: '2027-01-23T00:00:00+00:00',
+    source: 'azure:app-service-certificates', source_label: 'App Service certificates',
+    container_name: 'App Service', region: 'centralindia', in_use: true, same_holder: true,
+  };
+  const az = (over = {}) => ({
+    id: 'a1', account_id: 'acc-az', provider: 'AZURE', kind: 'CERTIFICATE',
+    source: 'azure:app-service-certificates', source_label: 'App Service certificates',
+    object_key: '/subscriptions/s/resourcegroups/tor-rg/providers/microsoft.web/certificates/toriotcom-26',
+    name: 'toriotcom-26', container_name: 'App Service', region: 'centralindia',
+    expires_at: '2026-07-31T00:00:00+00:00', days_left: -67, bucket: 'replaced',
+    in_use: false, in_use_by: [], superseded_by: RENEWAL,
+    details: { resource_group: 'tor-rg', thumbprint: 'AB12' }, ...over,
+  });
+  const g = credentialGuidance(az(), NOW);
+  check('replaced + unused -> an info headline naming the renewal, not a danger one',
+    g.headline.tone === 'info' && /toriotcom-27/.test(g.headline.text), g.headline.text);
+  check('...and the only step is deleting it', ids(g).length === 1 && /delete/.test(ids(g)[0]),
+    JSON.stringify(ids(g)));
+  eq('a replaced, expired row still reads as expired for the store steps',
+    lifecycleOf(az()).expired, true);
+
+  const busy = credentialGuidance(az({ bucket: 'expired', in_use: true,
+    in_use_by: ['tor-api: api.tor-iot.com'] }), NOW);
+  check('renewed but STILL BOUND -> danger headline that says switch the binding',
+    busy.headline.tone === 'danger' && /Switch the binding/.test(busy.headline.text),
+    busy.headline.text);
+  eq('...first step says the renewal already exists', ids(busy)[0], 'renewal-exists');
+  check('...and no step uploads or imports another renewal',
+    !ids(busy).some((x) => ['upload', 'import', 'reimport', 'request', 'new-version',
+      'import-version'].includes(x)), JSON.stringify(ids(busy)));
+
+  const elsewhere = credentialGuidance(az({ bucket: 'expired', in_use: true,
+    in_use_by: ['tor-api: api.tor-iot.com'],
+    superseded_by: { ...RENEWAL, same_holder: false, usable_in_place: false } }), NOW);
+  check('renewal held in ANOTHER resource group -> the upload/import steps are kept',
+    ids(elsewhere)[0] === 'renewal-exists' && ids(elsewhere).length > 2
+      && /cannot be bound here/.test(elsewhere.steps[0].body), JSON.stringify(ids(elsewhere)));
+  check('...and the headline says upload it here, not just switch',
+    /upload it here/.test(elsewhere.headline.text), elsewhere.headline.text);
+
+  const unknown = credentialGuidance(az({ bucket: 'expired', in_use: null }), NOW);
+  check('renewed, use unknown -> never leads with a deletion',
+    unknown.steps[0]?.id !== 'delete' && unknown.headline.tone === 'danger',
+    JSON.stringify(ids(unknown)));
+}
+
 console.log('\n6. Parity: every store the backend collects has guidance');
 {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));

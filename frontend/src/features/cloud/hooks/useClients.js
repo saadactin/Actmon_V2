@@ -36,6 +36,16 @@ export const useClient = (clientId) => useQuery({
   staleTime: 30_000,
 });
 
+// Not a refresh-sensitive root: see DELIBERATELY_NOT_REFRESHED's note on
+// 'clients' — no provider sweep changes a maturity score, and it recomputes
+// from live data on its own 60s staleTime.
+export const useClientScorecard = (clientId) => useQuery({
+  queryKey: key('scorecard', clientId),
+  queryFn: () => api.getClientScorecard(clientId),
+  enabled: !!clientId,
+  staleTime: 60_000,
+});
+
 export const useCreateClient = () => {
   const qc = useQueryClient();
   return useMutation({ mutationFn: api.createClient, onSuccess: () => invalidateAll(qc) });

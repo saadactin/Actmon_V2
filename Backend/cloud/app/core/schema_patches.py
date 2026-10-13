@@ -50,23 +50,58 @@ DISCOVERY_PATCHES = (
      "ALTER TABLE discovery_jobs ADD COLUMN IF NOT EXISTS scope_summary JSONB"),
 )
 
-ALL_PATCHES = CLIENT_PATCHES + DISCOVERY_PATCHES
+# Budget guardrails (feature 4): a forecast breach and an actual breach are
+# different facts and must dedupe independently (see cost_budget.py's
+# CloudCostBudgetNotification docstring). Every row this table already held
+# was an ACTUAL notification, so backfilling the column with that default is
+# correct, not a guess. The old 3-column unique constraint is replaced by a
+# unique INDEX over the 4 columns -- a unique index enforces exactly the same
+# thing a unique constraint does for a plain `INSERT` (there is no
+# `ON CONFLICT ON CONSTRAINT` anywhere in this codepath to care about the
+# difference), and `CREATE UNIQUE INDEX IF NOT EXISTS` is idempotent the same
+# way the column patches above are, whereas `ADD CONSTRAINT` has no such
+# clause in Postgres.
+BUDGET_PATCHES = (
+    ("cloud_cost_budget_notifications", "column", "kind",
+     "ALTER TABLE cloud_cost_budget_notifications ADD COLUMN IF NOT EXISTS "
+     "kind VARCHAR(16) NOT NULL DEFAULT 'ACTUAL'"),
+    ("cloud_cost_budget_notifications", "drop_constraint", "uq_budget_period_threshold",
+     "ALTER TABLE cloud_cost_budget_notifications "
+     "DROP CONSTRAINT IF EXISTS uq_budget_period_threshold"),
+    ("cloud_cost_budget_notifications", "index", "uq_budget_period_threshold_kind",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_budget_period_threshold_kind "
+     "ON cloud_cost_budget_notifications (budget_id, period_key, threshold, kind)"),
+)
+
+ALL_PATCHES = CLIENT_PATCHES + DISCOVERY_PATCHES + BUDGET_PATCHES
 
 _EXISTS = {
     "column": ("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "
                "AND table_name = :table AND column_name = :name"),
     "index": ("SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() "
               "AND tablename = :table AND indexname = :name"),
+    # to_regclass(), not `:table::regclass` -- SQLAlchemy's text() bind-param
+    # syntax collides visually with Postgres's `::` cast operator.
+    "drop_constraint": ("SELECT 1 FROM pg_constraint WHERE conname = :name "
+                         "AND conrelid = to_regclass(:table)"),
 }
+
+# For every other kind, "missing" means the thing is ABSENT and needs adding.
+# A "drop_constraint" patch inverts that: it is needed while the constraint is
+# still PRESENT, and becomes a no-op (correctly) once it has been dropped —
+# so its row in _EXISTS is read as "found = still needs dropping", not
+# "found = already there".
+_INVERTED_KINDS = frozenset({"drop_constraint"})
 
 
 async def missing(conn):
-    """The patches whose column or index is not there yet. Catalog reads
-    only — no table lock is taken."""
+    """The patches that still need to run. Catalog reads only — no table lock
+    is taken."""
     out = []
     for table, kind, name, ddl in ALL_PATCHES:
         found = (await conn.execute(text(_EXISTS[kind]), {"table": table, "name": name})).first()
-        if not found:
+        needed = bool(found) if kind in _INVERTED_KINDS else not found
+        if needed:
             out.append((table, kind, name, ddl))
     return out
 

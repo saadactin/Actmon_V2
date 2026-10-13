@@ -77,7 +77,7 @@ export default function RefreshAllButton({
         {iconOnly ? null : (busy ? REFRESH_ALL_BUSY_LABEL : REFRESH_ALL_LABEL)}
       </Button>
       {error && (
-        <span className="max-w-[16rem] text-right text-[10px] leading-snug text-danger">
+        <span className="max-w-[16rem] text-right text-micro leading-snug text-danger">
           {error}
         </span>
       )}

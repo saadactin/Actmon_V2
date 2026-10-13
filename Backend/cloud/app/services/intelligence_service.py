@@ -296,8 +296,13 @@ class IntelligenceService:
         rates: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for (region, os_type), skus in wanted.items():
             try:
+                # Falls back to INR, not USD, when the account's billing
+                # currency isn't known yet — matching `vm_rates`' own declared
+                # default instead of silently overriding it with a different
+                # assumption (this product's display currency is INR; see
+                # `fx_rate_service`).
                 rates[(region, os_type)] = await azure_pricing.vm_rates(
-                    skus, region, os_type, currency or "USD")
+                    skus, region, os_type, currency or "INR")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Azure price lookup failed: %s", exc)
                 rates[(region, os_type)] = {}

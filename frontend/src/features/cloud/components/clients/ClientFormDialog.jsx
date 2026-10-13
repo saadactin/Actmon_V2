@@ -92,7 +92,7 @@ export default function ClientFormDialog({ open, onClose, client = null, onSaved
         </Field>
         <Field label="Code (optional)" hint="Short label for lists and report file names. 1–32 letters, digits, “.”, “-” or “_”.">
           <Input value={form.code} onChange={set('code')} placeholder="e.g. KOEL" />
-          {codeInvalid && <p className="mt-1 text-[11px] text-danger-fg">That code has characters a code cannot contain.</p>}
+          {codeInvalid && <p className="mt-1 text-meta text-danger-fg">That code has characters a code cannot contain.</p>}
         </Field>
         <Field label="Description (optional)">
           <Textarea rows={2} value={form.description} onChange={set('description')} />
@@ -103,7 +103,7 @@ export default function ClientFormDialog({ open, onClose, client = null, onSaved
         >
           <Textarea rows={2} value={form.contacts} onChange={set('contacts')} placeholder="name@example.com, other@example.com" />
           {badEmails.length > 0 && (
-            <p className="mt-1 text-[11px] text-danger-fg">Not e-mail addresses: {badEmails.join(', ')}</p>
+            <p className="mt-1 text-meta text-danger-fg">Not e-mail addresses: {badEmails.join(', ')}</p>
           )}
         </Field>
         <Field label="Notes (optional)">

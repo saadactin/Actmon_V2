@@ -116,7 +116,7 @@ export default function CertificatesPage() {
         >
           <CertificateTable objects={data?.objects} showAccount loading={isFetching} />
           {data?.truncated && (
-            <p className="px-card py-2 text-[11px] text-warning-fg">Only the first 2,000 are shown; narrow the filters.</p>
+            <p className="px-card py-2 text-meta text-warning-fg">Only the first 2,000 are shown; narrow the filters.</p>
           )}
         </CloudSection>
 
@@ -140,9 +140,9 @@ export default function CertificatesPage() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate-safe text-[13px] font-medium text-fg">{a.account_name}</span>
-                      <span className="text-[11px] text-subtle">{providerLabel(a.provider)}</span>
+                      <span className="text-meta text-subtle">{providerLabel(a.provider)}</span>
                     </div>
-                    <div className="mt-1 text-[11px] text-muted">
+                    <div className="mt-1 text-meta text-muted">
                       {a.never_collected
                         ? 'Never collected'
                         : `${a.sources_total - a.sources_failing} of ${a.sources_total} store scope(s) read · last attempt ${formatDateTime(a.last_attempt_at)}`}

@@ -23,7 +23,7 @@ export function MoneyCell({ map, previous, previousLabel = 'last month' }) {
         {formatMoneyMap(map)}
       </div>
       {previous !== undefined && (
-        <div className="truncate-safe text-[11px] text-subtle" title={moneyTitle(previous)}>
+        <div className="truncate-safe text-meta text-subtle" title={moneyTitle(previous)}>
           {previousLabel}: {formatMoneyMap(previous)}
         </div>
       )}
@@ -43,7 +43,7 @@ export function PostureBadge({ security, detail }) {
           </abbr>
         )}
       </div>
-      {detail && <div className="mt-0.5 truncate-safe text-[11px] text-subtle">{detail}</div>}
+      {detail && <div className="mt-0.5 truncate-safe text-meta text-subtle">{detail}</div>}
     </div>
   );
 }
@@ -57,7 +57,7 @@ export function FindingsCell({ findings, undetermined }) {
         <Badge tone={f.critical ? 'danger' : 'neutral'} size="xs">{f.critical} critical</Badge>
         <Badge tone={f.high ? 'warning' : 'neutral'} size="xs">{f.high} high</Badge>
       </div>
-      <div className="mt-0.5 text-[11px] text-subtle">
+      <div className="mt-0.5 text-meta text-subtle">
         {formatCount(f.total)} confirmed
         {undetermined ? ` · ${formatCount(undetermined)} undetermined` : ''}
       </div>
@@ -70,7 +70,7 @@ export function CertificateCell({ certs }) {
   return (
     <div className="min-w-0">
       <Badge tone={h.tone}>{h.text}</Badge>
-      {h.detail && <div className="mt-0.5 truncate-safe text-[11px] text-subtle">{h.detail}</div>}
+      {h.detail && <div className="mt-0.5 truncate-safe text-meta text-subtle">{h.detail}</div>}
     </div>
   );
 }
@@ -99,9 +99,9 @@ export function StatCard({ label, value, sub, icon, tone = 'bg-accent-soft text-
         </div>
       )}
       <div className="min-w-0">
-        <div className="truncate-safe text-[11px] font-semibold uppercase tracking-wider text-muted">{label}</div>
+        <div className="truncate-safe text-meta font-semibold uppercase tracking-wider text-muted">{label}</div>
         <div className="mt-0.5 truncate-safe text-xl font-bold text-fg">{value}</div>
-        {sub && <div className="truncate-safe text-[11px] text-subtle">{sub}</div>}
+        {sub && <div className="truncate-safe text-meta text-subtle">{sub}</div>}
       </div>
     </div>
   );
@@ -129,7 +129,7 @@ export function AccountSummaryTable({
             <ProviderLogo provider={a.provider} size={20} />
             <div className="min-w-0">
               <div className="truncate-safe text-[13px] font-medium text-fg">{a.account_name}</div>
-              <div className="truncate-safe text-[11px] text-subtle">
+              <div className="truncate-safe text-meta text-subtle">
                 {[providerLabel(a.provider), a.environment, a.provider_account_id].filter(Boolean).join(' · ')}
               </div>
             </div>
@@ -140,7 +140,7 @@ export function AccountSummaryTable({
             <Badge tone={DISCOVERY_TONE[a.discovery_status] || 'neutral'} size="xs">
               {DISCOVERY_LABEL[a.discovery_status] || a.discovery_status}
             </Badge>
-            <div className="mt-0.5 text-[11px] text-subtle">{formatCount(a.resources)} resources · {formatDateTime(a.last_discovery)}</div>
+            <div className="mt-0.5 text-meta text-subtle">{formatCount(a.resources)} resources · {formatDateTime(a.last_discovery)}</div>
           </div>
         ),
         posture: <PostureBadge security={a.security} />,

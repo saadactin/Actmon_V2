@@ -41,7 +41,7 @@ export default function IntelligenceSummary({ summary, activeCard, onCard, onCov
             </p>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1 text-right">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Last analyzed</span>
+            <span className="text-meta font-semibold uppercase tracking-wider text-muted">Last analyzed</span>
             {run ? (
               <span className="text-[14px] font-bold text-fg" title={new Date(run.at).toLocaleString()}>
                 {relativeTime(run.at)}
@@ -53,14 +53,14 @@ export default function IntelligenceSummary({ summary, activeCard, onCard, onCov
               <span className="text-[13px] font-semibold text-muted">Not analyzed yet</span>
             )}
             {summary.analysis_running && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-accent-text">
+              <span className="inline-flex items-center gap-1 text-meta text-accent-text">
                 <Icon name="spinner" size={12} className="animate-spin" /> Analysis running…
               </span>
             )}
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11.5px] text-muted">
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-meta text-muted">
           <span className="inline-flex items-center gap-1.5">
             <ProviderLogo provider={provider} size={16} />
             <span className="font-semibold text-fg">{PROVIDER_LABEL[provider] || provider}</span>
@@ -101,7 +101,7 @@ export default function IntelligenceSummary({ summary, activeCard, onCard, onCov
         </div>
 
         {run?.incomplete_reasons?.length > 0 && (
-          <div className="mt-3 rounded-control border border-warning-soft bg-warning-soft px-3 py-2 text-[11.5px] text-warning-fg">
+          <div className="mt-3 rounded-control border border-warning-soft bg-warning-soft px-3 py-2 text-meta text-warning-fg">
             <p className="font-semibold">This analysis is partial — findings it could not re-check stay open.</p>
             <ul className="mt-1 list-disc space-y-0.5 pl-4">
               {run.incomplete_reasons.slice(0, 4).map((r) => <li key={r}>{r}</li>)}
@@ -154,7 +154,7 @@ function SummaryCard({ card, active, onClick }) {
         <Icon name={style.icon} size={18} />
       </span>
       <span className="min-w-0">
-        <span className="block truncate-safe text-[10.5px] font-semibold uppercase tracking-wider text-muted">
+        <span className="block truncate-safe text-meta font-semibold uppercase tracking-wider text-muted">
           {card.label}
         </span>
         <span className={cn('block truncate-safe text-[21px] font-bold tabular-nums',
@@ -162,7 +162,7 @@ function SummaryCard({ card, active, onClick }) {
         >
           {value}
         </span>
-        {caption && <span className="block truncate-safe text-[10.5px] text-subtle">{caption}</span>}
+        {caption && <span className="block truncate-safe text-meta text-subtle">{caption}</span>}
       </span>
     </button>
   );

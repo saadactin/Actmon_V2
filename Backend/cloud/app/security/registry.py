@@ -50,6 +50,7 @@ from app.security.model import (
     CAT_EXPOSURE, CAT_GOVERNANCE, CAT_IAM, CAT_MAINTENANCE,
     CAT_NETWORKING, CAT_PERFORMANCE, CAT_RESILIENCE, CATEGORIES, CONF_HIGH,
     CONF_LOW, CONF_MEDIUM, CONF_UNKNOWN, COV_CREDENTIALS, COV_ENCRYPTION, COV_EXPOSURE,
+    COV_INVENTORY,
     COV_IAM, COV_NETWORK,
     CRITICAL, HIGH, INFO, LOW, MEDIUM, NOT_SCANNED, OCI, SAFE,
     SEVERITIES, UNKNOWN, VULNERABLE,
@@ -2676,6 +2677,31 @@ _CREDENTIAL_RULES: List[SecurityRule] = [
         ),
     ),
     SecurityRule(
+        rule_id=_cx.CERT_SUPERSEDED, version="1.0", provider="*", resource_types=("*",),
+        synthetic=True, title="Renewed certificate left behind",
+        severity=LOW, category=CAT_ENCRYPTION, coverage=COV_CREDENTIALS,
+        description=(
+            "A certificate that is expired or about to expire has been replaced by a "
+            "renewal uploaded as a new certificate, and nothing uses the old one."
+        ),
+        rationale=(
+            "Hygiene, not a control failure: the domains it covered are served by a valid "
+            "certificate. Renewals in App Service, on OCI load balancers and in ACM (for "
+            "imported certificates) usually arrive as a new object under a new name, and "
+            "the old one stays until it is deleted. Left behind, it can be re-bound by "
+            "mistake, and it keeps the expired list from meaning 'needs renewal'."
+        ),
+        remediation=(
+            "Confirm the renewed certificate named in the finding is bound everywhere, then "
+            "delete the old one:\n"
+            "  Azure App Service: az webapp config ssl delete --certificate-thumbprint <t> "
+            "--resource-group <rg>\n"
+            "  OCI load balancer: oci lb certificate delete --load-balancer-id <lb> "
+            "--certificate-name <name>\n"
+            "  AWS ACM:           aws acm delete-certificate --certificate-arn <arn>"
+        ),
+    ),
+    SecurityRule(
         rule_id=_cx.AWS_IAM_SERVER_CERT_EXPIRED, version="1.0", provider=AWS,
         resource_types=("*",), synthetic=True,
         title="Expired SSL/TLS certificate stored in IAM",
@@ -2868,7 +2894,607 @@ _CREDENTIAL_RULES: List[SecurityRule] = [
 
 _SYNTHETIC.extend(_CREDENTIAL_RULES)
 
-RULES: Dict[str, SecurityRule] = {r.rule_id: r for r in (_R + _SYNTHETIC)}
+
+# ── Secrets left in configuration ────────────────────────────────────────────
+# Produced by app/security/secrets.py from resource configuration and tags.
+# Declared here, beside every other rule, so a secret finding gets the same
+# rule_version, control mapping, alert routing and suppression as any other —
+# and so `verify_secrets.py` can pin that the analyser and this list agree.
+#
+# provider="*" because a credential pasted into configuration is the same
+# mistake on all three clouds; which surface it was found in is evidence, not a
+# separate rule.
+_SECRET_RULES: List[SecurityRule] = [
+    SecurityRule(
+        rule_id="SECRET_PLAINTEXT_IN_CONFIG", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Credential stored in plaintext in resource configuration",
+        severity=CRITICAL, category=CAT_IAM, confidence=CONF_HIGH,
+        description="A value that is credential material was found in this resource's configuration.",
+        rationale=(
+            "Configuration is not a secret store. A credential here is readable by "
+            "everyone who can describe the resource, is copied into every export, "
+            "template and log line that renders the configuration, and survives "
+            "every rotation nobody knew to perform. It is also, unlike most "
+            "findings, unambiguous: there is no deployment in which this is the "
+            "intended design."
+        ),
+        remediation=(
+            "Move the value into the provider's secret store and reference it:\n"
+            "  AWS    Secrets Manager or SSM Parameter Store (SecureString); a Lambda\n"
+            "         reads it at cold start, or via the Parameters extension.\n"
+            "  Azure  Key Vault, referenced from app settings as\n"
+            "         @Microsoft.KeyVault(SecretUri=...).\n"
+            "  OCI    Vault secret, referenced by OCID.\n"
+            "Then ROTATE the credential. Removing it from configuration does not "
+            "un-disclose it — assume anything that was in plaintext is known."
+        ),
+    ),
+    SecurityRule(
+        rule_id="SECRET_PLAINTEXT_IN_TAG", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Credential stored in a resource tag",
+        severity=HIGH, category=CAT_IAM, confidence=CONF_MEDIUM,
+        description="A value that is credential material was found in a tag on this resource.",
+        rationale=(
+            "Tags are the most widely readable metadata a cloud resource has. They "
+            "are returned by every list call, copied into cost and inventory "
+            "exports, and frequently forwarded to third-party tooling — so a "
+            "credential in a tag has a far larger audience than one in "
+            "configuration."
+        ),
+        remediation=(
+            "Delete the tag, then rotate the credential — a tag value is retained "
+            "in cost and usage exports already delivered, so removal alone does not "
+            "contain it. If the tag exists to point at a secret, store the "
+            "reference (an ARN, a Key Vault URI, an OCID) rather than the value."
+        ),
+    ),
+    SecurityRule(
+        rule_id="SECRET_SURFACE_NOT_SCANNED", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="A known secret-bearing surface was not collected",
+        severity=INFO, category=CAT_IAM, coverage=COV_INVENTORY,
+        confidence=CONF_HIGH,
+        description=(
+            "Resources of this type exist, but the configuration field where "
+            "credentials are commonly left is not collected by the scanner."
+        ),
+        rationale=(
+            "This is a coverage gap, recorded so that 'no secrets found' cannot be "
+            "read as 'we looked everywhere'. The scanner reads some secret-bearing "
+            "surfaces and not others; without this finding the difference between "
+            "a clean surface and an unread one is invisible."
+        ),
+        remediation=(
+            "Extend the scanner to collect this field, or review it out of band. "
+            "Until then treat this surface as unassessed rather than clean — the "
+            "absence of a finding here is the absence of a check."
+        ),
+    ),
+]
+
+_SYNTHETIC.extend(_SECRET_RULES)
+
+
+# ── Identity & Access (CIEM) ─────────────────────────────────────────────────
+# Produced by app/identity/findings.py from the identity inventory, the
+# effective-permission engine and the Event Log — not from cloud_resources, for
+# the reason identity_grant.py gives: a principal is not infrastructure.
+#
+# They are declared HERE, beside every other rule, rather than in the analyser,
+# so that rule_version, compliance control mapping, alert routing, triage and
+# suppression all work identically for a CIEM finding and a storage finding.
+# `verify_identity_findings.py` pins that findings.RULE_IDS and this list agree,
+# which is what stops the analyser growing a rule the registry has never heard
+# of — a finding nobody can map, alert on or suppress.
+#
+# provider="*" because the questions are the same on all three clouds. Where a
+# provider genuinely differs, the DIFFERENCE is in the evidence block, not in a
+# separate near-duplicate rule.
+_IDENTITY_RULES: List[SecurityRule] = [
+    SecurityRule(
+        rule_id="IDENTITY_PRIVILEGED_WITHOUT_MFA", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Privileged identity has no multi-factor authentication",
+        severity=CRITICAL, category=CAT_IAM, coverage=COV_IAM,
+        description="A human identity classified privileged or administrative from its "
+                    "evaluated permissions has no MFA device registered.",
+        rationale=(
+            "A password is a single factor that is phished, reused and leaked at scale. "
+            "On a privileged identity it is the whole perimeter: the attacker inherits "
+            "every permission the account holds, and on an administrative account that "
+            "includes the ability to grant itself more and to turn off the logging that "
+            "would show it. This rule fires only where the provider positively reports "
+            "no registered device — an unreported MFA state is a coverage gap and is "
+            "raised separately as IDENTITY_MFA_STATE_UNKNOWN, never as a failure."
+        ),
+        remediation=(
+            "Register an MFA device for the identity, then require it:\n"
+            "  AWS:   aws iam enable-mfa-device --user-name <user> --serial-number <arn> "
+            "--authentication-code1 <c1> --authentication-code2 <c2>\n"
+            "  Azure: enforce MFA with a Conditional Access policy targeting the "
+            "directory role, not the individual user, so a new admin is covered on day one.\n"
+            "  OCI:   Identity > Users > <user> > Enable Multi-Factor Authentication, and "
+            "add an IAM policy condition requiring request.user.mfaTotpVerified.\n"
+            "Where the identity is a break-glass account, keep the MFA device in the "
+            "same safe as the credential rather than exempting the account."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_DORMANT_PRIVILEGED", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Privileged identity is dormant",
+        severity=HIGH, category=CAT_IAM, coverage=COV_IAM,
+        description="An identity with privileged or administrative permissions has not "
+                    "been used within the configured dormancy threshold.",
+        rationale=(
+            "An unused privileged credential has all of the risk of a used one and none "
+            "of the benefit: nobody would notice it being used, because nobody is using "
+            "it. Dormant admin accounts are the standard foothold after a laptop or a "
+            "repository leak, precisely because their absence of normal traffic means "
+            "there is no baseline for the misuse to stand out against. The finding is "
+            "raised only where last-used data actually exists; where the provider "
+            "reports none, the identity is UNKNOWN and is not called dormant."
+        ),
+        remediation=(
+            "Confirm with the owner whether the identity is still needed. If it is not, "
+            "disable it first and delete it after a notice period, so a missed "
+            "dependency surfaces as a failed login rather than a broken system:\n"
+            "  AWS:   aws iam delete-login-profile --user-name <user>, then deactivate "
+            "its access keys before deleting the user.\n"
+            "  Azure: disable the account or remove the role assignment; for a service "
+            "principal, remove the assignment rather than deleting the application.\n"
+            "  OCI:   Identity > Users > <user> > Delete, after removing group memberships.\n"
+            "If it is a break-glass account, that is expected — document it so it is "
+            "recognised next time, and make sure its use is alerted on."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_DORMANT", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Identity is dormant",
+        severity=MEDIUM, category=CAT_IAM, coverage=COV_IAM,
+        description="An identity has not been used within the configured dormancy "
+                    "threshold and the provider reports a last-used date.",
+        rationale=(
+            "Every identity that exists is a way in that has to be defended, rotated and "
+            "reviewed. A dormant one provides no value in exchange for that cost, and is "
+            "most often a leaver whose offboarding did not complete."
+        ),
+        remediation=(
+            "Verify with the owning team, then disable the identity and delete it after "
+            "a notice period. Removing the login profile first, and the identity later, "
+            "makes a missed dependency fail visibly instead of silently."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_STALE_CREDENTIAL", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Long-lived credential is stale",
+        severity=MEDIUM, category=CAT_IAM, coverage=COV_CREDENTIALS,
+        description="An access key, API key or client secret is old, has not been used "
+                    "recently, or both.",
+        rationale=(
+            "A long-lived credential is a bearer token with no expiry: anyone who obtains "
+            "it is the identity, from anywhere, until someone notices. Age matters "
+            "because the longer a secret exists the more places it has been copied — CI "
+            "variables, laptops, a Slack message in 2023. Staleness matters more, because "
+            "a credential nobody uses is one nobody would miss if it were stolen."
+        ),
+        remediation=(
+            "Rotate rather than delete, so a missed consumer fails loudly:\n"
+            "  1. Create a second credential alongside the existing one.\n"
+            "  2. Deploy it everywhere the old one is used.\n"
+            "  3. Mark the old one inactive and watch for failures for one full "
+            "business cycle.\n"
+            "  4. Delete the old one only after that window passes cleanly.\n"
+            "Where the credential exists to let a workload authenticate, replace it with "
+            "a managed identity, an instance principal or an IAM role for service "
+            "accounts, which removes the secret entirely."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_NEVER_USED_CREDENTIAL", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Credential has never been used",
+        severity=MEDIUM, category=CAT_IAM, coverage=COV_CREDENTIALS,
+        description="The provider reports that this credential has never authenticated a "
+                    "request since it was created.",
+        rationale=(
+            "A credential that was created and never used is pure liability: it carries "
+            "the identity's full permissions and no workload depends on it, so deleting "
+            "it cannot break anything that currently works. These are usually left over "
+            "from an abandoned integration or a key created 'just in case'. This finding "
+            "rests on the provider explicitly reporting no use — a credential whose "
+            "last-used date was merely not collected is reported as unknown instead."
+        ),
+        remediation=(
+            "Delete the credential. Because the provider states it has never been used, "
+            "no running system can depend on it:\n"
+            "  AWS:   aws iam delete-access-key --user-name <user> --access-key-id <id>\n"
+            "  Azure: remove the client secret from the application registration.\n"
+            "  OCI:   Identity > Users > <user> > API Keys > Delete."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_MULTIPLE_ACTIVE_CREDENTIALS", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Identity has more than one active credential of the same kind",
+        severity=LOW, category=CAT_IAM, coverage=COV_CREDENTIALS,
+        description="Two or more credentials of the same kind are active on one identity.",
+        rationale=(
+            "Two active keys is the correct state during a rotation and an incorrect one "
+            "at every other time. Left in place it doubles the exposure and, more "
+            "practically, means nobody can tell which key a given system is using — so "
+            "the next rotation is guesswork and gets postponed."
+        ),
+        remediation=(
+            "Finish the rotation: confirm which credential is in use from its last-used "
+            "date and service, deactivate the other, watch for failures, then delete it. "
+            "If both are genuinely in use by different systems, give those systems "
+            "separate identities instead so their access can be scoped and revoked "
+            "independently."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_EXCESSIVE_PERMISSION_SCOPE", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="High-impact permissions granted at the broadest scope",
+        severity=MEDIUM, category=CAT_IAM, coverage=COV_IAM,
+        description="An identity holds capabilities from the high-impact catalog across "
+                    "the whole account, subscription or tenancy rather than against "
+                    "specific resources.",
+        rationale=(
+            "Scope is the main thing standing between a compromised identity and the "
+            "whole estate. The same permission granted on one bucket and granted on every "
+            "bucket are the same line in a policy and two completely different blast "
+            "radii, which is why this is assessed from where the grant is attached rather "
+            "than from what it says."
+        ),
+        remediation=(
+            "Re-attach the grant at the narrowest scope that works — a resource group, a "
+            "compartment, an ARN pattern or a tag condition — and use the Permission "
+            "Explorer to confirm the identity can still reach what it needs before "
+            "removing the broad grant."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_UNUSED_PERMISSION", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Permissions granted with no observed use",
+        severity=LOW, category=CAT_IAM, coverage=COV_IAM,
+        description="Policy statements held by this identity had no matching action in "
+                    "the audit log over the stated observation window.",
+        rationale=(
+            "Unused permission is the surplus an attacker inherits for free. Removing it "
+            "shrinks the blast radius without changing what the identity can actually do, "
+            "which makes it the cheapest reduction available. The claim is bounded: this "
+            "rule reports only grants whose entire coverage went unexercised in a window "
+            "long enough, and busy enough, for the absence to mean something. Grants that "
+            "are data-plane blind, or seen over too short a window, are deliberately "
+            "excluded and are visible in the identity's Usage tab instead."
+        ),
+        remediation=(
+            "Open the identity's Usage tab and run Right-size permissions. Review the "
+            "generated diff — it marks every grant KEEP, REMOVE, NARROW or RETAIN — and "
+            "apply it through the approval workflow. Attach the proposed policy as a "
+            "permissions boundary first where the provider supports one, so a permission "
+            "needed by a path that did not run during the window surfaces as an "
+            "observable denial rather than an outage."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_EXTERNAL_PRIVILEGED_PRINCIPAL", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="External principal can assume privileged access",
+        severity=HIGH, category=CAT_IAM, coverage=COV_IAM,
+        description="A principal outside this account or tenant is trusted by an identity "
+                    "that holds privileged permissions.",
+        rationale=(
+            "Cross-account trust extends this estate's security boundary to include the "
+            "other party's: whoever can authenticate there can act here, with the target "
+            "identity's permissions. That is often entirely legitimate — a monitoring "
+            "vendor, a CI provider, a partner — so this is not a claim that the trust is "
+            "wrong. It is a claim that it is privileged, external, and therefore worth a "
+            "named owner and a review date."
+        ),
+        remediation=(
+            "Confirm the external party is expected and still engaged. Then reduce what "
+            "the trust leads to: give the external principal its own role with only the "
+            "permissions that integration needs, rather than trusting an existing "
+            "privileged role, and add an ExternalId or tenant-restriction condition so "
+            "the trust cannot be exercised by anyone else who learns the role's name."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_ANONYMOUS_TRUST", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Role can be assumed by any principal",
+        severity=CRITICAL, category=CAT_IAM, coverage=COV_IAM,
+        description="A trust policy names a wildcard principal, so no specific account or "
+                    "tenant is required to assume the identity.",
+        rationale=(
+            "This is not cross-account access, it is public access to an identity inside "
+            "the account. Anyone who learns the role's ARN — and ARNs are not secrets, "
+            "they appear in logs, templates and error messages — can assume it and act "
+            "with its permissions. A condition block may narrow it in practice, which is "
+            "why the conditions are shown in the evidence, but a wildcard principal with "
+            "no condition is an open door."
+        ),
+        remediation=(
+            "Replace the wildcard with the specific account, tenant or federated provider "
+            "that should be able to assume the identity. If the role genuinely must be "
+            "assumable by a third party you cannot enumerate, require an ExternalId that "
+            "only they hold, and scope the role to the minimum the integration needs."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_STANDING_ADMIN_ACCESS", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Standing administrative access",
+        severity=HIGH, category=CAT_IAM, coverage=COV_IAM,
+        description="Administrative permissions are held continuously rather than "
+                    "requested when needed.",
+        rationale=(
+            "Administrative permission is only needed for the minutes it is being used, "
+            "but standing access is exposed for every hour of every day — including every "
+            "hour the holder's laptop is unattended, their session token is cached, and "
+            "their credential sits in a password manager. Converting standing access to "
+            "on-demand access does not reduce what anyone can do; it reduces the window "
+            "in which a stolen credential is useful from months to minutes."
+        ),
+        remediation=(
+            "Move the privilege behind a request-and-approve flow with an expiry. This "
+            "platform's Identity & Access tab provides one — Request access, with a "
+            "duration, an approver and automatic revocation — and the provider-native "
+            "equivalents are Azure PIM, AWS IAM Identity Center permission sets with "
+            "session duration, and OCI time-bound group membership. Keep one documented "
+            "break-glass account outside the flow so the approval path is never the thing "
+            "standing between an incident and its fix."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_HIGH_BLAST_RADIUS", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Identity has a large blast radius",
+        severity=HIGH, category=CAT_IAM, coverage=COV_IAM,
+        description="The resources this identity can reach, directly and through the "
+                    "topology, make its compromise unusually consequential.",
+        rationale=(
+            "Permissions are usually reviewed one grant at a time, which is why a "
+            "collection of individually reasonable grants adds up to an identity that can "
+            "delete the production database, open the network and turn off the audit log. "
+            "The blast radius is the aggregate view that no single policy review produces. "
+            "It is computed from evaluated permissions matched against the actual "
+            "inventory, and the score is withheld entirely rather than estimated when the "
+            "inventory sweep was incomplete."
+        ),
+        remediation=(
+            "Split the identity. The usual cause is one role serving several workloads, "
+            "and the fix is one identity per workload with the permissions that workload "
+            "needs. Start with the capabilities listed in the evidence block — IAM "
+            "modification, credential creation and logging configuration are the three "
+            "that turn a contained incident into an uncontained one, and are worth "
+            "removing first even if the resource count stays high."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_POTENTIAL_BREAK_GLASS", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Potential emergency-access account",
+        severity=MEDIUM, category=CAT_GOVERNANCE, coverage=COV_IAM,
+        description="An identity's name, privileges and usage pattern match an "
+                    "emergency-access account. This platform cannot confirm it is "
+                    "designated as one.",
+        rationale=(
+            "A break-glass account is a deliberate, correct control, and the finding is "
+            "not that it exists — it is that this platform found something shaped like "
+            "one and cannot tell whether it is governed as one. An undocumented account "
+            "with standing administrative access and no recent use is either a "
+            "well-managed emergency credential or an abandoned admin account, and those "
+            "look identical from the outside. The word 'potential' in the title is load "
+            "bearing: the platform states the shape it matched, not a conclusion."
+        ),
+        remediation=(
+            "Confirm against your own register of emergency accounts. If it is one, "
+            "record the owner, enable MFA, add an alert on every use, and verify it works "
+            "on a schedule — an emergency credential that fails during the emergency is "
+            "worse than none. If it is not, treat it as a dormant privileged identity and "
+            "remove it."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_OVERLY_BROAD_ROLE", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Workload identity holds administrative permissions",
+        severity=HIGH, category=CAT_IAM, coverage=COV_IAM,
+        description="An identity used by code, rather than by a person, is classified "
+                    "administrative from its evaluated permissions.",
+        rationale=(
+            "A workload does a fixed, knowable set of things, so it is the easiest kind "
+            "of identity to scope tightly and the least excusable to leave wide. It is "
+            "also the most exposed: its credential sits in a deployment pipeline, an "
+            "environment variable or an instance it shares with application code, and it "
+            "has no MFA and no human to notice it behaving strangely. Administrative "
+            "permission on a workload usually comes from someone resolving a permissions "
+            "error under time pressure, not from a decision."
+        ),
+        remediation=(
+            "Replace the administrative grant with the specific actions the workload "
+            "performs. The identity's Usage tab shows which actions were actually "
+            "observed over the window, and Right-size permissions generates a proposed "
+            "policy from exactly that evidence, with a diff to review before anything is "
+            "applied."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_CROSS_ACCOUNT_TRUST_UNCONSTRAINED", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Cross-account trust has no ExternalId condition",
+        severity=MEDIUM, category=CAT_IAM, coverage=COV_IAM,
+        description="An external account is trusted to assume this identity without "
+                    "presenting a shared secret.",
+        rationale=(
+            "This is the confused-deputy problem AWS documents. If the external party is "
+            "a third-party service acting for many customers, and the trust requires only "
+            "their account id, then any other customer of that service can ask it to "
+            "assume this role — the service cannot tell the requests apart. The ExternalId "
+            "is what binds the trust to this specific relationship."
+        ),
+        remediation=(
+            "Add an ExternalId condition agreed with the third party, and have them send "
+            "it on every AssumeRole call:\n"
+            "  \"Condition\": {\"StringEquals\": {\"sts:ExternalId\": \"<agreed-value>\"}}\n"
+            "Most vendors generate one for you and will show it in their console. Where "
+            "the trusted account is your own, prefer a condition on aws:PrincipalOrgID "
+            "instead, which cannot be guessed and does not need to be shared."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_UNUSED_WORKLOAD", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Workload identity shows no recent activity",
+        severity=LOW, category=CAT_GOVERNANCE, coverage=COV_IAM,
+        description="A service principal, managed identity or workload role has no "
+                    "observed use in the window.",
+        rationale=(
+            "Workload identities accumulate: an integration is trialled, a service is "
+            "decommissioned, a pipeline is rebuilt, and the identity outlives all of "
+            "them. Each one left behind holds whatever permissions it was given and has a "
+            "credential somewhere. Reported at LOW because a workload may legitimately "
+            "run on a quarterly or annual cycle, which the window cannot see."
+        ),
+        remediation=(
+            "Check with the owning team before removing it — the usage window may simply "
+            "be shorter than the workload's schedule. Where it is genuinely retired, "
+            "remove its role assignments first and delete the identity afterwards, so a "
+            "surviving consumer fails with a permission error you can trace rather than "
+            "an authentication error you cannot."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_ROOT_ACCOUNT_ACTIVE", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Root or tenancy administrator account has been used",
+        severity=HIGH, category=CAT_IAM, coverage=COV_IAM,
+        description="The account's root identity shows recent activity.",
+        rationale=(
+            "Root cannot be constrained by policy, cannot be scoped down, and cannot be "
+            "denied by a service control policy or a permissions boundary. It is the one "
+            "identity for which every other control in this product is advisory. Routine "
+            "use of it means routine work is being done with permissions that cannot be "
+            "limited, and that the audit trail cannot distinguish one administrator from "
+            "another."
+        ),
+        remediation=(
+            "Reserve root for the handful of tasks that genuinely require it — closing "
+            "the account, changing the support plan, some billing changes — and do "
+            "everything else through named administrative identities. Enable MFA on root, "
+            "remove any access keys it holds, and add an alert on every root sign-in so "
+            "each use is noticed and explained at the time rather than audited later."
+        ),
+    ),
+    # ── Coverage gaps ────────────────────────────────────────────────────────
+    # UNKNOWN verdicts, not failures. Their whole purpose is to stop an empty
+    # identity dashboard reading as a clean one.
+    SecurityRule(
+        rule_id="IDENTITY_POLICIES_NOT_EVALUATED", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="Identities could not be assessed",
+        severity=MEDIUM, category=CAT_IAM, coverage=COV_IAM,
+        description="Policies or role assignments for some identities were not collected, "
+                    "so their effective permissions are unknown.",
+        rationale=(
+            "'No privileged identities found' and 'we were refused permission to look' "
+            "produce the same empty list, and only one of them is good news. Identities "
+            "whose permissions could not be read are excluded from every privilege count "
+            "in the product and reported here instead, so the number on the dashboard is "
+            "always a count of what was actually assessed."
+        ),
+        remediation=(
+            "Grant the permission named in the evidence block to the credential this "
+            "platform uses: iam:ListAttachedRolePolicies / iam:GetPolicyVersion on AWS, "
+            "Microsoft.Authorization/roleAssignments/read on Azure, or 'inspect policies "
+            "in tenancy' on OCI. Then re-run the identity analysis from the Identity & "
+            "Access tab."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_MFA_STATE_UNKNOWN", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="MFA state could not be determined",
+        severity=LOW, category=CAT_IAM, coverage=COV_IAM,
+        description="The provider did not report MFA registration for some human "
+                    "identities.",
+        rationale=(
+            "This is a data gap, not an MFA failure, and the distinction is what keeps "
+            "the MFA finding list actionable. Azure in particular does not expose "
+            "per-user MFA registration without a Graph permission and a licence tier that "
+            "many tenants do not have. Reporting those identities as 'MFA disabled' would "
+            "produce a long list of findings that are not true and cannot be fixed."
+        ),
+        remediation=(
+            "Grant the directory permission that exposes authentication methods — "
+            "UserAuthenticationMethod.Read.All on Microsoft Graph for Entra — or read the "
+            "state from your identity provider directly. Until then, treat these "
+            "identities as unknown rather than as compliant."
+        ),
+    ),
+    SecurityRule(
+        rule_id="IDENTITY_USAGE_DATA_UNAVAILABLE", version="1.0", provider="*",
+        resource_types=("*",), synthetic=True,
+        title="No usable audit data for permission-usage analysis",
+        severity=LOW, category=CAT_IAM, coverage=COV_IAM,
+        description="The Event Log holds no usable events for this account over the "
+                    "observation window, so permission usage could not be assessed.",
+        rationale=(
+            "Every unused-permission conclusion rests on an audit trail. Without one, the "
+            "absence of an event proves nothing, and the honest output is no conclusion "
+            "at all rather than a list of permissions that appear unused because nothing "
+            "was ever recorded. This finding exists so that the empty Usage tab has an "
+            "explanation attached to it."
+        ),
+        remediation=(
+            "Enable and collect the provider's audit trail: a CloudTrail trail covering "
+            "this account and region on AWS, Activity Log collection on Azure, or the "
+            "Audit service on OCI. Then let at least one full observation window elapse "
+            "before acting on any unused-permission result."
+        ),
+    ),
+]
+
+_SYNTHETIC.extend(_IDENTITY_RULES)
+
+# ── Declarative packs ────────────────────────────────────────────────────────
+# Rules that are a predicate over a field live in `rules/*.yaml` and are
+# compiled here into the same frozen `SecurityRule` objects as everything
+# above. They are merged BEFORE `_BY_TARGET` is built and before
+# `_selfcheck()` runs, so a YAML rule gets identical dispatch and identical
+# validation — a declarative rule that names a resource type its provider's
+# scanner never produces fails the import exactly as a hand-written one does.
+#
+# See rulepack.py for why this is a hybrid rather than a full migration.
+from app.security import rulepack as _rulepack
+
+_PACK_RULES: List[SecurityRule] = _rulepack.load_all(SecurityRule)
+
+_pack_ids = {r.rule_id for r in _PACK_RULES}
+_code_ids = {r.rule_id for r in (_R + _SYNTHETIC)}
+if _pack_ids & _code_ids:
+    raise RuntimeError(
+        "A rule is declared both in Python and in a YAML pack, so which one "
+        f"runs would depend on dict ordering: {sorted(_pack_ids & _code_ids)}"
+    )
+
+RULES: Dict[str, SecurityRule] = {
+    r.rule_id: r for r in (_R + _SYNTHETIC + _PACK_RULES)
+}
+
+
+def pack_rules() -> List[SecurityRule]:
+    """Rules that came from a YAML pack rather than from Python."""
+    return list(_PACK_RULES)
 
 # Dispatch table: (provider, resource_type) -> rules. Built once at import.
 #

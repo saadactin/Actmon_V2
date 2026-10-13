@@ -75,7 +75,7 @@ export default function AttentionCenter({
                   <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
                     {item.message}
                   </span>
-                  <span className="shrink-0 text-[11px] font-semibold text-accent-text">
+                  <span className="shrink-0 text-meta font-semibold text-accent-text">
                     {item.actionLabel}
                     <Icon name="arrow-right" size={11} className="ml-1 inline" />
                   </span>

@@ -26,6 +26,25 @@ policies well before 30. A managed certificate inside the 30-day window means
 renewal has not happened, so it is reported — with the provider's renewal
 status in the evidence — rather than waved through as "AWS renews it".
 
+**A renewal uploaded under a new name supersedes the old certificate.**
+Renewing rarely updates the old object in place: App Service, OCI load
+balancers and imported ACM certificates all take the renewed certificate as a
+NEW object, often under a new name (toriotcom-26 → toriotcom-27), and the old
+one stays behind until someone deletes it. Without recognising that, every
+renewal leaves an "expired" finding that no renewal can clear. So a
+certificate is *superseded* when another certificate in the same account is
+valid now, outlives it, and covers every domain it covers (see
+`supersession`). What that changes depends on whether the old one is in use:
+
+* not in use → it is a leftover. `CERT_EXPIRED` / `CERT_EXPIRING_SOON` do not
+  fire; a LOW `CERT_SUPERSEDED` cleanup finding names its replacement.
+* in use, or use unknown → the expiry findings stand exactly as before (an
+  expired certificate on a listener is an outage whatever else exists), and
+  their detail names the replacement to switch the binding to.
+
+AWS IAM server certificates are excluded: CIS asks for every expired one to be
+deleted, replacement or not.
+
 **Nothing unread passes.** A store that could not be read yields a
 `CREDENTIAL_STORE_NOT_READ` gap (verdict NOT_SCANNED), and its certificates'
 rules are counted NOT_SCANNED for compliance — so a control can go PARTIAL or
@@ -63,9 +82,11 @@ AZURE_KEYVAULT_NOT_RECOVERABLE = "AZURE_KEYVAULT_NOT_RECOVERABLE"
 AWS_SECRETSMANAGER_ROTATION_DISABLED = "AWS_SECRETSMANAGER_ROTATION_DISABLED"
 SECRET_ROTATION_OVERDUE = "SECRET_ROTATION_OVERDUE"
 CREDENTIAL_STORE_NOT_READ = "CREDENTIAL_STORE_NOT_READ"
+CERT_SUPERSEDED = "CERT_SUPERSEDED"
 
 RULE_IDS = (
-    CERT_EXPIRED, CERT_EXPIRING_SOON, AWS_IAM_SERVER_CERT_EXPIRED, SECRET_EXPIRED,
+    CERT_EXPIRED, CERT_EXPIRING_SOON, CERT_SUPERSEDED, AWS_IAM_SERVER_CERT_EXPIRED,
+    SECRET_EXPIRED,
     SECRET_EXPIRING_SOON, AZURE_KEYVAULT_RBAC_KEY_NO_EXPIRY,
     AZURE_KEYVAULT_POLICY_KEY_NO_EXPIRY, AZURE_KEYVAULT_RBAC_SECRET_NO_EXPIRY,
     AZURE_KEYVAULT_POLICY_SECRET_NO_EXPIRY, AZURE_KEYVAULT_NOT_RECOVERABLE,
@@ -112,6 +133,7 @@ ROTATING_SOURCES = frozenset({"aws:secretsmanager", "oci:vault-secrets"})
 RULE_SOURCES: Dict[str, frozenset] = {
     CERT_EXPIRED: CERT_SOURCES,
     CERT_EXPIRING_SOON: CERT_SOURCES,
+    CERT_SUPERSEDED: CERT_SOURCES,
     AWS_IAM_SERVER_CERT_EXPIRED: IAM_CERT_SOURCES,
     SECRET_EXPIRED: SECRET_SOURCES,
     SECRET_EXPIRING_SOON: SECRET_SOURCES,
@@ -212,6 +234,163 @@ def _evidence(obj: Any) -> Dict[str, Any]:
     ) if _g(obj, k) not in (None, [], {})}
 
 
+# ── Supersession: a renewal uploaded as a new object ────────────────────────
+# Only a certificate this close to (or past) its end is looked at: two valid
+# certificates for one domain far from expiry are usually deliberate (one per
+# region or listener), not a renewal.
+SUPERSEDE_LOOKAHEAD_DAYS = 90
+
+
+def cert_names(obj: Any) -> frozenset:
+    """The host names a certificate covers: its SANs, else its subject CN."""
+    names = {str(n).strip().lower().rstrip(".") for n in (_g(obj, "dns_names") or [])
+             if n and str(n).strip()}
+    if not names:
+        subject = (_g(obj, "subject") or "").strip()
+        cn = subject
+        for part in subject.split(","):
+            part = part.strip()
+            if part.upper().startswith("CN="):
+                cn = part[3:]
+                break
+        cn = cn.strip().lower().rstrip(".")
+        # A bare string with "=" in it is a DN without a CN — not a host name.
+        if cn and "=" not in cn and " " not in cn:
+            names.add(cn)
+    return frozenset(names)
+
+
+def _host_covered(host: str, by: frozenset) -> bool:
+    if host in by:
+        return True
+    # A wildcard covers exactly one label: *.example.com covers a.example.com,
+    # not example.com and not a.b.example.com.
+    if not host.startswith("*.") and "." in host:
+        return "*." + host.split(".", 1)[1] in by
+    return False
+
+
+# Where a certificate can be bound from. A load balancer or gateway serves only
+# certificates uploaded to it; an App Service app binds only certificates in
+# its own resource group; ACM serves only in its own region. A renewal held
+# anywhere else proves the domain was renewed, but cannot be bound in place —
+# it has to be uploaded/imported there first.
+HOLDER_BOUND_SOURCES = frozenset({
+    "oci:load-balancer-certificates", "azure:application-gateway",
+    "azure:app-service-certificates",
+})
+REGION_BOUND_SOURCES = frozenset({"aws:acm"})
+
+
+def _usable_in_place(old: Any, new: Any, locality: int) -> bool:
+    source = _g(old, "source")
+    if source in HOLDER_BOUND_SOURCES:
+        return locality == 0 and _g(new, "source") == source
+    if source in REGION_BOUND_SOURCES:
+        return locality <= 1
+    return True
+
+
+def _locality(old: Any, new: Any) -> int:
+    """0 = same holder (load balancer, gateway, vault, resource group),
+    1 = same store and region, 2 = elsewhere in the account."""
+    ck_old, ck_new = _g(old, "container_key"), _g(new, "container_key")
+    if ck_old and ck_old == ck_new:
+        return 0
+    rg_old = ((_g(old, "details") or {}).get("resource_group") or "").lower()
+    rg_new = ((_g(new, "details") or {}).get("resource_group") or "").lower()
+    same_store = _g(old, "source") == _g(new, "source")
+    if same_store and rg_old and rg_old == rg_new:
+        return 0
+    if same_store and (_g(old, "region") or "").lower() == (_g(new, "region") or "").lower():
+        return 1
+    return 2
+
+
+def supersession(objects: Iterable[Any], now: datetime) -> Dict[str, Dict[str, Any]]:
+    """For each certificate that has been renewed as a NEW object, its replacement.
+
+    Keyed by the old certificate's object_key. A certificate B supersedes A when,
+    in the same account: B is valid now (started, not ended), B ends after A,
+    and B covers every host name A covers. A has to be expired or within
+    SUPERSEDE_LOOKAHEAD_DAYS of its end. A certificate whose names are unknown
+    is never matched — "no names" would otherwise be covered by anything.
+
+    Of several candidates the closest wins (same holder, then same store and
+    region), then the one that lasts longest.
+    """
+    certs = [o for o in objects
+             if _g(o, "kind") == KIND_CERTIFICATE and _g(o, "enabled") is not False
+             and _g(o, "expires_at") is not None and _g(o, "source") not in IAM_CERT_SOURCES]
+    by_account: Dict[Any, List[Tuple[Any, frozenset]]] = {}
+    for o in certs:
+        by_account.setdefault(_g(o, "account_id"), []).append((o, cert_names(o)))
+
+    out: Dict[str, Dict[str, Any]] = {}
+    horizon = now + timedelta(days=SUPERSEDE_LOOKAHEAD_DAYS)
+    for members in by_account.values():
+        valid = [(o, names) for o, names in members
+                 if names and _g(o, "expires_at") > now
+                 and (_g(o, "not_before") is None or _g(o, "not_before") <= now)]
+        for old, old_names in members:
+            old_exp = _g(old, "expires_at")
+            if not old_names or old_exp > horizon:
+                continue
+            best = None
+            for new, new_names in valid:
+                if new is old or _g(new, "object_key") == _g(old, "object_key"):
+                    continue
+                if _g(new, "expires_at") <= old_exp:
+                    continue
+                if not all(_host_covered(h, new_names) for h in old_names):
+                    continue
+                rank = (_locality(old, new), -_g(new, "expires_at").timestamp())
+                if best is None or rank < best[0]:
+                    best = (rank, new)
+            if best is None:
+                continue
+            new = best[1]
+            exp = _g(new, "expires_at")
+            out[_g(old, "object_key")] = {
+                "object_key": _g(new, "object_key"),
+                "name": _g(new, "name") or _g(new, "object_key"),
+                "expires_at": exp.isoformat() if hasattr(exp, "isoformat") else exp,
+                "source": _g(new, "source"),
+                "source_label": SOURCE_LABEL.get(_g(new, "source"), _g(new, "source")),
+                "container_name": _g(new, "container_name"),
+                "region": _g(new, "region"),
+                "in_use": _g(new, "in_use"),
+                "same_holder": best[0][0] == 0,
+                "usable_in_place": _usable_in_place(old, new, best[0][0]),
+            }
+    return out
+
+
+def is_retired(obj: Any, successor: Optional[Dict[str, Any]]) -> bool:
+    """Replaced by a renewal AND reported unused: a leftover, not a risk."""
+    return bool(successor) and _g(obj, "in_use") is False
+
+
+def _successor_note(succ: Dict[str, Any], *, in_use: Optional[bool]) -> str:
+    where = ", ".join(b for b in (succ.get("container_name"), succ.get("source_label"),
+                                  succ.get("region")) if b)
+    exp = succ.get("expires_at")
+    when = exp[:10] if isinstance(exp, str) else _when(exp)
+    head = (f" It has been renewed: {succ['name']}"
+            + (f" ({where})" if where else "") + f" is valid until {when}")
+    if in_use is False:
+        return head + ". Nothing uses this one, so it can be deleted."
+    if in_use and not succ.get("usable_in_place", True):
+        return (head + ", but it is held elsewhere and cannot be bound here as it is. "
+                "Upload the renewed certificate where this one lives, switch the binding "
+                "to it, then delete this one.")
+    if in_use:
+        return (head + ". Switch the binding that still uses this one to the renewed "
+                "certificate, then delete this one.")
+    return (head + ". Whether this one is still bound was not reported — confirm "
+            "nothing uses it before deleting it.")
+
+
 def analyse(*, provider: str, objects: Sequence[Any], sources: Sequence[Any],
             now: datetime) -> CredentialAnalysis:
     risks: List[CredentialRisk] = []
@@ -273,6 +452,7 @@ def analyse(*, provider: str, objects: Sequence[Any], sources: Sequence[Any],
         c = _g(s, "container") or {}
         if _g(s, "source") in KEYVAULT_SOURCES and c.get("vault_id"):
             vault_rbac[c["vault_id"]] = c.get("rbac_authorization")
+    successors = supersession(objects, now)
     evaluated = 0
 
     for obj in objects:
@@ -290,20 +470,42 @@ def analyse(*, provider: str, objects: Sequence[Any], sources: Sequence[Any],
             left = _days(exp - now)
             iam_store = source in IAM_CERT_SOURCES
             expired_rule = AWS_IAM_SERVER_CERT_EXPIRED if iam_store else CERT_EXPIRED
+            succ = None if iam_store else successors.get(_g(obj, "object_key"))
+            in_use = _g(obj, "in_use")
+            evidence_succ = {"superseded_by": succ} if succ else {}
+            # Renewed as a new object and nothing uses this one: a leftover.
+            # Reported once, as cleanup — not as an expiry it can never clear.
+            if is_retired(obj, succ) and left <= EXPIRY_WINDOW_DAYS:
+                state = (f"expired {int(-left)} day(s) ago, on {_when(exp)}" if left < 0
+                         else f"expires in {int(left)} day(s), on {_when(exp)}")
+                risks.append(CredentialRisk(
+                    rule_id=CERT_SUPERSEDED, severity=LOW,
+                    subject_key=_g(obj, "object_key"), name=name,
+                    resource_type="Certificate", region=_g(obj, "region"),
+                    detail=(f"{name}{_where(obj)} {state}."
+                            + _successor_note(succ, in_use=False)),
+                    evidence={**_evidence(obj), **evidence_succ}))
+                _bump(stats, CERT_SUPERSEDED, VULNERABLE)
+                _bump(stats, expired_rule, NOT_APPLICABLE if left < 0 else SAFE)
+                _bump(stats, CERT_EXPIRING_SOON, NOT_APPLICABLE if left < 0 else SAFE)
+                continue
+            if succ:
+                _bump(stats, CERT_SUPERSEDED, SAFE)
             if left < 0:
-                in_use = _g(obj, "in_use")
                 sev = LOW if in_use is False else HIGH
                 use = (" The provider reports it is not in use, so this is a certificate "
                        "to delete rather than an outage." if in_use is False else
                        " It is still attached to a listener or service." if in_use else
                        " Whether it is still in use was not reported.")
+                if succ:
+                    use += _successor_note(succ, in_use=in_use)
                 risks.append(CredentialRisk(
                     rule_id=expired_rule, severity=sev,
                     subject_key=_g(obj, "object_key"), name=name,
                     resource_type="Certificate", region=_g(obj, "region"),
                     detail=(f"{name}{_where(obj)} expired {int(-left)} day(s) ago, on "
                             f"{_when(exp)}.{use}"),
-                    evidence=_evidence(obj)))
+                    evidence={**_evidence(obj), **evidence_succ}))
                 _bump(stats, expired_rule, VULNERABLE)
                 if not iam_store:
                     _bump(stats, CERT_EXPIRING_SOON, NOT_APPLICABLE)
@@ -328,13 +530,15 @@ def analyse(*, provider: str, objects: Sequence[Any], sources: Sequence[Any],
                             "happened this close to expiry.")
                 elif managed is False:
                     note = " Nothing renews this certificate automatically."
+                if succ:
+                    note = _successor_note(succ, in_use=in_use)
                 risks.append(CredentialRisk(
                     rule_id=CERT_EXPIRING_SOON, severity=sev,
                     subject_key=_g(obj, "object_key"), name=name,
                     resource_type="Certificate", region=_g(obj, "region"),
                     detail=(f"{name}{_where(obj)} expires in {max(0, int(left))} day(s), "
                             f"on {_when(exp)}.{note}"),
-                    evidence=_evidence(obj),
+                    evidence={**_evidence(obj), **evidence_succ},
                     confidence=CONF_HIGH))
                 _bump(stats, CERT_EXPIRING_SOON, VULNERABLE)
             else:

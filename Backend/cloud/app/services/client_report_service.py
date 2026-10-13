@@ -490,17 +490,28 @@ class ClientReportService:
                     r["gaps"].append("Compliance could not be computed for this account.")
 
     async def _certificates(self, rows, ids, now) -> None:
+        from app.security import credentials as credx
+
         horizon = now + timedelta(days=CERT_HORIZON_DAYS)
-        objs = (await self.db.execute(
+        # Every live object, not only those inside the horizon: a renewal that
+        # supersedes an expired certificate usually ends beyond it.
+        live = (await self.db.execute(
             select(CloudCredentialObject).where(
                 CloudCredentialObject.account_id.in_(ids),
                 CloudCredentialObject.enabled.is_distinct_from(False),
-                CloudCredentialObject.expires_at.is_not(None),
-                CloudCredentialObject.expires_at < horizon)
+                CloudCredentialObject.expires_at.is_not(None))
             .order_by(CloudCredentialObject.expires_at))).scalars().all()
+        successors = credx.supersession(live, now)
         for r in rows.values():
             r["certificates"] = []
-        for o in objs:
+            r["certificates_replaced"] = 0
+        for o in live:
+            if o.expires_at >= horizon:
+                continue
+            # Renewed as a new certificate and unused: cleanup, not an expiry.
+            if credx.is_retired(o, successors.get(o.object_key)):
+                rows[o.account_id]["certificates_replaced"] += 1
+                continue
             rows[o.account_id]["certificates"].append({
                 "name": o.name or o.object_key, "kind": o.kind,
                 "container": o.container_name, "region": o.region,

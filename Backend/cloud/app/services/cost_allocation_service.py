@@ -264,6 +264,74 @@ HEALTH_FORMULA = (
     "is deliberately independent of how much it costs."
 )
 
+# ── FinOps phases ─────────────────────────────────────────────────────────────
+# Inform / Optimize / Operate are the three phases of the FinOps Foundation's
+# own lifecycle, and are stable across every published version of their
+# framework -- unlike the granular capability names inside each phase, which
+# this product does not claim to assess. Each measurable component below is
+# placed under the phase it is evidence FOR, not a certified mapping to any
+# specific named capability.
+PHASE_INFORM = "INFORM"
+PHASE_OPTIMIZE = "OPTIMIZE"
+PHASE_OPERATE = "OPERATE"
+PHASES = (PHASE_INFORM, PHASE_OPTIMIZE, PHASE_OPERATE)
+PHASE_LABEL = {PHASE_INFORM: "Inform", PHASE_OPTIMIZE: "Optimize", PHASE_OPERATE: "Operate"}
+PHASE_DESCRIPTION = {
+    PHASE_INFORM: (
+        "Visibility: whether spend can be attributed to a tag, owner or team, "
+        "and how much billing history is stored to attribute it against."
+    ),
+    PHASE_OPTIMIZE: (
+        "Action: whether the savings opportunities this product has already "
+        "found are being reviewed, not left open indefinitely."
+    ),
+    PHASE_OPERATE: (
+        "Process: whether spend is being watched against a target and "
+        "against its own anomalies, as a matter of routine."
+    ),
+}
+# Which phase each component is evidence for. A component not listed here
+# would silently score nowhere -- tests assert every key in `components`
+# has an entry.
+COMPONENT_PHASE: Dict[str, str] = {
+    "tagging": PHASE_INFORM,
+    "allocation": PHASE_INFORM,
+    "data_coverage": PHASE_INFORM,
+    "resource_attribution": PHASE_INFORM,
+    "optimization_review_rate": PHASE_OPTIMIZE,
+    "budget_coverage": PHASE_OPERATE,
+    "anomaly_monitoring": PHASE_OPERATE,
+}
+
+# ── Maturity vocabulary ───────────────────────────────────────────────────────
+# Crawl / Walk / Run is the FinOps Foundation's own maturity vocabulary for a
+# capability practiced ad hoc, practiced but inconsistently, or practiced as a
+# matter of course -- not a scale this product invented.
+MATURITY_CRAWL = "CRAWL"
+MATURITY_WALK = "WALK"
+MATURITY_RUN = "RUN"
+MATURITY_LEVELS = (MATURITY_CRAWL, MATURITY_WALK, MATURITY_RUN)
+MATURITY_LABEL = {MATURITY_CRAWL: "Crawl", MATURITY_WALK: "Walk", MATURITY_RUN: "Run"}
+_MATURITY_RANK = {level: i for i, level in enumerate(MATURITY_LEVELS)}
+MATURITY_METHODOLOGY = (
+    "Below 50 is Crawl, 50-79 is Walk, 80 and above is Run. The OVERALL level "
+    "is the LOWEST of the scored phases below, never their average -- a "
+    "practice is only as mature as its weakest phase, and averaging would let "
+    "a strong Inform score hide a missing Operate practice. A phase with no "
+    "scoreable component is left out of that comparison, not treated as Crawl."
+)
+
+
+def maturity_level(score: Optional[float]) -> Optional[str]:
+    """Crawl/Walk/Run for one 0-100 score, or None for an un-scoreable one."""
+    if score is None:
+        return None
+    if score >= 80:
+        return MATURITY_RUN
+    if score >= 50:
+        return MATURITY_WALK
+    return MATURITY_CRAWL
+
 
 def finops_health(
     *,
@@ -274,6 +342,13 @@ def finops_health(
     accounts_in_scope: int,
     anomaly_monitoring_ready: bool,
     unpriced_resource_ratio: Optional[float] = None,
+    # Share of this scope's currently-visible cost-optimization findings (open,
+    # or resolved by a human) that have moved past NEW -- i.e. someone has
+    # actually looked at them. None when nothing could be measured (no account
+    # in scope has ever been analysed); see cost_service.get_governance for how
+    # it is computed. Optional and additive: existing callers that do not pass
+    # it simply get an excluded OPTIMIZE phase.
+    optimization_review_rate: Optional[float] = None,
 ) -> Dict[str, Any]:
     components: Dict[str, Optional[float]] = {}
 
@@ -294,15 +369,53 @@ def finops_health(
         round((1 - unpriced_resource_ratio) * 100, 2)
         if unpriced_resource_ratio is not None else None
     )
+    components["optimization_review_rate"] = (
+        round(optimization_review_rate, 2) if optimization_review_rate is not None else None
+    )
 
     scored = {k: v for k, v in components.items() if v is not None}
     score = round(sum(scored.values()) / len(scored), 1) if scored else None
+
+    # ── Phases: the SAME components, grouped and re-averaged -- never a
+    # second measurement, so the overall score and the phase view can never
+    # disagree about what a component is worth.
+    domains: List[Dict[str, Any]] = []
+    phase_scores: Dict[str, Optional[float]] = {}
+    for phase in PHASES:
+        keys = sorted(k for k, p in COMPONENT_PHASE.items() if p == phase)
+        values = [components[k] for k in keys if components.get(k) is not None]
+        phase_score = round(sum(values) / len(values), 1) if values else None
+        phase_scores[phase] = phase_score
+        domains.append({
+            "phase": phase,
+            "label": PHASE_LABEL[phase],
+            "description": PHASE_DESCRIPTION[phase],
+            "score": phase_score,
+            "maturity": maturity_level(phase_score),
+            "maturity_label": MATURITY_LABEL.get(maturity_level(phase_score)),
+            "components": keys,
+            "excluded_components": sorted(k for k in keys if components.get(k) is None),
+        })
+
+    scored_phase_levels = [
+        maturity_level(v) for v in phase_scores.values() if v is not None
+    ]
+    overall_maturity = (
+        min(scored_phase_levels, key=_MATURITY_RANK.__getitem__)
+        if scored_phase_levels else None
+    )
 
     return {
         "score": score,
         "components": components,
         "excluded_components": sorted(k for k, v in components.items() if v is None),
         "formula": HEALTH_FORMULA,
+        "domains": domains,
+        "maturity": {
+            "overall": overall_maturity,
+            "overall_label": MATURITY_LABEL.get(overall_maturity),
+            "methodology": MATURITY_METHODOLOGY,
+        },
         "warning": (
             "This is a FinOps maturity measure, not a cost. A low score does not "
             "mean the estate is expensive, and a high score does not mean it is "

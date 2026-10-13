@@ -24,6 +24,11 @@ export const getClient = async (clientId) => {
   return data;
 };
 
+export const getClientScorecard = async (clientId) => {
+  const { data } = await cloudAxios.get(`/clients/${clientId}/scorecard`);
+  return data;
+};
+
 export const createClient = async (payload) => {
   const { data } = await cloudAxios.post('/clients', payload);
   return data;

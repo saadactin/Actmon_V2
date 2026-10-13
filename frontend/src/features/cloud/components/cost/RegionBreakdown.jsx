@@ -71,7 +71,7 @@ export default function RegionBreakdown({ rows = [], selected, onSelect }) {
         return (
           <div key={currency}>
             {Object.keys(byCurrency).length > 1 && (
-              <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+              <p className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                 {currency}
               </p>
             )}
@@ -117,14 +117,14 @@ export default function RegionBreakdown({ rows = [], selected, onSelect }) {
                           style={{ width: `${(Math.abs(r.monthly_cost || 0) / max) * 100}%` }}
                         />
                       </span>
-                      <span className="w-12 shrink-0 text-right text-[11px] tabular-nums text-muted">
+                      <span className="w-12 shrink-0 text-right text-meta tabular-nums text-muted">
                         {share.toFixed(1)}%
                       </span>
                       <span className="w-28 shrink-0 text-right text-[12px] font-semibold tabular-nums text-fg">
                         {(r.monthly_cost ?? 0).toLocaleString(undefined, {
                           minimumFractionDigits: 2, maximumFractionDigits: 2,
                         })}
-                        <span className="ml-1 text-[10px] font-normal text-subtle">
+                        <span className="ml-1 text-micro font-normal text-subtle">
                           {r.currency || ''}
                         </span>
                       </span>
@@ -142,7 +142,7 @@ export default function RegionBreakdown({ rows = [], selected, onSelect }) {
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
         {idle.length > 0 ? (
-          <span className="text-[11px] text-subtle">
+          <span className="text-meta text-subtle">
             {idle.length} other region{idle.length === 1 ? '' : 's'} enabled on
             this account billed nothing in this period.
           </span>
@@ -151,7 +151,7 @@ export default function RegionBreakdown({ rows = [], selected, onSelect }) {
           <button
             type="button"
             onClick={() => onSelect?.(selected)}
-            className="text-[11px] font-semibold text-accent-text hover:underline"
+            className="text-meta font-semibold text-accent-text hover:underline"
           >
             Clear region filter
           </button>

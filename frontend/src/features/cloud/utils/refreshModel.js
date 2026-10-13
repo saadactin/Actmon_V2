@@ -147,6 +147,11 @@ export const REFRESHED_ROOTS = [
   'accountDiagnostics',
   // Resource Intelligence: every refresh ends with an analysis.
   'intelligence',
+  // Identity & Access. A sweep re-reads the principal estate and re-evaluates
+  // permissions, so the dashboard, the table, every open drawer, the trust map
+  // and the live JIT sessions are all stale afterwards. One root covers them
+  // because every identity key starts with it.
+  'identity',
 ];
 
 const ROOT_SET = new Set(REFRESHED_ROOTS);

@@ -36,6 +36,7 @@ export const toParams = (filters = {}) => ({
   provider: filters.providers?.length ? filters.providers : undefined,
   type: filters.types?.length ? filters.types : undefined,
   category: filters.categories?.length ? filters.categories : undefined,
+  service: filters.services?.length ? filters.services : undefined,
   region: filters.regions?.length ? filters.regions : undefined,
   status: filters.statuses?.length ? filters.statuses : undefined,
   risk: filters.risk?.length ? filters.risk : undefined,
@@ -71,6 +72,7 @@ export const fromParams = (params = {}) => {
   const out = {};
   const pairs = [
     ['provider', 'providers'], ['type', 'types'], ['category', 'categories'],
+    ['service', 'services'],
     ['region', 'regions'], ['status', 'statuses'], ['risk', 'risk'],
     ['environment', 'environments'], ['owner', 'owners'],
     ['resource_group', 'resourceGroups'], ['compartment', 'compartments'],
@@ -171,6 +173,34 @@ export const exportResourcesCsv = async (scope, filters = {}) => {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
   return { filename, rows: Number(response.headers?.['x-resource-rows']) || null };
+};
+
+/**
+ * Download a combined security/utilization/performance/cost-anomaly
+ * assessment for a hand-picked set of resources, as one CSV (one row per
+ * finding/metric/anomaly — see Backend/cloud/app/services/resource_assessment_service.py).
+ */
+export const exportResourceAssessment = async (accountId, resourceIds) => {
+  const response = await cloudAxios.post(
+    '/resources/assessment-export',
+    { account_id: accountId, resource_ids: resourceIds },
+    { responseType: 'blob' },
+  );
+
+  const disposition = response.headers?.['content-disposition'] || '';
+  const match = /filename="?([^"]+)"?/.exec(disposition);
+  const filename = match ? match[1] : 'resource-assessment.csv';
+
+  const url = URL.createObjectURL(response.data);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  return { filename, rows: Number(response.headers?.['x-assessment-rows']) || null };
 };
 
 // ── Actions ──────────────────────────────────────────────────────────────────

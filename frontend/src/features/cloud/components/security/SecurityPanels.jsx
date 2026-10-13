@@ -92,13 +92,13 @@ export function ExposurePanel({ accountId, enabled = true }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone="warning">Unknown</Badge>
                   <span className="text-[13px] font-medium text-fg">{r.resource_name}</span>
-                  <span className="text-[11px] text-subtle">{r.resource_type}</span>
+                  <span className="text-meta text-subtle">{r.resource_type}</span>
                   {r.public_addresses?.length > 0 && (
                     <Badge tone="outline" size="xs">{r.public_addresses.join(', ')}</Badge>
                   )}
                 </div>
                 {r.unknown_reason && (
-                  <p className="mt-1.5 text-[11px] leading-relaxed text-warning-fg">
+                  <p className="mt-1.5 text-meta leading-relaxed text-warning-fg">
                     {r.unknown_reason}
                   </p>
                 )}
@@ -153,7 +153,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
                   {r.open_ports.map((p, i) => (
                     <span
                       key={`${p.port}-${p.service}-${i}`}
-                      className="inline-flex items-center gap-1.5 rounded-control border border-border bg-sunken px-2 py-1 text-[11px]"
+                      className="inline-flex items-center gap-1.5 rounded-control border border-border bg-sunken px-2 py-1 text-meta"
                       title={p.why}
                     >
                       <Badge tone={severityTone(p.severity)} size="xs">{p.severity}</Badge>
@@ -163,7 +163,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
                 </div>
 
                 {r.confidence !== 'HIGH' && (
-                  <p className="mt-2 text-[11px] italic text-subtle">
+                  <p className="mt-2 text-meta italic text-subtle">
                     Confidence: {r.confidence}
                     {r.unknown_reason ? ` — ${r.unknown_reason}` : ''}
                   </p>
@@ -171,7 +171,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
 
                 {isOpen && (
                   <div className="mt-3 rounded-control border border-border bg-sunken p-3">
-                    <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+                    <div className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
                       Path from the internet
                     </div>
                     {/* The evidence chain. Without it, "exposed" is an
@@ -187,9 +187,9 @@ export function ExposurePanel({ accountId, enabled = true }) {
                           <Icon name="chevron-down" size={13} className="mt-0.5 text-subtle" />
                           <div className="min-w-0">
                             <span className="text-fg">{hop.label}</span>
-                            <span className="ml-1.5 text-[11px] text-subtle">({hop.kind})</span>
+                            <span className="ml-1.5 text-meta text-subtle">({hop.kind})</span>
                             {hop.detail && (
-                              <div className="text-[11px] text-muted">{hop.detail}</div>
+                              <div className="text-meta text-muted">{hop.detail}</div>
                             )}
                           </div>
                         </li>
@@ -203,7 +203,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
 
                     {r.port_verdicts?.length > 0 && (
                       <div className="mt-3">
-                        <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+                        <div className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                           Per-port verdicts
                         </div>
                         <div className="flex flex-wrap gap-1.5">
@@ -211,7 +211,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
                             <span
                               key={pv.port}
                               title={pv.reason}
-                              className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-1.5 py-0.5 text-[11px]"
+                              className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-1.5 py-0.5 text-meta"
                             >
                               <span className="font-mono text-fg">{pv.port}</span>
                               <Badge tone={exposureMeta(pv.verdict).tone} size="xs">
@@ -224,7 +224,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
                     )}
 
                     {r.evaluated_controls?.length > 0 && (
-                      <p className="mt-2 text-[11px] text-muted">
+                      <p className="mt-2 text-meta text-muted">
                         Rule sets consulted: {r.evaluated_controls.join(', ')}
                       </p>
                     )}
@@ -237,7 +237,7 @@ export function ExposurePanel({ accountId, enabled = true }) {
       )}
 
       {data.port_catalog_note && (
-        <p className="text-[11px] italic leading-relaxed text-subtle">{data.port_catalog_note}</p>
+        <p className="text-meta italic leading-relaxed text-subtle">{data.port_catalog_note}</p>
       )}
     </div>
   );
@@ -286,7 +286,7 @@ export function IdentityPanel({ accountId, enabled = true }) {
             {data.missing_permission && (
               <p className="mt-1.5">
                 Missing permission:{' '}
-                <span className="font-mono text-[11px]">{data.missing_permission}</span>
+                <span className="font-mono text-meta">{data.missing_permission}</span>
                 {' '}— granting the Reader role at subscription scope includes it.
               </p>
             )}
@@ -297,10 +297,10 @@ export function IdentityPanel({ accountId, enabled = true }) {
             </p>
             {data.collection_error && (
               <details className="mt-1.5">
-                <summary className="cursor-pointer text-[11px] underline">
+                <summary className="cursor-pointer text-meta underline">
                   Provider error
                 </summary>
-                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px] leading-relaxed">
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-micro leading-relaxed">
                   {data.collection_error}
                 </pre>
               </details>
@@ -349,7 +349,7 @@ export function IdentityPanel({ accountId, enabled = true }) {
                 what: (
                   <div className="min-w-0">
                     <div className="truncate-safe text-[13px] text-fg">{f.title}</div>
-                    <div className="truncate-safe text-[11px] text-subtle">{f.rule_id}</div>
+                    <div className="truncate-safe text-meta text-subtle">{f.rule_id}</div>
                   </div>
                 ),
                 who: (
@@ -358,7 +358,7 @@ export function IdentityPanel({ accountId, enabled = true }) {
                   </span>
                 ),
                 scope: (
-                  <span className="text-[11px] text-muted">
+                  <span className="text-meta text-muted">
                     {f.evidence?.scope_level || f.evidence?.scope || '—'}
                   </span>
                 ),
@@ -387,15 +387,15 @@ export function IdentityPanel({ accountId, enabled = true }) {
                 role: (
                   <div className="min-w-0">
                     <div className="truncate-safe text-[12px] text-fg">{g.role_name || g.role_key}</div>
-                    <div className="truncate-safe text-[11px] text-subtle">
+                    <div className="truncate-safe text-meta text-subtle">
                       {g.principal_name || g.principal_id}
                     </div>
                   </div>
                 ),
-                type: <span className="text-[11px] text-muted">{g.principal_type || '—'}</span>,
+                type: <span className="text-meta text-muted">{g.principal_type || '—'}</span>,
                 scope: <Badge tone="outline" size="xs">{g.scope_label || g.scope_level}</Badge>,
                 actions: (
-                  <span className="text-[11px] text-muted">
+                  <span className="text-meta text-muted">
                     {g.permissions?.actions?.length ?? '—'}
                   </span>
                 ),
@@ -494,13 +494,13 @@ export function CoveragePanel({ accountId, enabled = true }) {
             <div className="flex items-center gap-2">
               <Badge tone="warning">{data.identity_collection.status}</Badge>
               {data.identity_collection.missing_permission && (
-                <span className="font-mono text-[11px] text-muted">
+                <span className="font-mono text-meta text-muted">
                   {data.identity_collection.missing_permission}
                 </span>
               )}
             </div>
             {data.identity_collection.error_detail && (
-              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-control border border-border bg-sunken p-2 text-[10px] leading-relaxed text-muted">
+              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-control border border-border bg-sunken p-2 text-micro leading-relaxed text-muted">
                 {data.identity_collection.error_detail}
               </pre>
             )}
@@ -525,7 +525,7 @@ export function CoveragePanel({ accountId, enabled = true }) {
                 rule: (
                   <div className="min-w-0">
                     <div className="truncate-safe text-[12px] text-fg">{g.title}</div>
-                    <div className="line-clamp-2 text-[11px] leading-relaxed text-subtle">
+                    <div className="line-clamp-2 text-meta leading-relaxed text-subtle">
                       {g.reason}
                     </div>
                   </div>
@@ -585,7 +585,7 @@ function SweepPanel({ sweep }) {
                   <Badge tone="danger" size="xs">{label}</Badge>
                   <span className="text-muted">{e.regions?.length || 0} region(s)</span>
                   {(e.actions || []).map((a) => (
-                    <code key={a} className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-fg">{a}</code>
+                    <code key={a} className="rounded bg-sunken px-1.5 py-0.5 font-mono text-meta text-fg">{a}</code>
                   ))}
                 </li>
               ))}
@@ -602,7 +602,7 @@ function SweepPanel({ sweep }) {
                   {g.regions.length > 0 && (
                     <span title={g.regions.join(', ')}>
                       {g.regions.length} region(s):{' '}
-                      <span className="font-mono text-[11px] text-fg">
+                      <span className="font-mono text-meta text-fg">
                         {g.regions.slice(0, 6).join(', ')}{g.regions.length > 6 ? ', …' : ''}
                       </span>
                     </span>
@@ -652,7 +652,7 @@ function FixPermissions({ permissions }) {
               <span className="font-semibold text-fg">{a.area}</span>
               <span className="text-muted">· {a.item} · {a.scopes} scope(s) blocked</span>
               {(a.actions || []).map((act) => (
-                <code key={act} className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-fg">{act}</code>
+                <code key={act} className="rounded bg-sunken px-1.5 py-0.5 font-mono text-meta text-fg">{act}</code>
               ))}
             </li>
           ))}
@@ -663,13 +663,13 @@ function FixPermissions({ permissions }) {
               <p className="text-[12px] font-semibold text-fg">IAM policy granting exactly these actions</p>
               <CopyButton text={policy} label="Copy policy" />
             </div>
-            <pre className="max-h-64 overflow-auto rounded-control bg-sunken p-3 font-mono text-[11px] leading-relaxed text-fg">
+            <pre className="max-h-64 overflow-auto rounded-control bg-sunken p-3 font-mono text-meta leading-relaxed text-fg">
               {policy}
             </pre>
             {permissions.managed_policy && (
               <p className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
                 Or attach the AWS managed policy
-                <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[11px] text-fg">ReadOnlyAccess</code>
+                <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-meta text-fg">ReadOnlyAccess</code>
                 which includes them all.
                 <CopyButton text={permissions.managed_policy} label="Copy ARN" variant="ghost" />
               </p>
@@ -763,7 +763,7 @@ export function TrendsPanel({ accountId, enabled = true }) {
                   stroke="var(--border)" strokeWidth="1"
                   strokeDasharray={v === 70 ? '4 4' : undefined} />
                 <text x={W - PAD} y={y(v) - 3} textAnchor="end"
-                  className="fill-[var(--subtle)] text-[9px]">{v}</text>
+                  className="fill-[var(--subtle)] text-micro">{v}</text>
               </g>
             ))}
             {segments.map((seg, i) => (
@@ -812,7 +812,7 @@ export function TrendsPanel({ accountId, enabled = true }) {
               at: (
                 <div className="min-w-0">
                   <div className="text-[12px] text-fg">{formatDateTime(p.at)}</div>
-                  <div className="text-[11px] text-subtle">{p.outcome}</div>
+                  <div className="text-meta text-subtle">{p.outcome}</div>
                 </div>
               ),
               score: p.score !== null && p.reliable
@@ -824,7 +824,7 @@ export function TrendsPanel({ accountId, enabled = true }) {
               conf: <span className="text-[12px] text-fg">{formatCount(p.findings_confirmed)}</span>,
               undet: <span className="text-[12px] text-muted">{formatCount(p.findings_undetermined)}</span>,
               churn: (
-                <span className="text-[11px]">
+                <span className="text-meta">
                   <span className="text-danger">+{p.new ?? 0}</span>
                   {' / '}
                   <span className="text-success">−{p.resolved ?? 0}</span>
@@ -850,7 +850,7 @@ export function Stat({ label, value, tone, icon }) {
         <Icon name={icon} size={18} />
       </div>
       <div className="min-w-0">
-        <div className="truncate-safe text-[11px] font-semibold uppercase tracking-wider text-muted">
+        <div className="truncate-safe text-meta font-semibold uppercase tracking-wider text-muted">
           {label}
         </div>
         <div className="mt-0.5 text-2xl font-bold text-fg">{formatCount(value)}</div>

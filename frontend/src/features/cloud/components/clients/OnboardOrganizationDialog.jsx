@@ -141,7 +141,7 @@ export default function OnboardOrganizationDialog({ open, onClose, defaultClient
             <span className="truncate-safe text-[13px] font-medium text-fg">{m.name || m.member_id}</span>
             {m.is_management_account && <Badge tone="info" size="xs">Management</Badge>}
           </div>
-          <div className="font-mono text-[11px] text-subtle">{m.member_id}</div>
+          <div className="font-mono text-meta text-subtle">{m.member_id}</div>
         </div>
       ),
       detail: <span className="truncate-safe text-[12px] text-muted">{m.detail || '—'}</span>,
@@ -156,7 +156,7 @@ export default function OnboardOrganizationDialog({ open, onClose, defaultClient
               <Capability label="Identity" value={m.access.identity} />
             </div>
           )}
-          {m.reason && <p className="line-clamp-2 text-[11px] leading-snug text-muted" title={m.reason}>{m.reason}</p>}
+          {m.reason && <p className="line-clamp-2 text-meta leading-snug text-muted" title={m.reason}>{m.reason}</p>}
         </div>
       ),
     },
@@ -232,7 +232,7 @@ export default function OnboardOrganizationDialog({ open, onClose, defaultClient
         <div className="space-y-4">
           {discover.isError && <Notice tone="danger">{String(errorOf(discover))}</Notice>}
           <Segmented options={PROVIDERS} value={provider} onChange={setProvider} />
-          <p className="text-[11px] leading-relaxed text-subtle">
+          <p className="text-meta leading-relaxed text-subtle">
             OCI is not listed: a tenancy is already one account covering every compartment —
             add it from Add Account. Listing stores nothing; these credentials are used for the
             listing and dropped.

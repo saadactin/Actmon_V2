@@ -13,12 +13,17 @@
 // anywhere. Checked in BOTH directions.
 import {
   ACTION_OPTIONS, ACTOR_TYPE_OPTIONS, CATEGORY_CHIPS, DEFAULT_RANGE,
-  MIN_RISK_OPTIONS, PAGE_SIZE_OPTIONS, PROVIDER_BADGE_CLASSES, RANGE_HOURS,
+  MIN_RISK_OPTIONS, PAGE_SIZE_OPTIONS, RANGE_HOURS,
   RISK_OPTIONS, RISK_ORDER, RISK_TONE, SORT_OPTIONS, SOURCE_STATUS_ADVICE,
   SOURCE_STATUS_META, STATUS_OPTIONS, STATUS_TONE, TIME_RANGES,
   collectionLookbackHours, formatCount, formatEventDate, formatEventTime,
   formatUtc, relativeTime,
 } from '../src/features/cloud/utils/eventFormat.js';
+// The provider badge palette moved out of eventFormat into the one brand
+// registry. Asserting against the real styling function rather than a map of
+// class strings also means this now exercises the Oracle→OCI normalisation
+// itself, instead of checking that someone remembered to type two keys.
+import { PROVIDER_COLOR, providerBadgeStyle } from '../src/features/cloud/utils/providerTheme.js';
 
 let pass = 0; let fail = 0;
 const check = (label, cond, detail = '') => {
@@ -254,15 +259,33 @@ console.log('\n9. Every alarming collection status carries advice');
 
 console.log('\n10. Provider badges know Oracle and OCI are the same cloud');
 {
-  check('PROVIDER_BADGE_CLASSES has both OCI and Oracle',
-    'OCI' in PROVIDER_BADGE_CLASSES && 'Oracle' in PROVIDER_BADGE_CLASSES,
-    Object.keys(PROVIDER_BADGE_CLASSES).join(', '));
-  check('and they render identically — the alias this codebase forgets in '
-    + 'every new place',
-    PROVIDER_BADGE_CLASSES.OCI === PROVIDER_BADGE_CLASSES.Oracle,
-    `${PROVIDER_BADGE_CLASSES.OCI} vs ${PROVIDER_BADGE_CLASSES.Oracle}`);
-  check('AWS and Azure are present too',
-    'AWS' in PROVIDER_BADGE_CLASSES && 'Azure' in PROVIDER_BADGE_CLASSES);
+  const styleOf = (p) => JSON.stringify(providerBadgeStyle(p));
+
+  check('"Oracle" and "OCI" style identically — the alias this codebase '
+    + 'forgets in every new place',
+    styleOf('OCI') === styleOf('Oracle'),
+    `${styleOf('OCI')} vs ${styleOf('Oracle')}`);
+  check('AWS and Azure have pinned brand hues too',
+    Boolean(PROVIDER_COLOR.AWS && PROVIDER_COLOR.Azure && PROVIDER_COLOR.OCI),
+    Object.keys(PROVIDER_COLOR).join(', '));
+
+  // The bug the whole registry exists to prevent: a provider chip painted with
+  // a fixed light-palette swatch is a near-white block on the three dark
+  // themes. Every colour a badge carries must either mix against the live
+  // theme or be the brand hue itself — never a literal #rrggbb background.
+  const aws = providerBadgeStyle('AWS');
+  check('badge surfaces mix against the theme rather than pinning a swatch',
+    aws.backgroundColor.startsWith('color-mix(')
+      && aws.borderColor.startsWith('color-mix('),
+    `${aws.backgroundColor} / ${aws.borderColor}`);
+  check('badge ink is mixed toward the theme foreground, so it stays readable '
+    + 'on a white card and on a black one',
+    aws.color.includes('var(--fg)'), aws.color);
+
+  // An unrecognised provider must not silently borrow AWS orange.
+  check('an unknown provider falls back to the theme\'s neutral ink',
+    providerBadgeStyle('Nimbus').color.includes('var(--status-unknown)'),
+    providerBadgeStyle('Nimbus').color);
 }
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);

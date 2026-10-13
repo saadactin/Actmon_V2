@@ -969,9 +969,16 @@ async def _eval_credential_expiry(ctx: EvalContext, cfg: dict, scope: dict) -> E
     days = max(0, _int(cfg.get("within_days"), 30))
     include_expired = cfg.get("include_expired", "yes") == "yes"
     horizon = ctx.now + timedelta(days=days)
+    # A certificate renewed as a new object and no longer used is a leftover:
+    # paging on it would fire after every renewal that changed the name.
+    successors = credx.supersession(objects, ctx.now)
     hits = []
+    replaced = 0
     for o in objects:
         if o.kind not in kinds or o.enabled is False or o.expires_at is None:
+            continue
+        if credx.is_retired(o, successors.get(o.object_key)):
+            replaced += o.expires_at <= horizon
             continue
         if o.expires_at > horizon:
             continue
@@ -999,6 +1006,9 @@ async def _eval_credential_expiry(ctx: EvalContext, cfg: dict, scope: dict) -> E
 
     gap = (f" {len(failed)} store(s) could not be read this time; objects from them "
            "are counted as last seen." if failed else "")
+    if replaced:
+        gap += (f" {replaced} more were already replaced by a renewal and are unused, "
+                "so they are not counted.")
     return result.compared(
         fired, observed, threshold, operator,
         detail=(f"{len(hits)} {noun} "
@@ -1008,7 +1018,8 @@ async def _eval_credential_expiry(ctx: EvalContext, cfg: dict, scope: dict) -> E
         samples=[_sample(o) for o in hits[:MAX_SAMPLES]] if fired else [],
         as_of=ctx.now.isoformat(),
         context={"within_days": days, "kind": kind, "include_expired": include_expired,
-                 "stores_read": len(ok), "stores_unreadable": len(failed)},
+                 "stores_read": len(ok), "stores_unreadable": len(failed),
+                 "replaced_not_counted": replaced},
     )
 
 

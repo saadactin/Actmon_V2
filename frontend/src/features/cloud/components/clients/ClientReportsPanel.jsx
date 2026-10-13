@@ -147,7 +147,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
         generated: (
           <div className="text-[12px] text-muted">
             <div>{formatDateTime(r.generated_at)}</div>
-            <div className="text-[11px] text-subtle">
+            <div className="text-meta text-subtle">
               {r.trigger === 'schedule' ? 'Scheduled' : `Manual${r.requested_by ? ` · ${r.requested_by}` : ''}`}
             </div>
           </div>
@@ -155,7 +155,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
         status: (
           <div className="min-w-0">
             <Badge tone={status.tone}>{status.label}</Badge>
-            {r.error && <div className="mt-0.5 line-clamp-2 text-[11px] text-danger-fg" title={r.error}>{r.error}</div>}
+            {r.error && <div className="mt-0.5 line-clamp-2 text-meta text-danger-fg" title={r.error}>{r.error}</div>}
           </div>
         ),
         size: <span className="text-[12px] text-muted">{formatBytes(r.pdf_bytes)}</span>,
@@ -163,7 +163,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
           <div className="min-w-0">
             <Badge tone={dm.tone} title={dm.hint}>{dm.label}</Badge>
             {r.delivery_message && (
-              <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-subtle" title={r.delivery_message}>
+              <div className="mt-0.5 line-clamp-2 text-meta leading-snug text-subtle" title={r.delivery_message}>
                 {r.delivery_message}
               </div>
             )}
@@ -250,7 +250,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
                 </div>
                 {(p.accounts || []).some((a) => a.gaps?.length) && (
                   <div>
-                    <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">Data gaps the report will list</div>
+                    <div className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">Data gaps the report will list</div>
                     <ul className="space-y-1 text-[12px] text-muted">
                       {p.accounts.filter((a) => a.gaps?.length).map((a) => (
                         <li key={a.account_id}>
@@ -325,7 +325,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
                 />
               </Field>
             </div>
-            <p className="text-[11px] leading-relaxed text-subtle">
+            <p className="text-meta leading-relaxed text-subtle">
               The 3rd is the default because providers restate billing for a few days after month
               end. If the service was down on the day, only the latest month is produced — never a
               burst of back-dated e-mails.
@@ -338,7 +338,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
                   {schedule.last_status && <Badge tone={run.tone} size="xs">{run.label}</Badge>}
                   {schedule.last_period && <span>({periodLabel(schedule.last_period)})</span>}
                 </div>
-                {schedule.last_message && <p className="mt-1 text-[11px] leading-snug">{schedule.last_message}</p>}
+                {schedule.last_message && <p className="mt-1 text-meta leading-snug">{schedule.last_message}</p>}
               </div>
             )}
           </div>
@@ -351,8 +351,8 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
               <Field label="Cc"><Textarea rows={2} value={form.cc} onChange={(e) => set('cc')(e.target.value)} /></Field>
               <Field label="Bcc"><Textarea rows={2} value={form.bcc} onChange={(e) => set('bcc')(e.target.value)} /></Field>
             </div>
-            {bad.length > 0 && <p className="text-[11px] text-danger-fg">Not e-mail addresses: {bad.join(', ')}</p>}
-            {needsTo && <p className="text-[11px] text-danger-fg">A schedule that e-mails needs at least one To address.</p>}
+            {bad.length > 0 && <p className="text-meta text-danger-fg">Not e-mail addresses: {bad.join(', ')}</p>}
+            {needsTo && <p className="text-meta text-danger-fg">A schedule that e-mails needs at least one To address.</p>}
             <div>
               <div className="mb-1.5 text-[12px] font-semibold text-fg">Sections</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
@@ -366,7 +366,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
                     />
                     <span>
                       <span className="font-medium text-fg">{s.label}</span>
-                      <span className="block text-[11px] text-subtle">{s.hint}</span>
+                      <span className="block text-meta text-subtle">{s.hint}</span>
                     </span>
                   </label>
                 ))}
@@ -397,7 +397,7 @@ export default function ClientReportsPanel({ clientId, clientName, push }) {
 function PreviewStat({ label, value, title }) {
   return (
     <div title={title}>
-      <div className="text-[10px] font-bold uppercase tracking-wider text-muted">{label}</div>
+      <div className="text-micro font-bold uppercase tracking-wider text-muted">{label}</div>
       <div className="mt-0.5 text-[13px] font-semibold text-fg">{value}</div>
     </div>
   );

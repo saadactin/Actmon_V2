@@ -327,7 +327,7 @@ export default function AlertsPage({ embedded = false, accountId, account }) {
 
           <section className="card p-4">
             <h3 className="mb-2 text-[13px] font-bold text-fg">Recent alert activity</h3>
-            <p className="mb-2 text-[11px] leading-snug text-muted">
+            <p className="mb-2 text-meta leading-snug text-muted">
               What the alerting system itself did — rules changed, alerts
               triggered and resolved, every notification attempt. Provider
               activity (who changed a cloud resource) stays in the Event Log tab.

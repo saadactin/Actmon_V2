@@ -21,7 +21,7 @@ export default function TabRefreshButton({ accountId, tabKey, className }) {
       {outcome && !pending && (
         <span
           className={cn(
-            'hidden max-w-[22rem] truncate text-right text-[11px] sm:inline',
+            'hidden max-w-[22rem] truncate text-right text-meta sm:inline',
             outcome.ok ? 'text-muted' : 'text-danger',
           )}
           title={`${outcome.text} · ${new Date(outcome.at).toLocaleTimeString()}`}
@@ -30,7 +30,7 @@ export default function TabRefreshButton({ accountId, tabKey, className }) {
         </span>
       )}
       {pending && !plan.background && plan.source === SOURCE_PROVIDER && (
-        <span className="hidden text-[11px] text-accent-text sm:inline">
+        <span className="hidden text-meta text-accent-text sm:inline">
           Reading from the provider…
         </span>
       )}

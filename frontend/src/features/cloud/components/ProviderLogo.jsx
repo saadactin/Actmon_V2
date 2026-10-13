@@ -76,8 +76,10 @@ const OciMark = ({ size }) => (
 
 const MARKS = { AWS: AwsMark, Azure: AzureMark, OCI: OciMark };
 
-/** Brand accent per provider, for callers that need a matching colour. */
-export const PROVIDER_COLOR = { AWS: '#FF9900', Azure: '#0078D4', OCI: '#C74634' };
+/** Brand accent per provider, for callers that need a matching colour.
+    Re-exported from the brand registry rather than restated, so the hue behind
+    a logo cannot drift from the hue inside it. */
+export { PROVIDER_COLOR } from '../utils/providerTheme';
 
 /**
  * `provider` accepts a canonical key (AWS/Azure/OCI), the raw API value

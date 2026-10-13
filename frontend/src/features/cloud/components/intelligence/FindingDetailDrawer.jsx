@@ -81,7 +81,7 @@ export default function FindingDetailDrawer({ accountId, accountRoute, source, f
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={needsReason(draft) ? 'Required — why is this being left in place?' : 'Optional note'}
               />
-              {err && <p className="mt-1.5 text-[11px] text-danger">{err}</p>}
+              {err && <p className="mt-1.5 text-meta text-danger">{err}</p>}
               <div className="mt-2 flex gap-2">
                 <Button size="sm" variant="primary" loading={mutate.isPending} onClick={apply}
                   disabled={needsReason(draft) && !reason.trim()}>
@@ -124,7 +124,7 @@ export default function FindingDetailDrawer({ accountId, accountRoute, source, f
             <p className="leading-relaxed text-fg">{f.description}</p>
             {f.rationale && <p className="mt-1.5 leading-relaxed text-muted">{f.rationale}</p>}
             {lastCheckText(f.last_check) && f.status_group !== 'RESOLVED' && (
-              <p className="mt-1.5 text-[11.5px] italic text-subtle">{lastCheckText(f.last_check)}</p>
+              <p className="mt-1.5 text-meta italic text-subtle">{lastCheckText(f.last_check)}</p>
             )}
           </DrawerSection>
 
@@ -132,15 +132,15 @@ export default function FindingDetailDrawer({ accountId, accountRoute, source, f
             <DrawerSection title="Current and recommended configuration" icon="settings2">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
-                  <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-subtle">Current</p>
+                  <p className="mb-1 text-meta font-semibold uppercase tracking-wider text-subtle">Current</p>
                   <KeyValues rows={Object.entries(f.current_configuration || {})} />
                 </div>
                 <div>
-                  <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-wider text-subtle">Recommended</p>
+                  <p className="mb-1 text-meta font-semibold uppercase tracking-wider text-subtle">Recommended</p>
                   {f.recommended_configuration
                     ? <KeyValues rows={Object.entries(f.recommended_configuration)} />
                     : (
-                      <p className="rounded-control border border-dashed border-border px-2.5 py-2 text-[11.5px] text-muted">
+                      <p className="rounded-control border border-dashed border-border px-2.5 py-2 text-meta text-muted">
                         No exact configuration is named — the evidence does not support one. See the
                         recommendation below for why.
                       </p>
@@ -166,12 +166,12 @@ export default function FindingDetailDrawer({ accountId, accountRoute, source, f
               {f.evidence_raw?._withheld ? (
                 <p className="text-[12px] italic text-muted">{f.evidence_raw._withheld}</p>
               ) : (
-                <pre className="max-h-72 overflow-auto rounded-control border border-border bg-sunken p-3 text-[11px] leading-relaxed text-fg">
+                <pre className="max-h-72 overflow-auto rounded-control border border-border bg-sunken p-3 text-meta leading-relaxed text-fg">
                   {JSON.stringify(f.evidence_raw ?? {}, null, 2)}
                 </pre>
               )}
               {f.compliance_frameworks?.length > 0 && (
-                <p className="mt-2 text-[11.5px] text-muted">
+                <p className="mt-2 text-meta text-muted">
                   Cited by: {f.compliance_frameworks.join(', ')}
                 </p>
               )}
@@ -189,7 +189,7 @@ export default function FindingDetailDrawer({ accountId, accountRoute, source, f
           <DrawerSection title="Recommendation" icon="sparkles">
             <p className="leading-relaxed text-fg">{f.recommendation || 'No recommendation text.'}</p>
             {f.remediation && f.remediation !== f.recommendation && (
-              <p className="mt-2 whitespace-pre-wrap rounded-control border border-info-soft bg-info-soft px-2.5 py-2 text-[11.5px] leading-relaxed text-fg">
+              <p className="mt-2 whitespace-pre-wrap rounded-control border border-info-soft bg-info-soft px-2.5 py-2 text-meta leading-relaxed text-fg">
                 <span className="font-semibold">How: </span>{f.remediation}
               </p>
             )}
@@ -277,13 +277,13 @@ function CostBlock({ cost }) {
         <p className="text-fg">
           Billed <span className="font-bold tabular-nums">{compact(b.amount, b.currency)}</span> over the last{' '}
           {b.period_days} days
-          <span className="block text-[11px] text-subtle">{b.source}{b.service ? ` · ${b.service}` : ''}
+          <span className="block text-meta text-subtle">{b.source}{b.service ? ` · ${b.service}` : ''}
             {b.fetched_at ? ` · fetched ${relativeTime(b.fetched_at)}` : ''}</span>
         </p>
       ) : (
         <p><span className="font-semibold text-muted">N/A. </span><span className="text-muted">{cost.reason}</span></p>
       )}
-      {cost.daily_reason && <p className="text-[11px] text-subtle">30-day cost chart: N/A. {cost.daily_reason}</p>}
+      {cost.daily_reason && <p className="text-meta text-subtle">30-day cost chart: N/A. {cost.daily_reason}</p>}
     </div>
   );
 }
@@ -297,13 +297,13 @@ function SavingsBlock({ savings }) {
         <span className={cn('text-[20px] font-bold tabular-nums', view.priced ? 'text-fg' : 'text-muted')}>
           {view.text}
         </span>
-        <span className="text-[11px] text-subtle">{view.priced ? `from the ${view.sub}` : 'not quantified'}</span>
+        <span className="text-meta text-subtle">{view.priced ? `from the ${view.sub}` : 'not quantified'}</span>
       </div>
       {!view.priced && <p className="text-[12px] leading-relaxed text-muted">{view.reason}</p>}
-      {view.priced && s.basis && <p className="text-[11.5px] leading-relaxed text-muted">{s.basis}</p>}
+      {view.priced && s.basis && <p className="text-meta leading-relaxed text-muted">{s.basis}</p>}
       {(s.breakdown || []).length > 0 && (
         <div className="overflow-hidden rounded-control border border-border">
-          <table className="w-full text-[11px]">
+          <table className="w-full text-meta">
             <tbody>
               {s.breakdown.map((l, i) => (
                 <tr key={`${l.component}-${i}`} className="border-t border-border first:border-t-0">
@@ -323,7 +323,7 @@ function SavingsBlock({ savings }) {
         </div>
       )}
       {(s.assumptions || []).length > 0 && (
-        <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted">
+        <ul className="list-disc space-y-0.5 pl-4 text-meta text-muted">
           {s.assumptions.map((a) => <li key={a}>{a}</li>)}
         </ul>
       )}
@@ -350,7 +350,7 @@ function SafetyBlock({ safety, risk, notes }) {
                 <Badge tone={m.tone} size="xs"><Icon name={m.icon} size={10} />{m.label}</Badge>
                 <span className="min-w-0 text-fg">
                   {c.label}
-                  {c.detail && <span className="block text-[11px] text-subtle">{c.detail}</span>}
+                  {c.detail && <span className="block text-meta text-subtle">{c.detail}</span>}
                 </span>
               </li>
             );
@@ -358,14 +358,14 @@ function SafetyBlock({ safety, risk, notes }) {
         </ul>
       )}
       {(notes || []).length > 0 && (
-        <ul className="list-disc space-y-0.5 pl-4 text-[11.5px] text-muted">
+        <ul className="list-disc space-y-0.5 pl-4 text-meta text-muted">
           {notes.map((n) => <li key={n}>{n}</li>)}
         </ul>
       )}
       {(safety.preconditions || []).length > 0 && (
         <div>
-          <p className="text-[10.5px] font-semibold uppercase tracking-wider text-subtle">Before applying</p>
-          <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11.5px] text-fg">
+          <p className="text-meta font-semibold uppercase tracking-wider text-subtle">Before applying</p>
+          <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-meta text-fg">
             {safety.preconditions.map((p) => <li key={p}>{p}</li>)}
           </ul>
         </div>
@@ -383,11 +383,11 @@ function ConfidenceBlock({ f }) {
         {f.confidence_label ? <span className="text-muted"> — {f.confidence_label.split('—')[1] || ''}</span> : null}
       </p>
       {(f.confidence_reasons || []).length > 0 && (
-        <ul className="list-disc space-y-0.5 pl-4 text-[11.5px] text-muted">
+        <ul className="list-disc space-y-0.5 pl-4 text-meta text-muted">
           {f.confidence_reasons.map((r) => <li key={r}>{r}</li>)}
         </ul>
       )}
-      <p className="text-[10.5px] font-semibold uppercase tracking-wider text-subtle">Based on</p>
+      <p className="text-meta font-semibold uppercase tracking-wider text-subtle">Based on</p>
       <ul className="space-y-1">
         {(f.data_sources || []).map((d) => (
           <li key={d.key} className="flex items-start gap-2 text-[12px]">
@@ -396,7 +396,7 @@ function ConfidenceBlock({ f }) {
             <span className="min-w-0">
               <span className={d.available ? 'text-fg' : 'text-muted'}>{d.label}</span>
               {!d.required && <span className="text-subtle"> (optional)</span>}
-              {d.detail && <span className="block text-[11px] text-subtle">{d.detail}</span>}
+              {d.detail && <span className="block text-meta text-subtle">{d.detail}</span>}
             </span>
           </li>
         ))}
@@ -410,17 +410,17 @@ function OutcomeBlock({ outcome: o }) {
     <div className="space-y-2 text-[12px]">
       <p className="font-semibold text-fg">{RESOLUTION_LABEL[o.kind] || o.kind}</p>
       <p className="text-muted">{o.detail}</p>
-      <p className="text-[11px] text-subtle">
+      <p className="text-meta text-subtle">
         {o.at ? new Date(o.at).toLocaleString() : ''}{o.by ? ` · by ${o.by}` : ''}
         {o.resource_state ? ` · resource now: ${o.resource_state}` : ''}
       </p>
-      {o.note && <p className="text-[11.5px] italic text-muted">{o.note}</p>}
+      {o.note && <p className="text-meta italic text-muted">{o.note}</p>}
       {(o.config_changes || []).length > 0 && (
         <div>
-          <p className="text-[10.5px] font-semibold uppercase tracking-wider text-subtle">What changed</p>
+          <p className="text-meta font-semibold uppercase tracking-wider text-subtle">What changed</p>
           <ul className="mt-0.5 space-y-0.5">
             {o.config_changes.map((c, i) => (
-              <li key={`${c.at}-${i}`} className="text-[11.5px] text-fg">
+              <li key={`${c.at}-${i}`} className="text-meta text-fg">
                 <span className="text-subtle">{relativeTime(c.at)}: </span>
                 {c.summary || `${c.field}: ${c.old ?? '—'} → ${c.new ?? '—'}`}
               </li>
@@ -428,7 +428,7 @@ function OutcomeBlock({ outcome: o }) {
           </ul>
         </div>
       )}
-      <p className="rounded-control border border-border bg-sunken px-2.5 py-2 text-[11.5px] leading-relaxed text-fg">
+      <p className="rounded-control border border-border bg-sunken px-2.5 py-2 text-meta leading-relaxed text-fg">
         {o.realized}
       </p>
     </div>
@@ -447,8 +447,8 @@ function Timeline({ f }) {
           <Icon name="dot" size={12} className="mt-1 shrink-0 text-subtle" />
           <div className="min-w-0">
             <div className="text-[12px] font-semibold capitalize text-fg">{e.label}{e.by ? ` · ${e.by}` : ''}</div>
-            <div className="text-[11px] text-subtle">{e.at ? new Date(e.at).toLocaleString() : ''}</div>
-            {e.detail && <div className="text-[11px] leading-relaxed text-muted">{e.detail}</div>}
+            <div className="text-meta text-subtle">{e.at ? new Date(e.at).toLocaleString() : ''}</div>
+            {e.detail && <div className="text-meta leading-relaxed text-muted">{e.detail}</div>}
           </div>
         </li>
       ))}

@@ -66,7 +66,7 @@ export default function EmailSettingsPanel({
           {error?.response?.data?.detail || error?.message
             || 'The notification configuration could not be read.'}
         </p>
-        <p className="mt-2 text-[11px] leading-snug text-subtle">
+        <p className="mt-2 text-meta leading-snug text-subtle">
           Alert rules and history on the other tabs are unaffected — they do not
           depend on this.
         </p>
@@ -102,7 +102,7 @@ export default function EmailSettingsPanel({
               <Icon name="mail" size={15} className="text-accent-text" />
               Mail server
             </h3>
-            <p className="mt-0.5 text-[11px] leading-snug text-muted">
+            <p className="mt-0.5 text-meta leading-snug text-muted">
               Shared with the rest of Actmon&rsquo;s notifications. Configured in
               Settings → Notifications → Email.
             </p>
@@ -147,7 +147,7 @@ export default function EmailSettingsPanel({
         )}
 
         {smtp?.last_test_msg && !smtp.last_test_ok && (
-          <p className="mt-2 rounded-control border border-danger bg-danger-soft px-2.5 py-2 text-[11px] leading-snug text-fg">
+          <p className="mt-2 rounded-control border border-danger bg-danger-soft px-2.5 py-2 text-meta leading-snug text-fg">
             {smtp.last_test_msg}
           </p>
         )}
@@ -159,7 +159,7 @@ export default function EmailSettingsPanel({
           <Icon name="users" size={15} className="text-accent-text" />
           Default recipients for this account
         </h3>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted">
+        <p className="mt-0.5 text-meta leading-snug text-muted">
           Every rule that does not set its own recipients emails these addresses.
           Resolved when the alert fires, so adding one now reaches rules that
           already exist.
@@ -168,7 +168,7 @@ export default function EmailSettingsPanel({
         {canManage && (
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <label className="min-w-[220px] flex-1">
-              <span className="mb-1 block text-[11px] font-semibold text-fg">Email</span>
+              <span className="mb-1 block text-meta font-semibold text-fg">Email</span>
               <Input
                 size="sm"
                 placeholder="cloudops@company.com"
@@ -178,7 +178,7 @@ export default function EmailSettingsPanel({
               />
             </label>
             <label className="min-w-[150px] flex-1">
-              <span className="mb-1 block text-[11px] font-semibold text-fg">
+              <span className="mb-1 block text-meta font-semibold text-fg">
                 Label <span className="font-normal text-subtle">(optional)</span>
               </span>
               <Input
@@ -187,7 +187,7 @@ export default function EmailSettingsPanel({
               />
             </label>
             <label className="w-24">
-              <span className="mb-1 block text-[11px] font-semibold text-fg">Field</span>
+              <span className="mb-1 block text-meta font-semibold text-fg">Field</span>
               <Select size="sm" value={kind} onChange={setKind} options={KIND_OPTIONS} />
             </label>
             <Button icon="plus" loading={adding} onClick={submitRecipient}>Add</Button>
@@ -195,7 +195,7 @@ export default function EmailSettingsPanel({
         )}
 
         {addError && (
-          <p className="mt-2 text-[11px] text-danger">{addError}</p>
+          <p className="mt-2 text-meta text-danger">{addError}</p>
         )}
 
         <div className="mt-3">
@@ -217,7 +217,7 @@ export default function EmailSettingsPanel({
                       {!r.enabled && <Badge tone="warning" size="sm">Disabled</Badge>}
                     </div>
                     {r.label && (
-                      <span className="text-[11px] text-subtle">{r.label}</span>
+                      <span className="text-meta text-subtle">{r.label}</span>
                     )}
                   </div>
                   {canManage && (
@@ -248,13 +248,13 @@ export default function EmailSettingsPanel({
             <Icon name="send" size={15} className="text-accent-text" />
             Send a test message
           </h3>
-          <p className="mt-0.5 text-[11px] leading-snug text-muted">
+          <p className="mt-0.5 text-meta leading-snug text-muted">
             Clearly labelled <code className="text-fg">[TEST]</code> in the
             subject, so it can never be mistaken for a real incident.
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-2">
             <label className="min-w-[240px] flex-1">
-              <span className="mb-1 block text-[11px] font-semibold text-fg">
+              <span className="mb-1 block text-meta font-semibold text-fg">
                 Send to <span className="font-normal text-subtle">
                   (leave empty to use the default recipients)
                 </span>
@@ -288,7 +288,7 @@ export default function EmailSettingsPanel({
                   ? `Queued for ${(testResult.recipients || []).join(', ')}`
                   : 'Not queued'}
               </p>
-              <p className="mt-1 text-[11px] leading-snug text-muted">
+              <p className="mt-1 text-meta leading-snug text-muted">
                 {testResult.note || testResult.reason || testResult.message}
               </p>
             </div>
@@ -304,7 +304,7 @@ export default function EmailSettingsPanel({
               <Icon name="history" size={15} className="text-accent-text" />
               Delivery history
             </h3>
-            <p className="mt-0.5 text-[11px] leading-snug text-muted">
+            <p className="mt-0.5 text-meta leading-snug text-muted">
               What the mail server actually did. This is the only place
               &ldquo;sent&rdquo; is claimed.
             </p>
@@ -342,14 +342,14 @@ export default function EmailSettingsPanel({
               rows={(data?.history || []).map((h, i) => ({
                 key: `${h.at}-${i}`,
                 cells: {
-                  at: <span className="text-[11px]"><When iso={h.at} /></span>,
+                  at: <span className="text-meta"><When iso={h.at} /></span>,
                   alert: (
                     <span className="block truncate text-[12px] text-fg">
                       {h.alert || '—'}
                     </span>
                   ),
                   recipient: (
-                    <span className="block truncate text-[11px] text-muted">
+                    <span className="block truncate text-meta text-muted">
                       {h.recipient || '—'}
                     </span>
                   ),
@@ -359,7 +359,7 @@ export default function EmailSettingsPanel({
                     </Badge>
                   ),
                   detail: (
-                    <span className="text-[11px] leading-snug text-muted">
+                    <span className="text-meta leading-snug text-muted">
                       {h.error || (h.response_time_ms
                         ? `${Math.round(h.response_time_ms)} ms`
                         : '—')}
@@ -384,7 +384,7 @@ export default function EmailSettingsPanel({
 
       {/* ── Other channels, stated honestly ────────────────────────── */}
       {data?.channels?.others && (
-        <p className="rounded-control border border-dashed border-border px-3 py-2.5 text-[11px] leading-snug text-muted">
+        <p className="rounded-control border border-dashed border-border px-3 py-2.5 text-meta leading-snug text-muted">
           <strong className="text-fg">Email is the only connected channel.</strong>{' '}
           {data.channels.others.note} ({data.channels.others.label}.)
         </p>

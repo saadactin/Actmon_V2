@@ -24,7 +24,7 @@ import { useCloudScope } from '../hooks/useCloudScope';
 import {
   useResourceQuery, useResourceReference,
 } from '../hooks/useResources';
-import { exportResourcesCsv } from '../api/resources.api';
+import { exportResourceAssessment, exportResourcesCsv } from '../api/resources.api';
 import {
   activeFilterCount, EMPTY_FILTERS, filtersFromSearchParams, filtersToSearchParams,
   formatCount, formatPct, relativeTime,
@@ -52,6 +52,7 @@ import {
 
 const GROUP_OPTIONS = [
   { id: '', label: 'No grouping' },
+  { id: 'service', label: 'Service' },
   { id: 'normalized_type', label: 'Category' },
   { id: 'resource_type', label: 'Resource type' },
   { id: 'status', label: 'Status' },
@@ -66,6 +67,12 @@ const GROUP_OPTIONS = [
 ];
 
 const ALL_SCOPE = 'ALL';
+
+// Mirrors MAX_RESOURCES_PER_EXPORT in
+// Backend/cloud/app/services/resource_assessment_service.py — checked here
+// too so the button disables with an explanation instead of the user
+// selecting 300 rows and only finding out at the request.
+const MAX_ASSESSMENT_RESOURCES = 200;
 
 export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) => {
   const navigate = useNavigate();
@@ -99,6 +106,12 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [showRail, setShowRail] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [exportingAssessment, setExportingAssessment] = useState(false);
+
+  // A selection naming resources from a different account or filter set is
+  // worse than an empty one — reset rather than carry it across a scope change.
+  useEffect(() => { setSelectedIds([]); }, [activeScope, filters]);
 
   const applyFilters = useCallback((next) => {
     setPage(1);
@@ -162,6 +175,16 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
       await exportResourcesCsv(activeScope, filters);
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleExportAssessment = async () => {
+    if (!selectedIds.length || activeScope === ALL_SCOPE) return;
+    setExportingAssessment(true);
+    try {
+      await exportResourceAssessment(activeScope, selectedIds);
+    } finally {
+      setExportingAssessment(false);
     }
   };
 
@@ -340,6 +363,34 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
             CSV
           </Button>
 
+          {selectedIds.length > 0 && (
+            <>
+              <span className="text-[12px] font-semibold text-muted">
+                {`${selectedIds.length} selected`}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="download"
+                loading={exportingAssessment}
+                disabled={activeScope === ALL_SCOPE || selectedIds.length > MAX_ASSESSMENT_RESOURCES}
+                onClick={handleExportAssessment}
+                title={
+                  activeScope === ALL_SCOPE
+                    ? 'Select a specific account (not "All accounts") to export an assessment.'
+                    : selectedIds.length > MAX_ASSESSMENT_RESOURCES
+                      ? `Up to ${MAX_ASSESSMENT_RESOURCES} resources per export — select fewer.`
+                      : 'Security, utilization, performance and cost-anomaly findings for the selected resources, as one CSV.'
+                }
+              >
+                Export Assessment
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+                Clear selection
+              </Button>
+            </>
+          )}
+
           {filterCount > 0 && (
             <Button variant="ghost" size="sm" onClick={() => applyFilters(EMPTY_FILTERS)}>
               Clear filters
@@ -385,13 +436,16 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
               onPageSize={(size) => { setPageSize(size); setPage(1); }}
               onOpen={setDrawerResource}
               emptyState={renderEmpty()}
+              selectable
+              selectedKeys={selectedIds}
+              onSelectionChange={setSelectedIds}
             />
 
             {/* Coverage is reported, not assumed. A figure nobody collected
                 reads as "not applicable" rather than 0%. */}
             {dataQuality?.coverage && (
               <div className="card flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 text-[12px]">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                <span className="text-meta font-semibold uppercase tracking-wider text-muted">
                   Data quality
                 </span>
                 {[

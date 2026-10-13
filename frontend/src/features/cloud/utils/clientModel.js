@@ -142,8 +142,12 @@ export const BUCKET_META = {
   within_90: { label: '≤ 90 days', tone: 'info' },
   later: { label: 'Later', tone: 'neutral' },
   no_expiry: { label: 'No expiry set', tone: 'neutral' },
+  // Renewed as a new certificate (often under a new name) and no longer used:
+  // a leftover to delete, not an expiry to act on.
+  replaced: { label: 'Replaced by renewal', tone: 'outline' },
 };
-export const BUCKET_ORDER = ['expired', 'within_7', 'within_30', 'within_90', 'later', 'no_expiry'];
+export const BUCKET_ORDER = ['expired', 'within_7', 'within_30', 'within_90', 'later', 'no_expiry',
+  'replaced'];
 export const bucketMeta = (b) => BUCKET_META[b] || { label: b || '—', tone: 'neutral' };
 
 export const KIND_META = {

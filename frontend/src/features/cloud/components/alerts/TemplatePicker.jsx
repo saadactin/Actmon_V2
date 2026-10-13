@@ -48,7 +48,7 @@ export default function TemplatePicker({
       width={720}
       footer={(
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] leading-snug text-muted">
+          <span className="text-meta leading-snug text-muted">
             {selected.size > 0
               ? `${selected.size} selected — created disabled, notifying nobody.`
               : `${eligible.length} recommended rule${eligible.length === 1 ? '' : 's'} can be added for this account.`}
@@ -72,7 +72,7 @@ export default function TemplatePicker({
         </div>
       )}
     >
-      <p className="mb-3 flex gap-2 rounded-control border border-border bg-sunken px-3 py-2 text-[11px] leading-snug text-muted">
+      <p className="mb-3 flex gap-2 rounded-control border border-border bg-sunken px-3 py-2 text-meta leading-snug text-muted">
         <Icon name="info" size={13} className="mt-0.5 shrink-0 text-subtle" />
         <span>
           Templates only pre-fill the builder. Rules added from here are created
@@ -91,7 +91,7 @@ export default function TemplatePicker({
           {!!result.skipped?.length && (
             <ul className="mt-1.5 space-y-0.5">
               {result.skipped.map((s) => (
-                <li key={s.key} className="text-[11px] leading-snug text-muted">
+                <li key={s.key} className="text-meta leading-snug text-muted">
                   <span className="font-medium text-fg">{s.label || s.key}:</span>{' '}
                   {s.reason}
                 </li>
@@ -138,7 +138,7 @@ export default function TemplatePicker({
                     <p className="mt-0.5 text-[12px] leading-snug text-muted">
                       {t.rationale}
                     </p>
-                    <p className="mt-1 text-[11px] leading-snug text-subtle">
+                    <p className="mt-1 text-meta leading-snug text-subtle">
                       {t.preview_sentence}
                     </p>
                   </div>
@@ -164,13 +164,13 @@ export default function TemplatePicker({
                 </div>
 
                 {unsupported && t.support?.reason && (
-                  <p className="mt-2 flex gap-1.5 rounded border border-warning bg-warning-soft px-2 py-1.5 text-[11px] leading-snug text-fg">
+                  <p className="mt-2 flex gap-1.5 rounded border border-warning bg-warning-soft px-2 py-1.5 text-meta leading-snug text-fg">
                     <Icon name="info" size={12} className="mt-0.5 shrink-0 text-warning-fg" />
                     {t.support.reason}
                   </p>
                 )}
                 {!unsupported && !!t.needs_input?.length && (
-                  <p className="mt-2 text-[11px] leading-snug text-subtle">
+                  <p className="mt-2 text-meta leading-snug text-subtle">
                     Opens in the builder so you can supply{' '}
                     {t.needs_input.join(' and ')}.
                   </p>

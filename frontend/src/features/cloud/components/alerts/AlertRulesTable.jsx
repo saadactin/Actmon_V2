@@ -112,7 +112,7 @@ export default function AlertRulesTable({
               <Icon name={cat.icon} size={13} className="shrink-0 text-subtle" />
               <span className="truncate font-semibold text-fg">{r.name}</span>
             </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted">
+            <div className="mt-0.5 flex flex-wrap items-center gap-1 text-meta text-muted">
               <span>{cat.label}</span>
               {r.is_silenced && (
                 <Badge tone="warning" size="sm" title={r.silence_reason || undefined}>
@@ -144,7 +144,7 @@ export default function AlertRulesTable({
           </span>
         ),
         scope: (
-          <span className="block text-[11px] leading-snug text-muted">
+          <span className="block text-meta leading-snug text-muted">
             {scopeBits.length
               ? scopeBits.map(([k, v]) => `${k}: ${v}`).join(', ')
               : <span className="text-subtle">Whole account</span>}
@@ -154,7 +154,7 @@ export default function AlertRulesTable({
         result: (
           <div className="min-w-0">
             <ResultBadge state={r.last_result} />
-            <div className="mt-0.5 text-[10px] text-subtle">
+            <div className="mt-0.5 text-micro text-subtle">
               <When iso={r.last_evaluated_at} never="Not evaluated yet" />
             </div>
           </div>
@@ -167,14 +167,14 @@ export default function AlertRulesTable({
               )}
             </div>
             {r.trigger_count > 0 && (
-              <div className="text-[10px] text-subtle">
+              <div className="text-micro text-subtle">
                 fired <Count value={r.trigger_count} />×
               </div>
             )}
           </div>
         ),
         notifications: (
-          <div className="text-[11px] leading-snug">
+          <div className="text-meta leading-snug">
             {r.is_silenced ? (
               <span className="text-warning-fg">
                 Suppressed until <When iso={r.silenced_until} />
@@ -195,7 +195,7 @@ export default function AlertRulesTable({
           </div>
         ),
         triggered: (
-          <span className="text-[11px] text-muted">
+          <span className="text-meta text-muted">
             <When iso={r.last_triggered_at} never="Never" />
           </span>
         ),
@@ -321,11 +321,11 @@ export default function AlertRulesTable({
                 </div>
               </dl>
               {testResult.explain?.detail && (
-                <p className="mt-2 text-[11px] leading-snug text-muted">
+                <p className="mt-2 text-meta leading-snug text-muted">
                   {testResult.explain.detail}
                 </p>
               )}
-              <p className="mt-2 text-[11px] text-subtle">{testResult.note}</p>
+              <p className="mt-2 text-meta text-subtle">{testResult.note}</p>
             </div>
             <Button size="sm" variant="ghost" icon="close" onClick={onClearTest} />
           </div>
@@ -413,12 +413,12 @@ export default function AlertRulesTable({
         </p>
         <div className="mt-3 space-y-2">
           <label className="block">
-            <span className="mb-1 block text-[11px] font-semibold text-fg">For</span>
+            <span className="mb-1 block text-meta font-semibold text-fg">For</span>
             <Select size="sm" value={silenceSeconds} options={SILENCE_CHOICES}
                     onChange={setSilenceSeconds} />
           </label>
           <label className="block">
-            <span className="mb-1 block text-[11px] font-semibold text-fg">
+            <span className="mb-1 block text-meta font-semibold text-fg">
               Reason <span className="font-normal text-subtle">(optional)</span>
             </span>
             <Input size="sm" placeholder="Planned maintenance"

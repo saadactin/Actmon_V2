@@ -35,13 +35,19 @@ from app.api.deps import get_db
 from app.security import controls as ctl
 from app.security import policies as pol
 from app.security import registry as reg
+from app.security import rulepack
 from app.security import scoring
 from app.security.model import (
     CATEGORIES, CONFIDENCES, FINDING_STATUSES, SEVERITIES, VERDICTS,
 )
+from app.services.attack_path_service import AttackPathService
 from app.services.security_center_service import SecurityCenterService
 
 router = APIRouter(prefix="/cloud/security-center", tags=["Security Center"])
+
+# Computed once: the catalog is served on every page load and this does not
+# change between deploys.
+_PACK_RULE_IDS = frozenset(r.rule_id for r in reg.pack_rules())
 
 
 async def get_service(db: AsyncSession = Depends(get_db)) -> SecurityCenterService:
@@ -74,9 +80,18 @@ def _strip_evidence(payload: Any, allowed: bool) -> Any:
                 {k: v for k, v in item.items() if k != "evidence"}
                 for item in out["affected_sample"]
             ]
-        for key in ("findings", "top_risks", "violations", "resources", "grants"):
+        # `hops`, `components` and `paths` carry the attack-path engine's
+        # evidence, which quotes the same provider payloads as everything else
+        # here — IAM policy statements on a permission edge, NSG rule bodies on
+        # an entry point. They recurse through the same gate rather than
+        # arriving as a second, ungated copy of data this function exists to
+        # withhold.
+        for key in ("findings", "top_risks", "violations", "resources", "grants",
+                    "paths", "hops", "components"):
             if isinstance(out.get(key), list):
                 out[key] = [_strip_evidence(i, False) for i in out[key]]
+        if isinstance(out.get("risk"), dict):
+            out["risk"] = _strip_evidence(out["risk"], False)
         return out
     if isinstance(payload, list):
         return [_strip_evidence(i, False) for i in payload]
@@ -123,10 +138,16 @@ async def get_meta(
                 "aggregate": r.aggregate,
                 "synthetic": r.evaluate is None,
                 "coverage_dimension": r.coverage,
+                # Where the rule is written. A declarative rule is editable by
+                # anyone who can read YAML; a Python one needs a change to the
+                # engine. That is worth showing in the catalog rather than
+                # leaving a reader to guess which rules they can extend.
+                "declarative": r.rule_id in _PACK_RULE_IDS,
                 "compliance": ctl.mappings_for_rule(r.rule_id),
             }
             for r in sorted(reg.RULES.values(), key=lambda x: x.rule_id)
         ],
+        "rule_packs": rulepack.pack_summary(),
         "frameworks": {fw: ctl.framework_meta(fw) for fw in ctl.FRAMEWORKS},
         "control_catalog": ctl.catalog_summary(),
         "threshold_kinds": [{"value": k, "label": v} for k, v in THRESHOLD_LABEL.items()],
@@ -555,6 +576,169 @@ async def get_exposure(
     """
     try:
         out = await svc.exposure(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))
+
+
+@router.get("/{account_id}/attack-paths")
+async def get_attack_paths(
+    account_id: uuid.UUID,
+    max_depth: int = Query(6, ge=1, le=10),
+    limit: int = Query(100, ge=1, le=500),
+    refresh: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Dict[str, Any]:
+    """Routes from a confirmed internet entry point to a resource worth reaching.
+
+    Every path is a walk over the same topology graph the Topology tab draws,
+    so each hop can be opened and checked there. Only a resource the exposure
+    analyser returned as EXPOSED may start a path: an UNKNOWN reachability
+    verdict is reported under `coverage` as a gap in the list rather than
+    quietly treated as an entry point.
+
+    `available: false` carries `unavailable_reason` — no inventory, or a graph
+    that could not be built. An empty `paths` with `available: true` means the
+    walk ran and found nothing, which is a different statement.
+    """
+    svc = AttackPathService(db)
+    try:
+        out = await svc.analyse(
+            account_id, max_depth=max_depth, limit=limit, refresh=refresh)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))
+
+
+@router.get("/{account_id}/attack-paths/{path_id}")
+async def get_attack_path(
+    account_id: uuid.UUID,
+    path_id: str,
+    max_depth: int = Query(6, ge=1, le=10),
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Dict[str, Any]:
+    """One path, with every hop's evidence and the full scoring breakdown.
+
+    404 when the path is not in the current graph. Paths are derived, not
+    stored, so a route that no longer exists is gone rather than stale — which
+    is the honest answer after the condition that created it was fixed.
+    """
+    svc = AttackPathService(db)
+    try:
+        out = await svc.path_detail(account_id, path_id, max_depth=max_depth)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if out is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No such attack path in the current graph. It may have been "
+                   "resolved, or the inventory may have changed since the link was made.",
+        )
+    return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))
+
+
+@router.get("/{account_id}/vulnerabilities")
+async def get_vulnerabilities(
+    account_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Dict[str, Any]:
+    """Software identity per compute resource, joined to internet reachability.
+
+    **`source_configured` is the field to read first.** No vulnerability data
+    source ships with this product, so `resources[].vulnerabilities` is empty
+    and that means *not assessed*, never *not vulnerable*. The response says so
+    in `empty_means` rather than leaving an empty table to imply a clean bill.
+
+    What is real today is the other half: `coverage` reports how many compute
+    resources have an identifiable operating system — collected from AMI
+    metadata, Azure image references and OCI image OCIDs — and each row carries
+    the exposure verdict and attack paths that would decide which CVE to fix
+    first once a feed exists.
+    """
+    svc = AttackPathService(db)
+    try:
+        out = await svc.vulnerabilities(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))
+
+
+@router.get("/{account_id}/ransomware")
+async def get_ransomware_posture(
+    account_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Dict[str, Any]:
+    """Recovery-control posture for every data store — a CONFIGURATION review.
+
+    `is_configuration_review` is true and `disclaimer` says what this is:
+    nothing here inspects files, processes or signatures. It reports whether the
+    controls that decide how recoverable a ransomware incident would be are
+    configured.
+
+    Read `unassessable_controls` before the totals. Object Lock, MFA Delete,
+    backup policy and restore testing are not collected by any scanner, so they
+    are reported as NOT_ASSESSED rather than folded into a score — which is why
+    there is no score.
+    """
+    svc = AttackPathService(db)
+    try:
+        out = await svc.ransomware_posture(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))
+
+
+@router.get("/{account_id}/threats")
+async def get_threats(
+    account_id: uuid.UUID,
+    days: int = Query(30, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Dict[str, Any]:
+    """Behavioural detections over the Event Log.
+
+    A detection is a pattern match over recorded events, **not an accusation**.
+    `CreateUser` then `CreateAccessKey` then `AttachUserPolicy` is both the
+    canonical persistence sequence and ordinary onboarding; the detector names
+    the shape and attaches every contributing event so a human can tell which.
+
+    Read `availability` before concluding anything from an empty list. A
+    detector whose required field is not populated — `source_location` is empty
+    on every event collected here, so impossible-travel can never fire — is
+    reported as unavailable rather than as finding nothing.
+    """
+    svc = AttackPathService(db)
+    try:
+        out = await svc.threats(account_id, days=days)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))
+
+
+@router.get("/{account_id}/incidents")
+async def get_incidents(
+    account_id: uuid.UUID,
+    days: int = Query(30, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Dict[str, Any]:
+    """Signals from every subsystem, grouped by the subject they concern.
+
+    An incident requires at least two DIFFERENT kinds of signal about one
+    resource or principal — a finding plus a detection, an exposure plus an
+    attack path. Several findings on one bucket are findings, not an incident.
+
+    `correlation_basis` on each incident names the field the join was made on,
+    and `not_causal` says what the grouping does and does not assert. Severity
+    is the worst contributing signal, never a sum.
+    """
+    svc = AttackPathService(db)
+    try:
+        out = await svc.incidents(account_id, days=days)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return _strip_evidence(out, principal.can(rbac.SECURITY_VIEW_RAW))

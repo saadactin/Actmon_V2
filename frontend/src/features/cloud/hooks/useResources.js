@@ -4,7 +4,7 @@ import {
 import {
   deleteSavedView, getActionHistory, getAllResources, getAvailableActions,
   getResourceDetail, getResourceFacets,
-  getResourceGroups, getResourceMetrics, getResourceReference, getResources,
+  getResourceGroups, getResourceReference, getResources,
   previewAction,
   getResourceSummary, listSavedViews, queryResources, saveView,
 } from '../api/resources.api';
@@ -185,11 +185,4 @@ export const useResourceDetail = (resourceId) => useQuery({
   queryKey: ['resourceDetail', resourceId],
   queryFn: () => (resourceId ? getResourceDetail(resourceId) : Promise.resolve(null)),
   enabled: !!resourceId,
-});
-
-export const useResourceMetrics = (resourceId) => useQuery({
-  queryKey: ['resourceMetrics', resourceId],
-  queryFn: () => (resourceId ? getResourceMetrics(resourceId) : Promise.resolve(null)),
-  enabled: !!resourceId,
-  staleTime: 30_000,
 });

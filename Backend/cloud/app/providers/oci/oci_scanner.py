@@ -51,6 +51,13 @@ class OCIScanner:
         # delete live resources that simply couldn't be listed.
         self.scan_failures: List[str] = []
 
+        # image OCID -> Image. OCI has no batch image read, and a tenancy runs
+        # many instances from few images, so this turns one call per instance
+        # into one call per distinct image for the whole sweep. Scoped to the
+        # scanner instance, so it lives exactly as long as one sweep does and
+        # cannot serve a stale image name into the next one.
+        self._image_cache: Dict[str, Any] = {}
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     # (connect, read) seconds. Without this an unreachable service/region hangs
@@ -364,9 +371,66 @@ class OCIScanner:
                         },
                     }
                 )
+            self._enrich_with_images(compute, region, results)
             return results
 
         return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Image metadata ────────────────────────────────────────────────────────
+    def _enrich_with_images(self, compute, region: str,
+                            results: List[Dict[str, Any]]) -> None:
+        """Resolve each instance's image OCID to the OS it actually runs.
+
+        `image_id` is an opaque OCID. `get_image` turns it into
+        `operating_system` + `operating_system_version` ("Oracle Linux" /
+        "8"), which is the only thing here a vulnerability lookup could use.
+
+        OCI has no batch image read, so this is one call per DISTINCT image —
+        cached across the compartment, because a tenancy typically builds
+        dozens of instances from a handful of images. On the live tenancy that
+        is 52 instances resolved by a single-digit number of calls.
+
+        A failure is per image and non-fatal: the instance is still returned,
+        marked `not_collected`, and the reason is recorded on the sweep. An
+        image the caller may not read (a Marketplace image outside the
+        tenancy) is the common case and must not fail the compute scan.
+        """
+        image_ids = sorted({
+            r["config"].get("image_id") for r in results
+            if r["config"].get("image_id")
+        })
+        if not image_ids:
+            return
+
+        images: Dict[str, Any] = {}
+        failed: set = set()
+        for iid in image_ids:
+            cached = self._image_cache.get(iid)
+            if cached is not None:
+                images[iid] = cached
+                continue
+            try:
+                images[iid] = compute.get_image(iid).data
+                self._image_cache[iid] = images[iid]
+            except Exception as exc:  # noqa: BLE001
+                failed.add(iid)
+                self.scan_failures.append(
+                    f"Image [{region}] {iid[-24:]}: {str(exc)[:120]}")
+
+        for r in results:
+            cfg = r["config"]
+            iid = cfg.get("image_id")
+            if not iid:
+                continue
+            img = images.get(iid)
+            if img is None:
+                cfg["image_metadata_status"] = "not_collected"
+                continue
+            cfg["image_metadata_status"] = "collected"
+            cfg["image_name"] = getattr(img, "display_name", None)
+            cfg["image_os"] = getattr(img, "operating_system", None)
+            cfg["image_os_version"] = getattr(img, "operating_system_version", None)
+            cfg["image_created_at"] = str(getattr(img, "time_created", "")) or None
 
     # ── Block Volumes ─────────────────────────────────────────────────────────
 

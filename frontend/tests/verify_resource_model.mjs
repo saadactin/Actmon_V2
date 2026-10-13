@@ -20,6 +20,7 @@ const rich = {
   q: 'payment-api',
   providers: ['AWS', 'Azure'],
   categories: ['COMPUTE'],
+  services: ['aws.lambda', 'azure.app-service'],
   statuses: ['STOPPED', 'UNKNOWN'],
   risk: ['CRITICAL'],
   attachment: 'UNATTACHED',
@@ -39,6 +40,12 @@ check('hasCost=true survives', back.hasCost === true);
 check('stale survives', back.stale === true);
 check('numeric cost bound survives as a number', back.costMin === 100, typeof back.costMin);
 check('includeDefaults=false survives', back.includeDefaults === false);
+check('multi-value service survives (a shared "Lambda + App Service" link)',
+  JSON.stringify(back.services) === JSON.stringify(['aws.lambda', 'azure.app-service']),
+  JSON.stringify(back.services));
+check('...written as ?service=', filtersToSearchParams(rich).getAll('service').length === 2);
+check('...and counted as two active filters',
+  activeFilterCount({ ...EMPTY_FILTERS, services: ['aws.s3', 'oci.compute'] }) === 2);
 
 console.log('\n2. An empty filter produces a clean URL');
 const emptyUrl = filtersToSearchParams(EMPTY_FILTERS).toString();

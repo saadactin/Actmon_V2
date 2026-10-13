@@ -358,7 +358,11 @@ def validate_all() -> List[str]:
         probe = dict(template.condition_config)
         for field in template.needs_input:
             if field == "currency":
-                probe.setdefault(field, "USD")
+                # INR, not USD: budgets/alerts in this product are evaluated
+                # and displayed in INR (see `fx_rate_service`) — matching the
+                # dummy value here to that keeps this dry-run probe testing
+                # the same assumption the UI's own currency field makes.
+                probe.setdefault(field, "INR")
             else:
                 probe.setdefault(field, 1)
         try:

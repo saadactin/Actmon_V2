@@ -45,7 +45,7 @@ export function TopCostDrivers({ rows, currency, onSelect, dimension = 'service'
               onClick={() => onSelect?.(name)}
               className="group flex w-full items-center gap-3 rounded-control px-2 py-1.5 text-left transition-colors hover:bg-sunken"
             >
-              <span className="w-4 text-[11px] font-bold tabular-nums text-subtle">
+              <span className="w-4 text-meta font-bold tabular-nums text-subtle">
                 {i + 1}
               </span>
               <span
@@ -73,7 +73,7 @@ export function TopCostDrivers({ rows, currency, onSelect, dimension = 'service'
                 >
                   {compact(row.amount, row.currency || currency)}
                 </span>
-                <span className="block text-[10.5px] tabular-nums text-subtle">
+                <span className="block text-meta tabular-nums text-subtle">
                   {percent(share)}
                 </span>
               </span>
@@ -146,11 +146,11 @@ export function ForecastPanel({ forecast, history, coverage, onBackfill, onWhy }
                 ['Daily average', fc.daily_average, `${fc.observed_days} days`],
               ].map(([label, value, note]) => (
                 <div key={label} className="rounded-card border border-border bg-surface p-3">
-                  <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+                  <p className="text-meta font-bold uppercase tracking-wider text-muted">
                     {label}
                   </p>
                   <Amount value={value} currency={code} size="lg" className="mt-1 block" />
-                  <p className="mt-0.5 text-[10.5px] text-subtle">{note}</p>
+                  <p className="mt-0.5 text-meta text-subtle">{note}</p>
                 </div>
               ))}
             </div>
@@ -165,7 +165,7 @@ export function ForecastPanel({ forecast, history, coverage, onBackfill, onWhy }
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               {Object.entries(fc.horizons).map(([key, value]) => (
                 <div key={key} className="rounded-control border border-border bg-sunken p-2.5">
-                  <p className="text-[11px] text-muted">
+                  <p className="text-meta text-muted">
                     {key.replace('next_', 'Next ').replace('_days', ' days')}
                   </p>
                   <p className="text-[14px] font-semibold tabular-nums text-fg"
@@ -176,7 +176,7 @@ export function ForecastPanel({ forecast, history, coverage, onBackfill, onWhy }
               ))}
             </div>
 
-            <p className="rounded-control border border-border bg-sunken p-2.5 text-[11px] leading-relaxed text-muted">
+            <p className="rounded-control border border-border bg-sunken p-2.5 text-meta leading-relaxed text-muted">
               <Info size={11} className="mr-1 inline align-[-1px]" aria-hidden />
               This is a <strong className="text-fg">run-rate projection</strong>: the
               mean of {fc.observed_days} observed days extended forward. It is
@@ -232,7 +232,7 @@ export function AnomalyList({ anomalies, coverage, onBackfill }) {
               <p className="text-[13px] font-medium text-fg">
                 No anomalies detected in {code}
               </p>
-              <p className="mt-1 text-[11.5px] text-muted">
+              <p className="mt-1 text-meta text-muted">
                 {bucket.days_analyzed} days analysed against a trailing baseline.
                 A day must exceed both the percentage and the absolute threshold
                 to be flagged.
@@ -262,7 +262,7 @@ export function AnomalyList({ anomalies, coverage, onBackfill }) {
                       {formatDate(a.date)}
                       <Badge tone={SEVERITY_TONE[a.severity]} size="xs">{a.severity}</Badge>
                     </p>
-                    <p className="mt-1 text-[11.5px] leading-relaxed text-muted">
+                    <p className="mt-1 text-meta leading-relaxed text-muted">
                       {a.basis}
                     </p>
                   </div>
@@ -271,7 +271,7 @@ export function AnomalyList({ anomalies, coverage, onBackfill }) {
                        title={exact(a.actual, code)}>
                       {compact(a.actual, code)}
                     </p>
-                    <p className="text-[11px] tabular-nums text-muted">
+                    <p className="text-meta tabular-nums text-muted">
                       baseline {compact(a.baseline, code)}
                     </p>
                     <Badge tone="danger" size="xs" className="mt-1">
@@ -316,7 +316,7 @@ export function ChangeAnalysisPanel({ change, period, comparisonPeriod, onWhy })
                   <p className="text-[16px] font-bold tabular-nums text-fg">
                     {bucket.net_change > 0 ? '+' : ''}{compact(bucket.net_change, code)}
                   </p>
-                  <p className="text-[10.5px] text-subtle">net change</p>
+                  <p className="text-meta text-subtle">net change</p>
                 </div>
               )}
             />
@@ -334,7 +334,7 @@ export function ChangeAnalysisPanel({ change, period, comparisonPeriod, onWhy })
                 ['Decreases', bucket.decreases, ArrowDownRight, 'success']].map(
                 ([label, rows, Icon, tone]) => (
                   <div key={label} className="rounded-card border border-border bg-surface p-3">
-                    <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+                    <p className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
                       {label}
                     </p>
                     {rows?.length ? (
@@ -354,7 +354,7 @@ export function ChangeAnalysisPanel({ change, period, comparisonPeriod, onWhy })
                         ))}
                       </ul>
                     ) : (
-                      <p className="text-[11.5px] text-muted">None in this period.</p>
+                      <p className="text-meta text-muted">None in this period.</p>
                     )}
                   </div>
                 ),
@@ -364,7 +364,7 @@ export function ChangeAnalysisPanel({ change, period, comparisonPeriod, onWhy })
         );
       })}
 
-      <p className="rounded-control border border-border bg-sunken p-2.5 text-[11px] leading-relaxed text-muted">
+      <p className="rounded-control border border-border bg-sunken p-2.5 text-meta leading-relaxed text-muted">
         <Info size={11} className="mr-1 inline align-[-1px]" aria-hidden />
         {change?.interpretation}
       </p>
@@ -374,7 +374,9 @@ export function ChangeAnalysisPanel({ change, period, comparisonPeriod, onWhy })
 
 /** Budget utilisation. Thresholds are drawn on the bar so a breach is visible
  *  rather than inferred from a percentage. */
-export function BudgetPanel({ budgets, onCreate, canManage }) {
+export function BudgetPanel({
+  budgets, onCreate, onEdit, onDelete, canManage,
+}) {
   const rows = budgets?.budgets || [];
 
   if (!rows.length) {
@@ -382,12 +384,12 @@ export function BudgetPanel({ budgets, onCreate, canManage }) {
       <div className="rounded-control border border-dashed border-border bg-sunken p-6 text-center">
         <Target size={20} className="mx-auto mb-2 text-subtle" aria-hidden />
         <p className="text-[13px] font-medium text-fg">No budgets yet</p>
-        <p className="mx-auto mt-1 max-w-md text-[11.5px] text-muted">
+        <p className="mx-auto mt-1 max-w-md text-meta text-muted">
           A budget compares spend in one currency against a target over a
           period, and alerts as it crosses the thresholds you set.
         </p>
         {canManage && onCreate && (
-          <Button variant="primary" className="mt-3" onClick={onCreate}>
+          <Button variant="primary" icon="plus" className="mt-3" onClick={onCreate}>
             Create a budget
           </Button>
         )}
@@ -397,6 +399,13 @@ export function BudgetPanel({ budgets, onCreate, canManage }) {
 
   return (
     <div className="space-y-3">
+      {canManage && onCreate && (
+        <div className="flex justify-end">
+          <Button variant="secondary" size="sm" icon="plus" onClick={onCreate}>
+            Add budget
+          </Button>
+        </div>
+      )}
       {rows.map((entry) => {
         const b = entry.budget || entry;
         const used = entry.utilization_percent;
@@ -408,22 +417,45 @@ export function BudgetPanel({ budgets, onCreate, canManage }) {
           <div key={b.id} className="rounded-card border border-border bg-surface p-3.5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[13.5px] font-semibold text-fg">{b.name}</p>
-                <p className="mt-0.5 text-[11px] text-muted">
+                <p className="text-[13.5px] font-semibold text-fg">
+                  {b.name}
+                  {!b.enabled && <Badge tone="neutral" size="xs" className="ml-2">Disabled</Badge>}
+                  {b.alert_on_forecast && <Badge tone="info" size="xs" className="ml-1.5">Forecast alerts on</Badge>}
+                </p>
+                <p className="mt-0.5 text-meta text-muted">
                   {b.period?.toLowerCase()} · {compact(b.amount, b.currency)} {b.currency}
+                  {!b.account_id && ' · organisation-wide'}
                   {b.provider && ` · ${b.provider}`}
                   {b.service && ` · ${b.service}`}
                 </p>
               </div>
-              <div className="text-right">
-                <Badge tone={tone}>
-                  {isMissing(used) ? 'No data' : `${used.toFixed(1)}% used`}
-                </Badge>
-                <p className="mt-1 text-[11px] tabular-nums text-muted">
-                  {isMissing(spend?.amount)
-                    ? 'NA'
-                    : `${compact(spend.amount, b.currency)} of ${compact(b.amount, b.currency)}`}
-                </p>
+              <div className="flex items-start gap-2">
+                <div className="text-right">
+                  <Badge tone={tone}>
+                    {isMissing(used) ? 'No data' : `${used.toFixed(1)}% used`}
+                  </Badge>
+                  <p className="mt-1 text-meta tabular-nums text-muted">
+                    {isMissing(spend?.amount)
+                      ? 'NA'
+                      : `${compact(spend.amount, b.currency)} of ${compact(b.amount, b.currency)}`}
+                  </p>
+                </div>
+                {canManage && (onEdit || onDelete) && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    {onEdit && (
+                      <Button
+                        variant="ghost" size="sm" icon="file-edit"
+                        aria-label={`Edit ${b.name}`} onClick={() => onEdit(b)}
+                      />
+                    )}
+                    {onDelete && (
+                      <Button
+                        variant="ghost" size="sm" icon="trash"
+                        aria-label={`Delete ${b.name}`} onClick={() => onDelete(b)}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -448,7 +480,7 @@ export function BudgetPanel({ budgets, onCreate, canManage }) {
                 />
               ))}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[10.5px] text-subtle">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-meta text-subtle">
               {(b.thresholds || []).map((t) => <span key={t}>{t}%</span>)}
               {entry.period && (
                 <span className="ml-auto">
@@ -459,7 +491,7 @@ export function BudgetPanel({ budgets, onCreate, canManage }) {
 
             {spend?.out_of_scope_currencies
               && Object.keys(spend.out_of_scope_currencies).length > 0 && (
-              <p className="mt-2 rounded-control border border-warning/30 bg-warning-soft px-2.5 py-1.5 text-[11px] text-warning-fg">
+              <p className="mt-2 rounded-control border border-warning/30 bg-warning-soft px-2.5 py-1.5 text-meta text-warning-fg">
                 Spend in other currencies exists in this scope and is not counted
                 against this budget:{' '}
                 {Object.entries(spend.out_of_scope_currencies)
@@ -468,7 +500,7 @@ export function BudgetPanel({ budgets, onCreate, canManage }) {
             )}
 
             {entry.forecast?.projected_percent != null && (
-              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-muted">
+              <p className="mt-2 flex items-center gap-1.5 text-meta text-muted">
                 <TrendingUp size={11} aria-hidden />
                 Run-rate projection for the full period:{' '}
                 <strong className="text-fg">

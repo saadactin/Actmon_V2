@@ -21,9 +21,13 @@ export default function SecurityCertificates({ accountId, onOpenFinding }) {
   const [bucket, setBucket] = useState(null);
   const [kind, setKind] = useState('');
 
+  // Certificates replaced by a renewal and no longer used stay out of the
+  // default list — otherwise every renewal under a new name leaves an
+  // "Expired" row beside its replacement. Their tile shows them on demand.
   const objects = useMemo(() => (data?.objects || []).filter((o) => (
-    (!bucket || o.bucket === bucket) && (!kind || o.kind === kind)
+    (bucket ? o.bucket === bucket : o.bucket !== 'replaced') && (!kind || o.kind === kind)
   )), [data, bucket, kind]);
+  const replacedCount = data?.summary?.by_bucket?.replaced || 0;
 
   if (isLoading) return <InlineLoading label="Loading certificates and secrets…" />;
   if (isError) {
@@ -79,7 +83,10 @@ export default function SecurityCertificates({ accountId, onOpenFinding }) {
             description={bucket
               ? `Showing ${bucketMeta(bucket).label.toLowerCase()} only — click the tile again to clear.`
               : 'Soonest expiry first. Thresholds: expiring within '
-                + `${data?.thresholds?.expiring_days ?? 30} days, urgent within ${data?.thresholds?.urgent_days ?? 7}.`}
+                + `${data?.thresholds?.expiring_days ?? 30} days, urgent within ${data?.thresholds?.urgent_days ?? 7}.`
+                + (replacedCount
+                  ? ` ${replacedCount} certificate(s) already replaced by a renewal and no longer used are hidden — click "Replaced by renewal" to list them.`
+                  : '')}
             action={(
               <Select
                 width="auto"

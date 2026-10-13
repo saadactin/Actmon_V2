@@ -352,6 +352,52 @@ console.log('\n6. Props passed to shared UI components are props those component
   check('every prop passed to a shared ui/ component is one that component '
     + 'actually destructures — a misnamed prop is silently undefined',
   problems.length === 0, [...new Set(problems)].slice(0, 6).join(' | '));
+
+  // The mirror of the check above: a prop that is MISSING. The check above
+  // only inspects props that were passed, so a <Table> given children instead
+  // of data passed it cleanly and then crashed at runtime on
+  // `columns.length` — a blank panel with no build error and no overlay.
+  //
+  // Only data-driven components are listed: ones where a missing prop is not a
+  // defaulted option but the thing the component renders.
+  const REQUIRED_PROPS = { Table: ['columns', 'rows'] };
+
+  /** The attribute text of one JSX element, brace-aware.
+   *
+   * A `[^>]*` regex is not good enough here and produced a false positive the
+   * first time this guard met real code: `columns={rows.map((c) => ({...}))}`
+   * contains a `>` inside its arrow function, so the match stopped mid-prop
+   * and the element looked like it had no `rows=`. Tracking brace depth means
+   * only a `>` at depth zero ends the tag — which is the actual rule.
+   */
+  const attrsOf = (src, start) => {
+    let depth = 0;
+    for (let i = start; i < src.length; i += 1) {
+      const ch = src[i];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      else if (ch === '>' && depth === 0) return src.slice(start, i);
+    }
+    return src.slice(start);
+  };
+
+  const missing = [];
+  for (const [file, src] of SOURCES) {
+    for (const [component, required] of Object.entries(REQUIRED_PROPS)) {
+      const re = new RegExp(`<${component}(?=[\\s/>])`, 'g');
+      for (const m of src.matchAll(re)) {
+        const attrs = attrsOf(src, m.index + component.length + 1);
+        for (const prop of required) {
+          if (!new RegExp(`\\b${prop}\\s*=`).test(attrs)) {
+            missing.push(`${at(file, src, m.index)} -> <${component}> has no ${prop}=`);
+          }
+        }
+      }
+    }
+  }
+  check('data-driven ui/ components receive the props they render from — a '
+    + '<Table> without columns/rows builds fine and crashes on open',
+  missing.length === 0, [...new Set(missing)].slice(0, 6).join(' | '));
 }
 
 console.log('\n7. REFRESHED_ROOTS matches the query keys the hooks really use');
@@ -428,26 +474,28 @@ console.log('\n8. Raw hex colours only where they are sanctioned');
   const ALLOWED = new Set([
     'utils/securityModel.js', 'utils/topologyModel.js', 'utils/eventFormat.js',
     'utils/topologyLayout.js', 'utils/costFormat.js',
+    // THE home for provider brand hues. External identity, so a theme token
+    // would be the wrong owner — but everything derived from them
+    // (`providerBadgeStyle`, `providerTileStyle`, …) mixes against the live
+    // theme, which is why the call sites no longer need to be listed here.
+    'utils/providerTheme.js',
     // Recharts renders to SVG and takes `fill`/`stroke` as concrete values,
     // not CSS custom properties, so a chart series cannot be tokenised the
     // way chrome is. The file pins them to the same values the severity
     // badges use, and says so, precisely so a CRITICAL bar and a CRITICAL
     // badge are one red rather than two that nearly match.
     'components/alerts/AlertCharts.jsx',
-    // Provider BRAND colours — AWS orange, Azure blue, Oracle red, the AWS
-    // navy in the logo mark. External identity, not chrome: they are the
-    // same values for the same reason topologyModel's PROVIDER_META pins
-    // its own, and a theme token would be the wrong home for them.
-    'components/CloudProviderSelector.jsx',
+    // The brand marks themselves — AWS orange and its navy wordmark bar,
+    // Azure's blue gradient stops, Oracle's red ring. These are inside the
+    // inline SVG logos, which ARE the trademark rendition, so they stay
+    // literal; every other use of a brand hue now goes through
+    // `utils/providerTheme` instead.
     'components/ProviderLogo.jsx',
     // SVG `fill` on the canvas indicator dots. An SVG presentation attribute
     // takes a concrete colour, not a CSS custom property, so these cannot be
     // tokenised. The file already pairs each dot with a text label in the
     // resource panel, so the colour is never the only carrier of meaning.
     'components/TopologyCanvas.jsx',
-    // The unknown-provider fallback swatch, mirroring PROVIDER_META's own
-    // Unknown entry.
-    'pages/CloudProviderAccountsPage.jsx',
   ]);
   const findings = [];
   for (const [file, src] of SOURCES) {
@@ -596,9 +644,12 @@ console.log('\n11. Two refresh names: "Refresh all" in the header, "Refresh <tab
     ...mainIds.filter((id) => !delegated.includes(id) && !declared(id)),
     ...subIds.map((id) => `security.${id}`).filter((k) => !declared(k)),
   ];
-  // 9 since the Intelligence tab (Resource Intelligence) was added.
-  check('the tab tables were read (9 account tabs, 9 Security Center sub-tabs)',
-    mainIds.length === 9 && subIds.length === 9, `${mainIds.length} / ${subIds.length}`);
+  // A guard on the PARSER, not a cap on tabs: if either table stops being
+  // readable (renamed const, changed quoting) both lists come back empty and
+  // the refresh check below would pass vacuously. 10 account tabs since
+  // Identity & Access; 13 Security Center sub-tabs since Threats and Ransomware.
+  check('the tab tables were read (10 account tabs, 13 Security Center sub-tabs)',
+    mainIds.length === 10 && subIds.length === 13, `${mainIds.length} / ${subIds.length}`);
   check('every account tab and Security Center sub-tab declares its refresh in '
     + 'tabRefreshModel.js', missing.length === 0, missing.join(', '));
 }

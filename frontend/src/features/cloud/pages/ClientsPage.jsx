@@ -117,7 +117,7 @@ export default function ClientsPage() {
               {client.code && <Badge tone="outline" size="xs">{client.code}</Badge>}
             </div>
             {client.description && (
-              <div className="truncate-safe text-[11px] text-subtle">{client.description}</div>
+              <div className="truncate-safe text-meta text-subtle">{client.description}</div>
             )}
           </div>
         ),
@@ -136,7 +136,7 @@ export default function ClientsPage() {
             <Badge tone={sched?.enabled ? 'info' : 'neutral'} size="xs">
               {sched?.enabled ? 'Scheduled' : 'Not scheduled'}
             </Badge>
-            <div className="mt-0.5 truncate-safe text-[11px] text-subtle" title={delivery?.hint}>
+            <div className="mt-0.5 truncate-safe text-meta text-subtle" title={delivery?.hint}>
               {latest
                 ? `${periodLabel(latest.period)} · ${latest.status === 'FAILED' ? 'failed' : delivery.label}`
                 : 'No report yet'}

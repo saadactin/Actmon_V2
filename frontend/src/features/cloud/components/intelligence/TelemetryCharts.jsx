@@ -53,7 +53,7 @@ function MetricChart({ row }) {
         <div className="min-w-0">
           <div className="truncate-safe text-[12px] font-semibold text-fg">{row.label}</div>
           {ok && (
-            <div className="text-[10.5px] text-muted">
+            <div className="text-meta text-muted">
               avg {formatMetric(s.avg, row.unit)} · P95 {formatMetric(s.p95, row.unit)}
               {' · '}peak {formatMetric(s.peak, row.unit)}
               {s.peak_source === 'highest_period_average' ? ' (highest hourly average)' : ''}
@@ -71,11 +71,11 @@ function MetricChart({ row }) {
                 <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
                 <XAxis
                   dataKey="t" type="number" scale="time" domain={['dataMin', 'dataMax']}
-                  tickFormatter={dayLabel} stroke={AXIS} tick={{ fontSize: 10 }} tickLine={false}
+                  tickFormatter={dayLabel} stroke={AXIS} tick={{ fontSize: 11 }} tickLine={false}
                   minTickGap={28}
                 />
                 <YAxis
-                  stroke={AXIS} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={40}
+                  stroke={AXIS} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={40}
                   domain={row.unit === 'percent' ? [0, 100] : ['auto', 'auto']}
                   tickFormatter={(v) => formatAxisTick(v, row.unit)}
                 />
@@ -92,7 +92,7 @@ function MetricChart({ row }) {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-muted">
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-micro text-muted">
             <Legend color={AVG} label="Hourly average" />
             {hasPeak && <Legend color={PEAK} label="Hourly maximum" dashed />}
             <span className="ml-auto" title={row.source || undefined}>
@@ -101,12 +101,12 @@ function MetricChart({ row }) {
           </div>
         </>
       ) : (
-        <p className="py-3 text-[11.5px] leading-relaxed text-muted">
+        <p className="py-3 text-meta leading-relaxed text-muted">
           <span className="font-semibold text-fg">N/A. </span>
           {row.reason || 'No datapoints were returned.'}
         </p>
       )}
-      {row.source && <p className="mt-1 truncate-safe text-[10px] text-subtle" title={row.source}>{row.source}</p>}
+      {row.source && <p className="mt-1 truncate-safe text-micro text-subtle" title={row.source}>{row.source}</p>}
     </figure>
   );
 }
@@ -125,7 +125,7 @@ function Legend({ color, label, dashed }) {
 function ChartTip({ active, payload, label, unit }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-control border border-border bg-raised px-2.5 py-1.5 text-[11px] shadow-md">
+    <div className="rounded-control border border-border bg-raised px-2.5 py-1.5 text-meta shadow-md">
       <div className="font-semibold text-fg">{new Date(label).toLocaleString('en-GB')}</div>
       {payload.map((p) => (
         <div key={p.dataKey} className="flex justify-between gap-3 text-muted">

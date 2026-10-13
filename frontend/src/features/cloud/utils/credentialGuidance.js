@@ -71,11 +71,18 @@ function plusDaysIso(now, days) {
 
 export function lifecycleOf(o) {
   const bucket = o?.bucket;
+  // A replaced certificate keeps its real expiry state for the store steps
+  // (an expired leftover is still deleted the same way).
+  const replaced = bucket === 'replaced';
+  const left = Number(o?.days_left);
   return {
     disabled: o?.enabled === false,
-    expired: bucket === 'expired',
+    replaced,
+    superseded: !!o?.superseded_by,
+    expired: bucket === 'expired' || (replaced && left < 0),
     urgent: bucket === 'within_7',
-    soon: bucket === 'within_7' || bucket === 'within_30',
+    soon: bucket === 'within_7' || bucket === 'within_30'
+      || (replaced && left >= 0 && left <= 30),
     noExpiry: bucket === 'no_expiry' || (!o?.expires_at && bucket !== 'expired'),
     use: o?.in_use === true ? 'in_use' : o?.in_use === false ? 'unused' : 'unknown',
     renews: o?.managed_renewal === true,
@@ -126,6 +133,29 @@ function headline(o, s) {
   const noun = { CERTIFICATE: 'certificate', SECRET: 'secret', KEY: 'key' }[o?.kind] || 'item';
   if (s.disabled) {
     return { tone: 'neutral', text: `Disabled — this ${noun} is not served or returned while disabled.` };
+  }
+  if (s.superseded) {
+    const n = o.superseded_by;
+    const until = n.expires_at ? String(n.expires_at).slice(0, 10) : 'a later date';
+    const state = s.expired ? 'Expired' : 'Expiring';
+    if (s.use === 'unused') {
+      return {
+        tone: 'info',
+        text: `Replaced by the renewal ${n.name} (valid until ${until}), and nothing uses this one. It is a leftover — delete it to tidy up.`,
+      };
+    }
+    if (s.use === 'in_use') {
+      return {
+        tone: s.expired ? 'danger' : 'warning',
+        text: n.usable_in_place === false
+          ? `${state} and still in use. A renewal, ${n.name} (valid until ${until}), exists elsewhere — upload it here and switch the binding to it.`
+          : `${state} and still in use — but it has already been renewed as ${n.name} (valid until ${until}). Switch the binding to the renewal, then delete this one.`,
+      };
+    }
+    return {
+      tone: s.expired ? 'danger' : 'warning',
+      text: `${state}. It has been renewed as ${n.name} (valid until ${until}), but whether anything still uses this one is unknown — find out before you remove it.`,
+    };
   }
   if (s.expired) {
     const ago = s.days === null ? '' : s.days < 1 ? ' today' : ` ${plural(s.days, 'day')} ago`;
@@ -560,11 +590,34 @@ export function portalLink(o) {
   return id && id.startsWith('/subscriptions/') ? `https://portal.azure.com/#resource${id}` : null;
 }
 
+/** Steps that put a NEW renewal in place — dropped when one already exists. */
+const RENEWAL_STEP_IDS = new Set([
+  'upload', 'import', 'import-version', 'reimport', 'request', 'new-version',
+]);
+
 export function credentialGuidance(o, now = new Date()) {
   if (!o) return null;
   const s = lifecycleOf(o);
   const build = BUILDERS[o.source];
-  const steps = s.disabled ? [] : (build ? build(o, s, now) : []);
+  let steps = s.disabled ? [] : (build ? build(o, s, now) : []);
+  // Already renewed: uploading or requesting another renewal is the wrong
+  // advice. What is left is moving the bindings over and deleting this one.
+  if (s.superseded && s.use !== 'unused') {
+    const n = o.superseded_by;
+    const where = [n.container_name, n.source_label, n.region].filter(Boolean).join(', ');
+    const until = String(n.expires_at || '').slice(0, 10);
+    // A renewal on another load balancer / gateway / resource group / region
+    // cannot be bound here: the upload steps still apply, with its files.
+    steps = n.usable_in_place === false ? [{
+      id: 'renewal-exists',
+      title: `A renewal exists elsewhere: ${n.name}`,
+      body: `${n.name}${where ? ` (${where})` : ''} covers the same domains and is valid until ${until}, but it is not held where this certificate is, so it cannot be bound here directly. Upload the same renewed certificate here, as below.`,
+    }, ...steps] : [{
+      id: 'renewal-exists',
+      title: `The renewal is already uploaded: ${n.name}`,
+      body: `${n.name}${where ? ` (${where})` : ''} covers the same domains and is valid until ${until}. Point every binding below at it instead of uploading another certificate.`,
+    }, ...steps.filter((x) => !RENEWAL_STEP_IDS.has(x?.id))];
+  }
   // Whatever else applies, a certificate that someone renews by hand can be
   // watched: the account's Alerts tab has a template for exactly this.
   if (!s.disabled && o.kind === 'CERTIFICATE' && o.expires_at && !s.renews

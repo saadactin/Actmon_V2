@@ -2,10 +2,11 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import {
   Server, DollarSign, ShieldAlert, LayoutDashboard, Share2,
-  GitCompareArrows, ScrollText, BellRing, Lightbulb,
+  GitCompareArrows, ScrollText, BellRing, Lightbulb, KeyRound,
 } from 'lucide-react';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
+import { providerTileStyle } from '../utils/providerTheme';
 import AccountRefreshBar from '../components/refresh/AccountRefreshBar';
 import TabRefreshButton from '../components/refresh/TabRefreshButton';
 import { DELEGATED_TABS } from '../utils/tabRefreshModel';
@@ -19,6 +20,7 @@ import { ConfigDriftPage } from './ConfigDriftPage';
 import { EventLogPage } from './EventLogPage';
 import AlertsPage from './AlertsPage';
 import ResourceIntelligencePage from './ResourceIntelligencePage';
+import IdentityAccessPage from './IdentityAccessPage';
 
 // NOTE: `getSecurityGrade` used to live here — a second, independent mapping
 // from score to letter grade, feeding a card that was itself scored by a
@@ -41,6 +43,12 @@ const TABS = [
   // none of the 82 CRITICAL AWS findings had ever produced an alert. The
   // Security Center's own tabs are all views over one canonical finding set.
   { id: 'security', label: 'Security Center', icon: ShieldAlert },
+  // Beside the Security Center because it answers the other half of the same
+  // question. The Security Center asks "what is wrong with this estate"; this
+  // asks "who can reach it, what can they actually do, and how much of that
+  // access is being used". Its findings land in the Security Center's table
+  // rather than in a second one.
+  { id: 'identity', label: 'Identity & Access', icon: KeyRound },
   { id: 'topology', label: 'Topology', icon: Share2 },
   // Beside Alerts on purpose: an alert says a condition is true now, drift says
   // what changed to make it true.
@@ -85,7 +93,7 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         hideBreadcrumbs
         backTo={`/cloud/${routeProviderSlug}-accounts`}
         leading={(
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border" style={providerTileStyle(scopedAccount?.provider)}>
             <ProviderLogo provider={scopedAccount?.provider} size={28} />
           </span>
         )}
@@ -141,6 +149,9 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
           any open finding rather than carrying another account's triage across. */}
       {tab === 'security' && (
         <SecurityCenterPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
+      {tab === 'identity' && (
+        <IdentityAccessPage key={routeAccountId} embedded accountId={routeAccountId} />
       )}
       {tab === 'topology' && <CloudTopologyPage embedded accountId={routeAccountId} />}
       {/* 'compliance' is still a Security Center view, so a bookmarked URL from

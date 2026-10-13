@@ -89,7 +89,7 @@ export function Provenance({ source, period, retrievedAt, cached, currency, clas
   if (retrievedAt) parts.push(relativeTime(retrievedAt));
   if (!parts.length) return null;
   return (
-    <p className={cn('text-[11px] text-subtle', className)}>{parts.join(' · ')}</p>
+    <p className={cn('text-meta text-subtle', className)}>{parts.join(' · ')}</p>
   );
 }
 
@@ -106,12 +106,12 @@ export function ChartEmpty({ title = 'No billing data available', reason, onWhy,
     >
       <AlertTriangle size={20} className="text-subtle" aria-hidden />
       <p className="text-[13px] font-medium text-muted">{title}</p>
-      {reason && <p className="max-w-md px-4 text-[11px] text-subtle">{reason}</p>}
+      {reason && <p className="max-w-md px-4 text-meta text-subtle">{reason}</p>}
       {onWhy && (
         <button
           type="button"
           onClick={onWhy}
-          className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent-text hover:underline"
+          className="inline-flex items-center gap-1 text-meta font-semibold text-accent-text hover:underline"
         >
           <HelpCircle size={12} aria-hidden />
           Why?
@@ -145,7 +145,7 @@ export function CapabilityGate({ available, reason, children, label }) {
       {open && reason && (
         <span
           role="tooltip"
-          className="absolute left-0 top-full z-30 mt-1 w-72 rounded-control border border-border bg-surface p-2.5 text-[11px] leading-relaxed text-muted shadow-lg"
+          className="absolute left-0 top-full z-30 mt-1 w-72 rounded-control border border-border bg-surface p-2.5 text-meta leading-relaxed text-muted shadow-lg"
         >
           <span className="mb-1 block font-semibold text-fg">
             {label || 'Not available'}
@@ -165,10 +165,10 @@ export function ChartTooltip({ active, payload, label, currency, totalLabel = 'T
   const total = rows.reduce((sum, p) => sum + Number(p.value), 0);
   return (
     <div className="rounded-control border border-border bg-surface p-2.5 shadow-lg">
-      <p className="mb-1.5 text-[11px] font-bold text-fg">{label}</p>
+      <p className="mb-1.5 text-meta font-bold text-fg">{label}</p>
       <div className="space-y-1">
         {rows.map((p) => (
-          <div key={p.dataKey ?? p.name} className="flex items-center gap-2 text-[11px]">
+          <div key={p.dataKey ?? p.name} className="flex items-center gap-2 text-meta">
             <span
               className="h-2 w-2 shrink-0 rounded-full"
               style={{ background: p.color || p.fill }}
@@ -182,7 +182,7 @@ export function ChartTooltip({ active, payload, label, currency, totalLabel = 'T
         ))}
       </div>
       {rows.length > 1 && (
-        <div className="mt-1.5 flex items-center gap-2 border-t border-border pt-1.5 text-[11px]">
+        <div className="mt-1.5 flex items-center gap-2 border-t border-border pt-1.5 text-meta">
           <span className="font-semibold text-muted">{totalLabel}</span>
           <span className="ml-auto font-bold tabular-nums text-fg">
             {exact(total, currency)}
@@ -199,7 +199,7 @@ export function PanelHeading({ title, description, right }) {
     <div className="mb-3 flex items-end justify-between gap-3">
       <div className="min-w-0">
         <h3 className="text-[14px] font-semibold text-fg">{title}</h3>
-        {description && <p className="mt-0.5 text-[11.5px] text-muted">{description}</p>}
+        {description && <p className="mt-0.5 text-meta text-muted">{description}</p>}
       </div>
       {right && <div className="shrink-0">{right}</div>}
     </div>
@@ -215,7 +215,7 @@ export function InsufficientHistory({ available, required, reason, onBackfill })
     <div className="rounded-control border border-dashed border-border bg-sunken p-4 text-center">
       <Info size={18} className="mx-auto mb-1.5 text-subtle" aria-hidden />
       <p className="text-[13px] font-medium text-fg">Not enough billing history yet</p>
-      <p className="mx-auto mt-1 max-w-lg text-[11.5px] leading-relaxed text-muted">
+      <p className="mx-auto mt-1 max-w-lg text-meta leading-relaxed text-muted">
         {reason || `This needs at least ${required} days of stored history; ${available} day(s) are available.`}
       </p>
       {onBackfill && (

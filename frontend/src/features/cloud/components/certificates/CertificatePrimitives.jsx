@@ -32,7 +32,7 @@ const formatDate = (iso) => {
  *  strip says so rather than implying it matches a filtered table below. */
 export function BucketStrip({ byBucket, onSelect, active }) {
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
       {BUCKET_ORDER.map((b) => {
         const meta = bucketMeta(b);
         const n = byBucket?.[b];
@@ -54,6 +54,29 @@ export function BucketStrip({ byBucket, onSelect, active }) {
           </button>
         );
       })}
+    </div>
+  );
+}
+
+/** The renewal that replaced this certificate. Still bound to the old one is
+ *  the case that matters: the renewal exists, the binding was not switched. */
+function Successor({ row }) {
+  const s = row.superseded_by;
+  const until = s.expires_at ? formatDate(s.expires_at) : '—';
+  const where = [s.container_name, s.region].filter(Boolean).join(' · ');
+  const title = `${s.name}${where ? ` (${where})` : ''}, valid until ${until}`;
+  if (row.in_use === true) {
+    return (
+      <div className="truncate-safe text-meta text-warning" title={title}>
+        {s.usable_in_place === false
+          ? `Renewed as ${s.name} elsewhere — upload it here and switch the binding`
+          : `Renewed as ${s.name} — still bound to this one; switch the binding`}
+      </div>
+    );
+  }
+  return (
+    <div className="truncate-safe text-meta text-muted" title={title}>
+      Renewed as {s.name} · valid until {until}
     </div>
   );
 }
@@ -124,7 +147,7 @@ export function CertificateTable({
         expires: (
           <div className="min-w-0">
             <Badge tone={meta.tone}>{meta.label}</Badge>
-            <div className="mt-0.5 text-[11px] text-muted">
+            <div className="mt-0.5 text-meta text-muted">
               {o.expires_at ? `${formatDate(o.expires_at)} · ${daysLeftLabel(o.days_left)}` : 'No expiry set'}
             </div>
           </div>
@@ -138,10 +161,11 @@ export function CertificateTable({
               {o.enabled === false && <Badge tone="outline" size="xs">Disabled</Badge>}
             </div>
             {(o.subject || (o.dns_names || []).length > 0) && (
-              <div className="truncate-safe text-[11px] text-subtle" title={(o.dns_names || []).join(', ')}>
+              <div className="truncate-safe text-meta text-subtle" title={(o.dns_names || []).join(', ')}>
                 {o.subject || (o.dns_names || []).slice(0, 3).join(', ')}
               </div>
             )}
+            {o.superseded_by && <Successor row={o} />}
           </div>
         ),
         kind: (
@@ -153,13 +177,13 @@ export function CertificateTable({
         account: (
           <div className="min-w-0">
             <div className="truncate-safe text-[12px] text-fg">{o.account_name || '—'}</div>
-            <div className="text-[11px] text-subtle">{providerLabel(o.provider)}</div>
+            <div className="text-meta text-subtle">{providerLabel(o.provider)}</div>
           </div>
         ),
         store: (
           <div className="min-w-0">
             <div className="truncate-safe text-[12px] text-fg">{o.source_label || o.source}</div>
-            <div className="truncate-safe text-[11px] text-subtle">
+            <div className="truncate-safe text-meta text-subtle">
               {[o.container_name, o.region].filter(Boolean).join(' · ') || '—'}
             </div>
           </div>
@@ -220,7 +244,7 @@ export function SourcesTable({ sources }) {
         store: (
           <div className="min-w-0">
             <div className="truncate-safe text-[12px] font-medium text-fg">{s.source_label || s.source}</div>
-            <div className="truncate-safe text-[11px] text-subtle">{s.scope_label || s.scope}</div>
+            <div className="truncate-safe text-meta text-subtle">{s.scope_label || s.scope}</div>
           </div>
         ),
         status: <Badge tone={meta.tone}>{meta.label}</Badge>,
@@ -230,13 +254,13 @@ export function SourcesTable({ sources }) {
           </span>
         ),
         read: (
-          <div className="text-[11px] text-muted">
+          <div className="text-meta text-muted">
             <div>Last success: {formatDateTime(s.last_success_at)}</div>
             <div>Last attempt: {formatDateTime(s.last_attempt_at)}</div>
           </div>
         ),
         detail: (
-          <div className="min-w-0 text-[11px] leading-relaxed text-muted">
+          <div className="min-w-0 text-meta leading-relaxed text-muted">
             {s.missing_permission && (
               <div>Missing permission: <span className="font-mono text-fg">{s.missing_permission}</span></div>
             )}

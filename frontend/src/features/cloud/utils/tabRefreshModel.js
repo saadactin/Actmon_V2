@@ -48,6 +48,13 @@ export const TAB_REFRESH_ACTIONS = {
     title: 'Re-query this account\'s billing from the provider and re-store the last '
       + '30 days. Takes up to a minute.',
   },
+  ciem: {
+    source: SOURCE_PROVIDER,
+    background: false,
+    title: 'Re-read every principal, credential and policy from the provider, then '
+      + 're-evaluate effective permissions, usage, trust and blast radius against '
+      + 'the stored inventory and the Event Log. Takes up to a minute.',
+  },
   assess: {
     source: SOURCE_ASSESS,
     background: false,
@@ -89,6 +96,12 @@ export const TAB_REFRESH_ACTIONS = {
  */
 export const TAB_REFRESH = {
   overview: { noun: 'overview', action: 'reload' },
+  // Its own action rather than reusing 'identity': that one re-reads role
+  // assignments for the Security Center's grant table. This re-reads the whole
+  // principal estate (users, roles, groups, credentials, policies) AND re-runs
+  // the permission evaluation, so calling it by the same name would promise
+  // less than it does on one tab and more than it does on the other.
+  identity: { noun: 'identity & access', action: 'ciem' },
   intelligence: { noun: 'intelligence', action: 'analysis' },
   resources: { noun: 'resources', action: 'discovery' },
   cost: { noun: 'cost', action: 'cost' },
@@ -102,6 +115,15 @@ export const TAB_REFRESH = {
   'security.alerts': { noun: 'security alerts', action: 'assess' },
   'security.compliance': { noun: 'compliance', action: 'assess' },
   'security.exposure': { noun: 'exposure', action: 'assess' },
+  // Paths are derived from the topology graph and the exposure verdicts, both
+  // of which an assessment refreshes. There is no separate "recompute paths"
+  // action to offer, so this reuses the one that actually changes the answer.
+  'security.attack-paths': { noun: 'attack paths', action: 'assess' },
+  // Software identity comes from discovery, so a re-scan is what changes it.
+  'security.vulnerabilities': { noun: 'vulnerabilities', action: 'assess' },
+  // Detections read the Event Log, so collecting events is what changes them.
+  'security.threats': { noun: 'threats', action: 'events' },
+  'security.ransomware': { noun: 'resilience posture', action: 'assess' },
   'security.identity': { noun: 'identity', action: 'identity' },
   'security.certificates': { noun: 'certificates', action: 'certificates' },
   'security.coverage': { noun: 'coverage', action: 'assess' },

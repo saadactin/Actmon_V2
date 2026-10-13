@@ -69,6 +69,16 @@ POLICY_KINDS = (
 # Default thresholds, as percentages of the budget.
 DEFAULT_THRESHOLDS = [50, 75, 90, 100]
 
+# ── Notification kind ────────────────────────────────────────────────────────
+# A notification is either about ACTUAL spend crossing a threshold, or about
+# the FORECAST (run-rate projection) crossing one before actual spend does.
+# They are deliberately separate identities (see CloudCostBudgetNotification's
+# docstring): a forecast notice at 100% must not suppress the real breach
+# notice at 100% a week later, once spend actually gets there.
+NOTIFICATION_ACTUAL = "ACTUAL"
+NOTIFICATION_FORECAST = "FORECAST"
+NOTIFICATION_KINDS = (NOTIFICATION_ACTUAL, NOTIFICATION_FORECAST)
+
 # How long before the same threshold on the same budget may notify again.
 # Crossing a HIGHER threshold ignores this — see cost_budget_service: going
 # from 75% to 100% is new information and must not be silenced by a cooldown
@@ -259,6 +269,12 @@ class CloudCostBudgetNotification(Base):
     cycle either re-notifies at 75% forever, or -- if suppressed by a blanket
     cooldown -- stays silent when spend crosses 100%, which is the one moment
     that actually matters.
+
+    `kind` (ACTUAL / FORECAST) is part of the dedupe identity, not an
+    afterthought column. A forecast crossing 100% and an actual spend crossing
+    100% are different facts about the same budget and period, and must be
+    announced independently -- otherwise whichever fires first would silence
+    the other for the rest of the period.
     """
 
     __tablename__ = "cloud_cost_budget_notifications"
@@ -275,6 +291,11 @@ class CloudCostBudgetNotification(Base):
     # month start clean rather than inheriting last month's breach.
     period_key: Mapped[str] = mapped_column(String(16), nullable=False)
     threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    # ACTUAL or FORECAST (NOTIFICATION_KINDS). Defaulted for the rows this
+    # table already held before the column existed -- see db_setup patch.
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=NOTIFICATION_ACTUAL
+    )
     notified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False,
         default=lambda: datetime.now(timezone.utc),
@@ -284,10 +305,10 @@ class CloudCostBudgetNotification(Base):
     observed_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     __table_args__ = (
-        # One record per (budget, period, threshold): the database itself
-        # refuses a duplicate even if two evaluations race.
+        # One record per (budget, period, threshold, kind): the database
+        # itself refuses a duplicate even if two evaluations race.
         UniqueConstraint(
-            "budget_id", "period_key", "threshold",
-            name="uq_budget_period_threshold",
+            "budget_id", "period_key", "threshold", "kind",
+            name="uq_budget_period_threshold_kind",
         ),
     )

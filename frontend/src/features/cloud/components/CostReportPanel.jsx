@@ -11,14 +11,10 @@ import Pagination from '@/components/ui/Pagination';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { InlineLoading } from '@/components/ui/Loading';
+import { compact, exact } from '../utils/costFormat';
 
 const DAY_PRESETS = [30, 90, 180, 365];
 const PAGE_SIZE = 50;
-const CURRENCY_SYMBOLS = { USD: '$', INR: '₹', EUR: '€', GBP: '£' };
-
-function symbolFor(code) {
-  return code ? (CURRENCY_SYMBOLS[code] ?? `${code} `) : '';
-}
 
 const inputClass = 'rounded-control border border-border bg-surface px-2.5 py-1.5 text-xs text-fg placeholder:text-subtle focus:outline-none focus:ring-2 focus:ring-accent';
 
@@ -95,8 +91,8 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
       // Date bounds only apply to the day-by-day shape; resource rows are totals.
       if (!byResource && dateFrom && r.date < dateFrom) return false;
       if (!byResource && dateTo && r.date > dateTo) return false;
-      if (minC != null && !Number.isNaN(minC) && (r.cost ?? 0) < minC) return false;
-      if (maxC != null && !Number.isNaN(maxC) && (r.cost ?? 0) > maxC) return false;
+      if (minC != null && !Number.isNaN(minC) && (r.cost_inr ?? 0) < minC) return false;
+      if (maxC != null && !Number.isNaN(maxC) && (r.cost_inr ?? 0) > maxC) return false;
       if (s) {
         const hay = [
           r.service, r.account_name, r.region, r.provider,
@@ -109,9 +105,12 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
   }, [rows, providerFilter, accountFilter, serviceFilter, regionFilter, typeFilter,
     attachFilter, dateFrom, dateTo, minCost, maxCost, search, byResource]);
 
-  const totalCost = useMemo(() => filtered.reduce((sum, r) => sum + (r.cost || 0), 0), [filtered]);
-  const currency = data?.currency ?? null;
-  const sym = symbolFor(currency);
+  // `cost_inr` is every row converted to INR server-side (a live FX rate —
+  // see `cost_service.get_cost_report`), so this total is never a raw sum
+  // across whatever currencies the underlying providers happen to bill in.
+  const totalCostInr = useMemo(
+    () => filtered.reduce((sum, r) => sum + (r.cost_inr || 0), 0), [filtered],
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const clampedPage = Math.min(page, totalPages);
@@ -143,8 +142,9 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
       { key: 'attachment_status', label: 'Attachment' },
       { key: 'attached_to_name', label: 'Attached To' },
       { key: 'attached_to_status', label: 'Attached To Status' },
-      { key: 'cost', label: `Cost (${days}d)` },
+      { key: 'cost', label: `Cost (${days}d, native)` },
       { key: 'currency', label: 'Currency' },
+      { key: 'cost_inr', label: `Cost (${days}d, INR)` },
       { key: 'in_inventory', label: 'In Inventory' },
       { key: 'provider_resource_id', label: 'Provider Resource ID' },
     ]
@@ -154,8 +154,9 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
       { key: 'account_name', label: 'Account' },
       { key: 'service', label: 'Service' },
       { key: 'region', label: 'Region' },
-      { key: 'cost', label: 'Cost' },
+      { key: 'cost', label: 'Cost (native)' },
       { key: 'currency', label: 'Currency' },
+      { key: 'cost_inr', label: 'Cost (INR)' },
     ];
 
   const fileStem = `cost-report-${byResource ? 'by-resource' : 'by-service'}-${days}d-${new Date().toISOString().slice(0, 10)}`;
@@ -176,7 +177,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
           { key: 'region', label: 'Region', width: 32 },
           { key: 'size_gb', label: 'GB', width: 18, align: 'right' },
           { key: 'attached_to_name', label: 'Attached To', width: 48 },
-          { key: 'cost', label: 'Cost', width: 27, align: 'right' },
+          { key: 'cost_inr', label: 'Cost (INR)', width: 27, align: 'right' },
         ]
         : [
           { key: 'date', label: 'Date', width: 24 },
@@ -184,17 +185,16 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
           { key: 'account_name', label: 'Account', width: 55 },
           { key: 'service', label: 'Service', width: 65 },
           { key: 'region', label: 'Region', width: 40 },
-          { key: 'cost', label: 'Cost', width: 30, align: 'right' },
-          { key: 'currency', label: 'Currency', width: 20 },
+          { key: 'cost_inr', label: 'Cost (INR)', width: 30, align: 'right' },
         ];
       const { truncated, rowsWritten } = await downloadCostReportPdf(
         `${fileStem}.pdf`,
         byResource ? 'Cloud Cost Report — By Resource' : 'Cloud Cost Report — By Service & Day',
-        `Last ${days} days · ${filtered.length} rows · Total ${sym}${totalCost.toFixed(2)}${currency ? '' : ' (currency: NA)'}`,
+        `Last ${days} days · ${filtered.length} rows · Total ${exact(totalCostInr, 'INR')}`,
         pdfColumns,
         filtered.map((r) => ({
           ...r,
-          cost: r.cost != null ? r.cost.toFixed(2) : '',
+          cost_inr: r.cost_inr != null ? r.cost_inr.toFixed(2) : '',
           resource_name: r.resource_name || (byResource ? '(not in inventory)' : ''),
         })),
       );
@@ -303,7 +303,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
         ) : (
           <span className="text-subtle">—</span>
         ),
-        cost: <span className="font-semibold text-fg">{symbolFor(r.currency)}{(r.cost ?? 0).toFixed(2)}</span>,
+        cost: <span className="font-semibold text-fg" title={exact(r.cost_inr, 'INR')}>{compact(r.cost_inr, 'INR')}</span>,
       },
     }))
     : pageRows.map((r, i) => ({
@@ -314,7 +314,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
         account: r.account_name,
         service: r.service,
         region: r.region || '—',
-        cost: <span className="font-semibold text-fg">{symbolFor(r.currency)}{(r.cost ?? 0).toFixed(2)}</span>,
+        cost: <span className="font-semibold text-fg" title={exact(r.cost_inr, 'INR')}>{compact(r.cost_inr, 'INR')}</span>,
       },
     }));
 
@@ -327,7 +327,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
         <span className="flex items-center gap-2.5 text-sm font-bold uppercase tracking-wider text-fg">
           <CalendarRange size={16} className="text-accent-text" />
           Detailed Cost Report
-          <span className="text-[11px] font-semibold normal-case tracking-normal text-subtle">
+          <span className="text-meta font-semibold normal-case tracking-normal text-subtle">
             (up to 365 days · per resource or per service · CSV / PDF)
           </span>
         </span>
@@ -338,7 +338,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
         <div className="space-y-4 border-t border-border p-5">
           {/* Date range presets */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Range:</span>
+            <span className="text-meta font-bold uppercase tracking-wider text-muted">Range:</span>
             {DAY_PRESETS.map((d) => (
               <Button
                 key={d}
@@ -358,7 +358,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
 
           {/* Grouping — the whole shape of the report, so it sits beside the range */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Detail:</span>
+            <span className="text-meta font-bold uppercase tracking-wider text-muted">Detail:</span>
             {[
               ['resource', 'By resource', 'Every billed resource with name, type, size and what it is attached to'],
               ['service', 'By service & day', 'Daily spend per service — the timeline view'],
@@ -374,12 +374,12 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
               </Button>
             ))}
             {byResource && (
-              <span className="text-[11px] text-muted">
+              <span className="text-meta text-muted">
                 totals per resource over the window (not per-day)
               </span>
             )}
             {autoFellBack && !byResource && (
-              <span className="rounded-control border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-warning-fg">
+              <span className="rounded-control border border-warning/30 bg-warning-soft px-2 py-1 text-meta text-warning-fg">
                 This provider has no per-resource billing data — switched to service &amp; day.
               </span>
             )}
@@ -442,8 +442,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-sunken px-4 py-2.5">
                 <span className="text-xs text-muted">
                   <strong className="text-fg">{filtered.length.toLocaleString()}</strong> rows ·
-                  Total <strong className="text-fg">{sym}{totalCost.toFixed(2)}</strong>
-                  {!currency && <span className="text-subtle"> (currency: NA)</span>}
+                  Total <strong className="text-fg">{exact(totalCostInr, 'INR')}</strong>
                   {byResource && (data?.unmatched_resources ?? 0) > 0 && (
                     <span
                       className="text-subtle"
@@ -464,7 +463,7 @@ export const CostReportPanel = ({ accountId, open: openProp, onOpenChange }) => 
               </div>
 
               {exportNote && (
-                <div className="rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-[11px] text-warning-fg">
+                <div className="rounded-control border border-warning/30 bg-warning-soft px-3 py-2 text-meta text-warning-fg">
                   {exportNote}
                 </div>
               )}

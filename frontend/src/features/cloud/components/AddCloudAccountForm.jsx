@@ -8,18 +8,21 @@ import { slugForProvider } from '../utils/providerScope';
 import Input from '@/components/ui/Input';
 import Textarea from '@/components/ui/Textarea';
 import Button from '@/components/ui/Button';
+import { providerInkStyle, providerWashStyle } from '../utils/providerTheme';
 
 // Optional fields that must be omitted, not sent as "", when left blank: the
 // backend parses target_client_id as a UUID and treats any role_arn as a
 // request to assume a role.
 const OPTIONAL_FIELDS = ['target_client_id', 'role_arn', 'external_id', 'session_token'];
 
-// Brand colours are pinned (not theme tokens) — same provider identity used by
-// CloudProviderSelector / CloudProviderChooser.
+// Brand hues are pinned (not theme tokens) — the same provider identity used by
+// CloudProviderSelector / CloudProviderChooser, read from the one registry
+// rather than restated here as light-palette classes that disappear into the
+// card on a dark theme.
 const PROVIDERS = [
-  { id: 'AWS', label: 'AWS', hint: 'Amazon Web Services', activeText: 'text-orange-700', activeBg: 'bg-orange-50' },
-  { id: 'Azure', label: 'Azure', hint: 'Microsoft Azure', activeText: 'text-sky-700', activeBg: 'bg-sky-50' },
-  { id: 'OCI', label: 'OCI', hint: 'Oracle Cloud', activeText: 'text-red-700', activeBg: 'bg-red-50' },
+  { id: 'AWS', label: 'AWS', hint: 'Amazon Web Services' },
+  { id: 'Azure', label: 'Azure', hint: 'Microsoft Azure' },
+  { id: 'OCI', label: 'OCI', hint: 'Oracle Cloud' },
 ];
 
 const LBL = 'block text-[12px] font-semibold text-fg mb-1';
@@ -76,10 +79,14 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
             return (
               <button key={p.id} type="button" onClick={() => setProvider(p.id)}
                 className={`rounded-control border-2 px-3 py-3 text-left transition-colors ${
-                  active ? `border-accent shadow-sm ${p.activeBg}` : 'border-border bg-surface hover:border-strong'
-                }`}>
-                <span className={`block text-sm font-bold ${active ? p.activeText : 'text-fg'}`}>{p.label}</span>
-                <span className="block text-[11px] text-muted mt-0.5 leading-tight">{p.hint}</span>
+                  active ? 'border-accent shadow-sm' : 'border-border bg-surface hover:border-strong'
+                }`}
+                style={active ? providerWashStyle(p.id, 12) : undefined}>
+                <span
+                  className={`block text-sm font-bold ${active ? '' : 'text-fg'}`}
+                  style={active ? providerInkStyle(p.id) : undefined}
+                >{p.label}</span>
+                <span className="block text-meta text-muted mt-0.5 leading-tight">{p.hint}</span>
               </button>
             );
           })}
@@ -104,7 +111,7 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
             <option key={c.id} value={c.id}>{c.code ? `${c.name} (${c.code})` : c.name}</option>
           ))}
         </select>
-        <p className="mt-1 text-[11px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           Decides whose monthly report this account appears in. Can be changed later from Clients.
         </p>
       </div>
@@ -128,7 +135,7 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
           <Input {...register('tenant_or_region', { required: true })}
             placeholder={provider === 'AWS' ? 'e.g. ap-south-1' : provider === 'OCI' ? 'e.g. ap-mumbai-1' : 'e.g. us-east-1'} />
           {provider === 'AWS' && (
-            <p className="mt-1 text-[11px] text-subtle">
+            <p className="mt-1 text-meta text-subtle">
               Used as the default API endpoint; discovery scans all enabled regions.
             </p>
           )}
@@ -152,7 +159,7 @@ export const AddCloudAccountForm = ({ onSuccess, push }) => {
             </button>
             {showRole && (
               <div className="space-y-3 rounded-control border border-border bg-surface p-3">
-                <p className="text-[11px] leading-relaxed text-muted">
+                <p className="text-meta leading-relaxed text-muted">
                   The keys above belong to another account — usually the organisation&apos;s
                   management account — and every call assumes this role. The account is then
                   scanned with the role&apos;s permissions, never the keys&apos; own.

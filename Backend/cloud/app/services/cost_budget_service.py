@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlalchemy import and_, select
 
 from app.models.cost_budget import (
+    NOTIFICATION_ACTUAL,
+    NOTIFICATION_FORECAST,
     PERIOD_ANNUAL,
     PERIOD_MONTHLY,
     PERIOD_QUARTERLY,
@@ -212,13 +214,21 @@ async def evaluate_budget(
 
 
 async def _already_notified(
-    db, budget_id: uuid.UUID, period_key: str,
+    db, budget_id: uuid.UUID, period_key: str, *,
+    kind: str = NOTIFICATION_ACTUAL,
 ) -> Dict[int, CloudCostBudgetNotification]:
+    """What has already been announced this period, for one notification KIND.
+
+    ACTUAL and FORECAST are deliberately separate histories: a forecast notice
+    must not count as "already notified" for the real breach, or the real
+    breach would go unannounced the one time it actually matters.
+    """
     rows = (await db.execute(
         select(CloudCostBudgetNotification).where(
             and_(
                 CloudCostBudgetNotification.budget_id == budget_id,
                 CloudCostBudgetNotification.period_key == period_key,
+                CloudCostBudgetNotification.kind == kind,
             )
         )
     )).scalars().all()
@@ -300,85 +310,182 @@ async def evaluate_and_alert(
             continue
 
         period_key = state["period"]["key"]
-        history = await _already_notified(db, budget.id, period_key)
         breached = state["thresholds_breached"]
-        if not breached:
-            continue
 
-        # Only the HIGHEST breached threshold is a candidate. Announcing 50,
-        # 75 and 90 in one cycle is three notifications about one fact.
-        threshold = max(breached)
-        allowed, reason = _should_notify(
-            threshold, history,
-            cooldown_hours=budget.cooldown_hours, now=now,
-        )
-
-        record = {
-            "budget_id": str(budget.id),
-            "budget_name": budget.name,
-            "threshold": threshold,
-            "utilization_percent": percent,
-            "period_key": period_key,
-            "reason": reason,
-        }
-
-        if not allowed:
-            suppressed.append(record)
-            continue
-
-        severity = severity_for_threshold(percent)
-        spend = state["spend"]
-        details = (
-            f"Budget '{budget.name}' has reached {percent:.1f}% of its "
-            f"{budget.amount:,.2f} {budget.currency} {budget.period.lower()} budget "
-            f"({spend['amount']:,.2f} {budget.currency} spent in "
-            f"{state['period']['start']}..{state['period']['end']})."
-        )
-        if spend["out_of_scope_currencies"]:
-            details += (
-                " Note: spend in other currencies exists in this scope and is "
-                "NOT counted against this budget: "
-                + ", ".join(f"{v:,.2f} {c}" for c, v in
-                            spend["out_of_scope_currencies"].items())
-                + "."
+        if breached:
+            # Only the HIGHEST breached threshold is a candidate. Announcing
+            # 50, 75 and 90 in one cycle is three notifications about one fact.
+            threshold = max(breached)
+            history = await _already_notified(
+                db, budget.id, period_key, kind=NOTIFICATION_ACTUAL,
+            )
+            allowed, reason = _should_notify(
+                threshold, history,
+                cooldown_hours=budget.cooldown_hours, now=now,
             )
 
-        # The dedupe key carries budget, period and threshold, so a recurrence
-        # updates one alert row rather than appending a new one, and a new
-        # period or a higher threshold is correctly a different alert.
-        dedupe_key = f"COST_BUDGET:{budget.id}:{period_key}:{threshold}"
-        record["dedupe_key"] = dedupe_key
-        record["severity"] = severity
-
-        if dry_run:
-            raised.append({**record, "dry_run": True})
-            continue
-
-        await alerting.trigger_anomaly_alert(
-            anomaly_type="COST_BUDGET_THRESHOLD",
-            details=details,
-            severity=severity,
-            account_id=budget.account_id,
-            dedupe_key=dedupe_key,
-            context={
+            record = {
                 "budget_id": str(budget.id),
                 "budget_name": budget.name,
-                "threshold_percent": threshold,
+                "threshold": threshold,
                 "utilization_percent": percent,
-                "budget_amount": budget.amount,
-                "currency": budget.currency,
-                "period": state["period"],
-                "spend": spend,
-                "forecast": state["forecast"],
-                "source": "cloud_cost_facts",
-            },
-        )
-        db.add(CloudCostBudgetNotification(
-            budget_id=budget.id, period_key=period_key, threshold=threshold,
-            notified_at=now, observed_percent=percent, observed_amount=spend["amount"],
-        ))
-        await db.commit()
-        raised.append(record)
+                "period_key": period_key,
+                "kind": NOTIFICATION_ACTUAL,
+                "reason": reason,
+            }
+
+            if not allowed:
+                suppressed.append(record)
+            else:
+                severity = severity_for_threshold(percent)
+                spend = state["spend"]
+                details = (
+                    f"Budget '{budget.name}' has reached {percent:.1f}% of its "
+                    f"{budget.amount:,.2f} {budget.currency} {budget.period.lower()} "
+                    f"budget ({spend['amount']:,.2f} {budget.currency} spent in "
+                    f"{state['period']['start']}..{state['period']['end']})."
+                )
+                if spend["out_of_scope_currencies"]:
+                    details += (
+                        " Note: spend in other currencies exists in this scope "
+                        "and is NOT counted against this budget: "
+                        + ", ".join(f"{v:,.2f} {c}" for c, v in
+                                    spend["out_of_scope_currencies"].items())
+                        + "."
+                    )
+
+                # The dedupe key carries budget, period and threshold, so a
+                # recurrence updates one alert row rather than appending a new
+                # one, and a new period or a higher threshold is correctly a
+                # different alert.
+                dedupe_key = f"COST_BUDGET:{budget.id}:{period_key}:{threshold}"
+                record["dedupe_key"] = dedupe_key
+                record["severity"] = severity
+
+                if dry_run:
+                    raised.append({**record, "dry_run": True})
+                else:
+                    await alerting.trigger_anomaly_alert(
+                        anomaly_type="COST_BUDGET_THRESHOLD",
+                        details=details,
+                        severity=severity,
+                        account_id=budget.account_id,
+                        dedupe_key=dedupe_key,
+                        context={
+                            "budget_id": str(budget.id),
+                            "budget_name": budget.name,
+                            "threshold_percent": threshold,
+                            "utilization_percent": percent,
+                            "budget_amount": budget.amount,
+                            "currency": budget.currency,
+                            "period": state["period"],
+                            "spend": spend,
+                            "forecast": state["forecast"],
+                            "source": "cloud_cost_facts",
+                        },
+                    )
+                    db.add(CloudCostBudgetNotification(
+                        budget_id=budget.id, period_key=period_key,
+                        threshold=threshold, kind=NOTIFICATION_ACTUAL,
+                        notified_at=now, observed_percent=percent,
+                        observed_amount=spend["amount"],
+                    ))
+                    await db.commit()
+                    raised.append(record)
+
+        # ── Forecast-to-breach ───────────────────────────────────────────────
+        # `alert_on_forecast` is off by default: a projection is not a fact,
+        # and paging on one should be a deliberate choice (see the model's
+        # docstring). A forecast breach is only announced when it is telling
+        # the operator something the ACTUAL alert above has not already said
+        # this cycle — i.e. the forecast threshold is STRICTLY above the
+        # highest threshold actual spend has itself crossed. Without that
+        # guard, a budget already at 100% would also get a "forecast says
+        # 100%" notice every cycle, which is not new information.
+        if budget.alert_on_forecast:
+            projected_percent = state["forecast"]["projected_percent"]
+            forecast_breached = (
+                sorted(t for t in (budget.thresholds or []) if projected_percent >= t)
+                if projected_percent is not None else []
+            )
+            highest_actual = max(breached) if breached else None
+            forecast_breached = [
+                t for t in forecast_breached
+                if highest_actual is None or t > highest_actual
+            ]
+
+            if forecast_breached:
+                f_threshold = max(forecast_breached)
+                f_history = await _already_notified(
+                    db, budget.id, period_key, kind=NOTIFICATION_FORECAST,
+                )
+                f_allowed, f_reason = _should_notify(
+                    f_threshold, f_history,
+                    cooldown_hours=budget.cooldown_hours, now=now,
+                )
+
+                f_record = {
+                    "budget_id": str(budget.id),
+                    "budget_name": budget.name,
+                    "threshold": f_threshold,
+                    "utilization_percent": projected_percent,
+                    "period_key": period_key,
+                    "kind": NOTIFICATION_FORECAST,
+                    "reason": f_reason,
+                }
+
+                if not f_allowed:
+                    suppressed.append(f_record)
+                else:
+                    f_severity = severity_for_threshold(projected_percent)
+                    forecast = state["forecast"]
+                    f_details = (
+                        f"Budget '{budget.name}' is PROJECTED to reach "
+                        f"{projected_percent:.1f}% of its {budget.amount:,.2f} "
+                        f"{budget.currency} {budget.period.lower()} budget by "
+                        f"{state['period']['end']} ({forecast['basis']}). Actual "
+                        f"spend so far is {percent:.1f}%."
+                    )
+
+                    # A distinct dedupe identity from the actual-breach alert
+                    # above — see the model docstring for why reusing
+                    # COST_BUDGET:... here would be wrong.
+                    f_dedupe_key = (
+                        f"COST_BUDGET_FORECAST:{budget.id}:{period_key}:{f_threshold}"
+                    )
+                    f_record["dedupe_key"] = f_dedupe_key
+                    f_record["severity"] = f_severity
+
+                    if dry_run:
+                        raised.append({**f_record, "dry_run": True})
+                    else:
+                        await alerting.trigger_anomaly_alert(
+                            anomaly_type="COST_BUDGET_FORECAST",
+                            details=f_details,
+                            severity=f_severity,
+                            account_id=budget.account_id,
+                            dedupe_key=f_dedupe_key,
+                            context={
+                                "budget_id": str(budget.id),
+                                "budget_name": budget.name,
+                                "threshold_percent": f_threshold,
+                                "projected_percent": projected_percent,
+                                "actual_percent": percent,
+                                "budget_amount": budget.amount,
+                                "currency": budget.currency,
+                                "period": state["period"],
+                                "forecast": forecast,
+                                "source": "run_rate_projection",
+                            },
+                        )
+                        db.add(CloudCostBudgetNotification(
+                            budget_id=budget.id, period_key=period_key,
+                            threshold=f_threshold, kind=NOTIFICATION_FORECAST,
+                            notified_at=now, observed_percent=projected_percent,
+                            observed_amount=forecast["projected_period_total"],
+                        ))
+                        await db.commit()
+                        raised.append(f_record)
 
     return {
         "evaluated": evaluated,

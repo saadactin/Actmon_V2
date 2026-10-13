@@ -11,6 +11,7 @@ import { collectIdentity, runAssessment } from '../api/securityCenter.api';
 import { collectCertificates } from '../api/certificates.api';
 import { collectEvents } from '../api/events.api';
 import { runAnalysis } from '../api/intelligence.api';
+import { analyze as analyzeIdentity, collect as collectPrincipals } from '../api/identity.api';
 import {
   busyRefusal, isBusy, isTerminal, shouldInvalidate, syncDecision,
 } from '../utils/refreshModel';
@@ -243,6 +244,13 @@ export const useTabRefresh = (accountId, tabKey) => {
         case 'certificates': return collectCertificates(accountId);
         case 'events': return collectEvents(accountId);
         case 'analysis': return runAnalysis(accountId);
+        case 'ciem': {
+          // Collect first, then analyse: the analysis reads what the collection
+          // just wrote, and running them the other way round would evaluate the
+          // previous sweep's principals.
+          const collected = await collectPrincipals(accountId);
+          return { collected, ...(await analyzeIdentity(accountId)) };
+        }
         default: throw new Error(`No refresh is defined for ${action}`);
       }
     },

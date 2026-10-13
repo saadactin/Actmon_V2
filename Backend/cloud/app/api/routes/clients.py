@@ -239,3 +239,23 @@ async def send_report(client_id: uuid.UUID, report_id: uuid.UUID,
         return await ClientReportService(db).send(client_id, report_id, actor=principal.name)
     except ClientError as exc:
         _raise(exc)
+
+
+@router.get("/{client_id}/scorecard")
+async def client_scorecard(client_id: uuid.UUID, db: AsyncSession = Depends(get_db),
+                           _: Principal = Depends(rbac.require(rbac.CLIENT_VIEW))):
+    """The FinOps maturity scorecard for every account under one client.
+
+    A domain-grouped, Crawl/Walk/Run read of `finops_health` (see
+    cost_allocation_service), scoped to this client rather than one account
+    or every account -- the natural unit for an MSP handing a customer their
+    own report. Also records (at most once per day) and returns the trend.
+    """
+    from app.services.cost_service import CostService
+
+    try:
+        return await CostService(db).get_client_governance(client_id)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _raise(exc)

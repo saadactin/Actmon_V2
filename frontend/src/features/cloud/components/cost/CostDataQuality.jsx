@@ -36,10 +36,10 @@ export function DataQualityBadge({ quality, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-control border border-border bg-surface px-2.5 py-1.5 text-[11.5px] font-semibold text-fg transition-colors hover:bg-sunken"
+      className="inline-flex items-center gap-1.5 rounded-control border border-border bg-surface px-2.5 py-1.5 text-meta font-semibold text-fg transition-colors hover:bg-sunken"
       title="Open cost diagnostics"
     >
-      <span className="text-[10px] font-bold uppercase tracking-wider text-muted">
+      <span className="text-micro font-bold uppercase tracking-wider text-muted">
         Data quality
       </span>
       <Badge tone={meta.tone} size="xs">
@@ -90,7 +90,7 @@ export function ProviderStatusStrip({ quality, onDiagnostics, compact = false })
               type="button"
               onClick={onDiagnostics}
               title="Open cost diagnostics"
-              className="flex h-control-sm items-center gap-2 rounded-control border border-border bg-surface px-2.5 text-[11px] text-muted transition-colors hover:bg-sunken"
+              className="flex h-control-sm items-center gap-2 rounded-control border border-border bg-surface px-2.5 text-meta text-muted transition-colors hover:bg-sunken"
             >
               Billing <Badge tone={billingTone} size="xs">{billingLabel}</Badge>
               <span className="text-subtle">·</span>
@@ -110,16 +110,16 @@ export function ProviderStatusStrip({ quality, onDiagnostics, compact = false })
               <p className="truncate text-[12px] font-semibold text-fg">
                 {info.account_name}
               </p>
-              <p className="text-[10px] uppercase tracking-wider text-subtle">
+              <p className="text-micro uppercase tracking-wider text-subtle">
                 {info.provider}
               </p>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="flex items-center gap-1 text-[10px] text-muted">
+              <span className="flex items-center gap-1 text-micro text-muted">
                 Billing
                 <Badge tone={billingTone} size="xs">{billingLabel}</Badge>
               </span>
-              <span className="flex items-center gap-1 text-[10px] text-muted">
+              <span className="flex items-center gap-1 text-micro text-muted">
                 Inventory
                 <Badge tone={inventoryTone} size="xs">{inventoryLabel}</Badge>
               </span>
@@ -157,7 +157,7 @@ export function FreshnessPanel({ quality }) {
         <div key={accountId} className="rounded-control border border-border bg-sunken p-3">
           <p className="mb-2 text-[12px] font-semibold text-fg">
             {info.account_name}
-            <span className="ml-1.5 text-[10px] uppercase tracking-wider text-subtle">
+            <span className="ml-1.5 text-micro uppercase tracking-wider text-subtle">
               {info.provider}
             </span>
           </p>
@@ -167,8 +167,8 @@ export function FreshnessPanel({ quality }) {
               const never = !row.retrieved_at;
               return (
                 <div key={key} className="flex items-center justify-between gap-2">
-                  <dt className="text-[11.5px] text-muted">{label}</dt>
-                  <dd className="flex items-center gap-1.5 text-[11.5px] font-medium text-fg">
+                  <dt className="text-meta text-muted">{label}</dt>
+                  <dd className="flex items-center gap-1.5 text-meta font-medium text-fg">
                     <Clock size={11} className="text-subtle" aria-hidden />
                     {never ? (
                       <span className="text-muted">Never</span>
@@ -235,7 +235,7 @@ export function CapabilityMatrix({ capabilities }) {
                   <td key={p} className="px-3 py-2">
                     <span
                       className={cn(
-                        'inline-flex items-center gap-1 text-[11.5px] font-semibold',
+                        'inline-flex items-center gap-1 text-meta font-semibold',
                         yes ? 'text-success-fg' : 'text-muted',
                       )}
                       title={reason || undefined}
@@ -252,7 +252,7 @@ export function CapabilityMatrix({ capabilities }) {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-[11px] text-subtle">
+      <p className="mt-2 text-meta text-subtle">
         “No” means this integration cannot produce the value — it is never shown
         as zero. Hover a “No” for the reason and what would change it.
       </p>

@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.resource import CloudResource
 from app.models.cloud_account import CloudAccount
 from app.repository.resource_repo import ResourceRepository
+from app.services import fetch_policy
 
 logger = logging.getLogger("cloud_svc.metrics")
 
@@ -296,6 +297,106 @@ def _align_to_timestamps(
 
 
 # ---------------------------------------------------------------------------
+# Saved telemetry, for providers read only during a refresh (AWS)
+# ---------------------------------------------------------------------------
+
+# Stored telemetry metric -> (Monitoring-tab label, scale). The labels are the
+# live path's own, so the tab reads the same whichever source filled it; the
+# order is the order the charts appear in.
+_SAVED_METRIC_LABELS = {
+    "cpu_percent": ("CPU Utilization (%)", 1.0),
+    "memory_percent": ("Memory Utilization (%)", 1.0),
+    "network_in": ("Network In (KB)", 1 / 1024),
+    "network_out": ("Network Out (KB)", 1 / 1024),
+    "connections": ("DB Connections", 1.0),
+    "invocations": ("Invocations", 1.0),
+    "errors": ("Errors", 1.0),
+    "throttles": ("Throttles", 1.0),
+    "duration_ms": ("Duration (ms)", 1.0),
+    "consumed_rcu": ("Read Capacity (RCU)", 1.0),
+    "consumed_wcu": ("Write Capacity (WCU)", 1.0),
+    "volume_read_ops": ("Read Ops", 1.0),
+    "volume_write_ops": ("Write Ops", 1.0),
+    "stored_bytes": ("Size (MB)", 1 / (1024 * 1024)),
+    "object_count": ("Object Count", 1.0),
+}
+_SAVED_ORDER = {name: i for i, name in enumerate(_SAVED_METRIC_LABELS)}
+_SAVED_HOURS = 24
+
+
+def _saved_points(series, granularity_seconds, scale: float) -> List[Dict[str, Any]]:
+    """[[epoch, value], ...] -> the tab's [{timestamp, value}], last 24 h of an
+    hourly series (a daily series is shown whole). Null samples are dropped,
+    never drawn as zero."""
+    series = series or []
+    if (granularity_seconds or 3600) <= 3600:
+        series = series[-_SAVED_HOURS:]
+    points = []
+    for pt in series:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2 or pt[1] is None:
+            continue
+        points.append({
+            "timestamp": datetime.fromtimestamp(pt[0], tz=timezone.utc).isoformat(),
+            "value": round(float(pt[1]) * scale, 4),
+        })
+    return points
+
+
+async def _saved_metrics(resource_id: uuid.UUID, resource: CloudResource,
+                         provider: str, db: AsyncSession) -> Dict[str, Any]:
+    """The Monitoring tab for a refresh-only provider, from the telemetry the
+    last refresh saved (Resource Intelligence collects it on every refresh).
+    Never calls the provider."""
+    from app.models.optimization import CloudResourceTelemetry
+
+    rows = (await db.execute(
+        select(CloudResourceTelemetry)
+        .where(CloudResourceTelemetry.resource_id == resource.id)
+    )).scalars().all()
+
+    ok = sorted((r for r in rows if r.status == "OK"),
+                key=lambda r: _SAVED_ORDER.get(r.metric, len(_SAVED_ORDER)))
+    metrics: Dict[str, List[Dict[str, Any]]] = {}
+    as_of: Optional[datetime] = None
+    for t in ok:
+        label, scale = _SAVED_METRIC_LABELS.get(
+            t.metric, (t.metric.replace("_", " ").title(), 1.0))
+        metrics[label] = _saved_points(t.series, t.granularity_seconds, scale)
+        if t.collected_at and (as_of is None or t.collected_at > as_of):
+            as_of = t.collected_at
+
+    diagnostic = None
+    if not any(metrics.values()):
+        # Say what the refresh actually recorded, e.g. "the instance was
+        # stopped", before falling back to the general rule.
+        recorded = next((r.reason for r in rows if r.reason), None)
+        diagnostic = {
+            "category": "awaiting_refresh",
+            "message": (
+                (f"{recorded} " if recorded else
+                 "The last refresh saved no metrics for this resource. ")
+                + "AWS metrics are read from CloudWatch only during a refresh, "
+                "because CloudWatch charges for metric reads. They are saved for "
+                "running EC2 instances, RDS databases, Lambda functions, DynamoDB "
+                "tables, EBS volumes and S3 buckets."
+            ),
+        }
+
+    return {
+        "resource_id": str(resource_id),
+        "resource_type": resource.resource_type,
+        "metrics": metrics,
+        # Not live: these are what the last refresh read.
+        "realtime": False,
+        "saved": True,
+        "as_of": as_of.isoformat() if as_of else None,
+        "provider": (provider or "").upper(),
+        "source": "AWS CloudWatch",
+        "diagnostic": diagnostic,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry-point
 # ---------------------------------------------------------------------------
 
@@ -304,6 +405,15 @@ async def get_resource_metrics(resource_id: uuid.UUID, db: AsyncSession) -> Dict
     resource: Optional[CloudResource] = await repo.get_by_id(resource_id)
     if not resource:
         return {"error": "Resource not found"}
+
+    # AWS is read only during a refresh (fetch_policy): opening or re-polling
+    # this tab shows the telemetry the last refresh saved, and never calls
+    # CloudWatch.
+    account_provider = (await db.execute(
+        select(CloudAccount.provider).where(CloudAccount.id == resource.account_id)
+    )).scalar_one_or_none()
+    if not fetch_policy.may_call_provider(account_provider):
+        return await _saved_metrics(resource_id, resource, account_provider, db)
 
     rtype = resource.resource_type
     timestamps = _make_timestamps(24)

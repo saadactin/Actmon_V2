@@ -255,9 +255,81 @@ class AWSScanner:
                                 "raw_data": inst,
                             }
                         )
+            self._enrich_with_images(ec2, region, results)
             return results
 
         return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── AMI metadata ──────────────────────────────────────────────────────────
+    def _enrich_with_images(self, ec2, region: str, results: List[Dict[str, Any]]) -> None:
+        """Resolve each instance's AMI to the OS it actually runs.
+
+        `ImageId` alone is an opaque identifier. What a vulnerability check
+        needs is the platform and version behind it — "Windows Server 2019
+        Datacenter", "Amazon Linux 2 5.10" — and that costs one batched call
+        per region rather than one per instance.
+
+        Queried by FILTER, not by `ImageIds=`. `describe_images(ImageIds=[...])`
+        raises `InvalidAMIID.NotFound` for the whole batch if a single AMI has
+        been deregistered since the instance launched, which is common on
+        long-lived hosts and would have lost the metadata for every other
+        instance in the region. A filter silently omits what it cannot find,
+        and the instances it omitted are then marked `image_not_found` rather
+        than left looking uncollected.
+
+        Three outcomes, kept distinct because a vulnerability engine must not
+        read them as the same thing:
+          collected      - the AMI was described; its fields are below.
+          image_not_found - the call succeeded but this AMI is gone or not
+                            visible to us. Nothing can be said about its OS.
+          not_collected  - the call was denied or failed. Also nothing can be
+                           said, but for a reason the operator can fix.
+        """
+        image_ids = sorted({
+            r["config"].get("image_id") for r in results
+            if r["config"].get("image_id")
+        })
+        if not image_ids:
+            return
+
+        images: Dict[str, Dict[str, Any]] = {}
+        failed = False
+        # Chunked: a filter value list is not unbounded, and an account with
+        # hundreds of distinct AMIs would otherwise build one oversized request.
+        for i in range(0, len(image_ids), 180):
+            chunk = image_ids[i:i + 180]
+            page = self._subcall(
+                "EC2", region,
+                lambda c=chunk: ec2.describe_images(
+                    Filters=[{"Name": "image-id", "Values": c}]),
+                "DescribeImages",
+            )
+            if page is None:
+                failed = True
+                continue
+            for img in page.get("Images", []):
+                images[img["ImageId"]] = img
+
+        for r in results:
+            cfg = r["config"]
+            aid = cfg.get("image_id")
+            if not aid:
+                continue
+            img = images.get(aid)
+            if img is None:
+                cfg["image_metadata_status"] = "not_collected" if failed else "image_not_found"
+                continue
+            cfg["image_metadata_status"] = "collected"
+            cfg["image_name"] = img.get("Name")
+            cfg["image_description"] = img.get("Description")
+            # `PlatformDetails` is the licensing-grade string ("Red Hat
+            # Enterprise Linux", "Windows"); `Platform` on the instance is only
+            # ever "windows" or absent, so it cannot distinguish two Linuxes.
+            cfg["image_platform_details"] = img.get("PlatformDetails")
+            cfg["image_created_at"] = img.get("CreationDate")
+            cfg["image_owner_id"] = img.get("OwnerId")
+            cfg["image_architecture"] = img.get("Architecture")
+            r["metadata"]["image_deprecation_time"] = img.get("DeprecationTime")
 
     # ── EBS Volumes ───────────────────────────────────────────────────────────
     async def _scan_ebs(self, region: str) -> List[Dict[str, Any]]:

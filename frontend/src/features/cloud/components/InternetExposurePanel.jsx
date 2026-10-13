@@ -51,7 +51,7 @@ export default function InternetExposurePanel({ accountId }) {
           <div key={s.label} className="card flex items-center gap-3 p-card">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${s.tone}`}>{s.icon}</div>
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">{s.label}</div>
+              <div className="text-micro font-semibold uppercase tracking-wide text-muted">{s.label}</div>
               <div className="text-xl font-bold text-fg">{s.count}</div>
             </div>
           </div>
@@ -93,7 +93,7 @@ export default function InternetExposurePanel({ accountId }) {
                     {e.open_ports.map((hit, i) => (
                       <span
                         key={i}
-                        className="rounded-md px-2 py-0.5 text-[11px] font-semibold"
+                        className="rounded-md px-2 py-0.5 text-meta font-semibold"
                         style={{
                           color: hit.severity === 'CRITICAL' ? 'var(--danger-fg)' : hit.severity === 'INFO' ? 'var(--muted)' : 'var(--warning-fg)',
                           background: hit.severity === 'CRITICAL' ? 'var(--danger-soft)' : hit.severity === 'INFO' ? 'var(--neutral-soft)' : 'var(--warning-soft)',
@@ -104,7 +104,7 @@ export default function InternetExposurePanel({ accountId }) {
                     ))}
                   </div>
                   {e.confidence !== 'high' && (
-                    <p className="mt-2 text-[11px] italic text-subtle">Confidence: {e.confidence}</p>
+                    <p className="mt-2 text-meta italic text-subtle">Confidence: {e.confidence}</p>
                   )}
                 </div>
                 <button

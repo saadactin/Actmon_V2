@@ -30,7 +30,7 @@ const Card = ({ label, value, sub, tone = 'neutral', icon, active, onClick, titl
         active && 'border-accent bg-accent-soft/40',
       )}
     >
-      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
+      <div className="mb-1 flex items-center gap-1.5 text-meta font-semibold uppercase tracking-wider text-muted">
         {icon && <Icon name={icon} size={13} className="text-subtle" />}
         {label}
       </div>
@@ -43,7 +43,7 @@ const Card = ({ label, value, sub, tone = 'neutral', icon, active, onClick, titl
       >
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-[11px] leading-snug text-muted">{sub}</div>}
+      {sub && <div className="mt-0.5 text-meta leading-snug text-muted">{sub}</div>}
     </Element>
   );
 };

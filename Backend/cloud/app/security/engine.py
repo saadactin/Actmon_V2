@@ -45,6 +45,7 @@ from app.security import controls as ctl
 from app.security import credentials as credx
 from app.security import exposure as exp
 from app.security import identity as ident
+from app.security import secrets
 from app.security import ports as portcat
 from app.security import registry as reg
 from app.security import scoring
@@ -497,6 +498,23 @@ def assess(
             risk, provider=prov, account_id=str(account_id), started=started,
             discovery_scan_id=discovery_scan_id))
     for rid, verdicts in cred.rule_stats.items():
+        for verdict, n in verdicts.items():
+            _bump(rule_stats, rid, verdict, n=n)
+
+    # ── Secrets left in configuration ────────────────────────────────────────
+    # Reads the inventory already loaded above, so it costs no extra I/O. The
+    # analyser never returns the secret itself — see secrets.py — so nothing
+    # here can leak one into a finding, an alert e-mail or a log line.
+    #
+    # Surfaces the scanner does not collect produce one INFO finding each, so
+    # "no secrets found" cannot be read as "we looked everywhere".
+    sec = secrets.analyse(provider=prov, account_id=str(account_id),
+                          resources=resources)
+    for risk in sec.risks:
+        findings.append(_secret_finding(
+            risk, provider=prov, account_id=str(account_id), started=started,
+            discovery_scan_id=discovery_scan_id))
+    for rid, verdicts in sec.rule_stats.items():
         for verdict, n in verdicts.items():
             _bump(rule_stats, rid, verdict, n=n)
 
@@ -1010,6 +1028,51 @@ def _credential_finding(risk: "credx.CredentialRisk", *, provider: str, account_
         discovery_scan_id=discovery_scan_id,
         affected_count=risk.affected_count,
         affected_sample=list(risk.affected_sample),
+    )
+
+
+def _secret_finding(risk: "secrets.SecretRisk", *, provider: str, account_id: str,
+                    started: datetime,
+                    discovery_scan_id: Optional[str]) -> SecurityFinding:
+    """A credential found in configuration or in a tag.
+
+    The fingerprint hangs off the resource key AND the location within it, so
+    two secrets in one Lambda are two findings that resolve independently —
+    removing one environment variable should close one finding, not both.
+
+    `risk.evidence` is built by the analyser and already contains only
+    non-reversible material; this function adds nothing to it, so there is one
+    place to audit for leakage rather than two.
+    """
+    rule = reg.RULES[risk.rule_id]
+    return SecurityFinding(
+        rule_id=rule.rule_id,
+        rule_version=rule.version,
+        provider=provider,
+        account_id=account_id,
+        fingerprint=fingerprint(
+            provider=provider, account_id=account_id, rule_id=rule.rule_id,
+            resource_key=risk.resource_key or risk.discriminator,
+            discriminator=risk.discriminator,
+        ),
+        resource_key=risk.resource_key,
+        resource_id=risk.resource_id,
+        resource_name=risk.resource_name,
+        resource_type=risk.resource_type,
+        region=risk.region,
+        title=rule.title,
+        description=f"{rule.description} {risk.detail}",
+        rationale=rule.rationale,
+        remediation=rule.remediation,
+        severity=risk.severity,
+        category=CAT_IAM,
+        verdict=risk.verdict,
+        confidence=risk.confidence,
+        status=OPEN,
+        evidence=dict(risk.evidence),
+        first_detected_at=started,
+        last_detected_at=started,
+        discovery_scan_id=discovery_scan_id,
     )
 
 

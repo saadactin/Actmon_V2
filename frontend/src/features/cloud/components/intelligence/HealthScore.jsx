@@ -23,7 +23,7 @@ export default function HealthScore({ health }) {
     <div>
       <div className="mb-3 flex items-end justify-between gap-3">
         <div>
-          <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Overall</div>
+          <div className="text-meta font-semibold uppercase tracking-wider text-muted">Overall</div>
           <div className={cn('text-[26px] font-bold tabular-nums', TEXT[overallTone])}>
             {healthText(health.overall)}
             {health.overall !== null && health.overall !== undefined && (
@@ -31,7 +31,7 @@ export default function HealthScore({ health }) {
             )}
           </div>
         </div>
-        <p className="max-w-[18rem] text-right text-[10.5px] leading-relaxed text-subtle" title={health.methodology}>
+        <p className="max-w-[18rem] text-right text-meta leading-relaxed text-subtle" title={health.methodology}>
           {health.overall_reason || health.basis}
         </p>
       </div>
@@ -50,9 +50,9 @@ export default function HealthScore({ health }) {
                 <span className={cn('w-10 text-right font-bold tabular-nums', TEXT[tone])}>{healthText(d.score)}</span>
               </div>
               {d.score === null || d.score === undefined ? (
-                <p className="ml-[7.75rem] mt-0.5 text-[10.5px] text-subtle">{d.reason}</p>
+                <p className="ml-[7.75rem] mt-0.5 text-meta text-subtle">{d.reason}</p>
               ) : d.open_findings > 0 ? (
-                <p className="ml-[7.75rem] mt-0.5 text-[10.5px] text-subtle">
+                <p className="ml-[7.75rem] mt-0.5 text-meta text-subtle">
                   {d.open_findings} open finding{d.open_findings === 1 ? '' : 's'} · {d.checks} check{d.checks === 1 ? '' : 's'}
                 </p>
               ) : null}

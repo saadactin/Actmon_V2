@@ -153,7 +153,14 @@ class CostErrorDetail(BaseModel):
 
 class CurrencyBreakdown(BaseModel):
     """A total that may span currencies. ``amount`` is None when mixed --
-    different currencies are never added together."""
+    different currencies are never added together.
+
+    ``amount_inr`` is this same total converted to INR using a real daily FX
+    rate (see ``app.services.fx_rate_service``), so it exists -- and is a
+    single number -- even when ``amount`` is None because the scope is mixed.
+    It is itself None when nothing in ``by_currency`` could be converted
+    (``fx_unconverted`` then explains why); it is never a guess.
+    """
 
     amount: Optional[float] = None
     currency: Optional[str] = None
@@ -161,6 +168,11 @@ class CurrencyBreakdown(BaseModel):
     currencies: List[str] = Field(default_factory=list)
     mixed: bool = False
     na_reason: Optional[str] = None
+
+    amount_inr: Optional[float] = None
+    fx_rates_used: Optional[Dict[str, float]] = None
+    fx_as_of: Optional[str] = None
+    fx_unconverted: Optional[Dict[str, float]] = None
 
 
 class ProviderCapabilities(BaseModel):

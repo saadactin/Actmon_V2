@@ -60,7 +60,7 @@ function FacetSelect({ label, facet, value, onChange, allLabel }) {
   if (!facet?.length) return null;
   return (
     <label className="flex flex-col gap-0.5">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-subtle">{label}</span>
+      <span className="text-micro font-semibold uppercase tracking-wide text-subtle">{label}</span>
       <Select value={value || ''} onChange={onChange} options={options} size="sm" width="auto" />
     </label>
   );
@@ -195,14 +195,14 @@ export default function TopologyToolbar({
                 </p>
               ) : (
                 <>
-                  <p className="border-b border-border px-3 py-1.5 text-[11px] text-subtle">
+                  <p className="border-b border-border px-3 py-1.5 text-meta text-subtle">
                     {formatCount(searchResults.total)} match
                     {searchResults.total === 1 ? '' : 'es'}
                     {searchResults.truncated ? ' · showing the closest' : ''}
                   </p>
                   {groupedResults.map(([provider, rows]) => (
                     <div key={provider}>
-                      <p className="sticky top-0 bg-sunken px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-subtle">
+                      <p className="sticky top-0 bg-sunken px-3 py-1 text-micro font-bold uppercase tracking-wider text-subtle">
                         {providerMeta(provider).label} · {rows.length}
                       </p>
                       {rows.map((node) => {
@@ -217,7 +217,7 @@ export default function TopologyToolbar({
                             <span className="h-5 w-1 shrink-0 rounded-sm" style={{ background: meta.color }} />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-[12.5px] text-fg">{node.name}</span>
-                              <span className="block truncate text-[11px] text-subtle">
+                              <span className="block truncate text-meta text-subtle">
                                 {meta.label}
                                 {node.region ? ` · ${node.region}` : ''}
                               </span>
@@ -242,7 +242,7 @@ export default function TopologyToolbar({
           >
             Filters
             {activeFilterCount > 0 && (
-              <span className="ml-1 rounded-full bg-accent px-1.5 text-[10px] font-bold text-white">
+              <span className="ml-1 rounded-full bg-accent px-1.5 text-micro font-bold text-accent-fg">
                 {activeFilterCount}
               </span>
             )}
@@ -272,11 +272,11 @@ export default function TopologyToolbar({
       {/* ── Row 2: view mode and layout ────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-subtle">View</span>
+          <span className="text-micro font-semibold uppercase tracking-wide text-subtle">View</span>
           <ChipRow label="View mode" options={VIEW_MODES} value={view} onChange={onChangeView} />
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-subtle">Layout</span>
+          <span className="text-micro font-semibold uppercase tracking-wide text-subtle">Layout</span>
           <Select
             value={layout}
             onChange={onChangeLayout}
@@ -284,7 +284,7 @@ export default function TopologyToolbar({
             size="sm"
             width="auto"
           />
-          <span className="hidden text-[11px] text-subtle lg:inline">
+          <span className="hidden text-meta text-subtle lg:inline">
             {LAYOUTS.find((entry) => entry.id === layout)?.hint}
           </span>
         </div>
@@ -299,7 +299,7 @@ export default function TopologyToolbar({
             <FacetSelect label="Region" facet={facets?.region} value={filters.region}
               onChange={(v) => onChangeFilter('region', v)} allLabel="All regions" />
             <label className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-subtle">Category</span>
+              <span className="text-micro font-semibold uppercase tracking-wide text-subtle">Category</span>
               <Select
                 value={filters.category || ''}
                 onChange={(v) => onChangeFilter('category', v)}
@@ -321,7 +321,7 @@ export default function TopologyToolbar({
             <FacetSelect label="Status" facet={facets?.status} value={filters.status}
               onChange={(v) => onChangeFilter('status', v)} allLabel="Any status" />
             <label className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-subtle">Health</span>
+              <span className="text-micro font-semibold uppercase tracking-wide text-subtle">Health</span>
               <Select
                 value={filters.health || ''}
                 onChange={(v) => onChangeFilter('health', v)}
@@ -356,7 +356,7 @@ export default function TopologyToolbar({
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-3">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-subtle">Reduce clutter</span>
+            <span className="text-micro font-semibold uppercase tracking-wide text-subtle">Reduce clutter</span>
             {[
               [hideDefaults, onToggleHideDefaults,
                 `Hide provider defaults${defaultCount ? ` (${defaultCount})` : ''}`,
@@ -396,7 +396,7 @@ export default function TopologyToolbar({
                   width="auto"
                 />
               </label>
-              <span className="text-[11px] text-subtle">
+              <span className="text-meta text-subtle">
                 Context resources are dimmed so the matches stay identifiable.
                 {matchedCount !== undefined && matchedCount !== nodeCount && (
                   <> {formatCount(matchedCount)} of {formatCount(nodeCount)} shown matched.</>
@@ -417,7 +417,7 @@ export default function TopologyToolbar({
           .map(([type, count]) => {
             const style = edgeStyle(type);
             return (
-              <span key={type} className="inline-flex items-center gap-1.5 text-[11.5px] text-muted">
+              <span key={type} className="inline-flex items-center gap-1.5 text-meta text-muted">
                 <svg width="18" height="8" aria-hidden="true">
                   <line
                     x1="0" y1="4" x2="18" y2="4"
@@ -432,10 +432,10 @@ export default function TopologyToolbar({
             );
           })}
         {(!edgeCounts || Object.keys(edgeCounts).length === 0) && (
-          <span className="text-[11.5px] text-subtle">No relationships in the current view</span>
+          <span className="text-meta text-subtle">No relationships in the current view</span>
         )}
 
-        <span className="ml-auto inline-flex items-center gap-3 text-[11.5px] text-subtle">
+        <span className="ml-auto inline-flex items-center gap-3 text-meta text-subtle">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-2 w-2 rounded-full bg-danger-fg" /> Public
           </span>

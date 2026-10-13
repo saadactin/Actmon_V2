@@ -38,7 +38,7 @@ export function ResourceLandscape({
     >
       <div className="space-y-4">
         <div>
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-subtle">
+          <p className="mb-1.5 text-micro font-bold uppercase tracking-wider text-subtle">
             By category
           </p>
           <div className="space-y-0.5">
@@ -58,7 +58,7 @@ export function ResourceLandscape({
 
         {types.length > 0 && (
           <div>
-            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-subtle">
+            <p className="mb-1.5 text-micro font-bold uppercase tracking-wider text-subtle">
               Top resource types
             </p>
             <div className="space-y-0.5">
@@ -108,7 +108,7 @@ export function RegionDistribution({
         ))}
       </div>
       {regions.length > 0 && total > 0 && (
-        <p className="mt-2 border-t border-border pt-2 text-[11px] text-muted">
+        <p className="mt-2 border-t border-border pt-2 text-meta text-muted">
           {`${regions[0].label} holds ${formatPct((regions[0].count / total) * 100)} of this account's inventory.`}
         </p>
       )}
@@ -158,7 +158,7 @@ export function StatusDistribution({
       {/* Without this line, resources whose state nobody reported simply
           vanish from the reader's mental total. */}
       {total > 0 && (
-        <div className="mt-3 border-t border-border pt-2 text-[11px] text-muted">
+        <div className="mt-3 border-t border-border pt-2 text-meta text-muted">
           <span className="font-semibold text-fg">{`${reported.toLocaleString()} / ${total.toLocaleString()}`}</span>
           {` resources have a provider-reported state (${formatPct(coverage)}).`}
           {unknown > 0 && ' The rest are shown as “Not reported”, which is not the same as healthy.'}

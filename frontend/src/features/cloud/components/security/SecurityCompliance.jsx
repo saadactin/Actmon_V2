@@ -83,7 +83,7 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
                       </Badge>
                     )}
                   </div>
-                  <div className="truncate-safe text-[11px] text-subtle">{fw.full_name}</div>
+                  <div className="truncate-safe text-meta text-subtle">{fw.full_name}</div>
                 </div>
                 {fw.controls_failed > 0 && (
                   <Badge tone="danger">{fw.controls_failed} failed</Badge>
@@ -92,18 +92,18 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
 
               <div className="mt-3 grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                  <div className="text-micro font-bold uppercase tracking-wider text-muted">
                     Assessed controls passing
                   </div>
                   <div className="mt-0.5 text-xl font-bold text-fg">
                     {formatPct(fw.control_pass_rate, { nullLabel: 'None assessed' })}
                   </div>
-                  <div className="text-[11px] text-subtle">
+                  <div className="text-meta text-subtle">
                     {fw.controls_passed} of {fw.controls_assessed}
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                  <div className="text-micro font-bold uppercase tracking-wider text-muted">
                     Catalog assessed
                   </div>
                   <div className="mt-0.5 text-xl font-bold text-fg">
@@ -112,7 +112,7 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
                   {/* Of the controls that APPLY — the same denominator as the
                       percentage above it. "of declared" counted n/a controls
                       too, so the tile read "5 of 11" beside 55.6% (5 of 9). */}
-                  <div className="text-[11px] text-subtle">
+                  <div className="text-meta text-subtle">
                     {fw.controls_assessed} of {fw.controls_assessed + fw.controls_not_evaluated} applicable
                   </div>
                 </div>
@@ -129,7 +129,7 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
 
               {/* The framework's own caveat — what this cross-walk is not. */}
               {fw.framework_note && (
-                <p className="mt-auto line-clamp-2 pt-3 text-[11px] leading-snug text-subtle">
+                <p className="mt-auto line-clamp-2 pt-3 text-meta leading-snug text-subtle">
                   {fw.framework_note}
                 </p>
               )}
@@ -157,11 +157,11 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
                     {t.direction}
                   </Badge>
                 </div>
-                <div className="mt-1.5 text-[11px] text-muted">
+                <div className="mt-1.5 text-meta text-muted">
                   Failed controls: {t.controls_failed_before} → {t.controls_failed_now}
                 </div>
                 {t.note && (
-                  <p className="mt-1 text-[11px] italic leading-relaxed text-subtle">{t.note}</p>
+                  <p className="mt-1 text-meta italic leading-relaxed text-subtle">{t.note}</p>
                 )}
               </div>
             ))}
@@ -199,20 +199,20 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
               control: (
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-[11px] text-subtle">{c.framework}</span>
+                    <span className="font-mono text-meta text-subtle">{c.framework}</span>
                     <span className="truncate-safe text-[13px] font-medium text-fg">
                       {c.control_id} {c.title}
                     </span>
                   </div>
-                  <div className="line-clamp-1 text-[11px] text-subtle">{c.reason}</div>
+                  <div className="line-clamp-1 text-meta text-subtle">{c.reason}</div>
                 </div>
               ),
               findings: c.finding_count
                 ? <span className="text-[12px] text-fg">{formatCount(c.finding_count)}</span>
-                : <span className="text-[11px] text-subtle">—</span>,
+                : <span className="text-meta text-subtle">—</span>,
               resources: c.affected_resources
                 ? <span className="text-[12px] text-fg">{formatCount(c.affected_resources)}</span>
-                : <span className="text-[11px] text-subtle">—</span>,
+                : <span className="text-meta text-subtle">—</span>,
             },
             sort: {
               state: c.state, control: `${c.framework} ${c.control_id}`,
@@ -252,7 +252,7 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
                       <span className="text-[13px] font-semibold text-fg">{v.title}</span>
                       <Badge tone="outline" size="xs">{v.category}</Badge>
                     </div>
-                    <div className="mt-1 text-[11px] text-muted">{v.affected_resource}</div>
+                    <div className="mt-1 text-meta text-muted">{v.affected_resource}</div>
                   </div>
                   {onOpenFindings && (
                     <Button size="sm" icon="external"
@@ -264,11 +264,11 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
                 <div className="mt-2 flex flex-wrap gap-3">
                   {Object.entries(v.controls || {}).map(([fw, refs]) => (
                     <div key={fw} className="min-w-0">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-muted">
+                      <div className="text-micro font-bold uppercase tracking-wider text-muted">
                         {fw}
                       </div>
                       {refs.map((r) => (
-                        <div key={r} className="text-[11px] text-fg">{r}</div>
+                        <div key={r} className="text-meta text-fg">{r}</div>
                       ))}
                     </div>
                   ))}
@@ -316,24 +316,24 @@ function ControlDrawer({ control, onClose, onOpenFindings }) {
         </div>
 
         <div>
-          <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+          <h4 className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
             What the control requires
           </h4>
           <p className="leading-relaxed text-fg">{control.requirement}</p>
         </div>
 
         <div>
-          <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+          <h4 className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
             Why this state
           </h4>
           <p className="leading-relaxed text-muted">{control.reason}</p>
-          <p className="mt-1.5 text-[11px] italic leading-relaxed text-subtle">
+          <p className="mt-1.5 text-meta italic leading-relaxed text-subtle">
             {control.state_meaning}
           </p>
         </div>
 
         <div>
-          <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+          <h4 className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
             Checks covering it
           </h4>
           {control.rules?.length === 0 ? (
@@ -352,7 +352,7 @@ function ControlDrawer({ control, onClose, onOpenFindings }) {
                   />
                   <span className="font-mono text-fg">{r}</span>
                   {!control.rules_that_ran?.includes(r) && (
-                    <span className="text-[11px] text-subtle">(did not run)</span>
+                    <span className="text-meta text-subtle">(did not run)</span>
                   )}
                 </li>
               ))}
@@ -386,7 +386,7 @@ function ControlDrawer({ control, onClose, onOpenFindings }) {
 function Metric({ label, value }) {
   return (
     <div className="rounded-control border border-border p-2.5 text-center">
-      <div className="text-[10px] font-bold uppercase tracking-wider text-muted">{label}</div>
+      <div className="text-micro font-bold uppercase tracking-wider text-muted">{label}</div>
       <div className="mt-0.5 text-lg font-bold text-fg">{formatCount(value)}</div>
     </div>
   );

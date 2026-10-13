@@ -532,6 +532,30 @@ class SecurityCenterService:
 
         out["timeline"] = self._timeline(row, alerts)
         out["related"] = await self._related(row)
+
+        # What the declared severity means on THIS resource. Carried beside
+        # `severity`, never instead of it: the rule's verdict about the
+        # condition stays stable across scans, and the contextual band is a
+        # separate, fully-shown calculation the drawer can re-derive.
+        try:
+            from app.services.attack_path_service import AttackPathService
+
+            state = await self.identity.state(account_id)
+            out["risk_context"] = await AttackPathService(self.db).risk_context(
+                account_id,
+                resource_id=str(row.resource_id) if row.resource_id else None,
+                severity=row.severity,
+                rule_id=row.rule_id,
+                resource_type=row.resource_type,
+                identity_collected=state is not None,
+            )
+        except Exception:
+            # A finding must remain readable even if context cannot be built —
+            # a missing graph is a reason to show the finding without its
+            # amplifiers, not a reason to 500 the drawer.
+            logger.exception("Contextual risk unavailable for finding %s", key)
+            out["risk_context"] = None
+
         return out
 
     def _timeline(self, row, alerts) -> List[Dict[str, Any]]:

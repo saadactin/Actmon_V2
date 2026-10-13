@@ -245,6 +245,7 @@ export const EMPTY_FILTERS = {
   providers: [],
   types: [],
   categories: [],
+  services: [],
   regions: [],
   statuses: [],
   risk: [],
@@ -266,7 +267,7 @@ export const EMPTY_FILTERS = {
 };
 
 const ARRAY_KEYS = [
-  'providers', 'types', 'categories', 'regions', 'statuses', 'risk',
+  'providers', 'types', 'categories', 'services', 'regions', 'statuses', 'risk',
   'environments', 'owners', 'resourceGroups', 'compartments',
 ];
 
@@ -307,6 +308,7 @@ const URL_KEYS = {
   providers: 'provider',
   types: 'type',
   categories: 'category',
+  services: 'service',
   regions: 'region',
   statuses: 'status',
   risk: 'risk',

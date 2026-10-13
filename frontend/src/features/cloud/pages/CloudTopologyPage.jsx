@@ -98,7 +98,7 @@ function GlobalStrip({ data, scope, onPickScope, collapsed, onToggle }) {
       >
         <Icon name={collapsed ? 'chevron-right' : 'chevron-down'} size={14} className="text-subtle" />
         <span className="text-[12px] font-semibold text-fg">All clouds</span>
-        <span className="text-[11.5px] text-muted">
+        <span className="text-meta text-muted">
           {formatCount(data.total_resources)} resources across {data.total_accounts} account
           {data.total_accounts === 1 ? '' : 's'}
         </span>
@@ -110,16 +110,16 @@ function GlobalStrip({ data, scope, onPickScope, collapsed, onToggle }) {
             return (
               <div key={provider.provider} className="min-w-[210px] flex-1">
                 <div className="mb-1.5 flex items-center gap-2">
-                  <span className={`rounded border px-1.5 py-px text-[10px] font-bold ${meta.badge}`}>
+                  <span className="rounded border px-1.5 py-px text-micro font-bold" style={meta.badgeStyle}>
                     {meta.label}
                   </span>
-                  <span className="text-[11.5px] text-muted">
+                  <span className="text-meta text-muted">
                     {formatCount(provider.resources)} resources
                   </span>
                   <button
                     type="button"
                     onClick={() => onPickScope(provider.provider)}
-                    className={`ml-auto text-[11px] font-semibold ${
+                    className={`ml-auto text-meta font-semibold ${
                       scope === provider.provider ? 'text-accent-fg' : 'text-muted hover:text-fg'
                     }`}
                   >
@@ -132,7 +132,7 @@ function GlobalStrip({ data, scope, onPickScope, collapsed, onToggle }) {
                       <button
                         type="button"
                         onClick={() => onPickScope(account.account_id)}
-                        className={`flex w-full items-center gap-1.5 rounded-control px-1.5 py-1 text-left text-[11.5px] hover:bg-sunken ${
+                        className={`flex w-full items-center gap-1.5 rounded-control px-1.5 py-1 text-left text-meta hover:bg-sunken ${
                           scope === account.account_id ? 'bg-accent-soft' : ''
                         }`}
                       >
@@ -694,7 +694,7 @@ export const CloudTopologyPage = ({ embedded = false, accountId: propAccountId }
                 size="sm"
                 width="auto"
               />
-              <span className="text-[11.5px] text-muted">
+              <span className="text-meta text-muted">
                 Showing {formatCount(nodes.length)} resources around{' '}
                 <strong className="text-fg">{resourceDetail?.resource?.name || '—'}</strong>
                 {resourceDetail?.truncated && ' (bounded — there are more)'}
@@ -712,7 +712,7 @@ export const CloudTopologyPage = ({ embedded = false, accountId: propAccountId }
             </span>
           )}
           {topology?.topology_generated_at && (
-            <span className="ml-auto text-[11px] text-subtle">
+            <span className="ml-auto text-meta text-subtle">
               Built {formatMoment(topology.topology_generated_at)}
               {topology.build_ms !== undefined ? ` · ${topology.build_ms} ms` : ''}
             </span>

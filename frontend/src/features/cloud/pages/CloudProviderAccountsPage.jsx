@@ -8,6 +8,7 @@ import { PROVIDER_META } from '../components/CloudProviderSelector';
 import { CloudAccountList } from '../components/CloudAccountList';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
+import { UNKNOWN_COLOR, providerTileStyle } from '../utils/providerTheme';
 import CloudFilterBar from '../components/CloudFilterBar';
 import CloudSection from '../components/CloudSection';
 import { keyFromSlug, providerKeyOf } from '../utils/providerScope';
@@ -37,7 +38,10 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
   const navigate = useNavigate();
   const setDrawerOpen = useCloudStore((state) => state.setAddAccountDrawerOpen);
   const providerKey = keyFromSlug(slug) || slug;
-  const meta = PROVIDER_META[providerKey] || { label: providerKey, color: '#64748b', bg: '#f1f5f9', logo: '☁️' };
+  // `bg` and `logo` are gone from PROVIDER_META — the tile is drawn from the
+  // brand registry now, and the mark comes from <ProviderLogo>. An unrecognised
+  // provider falls back to the theme's neutral ink rather than a pinned grey.
+  const meta = PROVIDER_META[providerKey] || { label: providerKey, color: UNKNOWN_COLOR };
 
   const { data: accounts } = useCloudAccounts();
   const { data: counts } = useAccountResourceCounts();
@@ -80,6 +84,7 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
       value: onlineCount,
       sub: 'last scan succeeded',
       ring: 'ring-success-soft',
+      tooltip: 'Our last discovery scan of these accounts succeeded. This is about OUR scan connectivity, not whether the accounts’ own resources are up.',
     },
     {
       key: 'warning',
@@ -90,6 +95,7 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
       value: warningCount,
       sub: 'never scanned or in progress',
       ring: 'ring-warning-soft',
+      tooltip: 'These accounts have never been scanned, or a scan is currently running — connectivity is unverified either way.',
     },
     {
       key: 'offline',
@@ -100,6 +106,7 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
       value: offlineCount,
       sub: 'scan failed (often lost access)',
       ring: 'ring-danger-soft',
+      tooltip: 'Our last discovery scan of these accounts failed — often a lost or revoked credential/role, not necessarily a problem with the account itself.',
     },
     {
       key: null,
@@ -121,7 +128,7 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
         description={`${providerAccounts.length} account${providerAccounts.length !== 1 ? 's' : ''} · pick one to view its dashboard`}
         backTo="/cloud"
         leading={(
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border" style={providerTileStyle(providerKey)}>
             <ProviderLogo provider={providerKey} size={28} />
           </div>
         )}
@@ -145,6 +152,7 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
             <Wrapper
               key={card.label}
               type={clickable ? 'button' : undefined}
+              title={card.tooltip}
               onClick={clickable ? () => setStatusFilter((prev) => (prev === card.key ? null : card.key)) : undefined}
               className={`flex items-center gap-3 rounded-2xl border bg-surface px-4 py-3.5 text-left shadow-sm transition-all ${
                 clickable ? 'hover:-translate-y-0.5 hover:shadow-md' : ''
@@ -157,9 +165,9 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
                 {card.logo ? card.logo : <Icon name={card.icon} size={18} />}
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">{card.label}</p>
+                <p className="text-micro font-bold uppercase tracking-wide text-subtle">{card.label}</p>
                 <p className="text-2xl leading-none font-black text-fg">{card.value}</p>
-                <p className="mt-0.5 truncate text-[10px] text-subtle">{card.sub}</p>
+                <p className="mt-0.5 truncate text-micro text-subtle">{card.sub}</p>
               </div>
             </Wrapper>
           );
@@ -184,7 +192,7 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
               key={env}
               type="button"
               onClick={() => setEnvFilter(env)}
-              className={`h-7 rounded-lg px-3.5 text-[11px] font-bold transition-all ${
+              className={`h-7 rounded-lg px-3.5 text-meta font-bold transition-all ${
                 envFilter === env
                   ? 'bg-accent text-accent-fg shadow'
                   : 'text-subtle hover:bg-sunken hover:text-fg'

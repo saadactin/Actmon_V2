@@ -102,7 +102,7 @@ export default function FindingFilters({ filters, facets, onChange, total }) {
 function ChipRow({ label, children }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="w-16 shrink-0 text-[10.5px] font-bold uppercase tracking-wider text-subtle">{label}</span>
+      <span className="w-16 shrink-0 text-meta font-bold uppercase tracking-wider text-subtle">{label}</span>
       {children}
     </div>
   );

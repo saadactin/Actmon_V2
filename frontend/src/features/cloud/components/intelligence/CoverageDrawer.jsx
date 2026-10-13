@@ -25,8 +25,8 @@ export default function CoverageDrawer({ accountId, open, onClose }) {
         <div className="space-y-5 text-sm">
           <DrawerSection title="Rules that ran" icon="list">
             <div className="overflow-hidden rounded-control border border-border">
-              <table className="w-full text-[11.5px]">
-                <thead className="bg-sunken text-left text-[10px] uppercase tracking-wider text-muted">
+              <table className="w-full text-meta">
+                <thead className="bg-sunken text-left text-micro uppercase tracking-wider text-muted">
                   <tr>
                     <th className="px-2.5 py-1.5">Check</th>
                     <th className="px-2 py-1.5 text-right">Checked</th>
@@ -40,9 +40,9 @@ export default function CoverageDrawer({ accountId, open, onClose }) {
                     <tr key={r.rule_id} className="border-t border-border align-top">
                       <td className="px-2.5 py-1.5">
                         <div className="font-medium text-fg">{r.title}</div>
-                        <div className="text-[10.5px] text-subtle">{categoryMeta(r.category).label}</div>
+                        <div className="text-meta text-subtle">{categoryMeta(r.category).label}</div>
                         {r.reasons?.length > 0 && (r.insufficient > 0 || r.errors > 0) && (
-                          <ul className="mt-1 space-y-0.5 text-[10.5px] text-muted">
+                          <ul className="mt-1 space-y-0.5 text-meta text-muted">
                             {r.reasons.slice(0, 3).map((x) => (
                               <li key={x.reason}>{x.count}× {x.reason}</li>
                             ))}
@@ -61,7 +61,7 @@ export default function CoverageDrawer({ accountId, open, onClose }) {
               </table>
             </div>
             {idle.length > 0 && (
-              <p className="mt-2 text-[11px] text-subtle">
+              <p className="mt-2 text-meta text-subtle">
                 {idle.length} other check{idle.length === 1 ? '' : 's'} had nothing to evaluate in this
                 inventory ({idle.map((r) => r.title).slice(0, 6).join(', ')}{idle.length > 6 ? '…' : ''}).
               </p>
@@ -74,7 +74,7 @@ export default function CoverageDrawer({ accountId, open, onClose }) {
             ) : (
               <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                 {metrics.map(([metric, counts]) => (
-                  <li key={metric} className="rounded-control border border-border px-2.5 py-1.5 text-[11px]">
+                  <li key={metric} className="rounded-control border border-border px-2.5 py-1.5 text-meta">
                     <div className="font-semibold text-fg">{metric.replace(/_/g, ' ')}</div>
                     <div className="text-muted">
                       {counts.OK || 0} collected · {counts.NO_DATA || 0} no datapoints
@@ -92,7 +92,7 @@ export default function CoverageDrawer({ accountId, open, onClose }) {
           <DrawerSection title="What cannot be measured here" icon="help">
             <ul className="space-y-1.5">
               {(data.not_measurable || []).map((n) => (
-                <li key={n.what} className="text-[11.5px]">
+                <li key={n.what} className="text-meta">
                   <span className="font-semibold text-fg">{n.what}.</span>{' '}
                   <span className="text-muted">{n.why}</span>
                 </li>

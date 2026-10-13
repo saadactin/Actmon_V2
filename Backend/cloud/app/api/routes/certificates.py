@@ -42,6 +42,8 @@ async def estate(
     within_days: int = Query(90, ge=0, le=730),
     kind: Optional[str] = Query(None, description="CERTIFICATE,SECRET,KEY"),
     include_no_expiry: bool = Query(False),
+    include_replaced: bool = Query(False, description="Also list expired certificates "
+                                   "already replaced by a renewal and no longer used"),
     db: AsyncSession = Depends(get_db),
     _: Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
 ) -> Dict[str, Any]:
@@ -54,7 +56,7 @@ async def estate(
         account_ids = list((await db.execute(stmt)).scalars().all())
     out = await CredentialService(db).estate_view(
         account_ids=account_ids, within_days=within_days, kinds=_kinds(kind),
-        include_no_expiry=include_no_expiry)
+        include_no_expiry=include_no_expiry, include_replaced=include_replaced)
     out["client_id"] = str(client_id) if client_id else None
     return out
 

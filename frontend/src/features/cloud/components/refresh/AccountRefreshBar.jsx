@@ -124,7 +124,7 @@ export default function AccountRefreshBar({ account, accountId }) {
               <span
                 key={key}
                 title={comp.detail || `${comp.label}: ${String(comp.status).toLowerCase()}`}
-                className="inline-flex items-center gap-1 text-[10px] text-muted"
+                className="inline-flex items-center gap-1 text-micro text-muted"
               >
                 <Icon name={meta.icon} size={10} className={meta.className} />
                 {comp.label}
@@ -134,7 +134,7 @@ export default function AccountRefreshBar({ account, accountId }) {
         </div>
       )}
 
-      <div className="text-right text-[11px] leading-snug">
+      <div className="text-right text-meta leading-snug">
         {busy ? (
           <span className="text-accent-text">{busy.text}</span>
         ) : last.at ? (
@@ -168,7 +168,7 @@ export default function AccountRefreshBar({ account, accountId }) {
 
       {notice && !busy && (
         <div className={cn(
-          'flex max-w-xs items-start gap-1.5 rounded-control border px-2 py-1 text-[11px] leading-snug',
+          'flex max-w-xs items-start gap-1.5 rounded-control border px-2 py-1 text-meta leading-snug',
           notice.status === 'SUCCEEDED' ? 'border-success bg-success-soft'
             : notice.status === 'PARTIAL' ? 'border-warning bg-warning-soft'
               : 'border-danger bg-danger-soft',

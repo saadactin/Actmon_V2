@@ -644,6 +644,128 @@ eq("an Azure member is the same principal pointed at one subscription",
    az, {"tenant_id": "t", "client_id": "c", "client_secret": "s", "subscription_id": "sub-1"})
 
 # ═════════════════════════════════════════════════════════════════════════════
+print("\n=== I2. A renewal uploaded under a new name supersedes the old one ===")
+# ═════════════════════════════════════════════════════════════════════════════
+# The Azure TOR case: toriotcom-26 expired, the renewal went up as toriotcom-27,
+# and the old one stayed in the store showing "Expired" forever.
+read = [src(source="azure:app-service-certificates")]
+TOR = ["*.tor-iot.com", "tor-iot.com"]
+
+
+def app_cert(name, days, dns, in_use, rg="tor-rg", **over):
+    return obj(days=days, source="azure:app-service-certificates", scope="sub",
+               name=name, object_key=f"/sub/{rg}/{name}", dns_names=dns, in_use=in_use,
+               region="centralindia", container_name="App Service",
+               details={"resource_group": rg}, **over)
+
+
+old = app_cert("toriotcom-26", -67, TOR, False)
+new = app_cert("toriotcom-27", 108, TOR, True)
+a = analyse([old, new], read, provider="AZURE")
+eq("expired + unused + renewed -> CERT_SUPERSEDED only, no CERT_EXPIRED",
+   rules_of(a), [cx.CERT_SUPERSEDED])
+r = risk(a, cx.CERT_SUPERSEDED)
+eq("...at LOW (cleanup, not an outage)", r and r.severity, LOW)
+check("...naming the renewal", r and "toriotcom-27" in r.detail, r and r.detail)
+eq("...with the renewal in its evidence",
+   r and r.evidence.get("superseded_by", {}).get("name"), "toriotcom-27")
+eq("CERT_EXPIRED counts it NOT_APPLICABLE, never VULNERABLE",
+   a.rule_stats.get(cx.CERT_EXPIRED, {}).get(VULNERABLE, 0), 0)
+
+a = analyse([old, app_cert("unrelated", 108, ["other.com"], True)], read, provider="AZURE")
+eq("a valid certificate for OTHER domains does not supersede it",
+   rules_of(a), [cx.CERT_EXPIRED])
+
+busy = app_cert("toriotcom-26", -67, TOR, True)
+a = analyse([busy, new], read, provider="AZURE")
+r = risk(a, cx.CERT_EXPIRED)
+eq("expired but STILL BOUND + renewed -> CERT_EXPIRED stays HIGH", r and r.severity, HIGH)
+check("...and tells the operator to switch the binding to the renewal",
+      r and "toriotcom-27" in r.detail and "Switch the binding" in r.detail, r and r.detail)
+eq("...with no cleanup finding (deleting it would break the binding)",
+   risk(a, cx.CERT_SUPERSEDED), None)
+
+a = analyse([app_cert("toriotcom-26", -67, TOR, None), new], read, provider="AZURE")
+eq("use NOT REPORTED + renewed -> still CERT_EXPIRED HIGH (unknown is not unused)",
+   risk(a, cx.CERT_EXPIRED).severity, HIGH)
+
+a = analyse([app_cert("api-old", -5, ["x.com", "a.b.x.com"], False),
+             app_cert("wild", 200, ["*.x.com"], True)], read, provider="AZURE")
+eq("a wildcard does not cover the apex or two labels -> not superseded",
+   rules_of(a), [cx.CERT_EXPIRED])
+a = analyse([app_cert("api-old", -5, ["a.x.com"], False),
+             app_cert("wild", 200, ["*.x.com"], True)], read, provider="AZURE")
+eq("...but does cover one label", rules_of(a), [cx.CERT_SUPERSEDED])
+
+a = analyse([old, app_cert("toriotcom-27", 108, TOR, False,
+                           not_before=NOW + timedelta(days=2))], read, provider="AZURE")
+eq("a renewal not valid yet does not supersede", rules_of(a), [cx.CERT_EXPIRED])
+a = analyse([old, app_cert("toriotcom-25", -400, TOR, False)], read, provider="AZURE")
+eq("an OLDER expired certificate does not supersede a newer one",
+   sorted(set(rules_of(a))), [cx.CERT_EXPIRED])
+a = analyse([app_cert("no-names", -5, [], False), new], read, provider="AZURE")
+eq("a certificate with no known names is never matched", rules_of(a), [cx.CERT_EXPIRED])
+a = analyse([app_cert("by-cn", -5, [], False, subject="CN=shield.tor-iot.com, O=TOR"),
+             new], read, provider="AZURE")
+eq("...but its subject CN is used when there are no SANs", rules_of(a), [cx.CERT_SUPERSEDED])
+
+a = analyse([app_cert("toriotcom-26", 20, TOR, False), new], read, provider="AZURE")
+eq("expiring in 20 days, unused, renewed -> cleanup, not CERT_EXPIRING_SOON",
+   rules_of(a), [cx.CERT_SUPERSEDED])
+a = analyse([app_cert("toriotcom-26", 20, TOR, True), new], read, provider="AZURE")
+r = risk(a, cx.CERT_EXPIRING_SOON)
+check("expiring in 20 days, STILL BOUND, renewed -> CERT_EXPIRING_SOON naming the renewal",
+      r is not None and "toriotcom-27" in r.detail, r and r.detail)
+a = analyse([app_cert("toriotcom-26", 60, TOR, False), new], read, provider="AZURE")
+eq("60 days left, unused, renewed -> no finding at all (outside the window)", rules_of(a), [])
+
+# Same rule on the other two clouds' stores.
+lb = "ocid1.loadbalancer.oc1..lb1"
+o_old = obj(days=-30, source="oci:load-balancer-certificates", name="WC_2025",
+            object_key=f"{lb}/certificates/WC_2025", container_key=lb,
+            dns_names=["*.koel.com"], in_use=False)
+o_new = obj(days=60, source="oci:load-balancer-certificates", name="WC_2026",
+            object_key=f"{lb}/certificates/WC_2026", container_key=lb,
+            dns_names=["*.koel.com"], in_use=True)
+a = analyse([o_old, o_new], [src(source="oci:load-balancer-certificates")], provider="OCI")
+eq("OCI: a renewed load-balancer certificate supersedes the old one",
+   rules_of(a), [cx.CERT_SUPERSEDED])
+w_old = obj(days=-1, dns_names=["api.example.com"], in_use=False)
+w_new = obj(days=300, dns_names=["api.example.com"], in_use=True)
+a = analyse([w_old, w_new], read)
+eq("AWS ACM: a re-imported certificate supersedes the old one",
+   rules_of(a), [cx.CERT_SUPERSEDED])
+iam_old = obj(days=-1, source="aws:iam-server-certificates", dns_names=["api.example.com"],
+              in_use=False)
+a = analyse([iam_old, w_new], [src(source="aws:iam-server-certificates"), src()])
+eq("AWS IAM server certificates are never waived (CIS asks for every expired one)",
+   rules_of(a), [cx.AWS_IAM_SERVER_CERT_EXPIRED])
+
+# The closest replacement wins: same holder before a longer-lived one elsewhere.
+near = app_cert("toriotcom-27", 100, TOR, True, rg="tor-rg")
+far = app_cert("toriotcom-28", 400, TOR, True, rg="other-rg")
+s = cx.supersession([old, far, near], NOW)
+eq("the replacement in the same resource group is preferred",
+   s[old["object_key"]]["name"], "toriotcom-27")
+eq("...and is usable in place", s[old["object_key"]]["usable_in_place"], True)
+s = cx.supersession([old, far], NOW)
+eq("a renewal only in ANOTHER resource group is not usable in place (App Service binds "
+   "within its group)", s[old["object_key"]]["usable_in_place"], False)
+lb2 = "ocid1.loadbalancer.oc1..lb2"
+o_busy = dict(o_old, in_use=True)
+o_other = dict(o_new, object_key=f"{lb2}/certificates/WC_2026", container_key=lb2)
+a = analyse([o_busy, o_other], [src(source="oci:load-balancer-certificates")], provider="OCI")
+r = risk(a, cx.CERT_EXPIRED)
+check("OCI: a bound cert whose renewal is on ANOTHER load balancer says upload it here",
+      r and "Upload the renewed certificate where this one lives" in r.detail, r and r.detail)
+s = cx.supersession([dict(w_old, region="us-east-1"), dict(w_new, region="eu-west-1")], NOW)
+eq("ACM: a renewal in another region is not usable in place",
+   next(iter(s.values()))["usable_in_place"], False)
+a2, b2 = dict(old, account_id="A"), dict(new, account_id="B")
+eq("certificates in different accounts never supersede each other",
+   cx.supersession([a2, b2], NOW), {})
+
+# ═════════════════════════════════════════════════════════════════════════════
 print("\n=== J. The rule registry knows every credential rule ===")
 # ═════════════════════════════════════════════════════════════════════════════
 from app.security import registry as reg  # noqa: E402
@@ -656,7 +778,9 @@ check("every credential rule counts toward the credentials coverage dimension",
       all(reg.RULES[rid].coverage == COV_CREDENTIALS for rid in cx.RULE_IDS))
 check("CERT_EXPIRING_SOON is cited by NO compliance control (it is not a failure)",
       not ctl.controls_for_rule(cx.CERT_EXPIRING_SOON))
-check("CERT_EXPIRED is cited by at least one control", bool(ctl.controls_for_rule(cx.CERT_EXPIRED)))
+check("CERT_SUPERSEDED is cited by NO compliance control (cleanup, not a failure)",
+      not ctl.controls_for_rule(cx.CERT_SUPERSEDED))
+check("CERT_EXPIRED is cited by at least one control",bool(ctl.controls_for_rule(cx.CERT_EXPIRED)))
 
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:

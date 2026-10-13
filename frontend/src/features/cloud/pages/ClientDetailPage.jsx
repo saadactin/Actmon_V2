@@ -23,8 +23,9 @@ import { BucketStrip, CertificateTable } from '../components/certificates/Certif
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useCertificateEstate } from '../hooks/useCertificates';
 import {
-  useAssignAccounts, useClient, useDeleteClient, useUnassignAccount,
+  useAssignAccounts, useClient, useClientScorecard, useDeleteClient, useUnassignAccount,
 } from '../hooks/useClients';
+import { FinOpsHealth } from '../components/cost/CostAllocation';
 import {
   certificateHealth, findingCounts, formatMoneyMap, moneyTitle, worstPostureLabel,
 } from '../utils/clientModel';
@@ -33,6 +34,7 @@ import { formatCount, providerLabel } from '../utils/securityModel';
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'dashboard' },
   { id: 'accounts', label: 'Accounts', icon: 'cloud' },
+  { id: 'scorecard', label: 'FinOps scorecard', icon: 'gauge' },
   { id: 'reports', label: 'Monthly report', icon: 'report' },
   { id: 'certificates', label: 'Certificates & Secrets', icon: 'lock' },
 ];
@@ -57,6 +59,10 @@ export default function ClientDetailPage() {
   const [removing, setRemoving] = useState(null);
   const del = useDeleteClient();
   const unassign = useUnassignAccount();
+  // Fetched only once the tab is actually open: the backend records a daily
+  // snapshot on read, and a client page nobody opens the scorecard tab on
+  // should not quietly start accumulating history for it.
+  const scorecard = useClientScorecard(tab === 'scorecard' ? clientId : undefined);
 
   const client = data?.client;
   const summary = data?.summary;
@@ -204,6 +210,10 @@ export default function ClientDetailPage() {
         </CloudSection>
       )}
 
+      {tab === 'scorecard' && (
+        <ClientScorecardTab scorecard={scorecard} accountCount={accounts.length} />
+      )}
+
       {tab === 'reports' && <ClientReportsPanel clientId={client.id} clientName={client.name} push={push} />}
 
       {tab === 'certificates' && <ClientCertificates clientId={client.id} />}
@@ -290,7 +300,7 @@ function AddAccountsDialog({ open, onClose, client, memberIds, push }) {
           <ProviderLogo provider={a.provider} size={18} />
           <div className="min-w-0">
             <div className="truncate-safe text-[13px] font-medium text-fg">{a.account_name}</div>
-            <div className="text-[11px] text-subtle">{providerLabel(a.provider)} · {a.environment}</div>
+            <div className="text-meta text-subtle">{providerLabel(a.provider)} · {a.environment}</div>
           </div>
         </div>
       ),
@@ -338,6 +348,35 @@ function AddAccountsDialog({ open, onClose, client, memberIds, push }) {
   );
 }
 
+/** Reuses FinOpsHealth verbatim — the per-client scorecard is computed
+ *  through the IDENTICAL finops_health() an account's own governance view
+ *  uses, so the two must never look like two different scoring systems. */
+function ClientScorecardTab({ scorecard, accountCount }) {
+  const { data, isLoading, isError, error } = scorecard;
+
+  if (isLoading) return <PageLoading title="Computing the scorecard…" minHeight={200} />;
+  if (isError) {
+    return (
+      <CloudSection>
+        <Notice tone="danger">
+          {error?.response?.data?.detail || error?.message || 'Could not load the scorecard.'}
+        </Notice>
+      </CloudSection>
+    );
+  }
+  if (!accountCount) {
+    return (
+      <CloudSection title="FinOps scorecard">
+        <p className="text-[13px] text-muted">
+          This client has no accounts yet, so there is nothing to score.
+        </p>
+      </CloudSection>
+    );
+  }
+
+  return <FinOpsHealth governance={data} />;
+}
+
 function ClientCertificates({ clientId }) {
   const [within, setWithin] = useState('90');
   const { data, isLoading, isError, error, isFetching } = useCertificateEstate({
@@ -371,7 +410,7 @@ function ClientCertificates({ clientId }) {
       >
         <CertificateTable objects={data?.objects} showAccount loading={isFetching} />
         {data?.truncated && (
-          <p className="px-card py-2 text-[11px] text-warning-fg">Only the first 2,000 are shown.</p>
+          <p className="px-card py-2 text-meta text-warning-fg">Only the first 2,000 are shown.</p>
         )}
       </CloudSection>
     </div>

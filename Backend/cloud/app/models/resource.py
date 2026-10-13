@@ -81,6 +81,9 @@ class CloudResource(Base):
     normalized_type: Mapped[str | None] = mapped_column(
         String(32), nullable=True, index=True
     )
+    # The provider's product ("aws.lambda", "azure.app-service", "oci.compute"),
+    # from services/resource_services.py. Finer than normalized_type.
+    service: Mapped[str | None] = mapped_column(String(64), nullable=True)
     environment: Mapped[str | None] = mapped_column(String(128), nullable=True)
     owner: Mapped[str | None] = mapped_column(String(256), nullable=True)
     attachment_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -98,6 +101,7 @@ class CloudResource(Base):
         Index("ix_cloud_resources_account_region", "account_id", "region_or_zone"),
         Index("ix_cloud_resources_account_nstatus", "account_id", "normalized_status"),
         Index("ix_cloud_resources_account_ntype", "account_id", "normalized_type"),
+        Index("ix_cloud_resources_account_service", "account_id", "service"),
         Index("ix_cloud_resources_account_name", "account_id", "resource_name"),
         Index("ix_cloud_resources_account_seen", "account_id", "last_seen_at"),
         Index("ix_cloud_resources_updated_at", "updated_at"),

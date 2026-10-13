@@ -1,8 +1,3 @@
-export const formatCurrency = (value, currency = 'USD') => new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency,
-}).format(value);
-
 export const formatDate = (dateString) => {
   if (!dateString) return '-';
   const d = new Date(dateString);

@@ -4,6 +4,7 @@ import {
   X, Sparkles, HelpCircle, Wrench, Calculator, ExternalLink,
   Terminal, MousePointerClick, AlertTriangle, Info,
 } from 'lucide-react';
+import { symbolFor } from '../utils/costFormat';
 
 // ── Static "why / how" guidance, keyed by the backend rule name ───────────────
 // The savings numbers come from the API (real OCI list prices); this file holds
@@ -116,8 +117,6 @@ const FALLBACK_GUIDE = {
   consoleSteps: ['Open the affected resource in the provider console and verify it is still needed.', 'Apply the change described in the recommendation, backing up first where relevant.'],
 };
 
-const symbolFor = (code) => (code ? ({ USD: '$', INR: '₹', EUR: '€', GBP: '£' }[code] ?? `${code} `) : '');
-
 const fmt = (n) => n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const RecommendationDetailModal = ({ opt, onClose }) => {
@@ -159,7 +158,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
           <div className="min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
               <h2 className="text-lg font-bold text-fg">{opt.rule}</h2>
-              <span className={`rounded-full text-[11px] font-bold uppercase tracking-wide px-2.5 py-0.5 ${sevStyle}`}>
+              <span className={`rounded-full text-meta font-bold uppercase tracking-wide px-2.5 py-0.5 ${sevStyle}`}>
                 {opt.severity} Severity
               </span>
             </div>
@@ -187,7 +186,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
 
           {/* Savings headline */}
           <div className={`rounded-card border border-border p-5 ${hasSavings ? 'bg-success-soft' : 'bg-sunken'}`}>
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle mb-1">
+            <div className="flex items-center gap-2 text-meta font-bold uppercase tracking-wider text-subtle mb-1">
               <Sparkles size={14} className={hasSavings ? 'text-success-fg' : 'text-subtle'} />
               Estimated Monthly Saving
             </div>
@@ -213,7 +212,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
               {breakdown.length > 0 && (
                 <div className="overflow-x-auto rounded-card border border-border mb-3">
                   <table className="w-full text-sm">
-                    <thead className="bg-sunken text-[11px] uppercase tracking-wider text-subtle">
+                    <thead className="bg-sunken text-meta uppercase tracking-wider text-subtle">
                       <tr>
                         <th className="text-left font-semibold px-3 py-2">Component</th>
                         <th className="text-right font-semibold px-3 py-2">Quantity</th>
@@ -226,7 +225,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
                         <tr key={i}>
                           <td className="px-3 py-2 text-fg">
                             {b.component}
-                            {b.note && <div className="text-[11px] text-subtle">{b.note}</div>}
+                            {b.note && <div className="text-meta text-subtle">{b.note}</div>}
                           </td>
                           <td className="px-3 py-2 text-right text-muted whitespace-nowrap">{fmt(b.quantity)} <span className="text-subtle">{b.unit}</span></td>
                           <td className="px-3 py-2 text-right text-muted whitespace-nowrap">{sym}{b.unit_price}</td>
@@ -256,7 +255,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
                 </ul>
               )}
               {opt.savings_basis && (
-                <p className="flex gap-2 text-[11px] text-muted mt-2 pt-2 border-t border-border">
+                <p className="flex gap-2 text-meta text-muted mt-2 pt-2 border-t border-border">
                   <AlertTriangle size={13} className="text-warning shrink-0 mt-0.5" />
                   <span>{opt.savings_basis}</span>
                 </p>
@@ -285,13 +284,13 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
               <Wrench size={16} className="text-accent" /> How to do it
             </h3>
 
-            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle mb-2">
+            <div className="flex items-center gap-2 text-meta font-bold uppercase tracking-wider text-subtle mb-2">
               <MousePointerClick size={13} /> In the OCI Console
             </div>
             <ol className="space-y-2 mb-4">
               {guide.consoleSteps.map((s, i) => (
                 <li key={i} className="flex gap-3 text-sm text-muted leading-relaxed">
-                  <span className="shrink-0 w-5 h-5 rounded-full bg-accent-soft text-accent-text text-[11px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                  <span className="shrink-0 w-5 h-5 rounded-full bg-accent-soft text-accent-text text-meta font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
                   <span>{s}</span>
                 </li>
               ))}
@@ -299,17 +298,17 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
 
             {guide.cli && guide.cli.length > 0 && (
               <>
-                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle mb-2">
+                <div className="flex items-center gap-2 text-meta font-bold uppercase tracking-wider text-subtle mb-2">
                   <Terminal size={13} /> Or with the OCI CLI
                 </div>
                 <div className="space-y-2">
                   {guide.cli.map((c, i) => (
                     <div key={i}>
-                      <div className="text-[11px] text-subtle mb-1">{c.label}</div>
+                      <div className="text-meta text-subtle mb-1">{c.label}</div>
                       <pre className="bg-inverse text-on-inverse text-xs rounded-control px-3 py-2 overflow-x-auto"><code>{c.cmd}</code></pre>
                     </div>
                   ))}
-                  <p className="text-[11px] text-subtle">Replace <code className="font-mono">&lt;…-ocid&gt;</code> placeholders with the real OCIDs (Console → resource → OCID, or the Resource Details page).</p>
+                  <p className="text-meta text-subtle">Replace <code className="font-mono">&lt;…-ocid&gt;</code> placeholders with the real OCIDs (Console → resource → OCID, or the Resource Details page).</p>
                 </div>
               </>
             )}
@@ -337,7 +336,7 @@ export const RecommendationDetailModal = ({ opt, onClose }) => {
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-border shrink-0 bg-raised">
-          <p className="text-[11px] text-subtle">Savings are list-price estimates — verify against your OCI invoice before acting.</p>
+          <p className="text-meta text-subtle">Savings are list-price estimates — verify against your OCI invoice before acting.</p>
           <button onClick={onClose} className="bg-inverse hover:opacity-90 text-on-inverse rounded-control px-4 py-2 text-sm font-semibold">
             Close
           </button>

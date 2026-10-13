@@ -205,6 +205,48 @@ def single_currency(values: Iterable[Optional[str]]) -> Optional[str]:
     return codes.pop() if len(codes) == 1 else None
 
 
+def convert_total(total: "MoneyTotal", rates: Dict[str, float]) -> dict:
+    """Fold a per-currency total into one INR figure, using pre-fetched rates.
+
+    This does not relax rule 1 above -- it is still true that
+    ``$251.93 + Rs.13,22,788`` is not a number. What changed is that a real
+    exchange rate (fetched by ``app.services.fx_rate_service``, never invented
+    here) turns both into the same unit first, so *that* sum is honest.
+
+    Only buckets with a known rate are summed. A currency ``rates`` has no
+    entry for is left out of the total and reported in ``fx_unconverted``
+    rather than silently dropped -- the same treatment rule 2 gives an unknown
+    amount. This function does no I/O: the caller fetches rates first (see
+    ``fx_rate_service.get_rates_for``) and passes them in, so this stays
+    synchronous and testable like the rest of this module.
+    """
+    converted = 0.0
+    any_converted = False
+    unconverted: Dict[str, float] = {}
+    rates_used: Dict[str, float] = {}
+
+    for code, amount in total.by_currency.items():
+        if code == "INR":
+            converted += amount
+            any_converted = True
+            continue
+        rate = rates.get(code)
+        if rate is None:
+            unconverted[code] = amount
+            continue
+        converted += amount * rate
+        rates_used[code] = rate
+        any_converted = True
+
+    return {
+        # None here means NA, same rule as everywhere else in this module --
+        # it must not render as 0 when nothing was convertible.
+        "amount_inr": round(converted, 4) if any_converted else None,
+        "fx_rates_used": rates_used or None,
+        "fx_unconverted": unconverted or None,
+    }
+
+
 # ── Change between two periods ────────────────────────────────────────────────
 
 NEW = "new"                 # previous was zero/absent, current has spend

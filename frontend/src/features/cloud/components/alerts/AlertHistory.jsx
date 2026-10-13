@@ -92,7 +92,7 @@ export default function AlertHistory({
       onClick: () => onOpen?.(a.id),
       cells: {
         when: (
-          <div className="text-[11px] leading-snug">
+          <div className="text-meta leading-snug">
             <When iso={a.created_at} />
             {a.last_seen_at && a.last_seen_at !== a.created_at && (
               <div className="text-subtle">
@@ -107,13 +107,13 @@ export default function AlertHistory({
             <div className="truncate text-[12px] font-semibold text-fg">
               {a.resource_name || cat.label}
             </div>
-            <div className="line-clamp-2 text-[11px] leading-snug text-muted">
+            <div className="line-clamp-2 text-meta leading-snug text-muted">
               {a.details}
             </div>
           </div>
         ),
         rule: (
-          <span className="block truncate text-[11px] text-muted">
+          <span className="block truncate text-meta text-muted">
             {/* A deleted rule is labelled, not blanked — "why did I get this"
                 must stay answerable after somebody tidies up. */}
             {a.rule_name || (a.rule_id ? 'Rule no longer exists' : 'Raised directly')}
@@ -163,7 +163,7 @@ export default function AlertHistory({
           <button
             type="button"
             onClick={() => onFilters({ ...filters, ruleId: undefined })}
-            className="inline-flex items-center gap-1 rounded-control border border-accent bg-accent-soft px-2 py-1 text-[11px] font-semibold text-accent-text"
+            className="inline-flex items-center gap-1 rounded-control border border-accent bg-accent-soft px-2 py-1 text-meta font-semibold text-accent-text"
             title="Showing only alerts raised by this rule"
           >
             Rule: {ruleName || 'selected rule'}
@@ -207,7 +207,7 @@ export default function AlertHistory({
             )}
           />
           {data?.truncated && (
-            <p className="text-[11px] text-subtle">
+            <p className="text-meta text-subtle">
               Showing the {data.returned} most recent. Narrow the filters to see
               older alerts.
             </p>
