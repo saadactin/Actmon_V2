@@ -352,6 +352,52 @@ console.log('\n6. Props passed to shared UI components are props those component
   check('every prop passed to a shared ui/ component is one that component '
     + 'actually destructures — a misnamed prop is silently undefined',
   problems.length === 0, [...new Set(problems)].slice(0, 6).join(' | '));
+
+  // The mirror of the check above: a prop that is MISSING. The check above
+  // only inspects props that were passed, so a <Table> given children instead
+  // of data passed it cleanly and then crashed at runtime on
+  // `columns.length` — a blank panel with no build error and no overlay.
+  //
+  // Only data-driven components are listed: ones where a missing prop is not a
+  // defaulted option but the thing the component renders.
+  const REQUIRED_PROPS = { Table: ['columns', 'rows'] };
+
+  /** The attribute text of one JSX element, brace-aware.
+   *
+   * A `[^>]*` regex is not good enough here and produced a false positive the
+   * first time this guard met real code: `columns={rows.map((c) => ({...}))}`
+   * contains a `>` inside its arrow function, so the match stopped mid-prop
+   * and the element looked like it had no `rows=`. Tracking brace depth means
+   * only a `>` at depth zero ends the tag — which is the actual rule.
+   */
+  const attrsOf = (src, start) => {
+    let depth = 0;
+    for (let i = start; i < src.length; i += 1) {
+      const ch = src[i];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      else if (ch === '>' && depth === 0) return src.slice(start, i);
+    }
+    return src.slice(start);
+  };
+
+  const missing = [];
+  for (const [file, src] of SOURCES) {
+    for (const [component, required] of Object.entries(REQUIRED_PROPS)) {
+      const re = new RegExp(`<${component}(?=[\\s/>])`, 'g');
+      for (const m of src.matchAll(re)) {
+        const attrs = attrsOf(src, m.index + component.length + 1);
+        for (const prop of required) {
+          if (!new RegExp(`\\b${prop}\\s*=`).test(attrs)) {
+            missing.push(`${at(file, src, m.index)} -> <${component}> has no ${prop}=`);
+          }
+        }
+      }
+    }
+  }
+  check('data-driven ui/ components receive the props they render from — a '
+    + '<Table> without columns/rows builds fine and crashes on open',
+  missing.length === 0, [...new Set(missing)].slice(0, 6).join(' | '));
 }
 
 console.log('\n7. REFRESHED_ROOTS matches the query keys the hooks really use');
@@ -404,6 +450,10 @@ console.log('\n7. REFRESHED_ROOTS matches the query keys the hooks really use');
     'allResources', 'resourceMetrics', 'resources', 'resourceDetail',
     'resourceDrift', 'inventoryHistory', 'cloudEventSources',
     'cloudEventCollection', 'cloudEventStats', 'cloudEventFacets',
+    // Clients: the portfolio and a client's page roll up MANY accounts, so no
+    // key names one account for a refresh to match. They go stale on their
+    // 30-second staleTime instead, and every client write invalidates them.
+    'clients',
   ]);
   const unclassified = [...roots].filter(
     (r) => !declaredSet.has(r) && !DELIBERATELY_NOT_REFRESHED.has(r),
@@ -424,26 +474,28 @@ console.log('\n8. Raw hex colours only where they are sanctioned');
   const ALLOWED = new Set([
     'utils/securityModel.js', 'utils/topologyModel.js', 'utils/eventFormat.js',
     'utils/topologyLayout.js', 'utils/costFormat.js',
+    // THE home for provider brand hues. External identity, so a theme token
+    // would be the wrong owner — but everything derived from them
+    // (`providerBadgeStyle`, `providerTileStyle`, …) mixes against the live
+    // theme, which is why the call sites no longer need to be listed here.
+    'utils/providerTheme.js',
     // Recharts renders to SVG and takes `fill`/`stroke` as concrete values,
     // not CSS custom properties, so a chart series cannot be tokenised the
     // way chrome is. The file pins them to the same values the severity
     // badges use, and says so, precisely so a CRITICAL bar and a CRITICAL
     // badge are one red rather than two that nearly match.
     'components/alerts/AlertCharts.jsx',
-    // Provider BRAND colours — AWS orange, Azure blue, Oracle red, the AWS
-    // navy in the logo mark. External identity, not chrome: they are the
-    // same values for the same reason topologyModel's PROVIDER_META pins
-    // its own, and a theme token would be the wrong home for them.
-    'components/CloudProviderSelector.jsx',
+    // The brand marks themselves — AWS orange and its navy wordmark bar,
+    // Azure's blue gradient stops, Oracle's red ring. These are inside the
+    // inline SVG logos, which ARE the trademark rendition, so they stay
+    // literal; every other use of a brand hue now goes through
+    // `utils/providerTheme` instead.
     'components/ProviderLogo.jsx',
     // SVG `fill` on the canvas indicator dots. An SVG presentation attribute
     // takes a concrete colour, not a CSS custom property, so these cannot be
     // tokenised. The file already pairs each dot with a text label in the
     // resource panel, so the colour is never the only carrier of meaning.
     'components/TopologyCanvas.jsx',
-    // The unknown-provider fallback swatch, mirroring PROVIDER_META's own
-    // Unknown entry.
-    'pages/CloudProviderAccountsPage.jsx',
   ]);
   const findings = [];
   for (const [file, src] of SOURCES) {
@@ -506,6 +558,100 @@ console.log('\n10. Every page is reachable, with the export shape its route expe
   check('every lazy route that destructures a NAMED export finds that export '
     + '(a mismatch throws only when the route is navigated to)',
   problems.length === 0, problems.join(' | '));
+}
+
+console.log('\n11. Two refresh names: "Refresh all" in the header, "Refresh <tab>" per tab');
+{
+  // There were six controls with six names — Refresh Account, Run Discovery
+  // Scan, Run, Run assessment, Collect now, Retry — each re-reading a slice of
+  // the same account, so nobody could tell which one made which tab current.
+  // Now there are exactly two: the header's "Refresh all", and each tab's own
+  // "Refresh <tab>", whose behaviour is declared in utils/tabRefreshModel.js.
+  const rel = (f) => relative(CLOUD, f).replace(/\\/g, '/');
+  const usersOf = (pattern, allowed) => [...SOURCES]
+    .filter(([f, s]) => !allowed.includes(rel(f)) && pattern.test(s))
+    .map(([f]) => rel(f));
+  const rawOf = (file) => RAW.get([...RAW.keys()].find((f) => rel(f) === file)) || '';
+
+  const starters = usersOf(/\b(useStartRefresh|startRefresh)\s*\(/,
+    ['hooks/useAccountRefresh.js', 'api/refresh.api.js']);
+  check('only the shared hook starts a refresh — every button goes through '
+    + 'RefreshAllButton / useRefreshAll', starters.length === 0, starters.join(', '));
+
+  const plainScans = usersOf(/\buseTriggerDiscovery\b/, ['hooks/useDiscovery.js']);
+  check('no component starts a plain discovery scan by hand — the Resources tab '
+    + 'refresh does it through useTabRefresh', plainScans.length === 0, plainScans.join(', '));
+
+  // EventLogPage keeps its empty-state "Load events for the last Nh" window
+  // backfill: a refresh collects forward from the checkpoint and never
+  // reaches back, so that one is a different operation, not a refresh.
+  const sliceRefreshers = usersOf(
+    /\b(useRunAssessment|useCollectCertificates|useCollectIdentity|useCollectEvents)\b/,
+    ['hooks/useSecurityCenter.js', 'hooks/useCertificates.js', 'hooks/useEvents.js',
+      'pages/EventLogPage.jsx'],
+  );
+  check('no component re-reads a slice with its own ad-hoc button — slice '
+    + 'refreshes go through TabRefreshButton', sliceRefreshers.length === 0,
+  sliceRefreshers.join(', '));
+
+  const hookFiles = ['hooks/useAccountRefresh.js', 'hooks/useDiscovery.js',
+    'hooks/useSecurityCenter.js', 'hooks/useCertificates.js', 'hooks/useEvents.js'];
+  const apiFiles = [...SOURCES.keys()].map(rel).filter((f) => f.startsWith('api/'));
+  const sliceCalls = usersOf(
+    /\b(triggerDiscovery|refreshCost|runAssessment|collectIdentity|collectCertificates|collectEvents|runAnalysis)\s*\(/,
+    [...hookFiles, ...apiFiles],
+  );
+  check('the slice APIs are called only by hooks — a component calling one is a '
+    + 'seventh refresh under a new name', sliceCalls.length === 0, sliceCalls.join(', '));
+
+  const OLD_NAMES = ['Run Discovery Scan', 'Run assessment', 'Refresh Account',
+    'Collect now', 'Re-check account', 'Scan Running'];
+  const named = [];
+  for (const [file, src] of SOURCES) {
+    for (const name of OLD_NAMES) {
+      const i = src.indexOf(name);
+      if (i !== -1) named.push(`${at(file, src, i)} "${name}"`);
+    }
+  }
+  check('none of the old names survives in code (comments are not code)',
+    named.length === 0, named.slice(0, 6).join(', '));
+
+  const bars = [...SOURCES].filter(([, s]) => /<AccountRefreshBar\b/.test(s)).map(([f]) => rel(f));
+  check('the bar is rendered once, by the account header every tab shares',
+    bars.length === 1 && bars[0] === 'pages/CloudDashboard.jsx', bars.join(', '));
+
+  const tabButtons = [...SOURCES].filter(([, s]) => /<TabRefreshButton\b/.test(s))
+    .map(([f]) => rel(f)).sort();
+  check('tab refreshes render in exactly the two tab strips (account tabs, '
+    + 'Security Center sub-tabs)',
+  tabButtons.join(',') === 'pages/CloudDashboard.jsx,pages/SecurityCenterPage.jsx',
+  tabButtons.join(', '));
+
+  // Every tab a user can open must have a declared refresh — a tab missing
+  // from the table silently renders no button.
+  const model = rawOf('utils/tabRefreshModel.js');
+  const tabIds = (file) => {
+    const src = rawOf(file);
+    const from = src.indexOf('const TABS = [');
+    const body = from < 0 ? '' : src.slice(from, src.indexOf('];', from));
+    return [...body.matchAll(/\bid:\s*'([^']+)'/g)].map((m) => m[1]);
+  };
+  const declared = (k) => model.includes(`  ${k}: {`) || model.includes(`  '${k}': {`);
+  const delegated = ['security', 'compliance'];
+  const mainIds = tabIds('pages/CloudDashboard.jsx');
+  const subIds = tabIds('pages/SecurityCenterPage.jsx');
+  const missing = [
+    ...mainIds.filter((id) => !delegated.includes(id) && !declared(id)),
+    ...subIds.map((id) => `security.${id}`).filter((k) => !declared(k)),
+  ];
+  // A guard on the PARSER, not a cap on tabs: if either table stops being
+  // readable (renamed const, changed quoting) both lists come back empty and
+  // the refresh check below would pass vacuously. 10 account tabs since
+  // Identity & Access; 13 Security Center sub-tabs since Threats and Ransomware.
+  check('the tab tables were read (10 account tabs, 13 Security Center sub-tabs)',
+    mainIds.length === 10 && subIds.length === 13, `${mainIds.length} / ${subIds.length}`);
+  check('every account tab and Security Center sub-tab declares its refresh in '
+    + 'tabRefreshModel.js', missing.length === 0, missing.join(', '));
 }
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);

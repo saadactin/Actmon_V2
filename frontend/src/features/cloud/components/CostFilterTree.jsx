@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronRight, ChevronDown, Server, Cloud, MapPin, Package, Layers } from 'lucide-react';
+import { compact as formatCompact } from '../utils/costFormat';
 
 export const EMPTY_TREE_SELECTION = {
   provider: null,
@@ -9,36 +10,25 @@ export const EMPTY_TREE_SELECTION = {
   type: null,
 };
 
-const symbolFor = (code) => (code
-  ? ({ USD: '$', INR: '₹', EUR: '€', GBP: '£' }[code] ?? `${code} `)
-  : '');
-
-// Same abbreviation used for the trend chart's Y-axis (CostPage.jsx) — a raw
-// 6+ digit amount doesn't fit a tree row's badge.
-const formatCompact = (value, currency) => {
-  const abs = Math.abs(value);
-  const sym = symbolFor(currency);
-  if (abs >= 1_000_000_000) return `${sym}${(value / 1_000_000_000).toFixed(1)}B`;
-  if (abs >= 1_000_000) return `${sym}${(value / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sym}${(value / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}K`;
-  return `${sym}${value.toFixed(value ? 2 : 0)}`;
-};
-
 // Provider -> Account -> Region -> Service -> Resource Type, each level
 // carrying the match count AND the real cost total beneath it, so the tree
 // shows impact (not just row count) before drilling in.
+//
+// Totals here are built from `cost_inr` (every row converted to INR
+// server-side — see `cost_service.get_cost_report`), never the native
+// `cost`: this tree spans providers and a Provider node sums every Account
+// beneath it, so a raw sum would silently add USD and INR rows together the
+// moment an estate billed in more than one currency.
 function buildTree(items) {
   const providers = new Map();
-  let currency = null;
 
   for (const item of items) {
-    currency = currency || item.currency || null;
     const p = item.provider || 'Unknown';
     const a = item.account_name || 'Unknown';
     const r = item.region || 'Unknown';
     const s = item.service || 'Unknown';
     const t = item.resource_type || 'Unknown';
-    const cost = Number(item.cost) || 0;
+    const cost = Number(item.cost_inr) || 0;
 
     if (!providers.has(p)) providers.set(p, new Map());
     const accounts = providers.get(p);
@@ -76,22 +66,22 @@ function buildTree(items) {
     return { name: pName, count: providerCount, cost: providerCost, accounts: accountNodes };
   });
 
-  return { tree, currency };
+  return tree;
 }
 
 const rowClass = (active) => `w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-control text-xs text-left transition-colors ${
   active ? 'bg-accent-soft text-accent-text font-semibold' : 'text-muted hover:bg-sunken'
 }`;
 
-const CountBadge = ({ count, cost, currency }) => (
+const CountBadge = ({ count, cost }) => (
   <span className="flex items-center gap-1.5 shrink-0">
-    <span className="text-[10px] text-subtle font-bold">{count}</span>
-    <span className="text-[10px] text-subtle">{formatCompact(cost, currency)}</span>
+    <span className="text-micro text-subtle font-bold">{count}</span>
+    <span className="text-micro text-subtle">{formatCompact(cost, 'INR')}</span>
   </span>
 );
 
 export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No matching cost rows to filter.' }) => {
-  const { tree, currency } = useMemo(() => buildTree(items), [items]);
+  const tree = useMemo(() => buildTree(items), [items]);
   const [expanded, setExpanded] = useState({});
 
   const toggleExpand = (key) => setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -123,7 +113,7 @@ export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No ma
       {selection.provider && (
         <button
           onClick={() => onChange(EMPTY_TREE_SELECTION)}
-          className="text-[11px] font-semibold text-accent-text hover:opacity-80 px-2 pb-1.5"
+          className="text-meta font-semibold text-accent-text hover:opacity-80 px-2 pb-1.5"
         >
           Clear drill-down
         </button>
@@ -139,7 +129,7 @@ export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No ma
               </button>
               <button onClick={() => selectProvider(p.name)} className={rowClass(selection.provider === p.name && !selection.account)}>
                 <span className="flex items-center gap-1.5 truncate"><Cloud className="h-3.5 w-3.5 shrink-0" />{p.name}</span>
-                <CountBadge count={p.count} cost={p.cost} currency={currency} />
+                <CountBadge count={p.count} cost={p.cost} />
               </button>
             </div>
 
@@ -155,7 +145,7 @@ export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No ma
                     </button>
                     <button onClick={() => selectAccount(p.name, a.name)} className={rowClass(aActive && !selection.region)}>
                       <span className="flex items-center gap-1.5 truncate"><Server className="h-3.5 w-3.5 shrink-0" />{a.name}</span>
-                      <CountBadge count={a.count} cost={a.cost} currency={currency} />
+                      <CountBadge count={a.count} cost={a.cost} />
                     </button>
                   </div>
 
@@ -171,7 +161,7 @@ export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No ma
                           </button>
                           <button onClick={() => selectRegion(p.name, a.name, r.name)} className={rowClass(rActive && !selection.service)}>
                             <span className="flex items-center gap-1.5 truncate"><MapPin className="h-3.5 w-3.5 shrink-0" />{r.name}</span>
-                            <CountBadge count={r.count} cost={r.cost} currency={currency} />
+                            <CountBadge count={r.count} cost={r.cost} />
                           </button>
                         </div>
 
@@ -187,7 +177,7 @@ export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No ma
                                 </button>
                                 <button onClick={() => selectService(p.name, a.name, r.name, s.name)} className={rowClass(sActive && !selection.type)}>
                                   <span className="flex items-center gap-1.5 truncate"><Package className="h-3.5 w-3.5 shrink-0" />{s.name}</span>
-                                  <CountBadge count={s.count} cost={s.cost} currency={currency} />
+                                  <CountBadge count={s.count} cost={s.cost} />
                                 </button>
                               </div>
 
@@ -197,7 +187,7 @@ export const CostFilterTree = ({ items, selection, onChange, emptyLabel = 'No ma
                                   <div key={`${sKey}/t:${t.name}`} className="ml-7">
                                     <button onClick={() => selectType(p.name, a.name, r.name, s.name, t.name)} className={rowClass(tActive)}>
                                       <span className="flex items-center gap-1.5 truncate"><Layers className="h-3.5 w-3.5 shrink-0" />{t.name}</span>
-                                      <CountBadge count={t.count} cost={t.cost} currency={currency} />
+                                      <CountBadge count={t.count} cost={t.cost} />
                                     </button>
                                   </div>
                                 );

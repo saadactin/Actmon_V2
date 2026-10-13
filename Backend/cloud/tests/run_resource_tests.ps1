@@ -25,6 +25,11 @@ $suites = @(
     # all. A Delete button must not ship ahead of the permission check, the
     # dependency check and the audit trail. Pure logic, no DB.
     @{ Name = "provider capabilities + source cross-check (no DB)"; Args = @("tests\verify_resource_capabilities.py") },
+    # Which provider service each resource belongs to, for the Service filter.
+    # Keys are cloud-prefixed so a bare "Subnet" never merges AWS, Azure and
+    # OCI into one value, and Azure is read from the ARM namespace so unseen
+    # types still land correctly. Pure logic, no DB.
+    @{ Name = "cloud service classification (no DB)"; Args = @("tests\verify_resource_services.py") },
     # The server-side query itself: pagination, filters, sorting, facets,
     # grouping, export. Two assertions carry the weight. Unknown sorts LAST in
     # both directions -- Postgres puts NULLs first on DESC, so "most expensive"
@@ -62,7 +67,14 @@ $suites = @(
     # a resource the topology graph cannot place reports its dependents as
     # UNKNOWN, never as none -- "nothing depends on this" is the most dangerous
     # sentence a delete confirmation can get wrong.
-    @{ Name = "resource actions: gates, dependencies, audit, idempotency"; Args = @("tests\verify_resource_actions.py") }
+    @{ Name = "resource actions: gates, dependencies, audit, idempotency"; Args = @("tests\verify_resource_actions.py") },
+    # The resource-wise assessment export: security, utilization, performance
+    # and cost anomalies combined per resource into one CSV. The entry that
+    # must never flip: an account with no stored billing history reports
+    # anomalies as "Not checked", never as "No anomalies" -- that conflation
+    # is the exact false all-clear cost_money.py exists to prevent elsewhere,
+    # just reached from a different door.
+    @{ Name = "assessment export: category mapping, NA-vs-clean anomalies, degradation, CSV guard"; Args = @("tests\verify_resource_assessment.py") }
 )
 
 $pattern = '\[PASS\]|\[FAIL\]|\[SKIP\]|passed,|FAILED|Traceback|^!|^  !'

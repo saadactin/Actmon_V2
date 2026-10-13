@@ -11,11 +11,10 @@ import Pagination, { paginate, pageCountOf } from '@/components/ui/Pagination';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import { InlineLoading } from '@/components/ui/Loading';
+import { compact, exact, symbolFor } from '../utils/costFormat';
 
 const DAY_PRESETS = [30, 90, 180, 365];
 const PAGE_SIZE = 25;
-const CURRENCY_SYMBOLS = { USD: '$', INR: '₹', EUR: '€', GBP: '£' };
-const symbolFor = (code) => (code ? (CURRENCY_SYMBOLS[code] ?? `${code} `) : '');
 const STOPPED_RE = /stop|deallocat/i;
 
 // Drives both the Group By selector and the table's dynamic columns. 'resource'
@@ -34,12 +33,15 @@ const COMPONENT_TONE = {
   Compute: 'info', Database: 'warning', Storage: 'accent', Network: 'success', Other: 'neutral',
 };
 
+// Grouped on `cost_inr` (every row converted to INR server-side), not the
+// native `cost` — rows here can span providers that bill in different
+// currencies, and summing their raw amounts would add dollars to rupees.
 function groupRows(rows, dimId) {
   const groups = new Map();
   for (const r of rows) {
     const key = r[dimId] || 'Unknown';
     const g = groups.get(key) || { key, count: 0, cost: 0, resourceIds: new Set() };
-    g.cost += Number(r.cost) || 0;
+    g.cost += Number(r.cost_inr) || 0;
     g.resourceIds.add(r.provider_resource_id || r.resource_name || `${key}:${g.count}`);
     groups.set(key, g);
   }
@@ -53,6 +55,9 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
   const [days, setDays] = useState(30);
   const [groupBy, setGroupBy] = useState('service');
   const [treeSelection, setTreeSelection] = useState(EMPTY_TREE_SELECTION);
+  // Narrow layouts only (below md the tree stacks above the table): collapsed
+  // until asked for, so the results are not pushed a screen down.
+  const [treeOpen, setTreeOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState('All');
   const [serviceFilter, setServiceFilter] = useState('All');
@@ -85,8 +90,10 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
   const rows = autoFellBack ? (fallbackData?.rows || []) : rawRows;
   const usingFallback = autoFellBack;
 
-  const currency = data?.currency ?? fallbackData?.currency ?? null;
-  const sym = symbolFor(currency);
+  // The panel's own currency is fixed at INR: every row carries `cost_inr`,
+  // converted server-side with a live FX rate (see `cost_service.get_cost_report`
+  // / `fx_rate_service`), so totals here are never a raw sum across whatever
+  // currencies the underlying providers happen to bill in.
 
   const uniqSorted = (key, source) => Array.from(new Set(source.map((r) => r[key]).filter(Boolean))).sort();
   const providers = useMemo(() => uniqSorted('provider', rows), [rows]);
@@ -110,8 +117,8 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
       if (componentFilter !== 'All' && r.cost_component !== componentFilter) return false;
       if (statusFilter !== 'All' && r.status !== statusFilter) return false;
       if (stoppedOnly && !STOPPED_RE.test(r.status || '')) return false;
-      if (minC != null && !Number.isNaN(minC) && (r.cost ?? 0) < minC) return false;
-      if (maxC != null && !Number.isNaN(maxC) && (r.cost ?? 0) > maxC) return false;
+      if (minC != null && !Number.isNaN(minC) && (r.cost_inr ?? 0) < minC) return false;
+      if (maxC != null && !Number.isNaN(maxC) && (r.cost_inr ?? 0) > maxC) return false;
       if (s) {
         const hay = [
           r.service, r.account_name, r.region, r.provider, r.resource_name,
@@ -130,7 +137,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
     const totals = { Compute: 0, Database: 0, Storage: 0, Network: 0, Other: 0 };
     let total = 0;
     for (const r of filtered) {
-      const c = Number(r.cost) || 0;
+      const c = Number(r.cost_inr) || 0;
       total += c;
       const bucket = r.cost_component && totals[r.cost_component] !== undefined ? r.cost_component : 'Other';
       totals[bucket] += c;
@@ -187,7 +194,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
     ? paginate(filtered, clampedPage, PAGE_SIZE)
     : paginate(groupedRows, clampedPage, PAGE_SIZE);
   const filteredTotal = isResourceLevel
-    ? filtered.reduce((sum, r) => sum + (Number(r.cost) || 0), 0)
+    ? filtered.reduce((sum, r) => sum + (Number(r.cost_inr) || 0), 0)
     : groupedRows.reduce((sum, g) => sum + g.cost, 0);
 
   const tableRows = isResourceLevel
@@ -206,7 +213,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
                 not in inventory
               </span>
             )}
-            <div className="text-[10px] text-subtle">{r.resource_type || '—'}</div>
+            <div className="text-micro text-subtle">{r.resource_type || '—'}</div>
           </div>
         ),
         component: r.cost_component
@@ -227,7 +234,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
         status: r.status ? (
           <Badge tone={STOPPED_RE.test(r.status) ? 'danger' : 'neutral'}>{r.status}</Badge>
         ) : '—',
-        cost: <span className="font-semibold text-fg">{symbolFor(r.currency || currency)}{(r.cost ?? 0).toFixed(2)}</span>,
+        cost: <span className="font-semibold text-fg" title={exact(r.cost_inr, 'INR')}>{compact(r.cost_inr, 'INR')}</span>,
       },
     }))
     : pageItems.map((g, i) => {
@@ -252,7 +259,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
         cells: {
           name: <span className="font-semibold text-fg">{g.key}</span>,
           count: g.count.toLocaleString(),
-          cost: <span className="font-semibold text-fg">{sym}{g.cost.toFixed(2)}</span>,
+          cost: <span className="font-semibold text-fg" title={exact(g.cost, 'INR')}>{compact(g.cost, 'INR')}</span>,
           share: componentTotals.total > 0 ? `${((g.cost / componentTotals.total) * 100).toFixed(1)}%` : '—',
         },
       };
@@ -306,14 +313,14 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
           ['Other', componentTotals.Other, 'text-muted', 'neutral'],
         ].map(([label, value]) => (
           <div key={label} className="rounded-control border border-border bg-surface p-3">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-subtle">{label}</p>
-            <p className="mt-1 truncate text-base font-bold text-fg" title={`${sym}${value.toFixed(2)}`}>
-              {sym}{value.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            <p className="text-micro font-bold uppercase tracking-wider text-subtle">{label}</p>
+            <p className="mt-1 truncate text-base font-bold text-fg" title={exact(value, 'INR')}>
+              {compact(value, 'INR')}
             </p>
           </div>
         ))}
         <div className="rounded-control border border-success/30 bg-success-soft p-3">
-          <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-success-fg">
+          <p className="flex items-center gap-1 text-micro font-bold uppercase tracking-wider text-success-fg">
             <Sparkles size={11} /> Potential Savings
           </p>
           <p className="mt-1 truncate text-base font-bold text-success">
@@ -324,7 +331,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
 
       {/* Range + Group By */}
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Range:</span>
+        <span className="text-meta font-bold uppercase tracking-wider text-muted">Range:</span>
         {DAY_PRESETS.map((d) => (
           <Button key={d} size="sm" variant={days === d ? 'subtle' : 'secondary'} onClick={() => { setDays(d); setPage(1); }}>
             Last {d} days
@@ -337,7 +344,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-muted">Group By:</span>
+        <span className="text-meta font-bold uppercase tracking-wider text-muted">Group By:</span>
         {GROUP_DIMENSIONS.map((d) => (
           <Button
             key={d.id}
@@ -358,7 +365,7 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
           <PowerOff size={12} /> Stopped only
         </Button>
         {usingFallback && (
-          <span className="rounded-control border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-warning-fg">
+          <span className="rounded-control border border-warning/30 bg-warning-soft px-2 py-1 text-meta text-warning-fg">
             No per-resource billing for this provider — showing Service &amp; day totals; Resource level is unavailable.
           </span>
         )}
@@ -376,9 +383,33 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[220px_1fr]">
+          {/* Below md (≈250% zoom on a 1080p screen) the tree would stack above
+              the table and push the results down by its full length, so there
+              it collapses behind this toggle. From md up it is always shown. */}
+          <button
+            type="button"
+            onClick={() => setTreeOpen((v) => !v)}
+            aria-expanded={treeOpen}
+            aria-controls="cost-drill-down"
+            className="flex items-center justify-between gap-2 rounded-control border border-border bg-sunken px-3 py-2 text-left text-meta font-bold uppercase tracking-wider text-muted md:hidden"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Filter size={12} /> Drill down
+              {Object.values(treeSelection).filter(Boolean).length > 0 && (
+                <span className="rounded-full bg-accent-soft px-1.5 text-accent-text normal-case">
+                  {Object.values(treeSelection).filter(Boolean).length} active
+                </span>
+              )}
+            </span>
+            <span aria-hidden="true">{treeOpen ? '−' : '+'}</span>
+          </button>
+
           {/* Drill-down tree */}
-          <div className="rounded-control border border-border bg-sunken p-3">
-            <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+          <div
+            id="cost-drill-down"
+            className={`rounded-control border border-border bg-sunken p-3 ${treeOpen ? 'block' : 'hidden'} md:block`}
+          >
+            <div className="mb-2 flex items-center gap-1.5 px-1 text-meta font-bold uppercase tracking-wider text-muted">
               <Filter size={12} /> Drill Down
             </div>
             <CostFilterTree items={rows} selection={treeSelection} onChange={(sel) => { setTreeSelection(sel); setPage(1); }} />
@@ -434,12 +465,11 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
               <span className="text-xs text-muted">
                 <strong className="text-fg">{resultCount.toLocaleString()}</strong>{' '}
                 {isResourceLevel ? 'resources' : groupLabel.toLowerCase() + ' groups'} ·
-                Total <strong className="text-fg">{sym}{filteredTotal.toFixed(2)}</strong>
-                {!currency && <span className="text-subtle"> (currency: NA)</span>}
+                Total <strong className="text-fg">{exact(filteredTotal, 'INR')}</strong>
               </span>
             </div>
             {usingFallback && groupBy !== 'service' && groupBy !== 'cost_component' && (
-              <p className="text-[11px] text-subtle">
+              <p className="text-meta text-subtle">
                 Rows here aren&rsquo;t clickable — {groupBy === 'resource_type'
                   ? 'Resource Type is the deepest billing detail available for this provider.'
                   : `grouping by ${groupLabel} has nothing further to drill into for this provider.`}{' '}

@@ -63,18 +63,30 @@ class SecurityRepository:
         outcome: str,
         discovery_scan_id: Optional[uuid.UUID] = None,
         now: Optional[datetime] = None,
+        rule_scope: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
         """Reconcile an assessment's findings against the stored set.
 
         Returns `{new, updated, resolved, reopened, newly_opened, escalated}`.
         `newly_opened` is the set of fingerprints that went from absent-or-
         resolved to open — the only ones an `any_new` policy should fire on.
+
+        `rule_scope` limits BOTH the existing set and the resolution sweep to
+        findings whose `rule_id` is in it. Without it, a caller that produces
+        only part of the finding estate — the identity analyser, which runs on
+        its own schedule and emits only `IDENTITY_*` rules — would present its
+        partial set as the whole, and the resolution pass below would close
+        every storage, network and encryption finding on the account because
+        they were "no longer present". That is the same shape as the partial
+        scan that once pruned 62 live resources, and the scope is the guard:
+        an analyser reconciles its own rules and cannot touch anyone else's.
         """
         now = now or datetime.now(timezone.utc)
-        existing_rows = list((await self.db.execute(
-            select(CloudSecurityFinding).where(
-                CloudSecurityFinding.account_id == account_id)
-        )).scalars().all())
+        stmt = select(CloudSecurityFinding).where(
+            CloudSecurityFinding.account_id == account_id)
+        if rule_scope is not None:
+            stmt = stmt.where(CloudSecurityFinding.rule_id.in_(list(rule_scope)))
+        existing_rows = list((await self.db.execute(stmt)).scalars().all())
         existing = {r.fingerprint: r for r in existing_rows}
 
         seen: Set[str] = set()
@@ -207,6 +219,7 @@ class SecurityRepository:
         resource_types: Optional[Sequence[str]] = None,
         rule_ids: Optional[Sequence[str]] = None,
         search: Optional[str] = None,
+        resource_key: Optional[str] = None,
         detected_after: Optional[datetime] = None,
         detected_before: Optional[datetime] = None,
         limit: int = 100,
@@ -240,6 +253,10 @@ class SecurityRepository:
             conds.append(CloudSecurityFinding.resource_type.in_(list(resource_types)))
         if rule_ids:
             conds.append(CloudSecurityFinding.rule_id.in_(list(rule_ids)))
+        if resource_key:
+            # Exact, not the free-text search: a certificate named cert_ls_2023
+            # is a LIKE pattern in which every "_" matches any character.
+            conds.append(CloudSecurityFinding.resource_key == resource_key)
         if detected_after:
             conds.append(CloudSecurityFinding.last_detected_at >= detected_after)
         if detected_before:

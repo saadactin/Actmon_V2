@@ -43,6 +43,7 @@ from app.security.model import ASSESS_COMPLETE, ASSESS_PARTIAL, SEVERITIES
 from app.services import resource_capabilities as caps
 from app.services import resource_model as rm
 from app.services import resource_normalizer as normalizer
+from app.services import resource_services as svc
 
 logger = logging.getLogger("cloud_svc.resource_query")
 
@@ -227,6 +228,12 @@ class ResourceQueryService:
         provider = (account.provider if account else None) or row.provider
         provider_caps = caps.for_provider(provider)
 
+        service_info = (
+            svc.ServiceInfo(resource.service, svc.label_of(resource.service),
+                            svc.provider_of(resource.service) or "", True)
+            if resource.service
+            else svc.service_of(resource.resource_type, resource.provider_resource_id, provider)
+        )
         return {
             "id": str(resource.id),
             "account_id": str(resource.account_id),
@@ -241,6 +248,10 @@ class ResourceQueryService:
             "category_label": rm.CATEGORY_LABELS.get(
                 resource.normalized_type or type_info.category, "Other"
             ),
+            # Stored by the normalizer; computed here for a row written before
+            # the column existed, so the table never shows a blank service.
+            "service": service_info.key,
+            "service_label": service_info.label,
             "region": resource.region_or_zone,
             "availability_zone": resource.availability_zone,
             "resource_group": resource.resource_group,
@@ -492,6 +503,7 @@ class ResourceQueryService:
         ("resource_name", "Resource"),
         ("resource_type", "Type"),
         ("category_label", "Category"),
+        ("service_label", "Service"),
         ("provider_resource_id", "Provider Resource ID"),
         ("region", "Region"),
         ("availability_zone", "Availability Zone"),
@@ -607,6 +619,7 @@ class ResourceQueryService:
                               rm.NEVER_SEEN)
             ],
             "types": rm.type_registry(),
+            "services": svc.catalog(),
             "sort_fields": list(_SORTABLE),
             "group_fields": list(GROUP_FIELDS),
             "facet_dimensions": list(FACET_DIMENSIONS),
@@ -622,6 +635,7 @@ _SORTABLE: Tuple[Dict[str, str], ...] = (
     {"value": "resource_name", "label": "Name"},
     {"value": "resource_type", "label": "Type"},
     {"value": "normalized_type", "label": "Category"},
+    {"value": "service", "label": "Service"},
     {"value": "provider", "label": "Provider"},
     {"value": "account", "label": "Account"},
     {"value": "region", "label": "Region"},
@@ -707,7 +721,8 @@ def _describe_filters(query: ResourceQuery) -> str:
         parts.append(f"search={query.q}")
     for name, values in (
         ("provider", query.providers), ("type", query.types),
-        ("category", query.categories), ("region", query.regions),
+        ("category", query.categories), ("service", query.services),
+        ("region", query.regions),
         ("status", query.statuses), ("risk", query.risk),
         ("environment", query.environments), ("owner", query.owners),
     ):

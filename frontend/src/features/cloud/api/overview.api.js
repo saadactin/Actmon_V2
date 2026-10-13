@@ -81,17 +81,24 @@ export const getSecurityPostureCanonical = async (accountId) => {
   return data;
 };
 
-/** Daily billed spend. Real series or nothing — never a zero-filled line. */
-export const getCostSeries = async (accountId, days = 30) => {
+/** Daily billed spend. Real series or nothing — never a zero-filled line.
+ *  `region` narrows the series to one region; the backend reports whether
+ *  that is even possible for this account's provider via `region_capability`
+ *  (AWS's stored history carries no region — see cost_service.get_history). */
+export const getCostSeries = async (accountId, days = 30, region = null) => {
   const { data } = await cloudAxios.get(`/cost/history/${accountId}`, {
-    params: { days },
+    params: { days, ...(region ? { region } : {}) },
   });
   return data;
 };
 
-/** Account-level billed total, with its currency and source. */
-export const getCostTotal = async (accountId) => {
-  const { data } = await cloudAxios.get(`/cost-estimate/${accountId}`);
+/** Account-level billed total, with its currency and source. `region`
+ *  narrows the total to one region's spend — real for all three providers,
+ *  since every billing row already carries its own region. */
+export const getCostTotal = async (accountId, region = null) => {
+  const { data } = await cloudAxios.get(`/cost-estimate/${accountId}`, {
+    params: region ? { region } : undefined,
+  });
   return data;
 };
 

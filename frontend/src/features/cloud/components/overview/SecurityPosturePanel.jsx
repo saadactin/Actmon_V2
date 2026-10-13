@@ -78,7 +78,7 @@ export default function SecurityPosturePanel({
               <div className={cn('text-4xl font-bold tabular-nums', GRADE_TONE[score?.grade] || 'text-fg')}>
                 {score?.score ?? 'NA'}
               </div>
-              <div className="mt-0.5 text-[11px] text-muted">out of 100</div>
+              <div className="mt-0.5 text-meta text-muted">out of 100</div>
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -105,7 +105,7 @@ export default function SecurityPosturePanel({
               <button
                 type="button"
                 onClick={() => setExplain((v) => !v)}
-                className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-accent-text hover:underline"
+                className="mt-1.5 inline-flex items-center gap-1 text-meta font-semibold text-accent-text hover:underline"
                 aria-expanded={explain}
               >
                 <Icon name="help" size={11} />
@@ -116,13 +116,13 @@ export default function SecurityPosturePanel({
 
           {explain && (
             <div className="rounded-control border border-border bg-sunken p-3">
-              <p className="mb-2 text-[11px] leading-snug text-muted">
+              <p className="mb-2 text-meta leading-snug text-muted">
                 Each category has a deduction budget. These are the deductions
                 the assessment actually applied.
               </p>
               <div className="space-y-1">
                 {(score?.breakdown || []).map((row) => (
-                  <div key={row.category} className="flex items-center justify-between gap-2 text-[11px]">
+                  <div key={row.category} className="flex items-center justify-between gap-2 text-meta">
                     <span className="min-w-0 truncate text-muted">
                       {row.category}
                       <span className="text-subtle">{` · ${row.counted_count ?? row.finding_count} counted`}</span>
@@ -135,13 +135,13 @@ export default function SecurityPosturePanel({
                   </div>
                 ))}
                 {(score?.breakdown || []).length === 0 && (
-                  <p className="text-[11px] text-muted">No per-category breakdown was returned.</p>
+                  <p className="text-meta text-muted">No per-category breakdown was returned.</p>
                 )}
               </div>
               {/* Findings the model deliberately did not score. Saying so stops
                   the severity bars and the score looking like they disagree. */}
               {score?.unscored && Object.values(score.unscored).some((n) => n > 0) && (
-                <p className="mt-2 border-t border-border pt-2 text-[11px] leading-snug text-subtle">
+                <p className="mt-2 border-t border-border pt-2 text-meta leading-snug text-subtle">
                   {`Not scored: ${Object.entries(score.unscored)
                     .filter(([, n]) => n > 0)
                     .map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`)
@@ -149,7 +149,7 @@ export default function SecurityPosturePanel({
                 </p>
               )}
               {freshness?.last_assessed_at && (
-                <p className="mt-2 text-[11px] text-subtle">
+                <p className="mt-2 text-meta text-subtle">
                   {`Last evaluated ${formatDateTime(freshness.last_assessed_at)} (${relativeTime(freshness.last_assessed_at)}).`}
                 </p>
               )}

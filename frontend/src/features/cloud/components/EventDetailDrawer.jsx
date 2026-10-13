@@ -11,6 +11,7 @@ import Drawer from '@/components/ui/Drawer';
 import { InlineLoading } from '@/components/ui/Loading';
 import { useEvent, useEventRaw, useRelatedEvents } from '../hooks/useEvents';
 import ProviderLogo from './ProviderLogo';
+import { providerTileStyle } from '../utils/providerTheme';
 import { RISK_TONE, STATUS_TONE, formatEventTime, relativeTime } from '../utils/eventFormat';
 
 /**
@@ -51,7 +52,7 @@ const CopyableValue = ({ value, mono = true, className = '' }) => {
 
   return (
     <span className={`group/copy inline-flex max-w-full items-start gap-1 ${className}`}>
-      <span className={`min-w-0 break-all ${mono ? 'font-mono text-[11px]' : 'text-[12px]'} text-fg`}>
+      <span className={`min-w-0 break-all ${mono ? 'font-mono text-meta' : 'text-[12px]'} text-fg`}>
         {String(value)}
       </span>
       <button
@@ -75,7 +76,7 @@ const CopyableValue = ({ value, mono = true, className = '' }) => {
  * hard requirement of this feature.
  */
 const NotAvailable = ({ reason }) => (
-  <span className="text-[11px] italic text-subtle" title={reason || 'The provider did not report this field for this event.'}>
+  <span className="text-meta italic text-subtle" title={reason || 'The provider did not report this field for this event.'}>
     Not available
   </span>
 );
@@ -96,7 +97,7 @@ const Field = ({
   pivotHint,
 }) => (
   <div className="min-w-0 py-1">
-    <dt className="text-[10px] font-semibold uppercase tracking-wide text-subtle">{label}</dt>
+    <dt className="text-micro font-semibold uppercase tracking-wide text-subtle">{label}</dt>
     <dd className="mt-0.5 min-w-0">
       {children !== undefined
         ? children
@@ -110,7 +111,7 @@ const Field = ({
                   onClick={() => onPivot(value)}
                   title={pivotHint || `Filter the Event Log by ${label.toLowerCase()}`}
                   className={`min-w-0 break-words text-left text-accent-text underline decoration-dotted underline-offset-2 hover:decoration-solid ${
-                    mono ? 'font-mono text-[11px]' : 'text-[12px]'
+                    mono ? 'font-mono text-meta' : 'text-[12px]'
                   }`}
                 >
                   {String(value)}
@@ -120,7 +121,7 @@ const Field = ({
             )
             : copyable
               ? <CopyableValue value={value} mono={mono} />
-              : <span className={`break-words ${mono ? 'font-mono text-[11px]' : 'text-[12px]'} text-fg`}>{String(value)}</span>}
+              : <span className={`break-words ${mono ? 'font-mono text-meta' : 'text-[12px]'} text-fg`}>{String(value)}</span>}
     </dd>
   </div>
 );
@@ -229,7 +230,7 @@ const JsonViewer = ({ value, filename }) => {
         <button
           type="button"
           onClick={copy}
-          className="inline-flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-[11px] font-semibold text-muted transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-meta font-semibold text-muted transition-colors hover:text-fg"
         >
           {copied ? <Check size={11} /> : <Copy size={11} />}
           {copied ? 'Copied' : 'Copy JSON'}
@@ -237,14 +238,14 @@ const JsonViewer = ({ value, filename }) => {
         <button
           type="button"
           onClick={download}
-          className="inline-flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-[11px] font-semibold text-muted transition-colors hover:text-fg"
+          className="inline-flex items-center gap-1.5 rounded-control border border-border px-2 py-1 text-meta font-semibold text-muted transition-colors hover:text-fg"
         >
           <Download size={11} /> Download JSON
         </button>
       </div>
       {/* Its own horizontal scroller: a deeply-nested payload must not make the
           drawer itself scroll sideways. */}
-      <pre className="max-h-[420px] overflow-auto rounded-control bg-sunken p-2.5 font-mono text-[10.5px] leading-relaxed text-fg">
+      <pre className="max-h-[420px] overflow-auto rounded-control bg-sunken p-2.5 font-mono text-meta leading-relaxed text-fg">
         {text}
       </pre>
     </div>
@@ -264,7 +265,7 @@ const JsonViewer = ({ value, filename }) => {
 const ChangeDiff = ({ change, provider }) => {
   if (!change?.available) {
     return (
-      <p className="text-[11.5px] leading-relaxed text-muted">
+      <p className="text-meta leading-relaxed text-muted">
         Not available from the provider audit event.
         {' '}
         {provider === 'OCI'
@@ -284,7 +285,7 @@ const ChangeDiff = ({ change, provider }) => {
   return (
     <div className="space-y-3">
       {fields.length > 0 && (
-        <p className="flex flex-wrap items-center gap-1 text-[11px] text-muted">
+        <p className="flex flex-wrap items-center gap-1 text-meta text-muted">
           <span className="font-semibold">Changed:</span>
           {fields.map((f) => (
             <Badge key={f} tone="warning" size="xs">{f}</Badge>
@@ -293,18 +294,18 @@ const ChangeDiff = ({ change, provider }) => {
       )}
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="min-w-0 rounded-control border border-danger/30 bg-danger-soft/30 p-2">
-          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-danger-fg">
+          <p className="mb-1 text-micro font-bold uppercase tracking-wide text-danger-fg">
             − Before
           </p>
-          <pre className="max-h-56 overflow-auto font-mono text-[10.5px] leading-relaxed text-fg">
+          <pre className="max-h-56 overflow-auto font-mono text-meta leading-relaxed text-fg">
             {JSON.stringify(change.before, null, 2)}
           </pre>
         </div>
         <div className="min-w-0 rounded-control border border-success/30 bg-success-soft/30 p-2">
-          <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-success-fg">
+          <p className="mb-1 text-micro font-bold uppercase tracking-wide text-success-fg">
             + After
           </p>
-          <pre className="max-h-56 overflow-auto font-mono text-[10.5px] leading-relaxed text-fg">
+          <pre className="max-h-56 overflow-auto font-mono text-meta leading-relaxed text-fg">
             {JSON.stringify(change.after, null, 2)}
           </pre>
         </div>
@@ -320,12 +321,12 @@ const ActorChain = ({ chain }) => {
   if (!chain?.length) return null;
   return (
     <div className="mt-2 rounded-control bg-sunken p-2">
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-subtle">
+      <p className="mb-1.5 text-micro font-semibold uppercase tracking-wide text-subtle">
         Identity chain
       </p>
       <ol className="space-y-1">
         {chain.map((hop, i) => (
-          <li key={`${hop.step}-${i}`} className="flex items-start gap-1.5 text-[11px]">
+          <li key={`${hop.step}-${i}`} className="flex items-start gap-1.5 text-meta">
             <span className="mt-0.5 shrink-0 text-subtle">
               {i === 0 ? '' : '↓'}
             </span>
@@ -333,7 +334,7 @@ const ActorChain = ({ chain }) => {
               <span className="font-semibold text-fg">{hop.name || 'Unnamed'}</span>
               <span className="text-subtle"> · {hop.type || hop.step}</span>
               {hop.id && (
-                <span className="block truncate font-mono text-[10px] text-subtle" title={hop.id}>
+                <span className="block truncate font-mono text-micro text-subtle" title={hop.id}>
                   {hop.id}
                 </span>
               )}
@@ -390,12 +391,12 @@ export default function EventDetailDrawer({
           <div className="rounded-card border border-border bg-sunken p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2.5">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-white">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md border" style={providerTileStyle(event.provider)}>
                   <ProviderLogo provider={event.provider} size={22} />
                 </span>
                 <div className="min-w-0">
                   <p className="break-words text-[14px] font-bold text-fg">{event.event_name}</p>
-                  <p className="mt-0.5 break-all font-mono text-[10.5px] text-subtle">
+                  <p className="mt-0.5 break-all font-mono text-meta text-subtle">
                     {event.api_operation || event.event_source}
                   </p>
                 </div>
@@ -415,7 +416,7 @@ export default function EventDetailDrawer({
                 something the reader has to take on trust; the classifier
                 records the rule that fired, so it is shown. */}
             {event.risk_reason && (
-              <p className="mt-2.5 flex items-start gap-1.5 rounded-control bg-surface px-2 py-1.5 text-[11px] leading-relaxed text-muted">
+              <p className="mt-2.5 flex items-start gap-1.5 rounded-control bg-surface px-2 py-1.5 text-meta leading-relaxed text-muted">
                 <AlertTriangle size={12} className="mt-px shrink-0 text-warning-fg" />
                 <span>
                   <span className="font-semibold text-fg">Why {event.risk_level}: </span>
@@ -432,13 +433,13 @@ export default function EventDetailDrawer({
                 <ActorIcon size={11} /> {ACTOR_LABEL[event.actor.type] || event.actor.type}
               </Badge>
               {event.actor.type === 'RootAccount' && (
-                <span className="text-[10.5px] font-semibold text-danger-fg">
+                <span className="text-meta font-semibold text-danger-fg">
                   Break-glass identity — every use is worth explaining
                 </span>
               )}
               {['ServicePrincipal', 'CloudService', 'AutomatedProcess', 'ServiceAccount']
                 .includes(event.actor.type) && (
-                <span className="text-[10.5px] text-subtle">
+                <span className="text-meta text-subtle">
                   Not a person — this was performed by software
                 </span>
               )}
@@ -502,12 +503,12 @@ export default function EventDetailDrawer({
             </dl>
             {event.resource.additional?.length > 0 && (
               <div className="mt-2 rounded-control bg-sunken p-2">
-                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-subtle">
+                <p className="mb-1 text-micro font-semibold uppercase tracking-wide text-subtle">
                   Also touched ({event.resource.additional.length})
                 </p>
                 <ul className="space-y-0.5">
                   {event.resource.additional.map((r, i) => (
-                    <li key={r.id || i} className="break-all font-mono text-[10.5px] text-muted">
+                    <li key={r.id || i} className="break-all font-mono text-meta text-muted">
                       {r.id}{r.type ? ` · ${r.type}` : ''}
                     </li>
                   ))}
@@ -518,7 +519,7 @@ export default function EventDetailDrawer({
               <button
                 type="button"
                 onClick={() => { onClose(); navigate(`/cloud/resources?q=${encodeURIComponent(event.resource.name || event.resource.id)}`); }}
-                className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-accent-text hover:text-accent-hover"
+                className="mt-2 inline-flex items-center gap-1.5 text-meta font-semibold text-accent-text hover:text-accent-hover"
               >
                 Find this resource in inventory <ExternalLink size={11} />
               </button>
@@ -532,7 +533,7 @@ export default function EventDetailDrawer({
                 <span className="text-[12px] text-fg">{formatEventTime(event.timestamp)}</span>
               </Field>
               <Field label="Event time (UTC)">
-                <span className="font-mono text-[11px] text-fg">
+                <span className="font-mono text-meta text-fg">
                   {new Date(event.timestamp).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}
                 </span>
               </Field>
@@ -608,18 +609,18 @@ export default function EventDetailDrawer({
                     : 'The provider reported no error code.'} />
               </dl>
               {event.result.error_message && (
-                <p className="mt-1.5 break-words rounded-control bg-surface px-2 py-1.5 text-[11.5px] leading-relaxed text-danger-fg">
+                <p className="mt-1.5 break-words rounded-control bg-surface px-2 py-1.5 text-meta leading-relaxed text-danger-fg">
                   {event.result.error_message}
                 </p>
               )}
               {event.status === 'Denied' && (
-                <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+                <p className="mt-1.5 text-meta leading-relaxed text-muted">
                   This operation was refused. A cluster of refusals from one principal
                   is what reconnaissance — or a misconfigured automation — looks like.
                 </p>
               )}
               {event.status === 'Partial' && (
-                <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+                <p className="mt-1.5 text-meta leading-relaxed text-muted">
                   The provider recorded this operation starting but not finishing.
                   Its outcome is a separate event sharing the same correlation id — see
                   Related events below.
@@ -640,7 +641,7 @@ export default function EventDetailDrawer({
               icon={GitCompareArrows}
               count={relatedDrift.length}
             >
-              <p className="mb-2 text-[11px] leading-relaxed text-muted">
+              <p className="mb-2 text-meta leading-relaxed text-muted">
                 {relatedDrift[0].match_note}
               </p>
               <ul className="space-y-1.5">
@@ -651,20 +652,20 @@ export default function EventDetailDrawer({
                         {d.severity}
                       </Badge>
                       {d.field_path && (
-                        <span className="font-mono text-[11px] font-semibold text-fg">
+                        <span className="font-mono text-meta font-semibold text-fg">
                           {d.field_path}
                         </span>
                       )}
-                      <span className="ml-auto text-[10px] text-subtle">
+                      <span className="ml-auto text-micro text-subtle">
                         detected {relativeTime(d.detected_at)}
                       </span>
                     </div>
-                    <p className="mt-1 break-words text-[11px] text-muted">{d.summary}</p>
+                    <p className="mt-1 break-words text-meta text-muted">{d.summary}</p>
                     {onViewDrift && (
                       <button
                         type="button"
                         onClick={() => { onClose(); onViewDrift(d); }}
-                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-accent-text hover:text-accent-hover"
+                        className="mt-1 inline-flex items-center gap-1 text-meta font-semibold text-accent-text hover:text-accent-hover"
                       >
                         View drift <ExternalLink size={10} />
                       </button>
@@ -685,7 +686,7 @@ export default function EventDetailDrawer({
             {relatedLoading ? (
               <InlineLoading label="Finding related events…" />
             ) : relatedCount === 0 ? (
-              <p className="text-[11.5px] leading-relaxed text-muted">
+              <p className="text-meta leading-relaxed text-muted">
                 Nothing else on file is linked to this event by a provider-assigned
                 identifier, the same resource, or the same principal in a narrow time
                 window. Time proximity alone is deliberately not treated as a
@@ -699,11 +700,11 @@ export default function EventDetailDrawer({
                       <Badge tone={CONFIDENCE_TONE[group.confidence] || 'neutral'} size="xs">
                         {CONFIDENCE_LABEL[group.confidence] || group.confidence}
                       </Badge>
-                      <span className="text-[10.5px] text-subtle">
+                      <span className="text-meta text-subtle">
                         {group.events.length} event{group.events.length === 1 ? '' : 's'}
                       </span>
                     </div>
-                    <p className="mb-1.5 text-[10.5px] leading-relaxed text-subtle">
+                    <p className="mb-1.5 text-meta leading-relaxed text-subtle">
                       {group.why}
                     </p>
                     <ul className="space-y-1">
@@ -718,10 +719,10 @@ export default function EventDetailDrawer({
                               {e.risk_level}
                             </Badge>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[11.5px] font-medium text-fg">
+                              <span className="block truncate text-meta font-medium text-fg">
                                 {e.event_name}
                               </span>
-                              <span className="block truncate text-[10px] text-subtle">
+                              <span className="block truncate text-micro text-subtle">
                                 {e.actor_name || 'Unknown actor'} · {relativeTime(e.timestamp)}
                               </span>
                             </span>
@@ -739,7 +740,7 @@ export default function EventDetailDrawer({
           {/* ── Provider payload ──────────────────────────────────────────── */}
           {Object.keys(event.provider_metadata || {}).length > 0 && (
             <Section title="Provider payload (normalized)" icon={Cloud} defaultOpen={false}>
-              <p className="mb-2 text-[11px] leading-relaxed text-muted">
+              <p className="mb-2 text-meta leading-relaxed text-muted">
                 Fields this provider reports that the other two have no equivalent for.
                 Kept rather than dropped during normalization.
               </p>
@@ -771,14 +772,14 @@ export default function EventDetailDrawer({
             {rawOpen && (
               <div className="px-3 py-2.5">
                 {event.raw_event_withheld ? (
-                  <p className="text-[11.5px] leading-relaxed text-muted">
+                  <p className="text-meta leading-relaxed text-muted">
                     {event.raw_event_withheld}
                   </p>
                 ) : rawLoading ? (
                   <InlineLoading label="Loading raw payload…" />
                 ) : raw?.raw_event ? (
                   <>
-                    <p className="mb-2 text-[11px] leading-relaxed text-muted">
+                    <p className="mb-2 text-meta leading-relaxed text-muted">
                       {raw.redaction_note}
                     </p>
                     <JsonViewer
@@ -787,7 +788,7 @@ export default function EventDetailDrawer({
                     />
                   </>
                 ) : (
-                  <p className="text-[11.5px] text-muted">
+                  <p className="text-meta text-muted">
                     No raw payload was stored for this event.
                   </p>
                 )}

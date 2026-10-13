@@ -60,7 +60,7 @@ export function NotificationBadge({ status, size = 'sm' }) {
   if (!status) {
     return (
       <span
-        className="text-[11px] text-subtle"
+        className="text-meta text-subtle"
         title="No notification attempt is recorded for this alert."
       >
         Not attempted
@@ -109,7 +109,7 @@ export function DeliveryBanner({ delivery, onFix, fixing, className }) {
         </p>
         <ul className="mt-1 space-y-0.5">
           {(delivery.blockers || []).map((b) => (
-            <li key={b.code} className="text-[11px] leading-snug text-muted">{b.message}</li>
+            <li key={b.code} className="text-meta leading-snug text-muted">{b.message}</li>
           ))}
         </ul>
       </div>
@@ -118,7 +118,7 @@ export function DeliveryBanner({ delivery, onFix, fixing, className }) {
           type="button"
           onClick={onFix}
           disabled={fixing}
-          className="shrink-0 rounded-control border border-border bg-surface px-2.5 py-1 text-[11px] font-semibold text-fg hover:bg-sunken disabled:opacity-50"
+          className="shrink-0 rounded-control border border-border bg-surface px-2.5 py-1 text-meta font-semibold text-fg hover:bg-sunken disabled:opacity-50"
         >
           {fixing ? 'Enabling…' : 'Enable email delivery'}
         </button>
@@ -159,19 +159,19 @@ export function WhyPanel({ explain, className }) {
         ))}
       </dl>
       {explain.detail && (
-        <p className="mt-2 border-t border-border pt-2 text-[11px] leading-snug text-muted">
+        <p className="mt-2 border-t border-border pt-2 text-meta leading-snug text-muted">
           {explain.detail}
         </p>
       )}
       {!!explain.samples?.length && (
         <div className="mt-2 border-t border-border pt-2">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-subtle">
+          <p className="mb-1 text-micro font-semibold uppercase tracking-wider text-subtle">
             Examples
           </p>
           <ul className="space-y-1">
             {explain.samples.map((s, i) => (
               // eslint-disable-next-line react/no-array-index-key
-              <li key={`${s.name}-${i}`} className="text-[11px] leading-snug">
+              <li key={`${s.name}-${i}`} className="text-meta leading-snug">
                 <span className="font-medium text-fg">{s.name}</span>
                 {s.type && <span className="text-subtle"> · {s.type}</span>}
                 {s.detail && <span className="block text-muted">{s.detail}</span>}

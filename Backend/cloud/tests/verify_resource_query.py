@@ -63,6 +63,10 @@ def check(label, cond, detail=""):
     print(f"  [{'PASS' if cond else 'FAIL'}] {label}" + (f"  {detail}" if detail else ""))
 
 
+def eq(label, got, want):
+    check(label, got == want, f"got {got!r}, want {want!r}")
+
+
 async def purge_fixtures(db):
     """Remove anything a previous crashed run left behind.
 
@@ -673,6 +677,38 @@ async def main():
                   orphan["attachment_state"] == rm.UNATTACHED)
             check("a VCN is neither attached nor unattached",
                   vcn["attached_to"] is None and vcn["attachment_state"] is None)
+
+            # Category says "Storage"; people ask for "everything in Block
+            # Volume" or "everything in S3". The service is its own dimension.
+            print("\n19. Filter, facet and group by cloud service")
+            web = by_name["web-1"]
+            check("a row carries its service key and label",
+                  web["service"] == "oci.compute" and web["service_label"] == "Compute",
+                  f"{web['service']} / {web['service_label']}")
+            r = await svc.query(A, service=["oci.block-volume"], page_size=50)
+            eq("service filter keeps exactly that service's rows",
+               sorted(x["resource_name"] for x in r["rows"]),
+               ["disk-attached", "disk-orphan"])
+            r = await svc.query(A, service=["OCI.Compute"], page_size=50)
+            eq("...and is case-insensitive", r["total"], 2)
+            r = await svc.query(A, service=["oci.compute", "oci.block-volume"], page_size=50)
+            eq("several services OR together", r["total"], 4)
+            facets = (await svc.query(A, service=["oci.compute"], page_size=1))["facets"]
+            svc_facet = {f["value"]: f for f in facets.get("services", [])}
+            check("the service facet ignores its own filter (other services still counted)",
+                  svc_facet.get("oci.block-volume", {}).get("count") == 2, str(svc_facet))
+            check("...and names each service's cloud",
+                  svc_facet.get("oci.compute", {}).get("provider") == "OCI")
+            groups = await svc.groups(A, "service")
+            by_group = {g["value"]: g for g in groups["groups"]}
+            eq("group by service counts each service",
+               (by_group.get("oci.compute") or {}).get("resource_count"), 2)
+            eq("...and labels it", (by_group.get("oci.compute") or {}).get("label"), "Compute")
+            r = await svc.query(B, service=["aws.s3"], page_size=50)
+            eq("AWS rows land in AWS services", [x["resource_name"] for x in r["rows"]],
+               ["aws-bucket"])
+            r = await svc.query(A, sort="service", page_size=50)
+            check("sorting by service is accepted", r["total"] == 7)
 
         finally:
             await db.rollback()

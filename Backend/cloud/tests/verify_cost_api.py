@@ -273,6 +273,54 @@ async def main():
     check("cost permissions appear in the advertised RBAC summary",
           any(p.startswith("cost:") for p in rbac.rbac_summary()["roles"]["administrator"]))
 
+    print("\n12b. The Cost tab's own refresh expires the cache without discarding it")
+    from app.services import cost_service as cs
+
+    aid, other = "zz-expire-a", "zz-expire-b"
+    good = [{"service": "Compute", "cost": 10.0}]
+    now = time.time()
+    cs._real_cost_cache[aid] = (now, good, False, now)
+    cs._real_cost_cache[other] = (now, good, False, now)
+    cs._cost_report_cache[(aid, 30)] = (now, good, False, now)
+    try:
+        n = cs.expire_account_cost_cache(aid)
+        check("expires the account's plain and (id, days)-keyed slots", n == 2, str(n))
+        check("an expired slot is a cache miss", cs._cache_get(cs._real_cost_cache, aid) is None)
+        check("another account's slot is untouched",
+              cs._cache_get(cs._real_cost_cache, other) == good)
+        check("the last-good time survives expiry",
+              cs._real_cost_cache[aid][3] == now)
+
+        async def _refuses():
+            raise RuntimeError("403 AccessDenied")
+
+        served = await cs._cached_fetch(cs._real_cost_cache, aid, "test", _refuses, [])
+        check("a refused re-read after expiry serves the last good numbers, not NA",
+              served == good, repr(served))
+        check("…and marks them stale", cs._real_cost_cache[aid][2] is True)
+
+        fresh = [{"service": "Compute", "cost": 12.5}]
+
+        async def _answers():
+            return fresh
+
+        cs.expire_account_cost_cache(aid)
+        served = await cs._cached_fetch(cs._real_cost_cache, aid, "test", _answers, [])
+        check("a successful re-read after expiry replaces the value", served == fresh)
+        check("expiring an account with nothing cached is a no-op",
+              cs.expire_account_cost_cache("zz-never-cached") == 0)
+    finally:
+        cs._real_cost_cache.pop(aid, None)
+        cs._real_cost_cache.pop(other, None)
+        cs._cost_report_cache.pop((aid, 30), None)
+        cs._cost_error_reason.pop(aid, None)
+
+    from app.api.routes import cost as cost_routes
+    route = next((r for r in cost_routes.router.routes
+                  if r.path == "/cloud/cost/refresh/{account_id}"), None)
+    check("POST /cost/refresh/{account_id} is registered",
+          route is not None and "POST" in route.methods)
+
     print("\n13. The fixture left no residue")
     after = await count_accounts()
     check("account count restored exactly", after == before, f"{before} -> {after}")

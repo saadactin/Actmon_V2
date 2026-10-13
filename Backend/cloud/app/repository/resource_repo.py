@@ -53,6 +53,13 @@ class ResourceRepository:
             )
         )
         existing = {row[0]: row[1] for row in existing_result}
+        # The account's cloud decides which service a resource belongs to —
+        # a bare "Subnet" is AWS VPC, Azure Virtual Network or OCI Networking.
+        from app.models.cloud_account import CloudAccount
+
+        provider = (await self.db.execute(
+            select(CloudAccount.provider).where(CloudAccount.id == account_id)
+        )).scalar()
 
         drift_repo = DriftRepository(self.db) if drift_job_id else None
 
@@ -89,7 +96,7 @@ class ResourceRepository:
                     resource.cost_monthly = r.get("cost_monthly")
                     resource.tags = clean_json(r.get("tags"))
                     resource.raw_data = clean_json(r.get("raw_data"))
-                    _apply_normalization(resource)
+                    _apply_normalization(resource, provider)
             else:
                 # Insert. The primary key is generated here rather than left to
                 # the column default, which only fires at INSERT time - the
@@ -109,7 +116,7 @@ class ResourceRepository:
                     tags=clean_json(r.get("tags")),
                     raw_data=clean_json(r.get("raw_data")),
                 )
-                _apply_normalization(obj)
+                _apply_normalization(obj, provider)
                 self.db.add(obj)
                 if drift_repo is not None:
                     await drift_repo.record(
@@ -228,7 +235,7 @@ class ResourceRepository:
         return result.rowcount or 0
 
 
-def _apply_normalization(resource: CloudResource) -> None:
+def _apply_normalization(resource: CloudResource, provider: Optional[str] = None) -> None:
     """Refresh the normalized projections from the row's own fields.
 
     Imported lazily because resource_normalizer imports the cost service, and
@@ -237,5 +244,5 @@ def _apply_normalization(resource: CloudResource) -> None:
     """
     from app.services.resource_normalizer import normalized_values
 
-    for key, value in normalized_values(resource).items():
+    for key, value in normalized_values(resource, provider=provider).items():
         setattr(resource, key, value)

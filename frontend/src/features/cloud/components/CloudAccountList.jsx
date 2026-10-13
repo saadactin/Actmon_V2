@@ -3,12 +3,13 @@ import cn from '@/lib/cn';
 import { useCloudAccounts, useDeleteCloudAccount } from '../hooks/useCloudAccounts';
 import { useCloudScope } from '../hooks/useCloudScope';
 import { useCloudStore } from '../state/cloudStore';
-import { useTriggerDiscovery } from '../hooks/useDiscovery';
 import { useAccountResourceCounts } from '../hooks/useResources';
 import { formatDate } from '../utils/formatters';
 import { providerKeyOf, slugForProvider } from '../utils/providerScope';
+import { providerBadgeStyle } from '../utils/providerTheme';
 import { accountLocation } from '../utils/regions';
 import ProviderLogo from './ProviderLogo';
+import RefreshAllButton from './refresh/RefreshAllButton';
 import { usePermissions } from '@/hooks/usePermissions';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
@@ -29,15 +30,11 @@ const STATUS_BADGE_COLORS = {
   info: { bg: 'var(--info-soft)', fg: 'var(--info-fg)' },
 };
 
-// Provider brand colours are pinned (external identity), not theme tokens —
-// same badge look CloudProviderSelector uses for these same three providers.
-function providerBadgeClass(provider) {
-  const p = (provider || '').toLowerCase();
-  if (p.includes('azure')) return 'bg-sky-50 text-sky-700 border-sky-200';
-  if (p.includes('aws')) return 'bg-orange-50 text-orange-700 border-orange-200';
-  if (p.includes('oci') || p.includes('oracle')) return 'bg-red-50 text-red-700 border-red-200';
-  return 'bg-sunken text-muted border-border';
-}
+// Provider brand hues are pinned (external identity), but applied through the
+// one registry so this list, the selector, the chooser and the topology all
+// agree — and so the badge is a tint of the hue rather than a fixed
+// light-palette swatch that turns white on the dark themes.
+const BADGE_CLASS = 'inline-flex items-center rounded-full border px-2 py-0.5 font-bold uppercase';
 
 // The account row itself carries no health flag — `last_discovery_status` is
 // derived server-side from that account's most recent discovery job
@@ -48,11 +45,27 @@ function providerBadgeClass(provider) {
 // whether the cloud itself is up: a subscription that revoked our Reader role is
 // perfectly healthy and still reads "Unreachable" here. "Online"/"Offline" implied
 // the provider was down, so the wording now says what is actually being measured.
+// `tooltip` spells out what the badge measures, on the badge itself, so the
+// label doesn't have to carry that whole distinction on its own — "Reachable"
+// read in isolation still invites "is the resource itself reachable?", which
+// is exactly the mix-up the wording above is trying to avoid.
 const STATUS_META = {
-  ok: { label: 'Reachable', tone: 'success', icon: 'check', bucket: 'online' },
-  scanning: { label: 'Scanning', tone: 'info', icon: 'refresh', bucket: 'warning' },
-  never_scanned: { label: 'Not Scanned', tone: 'warning', icon: 'alert', bucket: 'warning' },
-  failed: { label: 'Scan Failed', tone: 'danger', icon: 'ban', bucket: 'offline' },
+  ok: {
+    label: 'Reachable', tone: 'success', icon: 'check', bucket: 'online',
+    tooltip: 'Our last discovery scan could connect to and read this account. It does not reflect the live state of the account’s own resources.',
+  },
+  scanning: {
+    label: 'Scanning', tone: 'info', icon: 'refresh', bucket: 'warning',
+    tooltip: 'A discovery scan of this account is in progress.',
+  },
+  never_scanned: {
+    label: 'Not Scanned', tone: 'warning', icon: 'alert', bucket: 'warning',
+    tooltip: 'This account has never been scanned, so its connectivity is unverified.',
+  },
+  failed: {
+    label: 'Scan Failed', tone: 'danger', icon: 'ban', bucket: 'offline',
+    tooltip: 'Our last discovery scan could not connect to this account — often a lost or revoked credential/role, not necessarily a problem with the account itself.',
+  },
 };
 const statusMetaOf = (acc) => STATUS_META[acc.last_discovery_status] || STATUS_META.never_scanned;
 
@@ -62,7 +75,11 @@ const COLUMNS = [
   { key: 'environment', label: 'Environment', align: 'center' },
   // Not always a region: Azure accounts may carry a tenant GUID here instead.
   { key: 'region', label: 'Region / Tenant', align: 'center' },
-  { key: 'status', label: 'Status', align: 'center', width: 150 },
+  // "Scan Status", not bare "Status" — this column reports whether OUR last
+  // discovery scan could reach the account, not the live state of its
+  // resources (see STATUS_META above), and the column header is the first
+  // place a reader looks to tell those apart.
+  { key: 'status', label: 'Scan Status', align: 'center', width: 150 },
   { key: 'resources', label: 'Resources', align: 'center' },
   { key: 'lastScan', label: 'Last Scan', align: 'center' },
   { key: 'actions', label: 'Action', align: 'center', width: 90 },
@@ -78,8 +95,7 @@ export const CloudAccountList = ({
   const { isLoading } = useCloudAccounts();
   const { data: counts } = useAccountResourceCounts();
   const { mutate: deleteAccount } = useDeleteCloudAccount();
-  const { mutate: triggerScan } = useTriggerDiscovery();
-  const { selectedAccountId, setSelectedAccountId, activeDiscoveryJobs } = useCloudStore();
+  const { selectedAccountId, setSelectedAccountId } = useCloudStore();
   // Only list accounts for the provider currently scoped (all when unscoped).
   const scope = useCloudScope();
   const { canHere } = usePermissions();
@@ -104,7 +120,6 @@ export const CloudAccountList = ({
   // null, not 0, while the counts are still loading — an account whose count we
   // have not fetched yet has not been shown to be empty.
   const resourceCountOf = (accountId) => counts?.byAccount?.[accountId] ?? null;
-  const isScanningRow = (accountId) => !!activeDiscoveryJobs?.[accountId];
 
   if (isLoading) {
     return <PageLoading title="Loading accounts…" illustration />;
@@ -129,17 +144,10 @@ export const CloudAccountList = ({
 
   const rowActions = (acc) => (
     <div className="flex items-center justify-center gap-1">
-      {canHere('execute') && (
-        <Button
-          variant="ghost"
-          size="sm"
-          icon="refresh"
-          loading={isScanningRow(acc.id)}
-          aria-label="Run discovery scan"
-          title="Run discovery scan"
-          onClick={(e) => { e.stopPropagation(); triggerScan(acc.id); }}
-        />
-      )}
+      {/* The same Refresh all as inside the account — it used to start a
+          plain discovery under a third name. */}
+      <RefreshAllButton accountId={acc.id} variant="ghost" iconOnly />
+
       {canHere('delete') && (
         <Button
           variant="danger-ghost"
@@ -178,7 +186,7 @@ export const CloudAccountList = ({
                   </p>
                   <span className="mt-1 inline-flex items-center gap-1.5">
                     <ProviderLogo provider={acc.provider} size={14} />
-                    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${providerBadgeClass(acc.provider)}`}>
+                    <span className={cn(BADGE_CLASS, 'text-micro')} style={providerBadgeStyle(acc.provider)}>
                       {acc.provider}
                     </span>
                   </span>
@@ -186,15 +194,15 @@ export const CloudAccountList = ({
                 <Badge tone={meta.tone}><Icon name={meta.icon} size={11} />{meta.label}</Badge>
               </div>
               <div className="grid grid-cols-2 gap-2 text-[12px] text-muted">
-                <div><p className="text-[10px] uppercase tracking-wide text-subtle">Environment</p>{acc.environment || 'NA'}</div>
+                <div><p className="text-micro uppercase tracking-wide text-subtle">Environment</p>{acc.environment || 'NA'}</div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-subtle">
+                  <p className="text-micro uppercase tracking-wide text-subtle">
                     {accountLocation(acc).kind === 'tenant' ? 'Tenant' : 'Region'}
                   </p>
                   {accountLocation(acc).text}
                 </div>
-                <div><p className="text-[10px] uppercase tracking-wide text-subtle">Resources</p>{resourceCountOf(acc.id) ?? "—"}</div>
-                <div><p className="text-[10px] uppercase tracking-wide text-subtle">Last Scan</p>{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</div>
+                <div><p className="text-micro uppercase tracking-wide text-subtle">Resources</p>{resourceCountOf(acc.id) ?? "—"}</div>
+                <div><p className="text-micro uppercase tracking-wide text-subtle">Last Scan</p>{acc.last_discovery ? formatDate(acc.last_discovery) : 'NA'}</div>
               </div>
               <div className="flex justify-end border-t border-border pt-2">{rowActions(acc)}</div>
             </button>
@@ -220,7 +228,7 @@ export const CloudAccountList = ({
             <span className={cn(CELL_SIZE, isSelected ? 'font-bold text-accent-text' : 'font-bold text-fg')}>
               {acc.account_name}
             </span>
-            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold uppercase ${providerBadgeClass(acc.provider)}`}>
+            <span className={cn(BADGE_CLASS, 'text-meta')} style={providerBadgeStyle(acc.provider)}>
               {acc.provider}
             </span>
           </div>
@@ -241,6 +249,7 @@ export const CloudAccountList = ({
             <Badge
               tone={meta.tone}
               size="xs"
+              title={meta.tooltip}
               className="w-[11.125rem] justify-center gap-[0.625rem]"
               style={{
                 height: '3rem',

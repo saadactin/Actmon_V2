@@ -108,8 +108,8 @@ const StatCard = ({ icon: Icon, label, value, tone = 'neutral', active, onClick,
       </span>
       <span className="min-w-0">
         <span className="block text-[18px] font-semibold leading-tight text-fg">{value}</span>
-        <span className="block truncate text-[11px] text-muted">{label}</span>
-        {hint && <span className="block truncate text-[10px] text-subtle">{hint}</span>}
+        <span className="block truncate text-meta text-muted">{label}</span>
+        {hint && <span className="block truncate text-micro text-subtle">{hint}</span>}
       </span>
     </button>
   );
@@ -119,7 +119,7 @@ const StatCard = ({ icon: Icon, label, value, tone = 'neutral', active, onClick,
 const ValueChip = ({ value, muted }) => (
   <span
     title={value || undefined}
-    className={`inline-block max-w-[220px] truncate rounded-control px-1.5 py-0.5 font-mono text-[11px] ${
+    className={`inline-block max-w-[220px] truncate rounded-control px-1.5 py-0.5 font-mono text-meta ${
       muted ? 'bg-sunken text-subtle' : 'bg-sunken text-fg'
     }`}
   >
@@ -175,11 +175,11 @@ const ResourceTimelineDrawer = ({ resourceId, open, onClose, accountId }) => {
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-control bg-sunken p-2">
-              <span className="block text-[10px] uppercase tracking-wide text-subtle">Status now</span>
+              <span className="block text-micro uppercase tracking-wide text-subtle">Status now</span>
               <span className="font-semibold text-fg">{resource.status || 'n/a'}</span>
             </div>
             <div className="rounded-control bg-sunken p-2">
-              <span className="block text-[10px] uppercase tracking-wide text-subtle">Last scanned</span>
+              <span className="block text-micro uppercase tracking-wide text-subtle">Last scanned</span>
               <span className="font-semibold text-fg">{relativeTime(resource.updated_at)}</span>
             </div>
           </div>
@@ -203,7 +203,7 @@ const ResourceTimelineDrawer = ({ resourceId, open, onClose, accountId }) => {
               </p>
               <ul className="mt-2 space-y-1">
                 {data.active_alerts.map((a) => (
-                  <li key={a.id} className="text-[11px] text-muted">
+                  <li key={a.id} className="text-meta text-muted">
                     <Badge tone={SEVERITY_TONE[a.severity] || 'neutral'} size="xs">{a.severity}</Badge>{' '}
                     {a.anomaly_type} — {a.details}
                   </li>
@@ -219,7 +219,7 @@ const ResourceTimelineDrawer = ({ resourceId, open, onClose, accountId }) => {
               rather than left as a separate hunt on another tab. */}
           {resource?.provider_resource_id && (
             <div className="rounded-card border border-border bg-surface p-3">
-              <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+              <p className="mb-2 flex items-center gap-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
                 <ScrollText size={12} className="text-accent-text" />
                 Who changed this
               </p>
@@ -235,7 +235,7 @@ const ResourceTimelineDrawer = ({ resourceId, open, onClose, accountId }) => {
           )}
 
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-subtle">
+            <p className="mb-2 text-meta font-bold uppercase tracking-wider text-subtle">
               {data.changes.length} recorded change{data.changes.length === 1 ? '' : 's'}
             </p>
             {data.changes.length === 0 ? (
@@ -252,25 +252,25 @@ const ResourceTimelineDrawer = ({ resourceId, open, onClose, accountId }) => {
                       <div className="flex flex-wrap items-center gap-1.5">
                         <Badge tone={SEVERITY_TONE[c.severity] || 'neutral'} size="xs">{c.severity}</Badge>
                         {c.field_path && (
-                          <span className="font-mono text-[11px] font-semibold text-fg">
+                          <span className="font-mono text-meta font-semibold text-fg">
                             {fieldLabel(c.field_path)}
                           </span>
                         )}
                         {dir && <Badge tone={dir.tone} size="xs">{dir.label}</Badge>}
-                        <span className="ml-auto text-[10px] text-subtle">{relativeTime(c.detected_at)}</span>
+                        <span className="ml-auto text-micro text-subtle">{relativeTime(c.detected_at)}</span>
                       </div>
                       {c.field_path && c.old_value !== null && !c.value_vanished ? (
-                        <p className="mt-1 flex items-center gap-1.5 text-[11px]">
+                        <p className="mt-1 flex items-center gap-1.5 text-meta">
                           <ValueChip value={c.old_value} muted />
                           <span className="text-subtle">→</span>
                           <ValueChip value={c.new_value} />
                         </p>
                       ) : (
-                        <p className="mt-1 text-[11px] text-muted">{c.summary}</p>
+                        <p className="mt-1 text-meta text-muted">{c.summary}</p>
                       )}
                       <p className="mt-0.5 flex flex-wrap gap-1">
                         {(c.impact || []).map((p) => (
-                          <span key={p} className="text-[10px] text-subtle">
+                          <span key={p} className="text-micro text-subtle">
                             {PILLAR_BY_ID[p]?.label || p}
                           </span>
                         ))}
@@ -343,7 +343,7 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
           {new Date(r.created_at).toLocaleDateString()}
         </span>
       ) : (
-        <span className="text-[11px] italic text-subtle" title="This provider does not report a creation timestamp for this resource.">
+        <span className="text-meta italic text-subtle" title="This provider does not report a creation timestamp for this resource.">
           not reported
         </span>
       ),
@@ -352,13 +352,13 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
           <p className="truncate text-[13px] font-medium text-fg" title={r.provider_resource_id}>
             {r.resource_name || r.provider_resource_id}
           </p>
-          {r.status && <p className="truncate text-[11px] text-subtle">{r.status}</p>}
+          {r.status && <p className="truncate text-meta text-subtle">{r.status}</p>}
         </div>
       ),
       type: <span className="text-[12px] text-muted">{r.resource_type}</span>,
       region: <span className="text-[12px] text-muted">{r.region_or_zone || '—'}</span>,
       firstSeen: (
-        <span className="whitespace-nowrap text-[11px] text-subtle">
+        <span className="whitespace-nowrap text-meta text-subtle">
           {r.first_seen ? new Date(r.first_seen).toLocaleDateString() : '—'}
         </span>
       ),
@@ -386,7 +386,7 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
               <button
                 key={s.id}
                 onClick={() => { setSort(s.id); setPage(1); }}
-                className={`rounded-control px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                className={`rounded-control px-2.5 py-1 text-meta font-semibold transition-colors ${
                   sort === s.id ? 'bg-accent-soft text-accent-text' : 'text-muted hover:text-fg'
                 }`}
               >
@@ -397,7 +397,7 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
         </div>
 
         {noProviderDates && (
-          <p className="rounded-control bg-warning-soft px-2.5 py-2 text-[11px] leading-relaxed text-warning-fg">
+          <p className="rounded-control bg-warning-soft px-2.5 py-2 text-meta leading-relaxed text-warning-fg">
             This provider reports no creation timestamps, so the Created column is
             empty for all {coverage.total_resources} resources. Only “First seen”
             is available here — and that is when this system first recorded the
@@ -466,7 +466,7 @@ const InventoryHistoryPanel = ({ accountId, onOpenResource }) => {
           </CloudSection>
         )}
 
-        <p className="flex items-start gap-1.5 px-1 text-[11px] leading-relaxed text-subtle">
+        <p className="flex items-start gap-1.5 px-1 text-meta leading-relaxed text-subtle">
           <Clock size={12} className="mt-0.5 shrink-0" />
           This view answers “when did this come into existence”. It cannot show
           modifications made before drift capture was switched on — the previous
@@ -500,18 +500,18 @@ const DriftEventsDrawer = ({ change, accountId, onClose }) => (
     {change && (
       <div className="space-y-4">
         <div className="rounded-card border border-border bg-sunken p-3">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-subtle">
+          <p className="text-meta font-bold uppercase tracking-wider text-subtle">
             The change
           </p>
           <p className="mt-1 break-words text-[12.5px] text-fg">{change.summary}</p>
           {change.field_path && change.old_value !== null && !change.value_vanished && (
-            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-meta">
               <ValueChip value={change.old_value} muted />
               <span className="text-subtle">-&gt;</span>
               <ValueChip value={change.new_value} />
             </p>
           )}
-          <p className="mt-1.5 text-[10.5px] text-subtle">
+          <p className="mt-1.5 text-meta text-subtle">
             Detected by the discovery scan at {new Date(change.detected_at).toLocaleString()}.
             The change itself happened at some point before that, so the audit
             trail is searched backwards from here.
@@ -649,7 +649,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
         : undefined,
       cells: {
         when: (
-          <span className="whitespace-nowrap text-[11px] text-muted" title={new Date(c.detected_at).toLocaleString()}>
+          <span className="whitespace-nowrap text-meta text-muted" title={new Date(c.detected_at).toLocaleString()}>
             {relativeTime(c.detected_at)}
           </span>
         ),
@@ -658,7 +658,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
             <p className="truncate text-[13px] font-medium text-fg" title={c.provider_resource_id}>
               {c.resource_name || c.provider_resource_id}
             </p>
-            <p className="truncate text-[11px] text-subtle">
+            <p className="truncate text-meta text-subtle">
               {c.resource_type}
               {c.region_or_zone ? ` · ${c.region_or_zone}` : ''}
               {!accountId && c.account_name ? ` · ${c.account_name}` : ''}
@@ -671,7 +671,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
               <TypeIcon size={10} /> {typeMeta.label}
             </Badge>
             {c.field_path && (
-              <span className="font-mono text-[11px] font-semibold text-fg">{fieldLabel(c.field_path)}</span>
+              <span className="font-mono text-meta font-semibold text-fg">{fieldLabel(c.field_path)}</span>
             )}
             <Badge tone={SEVERITY_TONE[c.severity] || 'neutral'} size="xs">{c.severity}</Badge>
           </div>
@@ -683,7 +683,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
           ? <span className="text-subtle">—</span>
           : c.old_value === null
             ? (
-              <span className="text-[11px] italic text-subtle" title={c.summary}>
+              <span className="text-meta italic text-subtle" title={c.summary}>
                 not collected before
               </span>
             )
@@ -693,10 +693,10 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
         // provider call that supplies it did not answer. Say that, don't
         // render a bare dash and let it read as a confirmed removal.
         to: !c.field_path
-          ? <span className="truncate text-[11px] text-muted" title={c.summary}>{c.summary}</span>
+          ? <span className="truncate text-meta text-muted" title={c.summary}>{c.summary}</span>
           : c.value_vanished
             ? (
-              <span className="text-[11px] text-warning-fg" title={c.summary}>
+              <span className="text-meta text-warning-fg" title={c.summary}>
                 no longer reported
               </span>
             )
@@ -709,7 +709,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
             type="button"
             onClick={(ev) => { ev.stopPropagation(); setEventsForChange(c); }}
             title="Find the control-plane events that could account for this change"
-            className="inline-flex items-center gap-1 rounded-control border border-border px-1.5 py-0.5 text-[10.5px] font-semibold text-muted transition-colors hover:border-accent hover:text-accent-text"
+            className="inline-flex items-center gap-1 rounded-control border border-border px-1.5 py-0.5 text-meta font-semibold text-muted transition-colors hover:border-accent hover:text-accent-text"
           >
             <ScrollText size={10} /> Who?
           </button>
@@ -795,7 +795,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
                 >
                   {v.label}
                   {v.count !== undefined && (
-                    <span className="rounded-full bg-neutral-soft px-1.5 text-[10px] text-muted">
+                    <span className="rounded-full bg-neutral-soft px-1.5 text-micro text-muted">
                       {v.count}
                     </span>
                   )}
@@ -804,7 +804,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
             </div>
             {view === 'log' && (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-subtle">Window</span>
+                <span className="text-meta font-bold uppercase tracking-wider text-subtle">Window</span>
                 {RANGES.map((r) => (
                   <button
                     key={r.id}
@@ -988,14 +988,14 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
                             key={id}
                             disabled={n === 0 && changeType !== id}
                             onClick={() => setFilter(setChangeType)(changeType === id ? '' : id)}
-                            className={`inline-flex items-center gap-1 rounded-control border px-2 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                            className={`inline-flex items-center gap-1 rounded-control border px-2 py-1 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                               changeType === id
                                 ? 'border-accent bg-accent-soft text-accent-text'
                                 : 'border-border bg-surface text-muted hover:text-fg'
                             }`}
                           >
                             {meta.label}
-                            <span className="rounded-full bg-neutral-soft px-1.5 text-[10px] text-muted">{n}</span>
+                            <span className="rounded-full bg-neutral-soft px-1.5 text-micro text-muted">{n}</span>
                           </button>
                         );
                       })}
@@ -1017,7 +1017,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
                                 <span className="block truncate font-medium text-fg">
                                   {r.resource_name || r.provider_resource_id}
                                 </span>
-                                <span className="block truncate text-[10px] text-subtle">
+                                <span className="block truncate text-micro text-subtle">
                                   {r.resource_type} · {relativeTime(r.last_change)}
                                 </span>
                               </span>
@@ -1048,7 +1048,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
                               }`}
                             >
                               <span className="truncate">{t.resource_type}</span>
-                              <span className="text-[10px] font-bold text-subtle">{t.count}</span>
+                              <span className="text-micro font-bold text-subtle">{t.count}</span>
                             </button>
                           </li>
                         ))}
@@ -1060,7 +1060,7 @@ export const ConfigDriftPage = ({ embedded = false, accountId }) => {
 
                   {/* Says out loud what the log leaves out, so an empty page is
                       never mistaken for "nothing is happening". */}
-                  <p className="flex items-start gap-1.5 px-1 text-[11px] leading-relaxed text-subtle">
+                  <p className="flex items-start gap-1.5 px-1 text-meta leading-relaxed text-subtle">
                     <Clock size={12} className="mt-0.5 shrink-0" />
                     Drift is detected by comparing each discovery scan against the previous
                     one, so the granularity is your scan interval. Usage counters

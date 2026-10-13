@@ -287,6 +287,17 @@ class EvalContext:
             lambda: DiscoveryService(self.db).latest_for_account(self.account_id),
         )
 
+    # ── Certificates and secrets ─────────────────────────────────────────────
+    async def credential_inventory(self) -> Tuple[List[Any], List[Any]]:
+        from app.repository.credential_repo import CredentialRepository
+
+        async def _load():
+            repo = CredentialRepository(self.db)
+            return (await repo.objects([self.account_id]),
+                    await repo.sources([self.account_id]))
+
+        return await self._memo("credential_inventory", _load)
+
 
 # ── Security ──────────────────────────────────────────────────────────────────
 # The statuses that mean a finding is still a live problem, and the verdict that
@@ -916,6 +927,142 @@ async def _eval_cost_data_unavailable(ctx: EvalContext, cfg: dict,
     )
 
 
+# ── Certificates and secrets ─────────────────────────────────────────────────
+async def _eval_credential_expiry(ctx: EvalContext, cfg: dict, scope: dict) -> Evaluation:
+    from app.models.credential_inventory import (
+        COLLECT_NOT_SUPPORTED, COLLECT_OK, KIND_CERTIFICATE, KIND_KEY, KIND_SECRET,
+    )
+    from app.security import credentials as credx
+
+    objects, sources = await ctx.credential_inventory()
+    kind = cfg.get("kind", "CERTIFICATE")
+    kinds = {"CERTIFICATE": {KIND_CERTIFICATE},
+             "SECRET_OR_KEY": {KIND_SECRET, KIND_KEY}}.get(
+        kind, {KIND_CERTIFICATE, KIND_SECRET, KIND_KEY})
+    relevant_sources = set()
+    if KIND_CERTIFICATE in kinds:
+        relevant_sources |= credx.CERT_SOURCES | credx.IAM_CERT_SOURCES
+    if kinds & {KIND_SECRET, KIND_KEY}:
+        relevant_sources |= credx.SECRET_SOURCES
+    noun = {"CERTIFICATE": "certificate(s)", "SECRET_OR_KEY": "secret(s) or key(s)"}.get(
+        kind, "certificate(s), secret(s) or key(s)")
+
+    mine = [s for s in sources if s.source in relevant_sources]
+    if not mine:
+        return result.unsupported(
+            "Certificates and secrets have not been collected for this account yet. They "
+            "are read during every discovery scan; after the next one this rule can be "
+            "evaluated. Until then there is no count — which is not the same as none.")
+    ok = [s for s in mine if s.status == COLLECT_OK]
+    failed = [s for s in mine if s.status not in (COLLECT_OK, COLLECT_NOT_SUPPORTED)]
+    # A store refused NOW but read successfully before still holds the objects
+    # it returned then (a refusal never deletes them), and the Security Center
+    # keeps counting them — so this does too. Only a store that has NEVER been
+    # read leaves nothing to count, which is UNKNOWN, not zero.
+    ever_read = [s for s in mine if s.status == COLLECT_OK or s.last_success_at]
+    if not ever_read:
+        return result.unknown(
+            f"None of the {len(failed) or len(mine)} store(s) holding {noun} has ever "
+            f"been read ({', '.join(sorted({s.status for s in mine}))}), so there is "
+            "nothing to count — which is not the same as nothing expiring.")
+
+    days = max(0, _int(cfg.get("within_days"), 30))
+    include_expired = cfg.get("include_expired", "yes") == "yes"
+    horizon = ctx.now + timedelta(days=days)
+    # A certificate renewed as a new object and no longer used is a leftover:
+    # paging on it would fire after every renewal that changed the name.
+    successors = credx.supersession(objects, ctx.now)
+    hits = []
+    replaced = 0
+    for o in objects:
+        if o.kind not in kinds or o.enabled is False or o.expires_at is None:
+            continue
+        if credx.is_retired(o, successors.get(o.object_key)):
+            replaced += o.expires_at <= horizon
+            continue
+        if o.expires_at > horizon:
+            continue
+        if o.expires_at < ctx.now and not include_expired:
+            continue
+        hits.append(o)
+    hits.sort(key=lambda o: o.expires_at)
+
+    observed = float(len(hits))
+    threshold = float(cfg.get("threshold", 0))
+    operator = cfg.get("operator", catalog.OP_GT)
+    fired = catalog.compare(observed, operator, threshold)
+
+    def _sample(o) -> Dict[str, Any]:
+        left = (o.expires_at - ctx.now).total_seconds() / 86400.0
+        return {
+            "name": o.name or o.object_key,
+            "type": o.kind.title(),
+            "severity": "HIGH" if left < 0 else "MEDIUM" if left <= credx.URGENT_DAYS else "LOW",
+            "detail": ((f"expired {int(-left)} day(s) ago" if left < 0
+                        else f"expires in {int(left)} day(s)")
+                       + f" — {o.expires_at.strftime('%d %b %Y')}"
+                       + (f", {o.container_name}" if o.container_name else "")),
+        }
+
+    gap = (f" {len(failed)} store(s) could not be read this time; objects from them "
+           "are counted as last seen." if failed else "")
+    if replaced:
+        gap += (f" {replaced} more were already replaced by a renewal and are unused, "
+                "so they are not counted.")
+    return result.compared(
+        fired, observed, threshold, operator,
+        detail=(f"{len(hits)} {noun} "
+                + ("expired" if days == 0 else f"expire within {days} day(s)"
+                   + (" or have already expired" if include_expired else ""))
+                + f".{gap}"),
+        samples=[_sample(o) for o in hits[:MAX_SAMPLES]] if fired else [],
+        as_of=ctx.now.isoformat(),
+        context={"within_days": days, "kind": kind, "include_expired": include_expired,
+                 "stores_read": len(ok), "stores_unreadable": len(failed),
+                 "replaced_not_counted": replaced},
+    )
+
+
+async def _eval_intelligence_finding_count(ctx: EvalContext, cfg: dict,
+                                           scope: dict) -> Evaluation:
+    """Open optimization findings, from the table the analysis writes. An
+    account never analysed is UNKNOWN — its finding count is not zero."""
+    from app.repository.optimization_repo import OptimizationRepository
+
+    repo = OptimizationRepository(ctx.db)
+    run = await repo.latest_run(ctx.account_id)
+    if run is None:
+        return result.unknown(
+            "This account has not been analysed by Resource Intelligence yet, so the "
+            "number of open findings is unknown. It is NOT zero. Refresh intelligence "
+            "(or Refresh all) runs the analysis.")
+    rows = await repo.for_accounts([ctx.account_id], statuses=["OPEN", "ACKNOWLEDGED"])
+    category = cfg.get("category_filter", "ANY")
+    severity = cfg.get("severity_filter", "ANY")
+    if category != "ANY":
+        rows = [r for r in rows if r.category == category]
+    if severity != "ANY":
+        rows = [r for r in rows if r.severity == severity]
+    observed = len(rows)
+    threshold = float(cfg.get("threshold", 0))
+    operator = cfg.get("operator", catalog.OP_GT)
+    fired = catalog.compare(observed, operator, threshold)
+    detail = f"{observed} open finding(s) match this rule."
+    if run.outcome != "COMPLETE":
+        detail += (" The latest analysis was partial: findings it could not re-check "
+                   "stay open, so this count may include some it could not re-verify.")
+    return result.compared(
+        fired, observed, threshold, operator, detail=detail,
+        as_of=run.finished_at.isoformat() if run.finished_at else None,
+        samples=[{"name": r.resource_name or r.resource_key, "type": r.resource_type,
+                  "severity": r.severity, "detail": r.title}
+                 for r in sorted(rows, key=lambda x: (_sev_rank(x.severity),
+                                                      -(x.estimated_savings or 0)))[:MAX_SAMPLES]],
+        context={"category_filter": category, "severity_filter": severity,
+                 "analysis_outcome": run.outcome},
+    )
+
+
 def _int(value: Any, default: int) -> int:
     try:
         return int(float(value))
@@ -953,6 +1100,8 @@ EVALUATORS: Dict[str, Callable] = {
     catalog.DISCOVERY_STALE: _eval_discovery_stale,
     catalog.COST_DATA_UNAVAILABLE: _eval_cost_data_unavailable,
     catalog.EVENT_COLLECTION_UNHEALTHY: _eval_event_collection_unhealthy,
+    catalog.CREDENTIAL_EXPIRY: _eval_credential_expiry,
+    catalog.INTELLIGENCE_FINDING_COUNT: _eval_intelligence_finding_count,
 }
 
 _MISSING = set(catalog.CONDITIONS) - set(EVALUATORS)

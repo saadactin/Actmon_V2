@@ -45,7 +45,7 @@ function RelatedSignals({ data, loading, error, onOpenTab }) {
   }
   if (error) {
     return (
-      <p className="text-[11px] leading-snug text-muted">
+      <p className="text-meta leading-snug text-muted">
         Related signals could not be loaded. The alert itself is unaffected.
       </p>
     );
@@ -54,7 +54,7 @@ function RelatedSignals({ data, loading, error, onOpenTab }) {
 
   if (!data.total) {
     return (
-      <p className="rounded-control border border-dashed border-border px-3 py-3 text-[11px] leading-snug text-muted">
+      <p className="rounded-control border border-dashed border-border px-3 py-3 text-meta leading-snug text-muted">
         {data.empty_note || 'Nothing else was recorded in the surrounding window.'}
       </p>
     );
@@ -65,12 +65,12 @@ function RelatedSignals({ data, loading, error, onOpenTab }) {
       {data.groups.map((group) => (
         <div key={group.kind}>
           <div className="mb-1 flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold text-fg">{group.label}</p>
+            <p className="text-meta font-semibold text-fg">{group.label}</p>
             {group.link_tab && (
               <button
                 type="button"
                 onClick={() => onOpenTab?.(group.link_tab)}
-                className="text-[10px] font-semibold text-accent-text hover:underline"
+                className="text-micro font-semibold text-accent-text hover:underline"
               >
                 Open {group.link_tab}
                 <Icon name="arrow-right" size={10} className="ml-0.5 inline" />
@@ -90,11 +90,11 @@ function RelatedSignals({ data, loading, error, onOpenTab }) {
                     <Badge tone={meta.tone} size="sm">{meta.label}</Badge>
                   </div>
                   {item.detail && (
-                    <p className="mt-0.5 text-[11px] leading-snug text-muted">
+                    <p className="mt-0.5 text-meta leading-snug text-muted">
                       {item.detail}
                     </p>
                   )}
-                  <p className="mt-0.5 text-[10px] text-subtle">
+                  <p className="mt-0.5 text-micro text-subtle">
                     <When iso={item.at} />
                     {item.severity && ` · ${item.severity}`}
                   </p>
@@ -105,7 +105,7 @@ function RelatedSignals({ data, loading, error, onOpenTab }) {
         </div>
       ))}
 
-      <p className="flex gap-1.5 rounded-control border border-border bg-sunken px-2.5 py-2 text-[10px] leading-snug text-muted">
+      <p className="flex gap-1.5 rounded-control border border-border bg-sunken px-2.5 py-2 text-micro leading-snug text-muted">
         <Icon name="info" size={11} className="mt-0.5 shrink-0 text-subtle" />
         {data.disclaimer}
       </p>
@@ -234,7 +234,7 @@ export default function AlertDetailDrawer({
           {/* Stated separately, always. An alert being correctly OPEN while its
               email failed to leave the building is a real and common state,
               and one badge cannot express it. */}
-          <p className="rounded-control border border-border bg-sunken px-3 py-2 text-[11px] leading-snug text-muted">
+          <p className="rounded-control border border-border bg-sunken px-3 py-2 text-meta leading-snug text-muted">
             <strong className="text-fg">Alert status</strong> is whether the
             condition is still a problem.{' '}
             <strong className="text-fg">Notification</strong> is whether an email
@@ -243,7 +243,7 @@ export default function AlertDetailDrawer({
           </p>
 
           {actionNote && (
-            <p className="flex gap-1.5 rounded-control border border-warning bg-warning-soft px-2.5 py-2 text-[11px] leading-snug text-fg">
+            <p className="flex gap-1.5 rounded-control border border-warning bg-warning-soft px-2.5 py-2 text-meta leading-snug text-fg">
               <Icon name="info" size={12} className="mt-0.5 shrink-0 text-warning-fg" />
               {actionNote}
             </p>
@@ -252,14 +252,14 @@ export default function AlertDetailDrawer({
           <p className="text-[13px] leading-relaxed text-fg">{alert.details}</p>
 
           <section>
-            <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+            <h4 className="mb-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
               Why this fired
             </h4>
             <WhyPanel explain={alert.explain} />
           </section>
 
           <section>
-            <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+            <h4 className="mb-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
               Timeline
             </h4>
             <dl className="space-y-1.5">
@@ -285,7 +285,7 @@ export default function AlertDetailDrawer({
               ))}
             </dl>
             {alert.resolution_reason && (
-              <p className="mt-2 rounded-control border border-border px-2.5 py-2 text-[11px] leading-snug text-muted">
+              <p className="mt-2 rounded-control border border-border px-2.5 py-2 text-meta leading-snug text-muted">
                 {alert.resolution_reason}
               </p>
             )}
@@ -293,7 +293,7 @@ export default function AlertDetailDrawer({
 
           {rule && (
             <section>
-              <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+              <h4 className="mb-1.5 flex items-center gap-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
                 Rule
                 {alert.rule_deleted && <Badge tone="warning" size="sm">Deleted</Badge>}
               </h4>
@@ -310,14 +310,14 @@ export default function AlertDetailDrawer({
                       ? `Every ${humanDuration(rule.repeat_interval_seconds)}`
                       : 'Notify once'],
                   ].map(([k, v]) => (
-                    <div key={k} className="flex gap-3 text-[11px]">
+                    <div key={k} className="flex gap-3 text-meta">
                       <dt className="w-24 shrink-0 text-subtle">{k}</dt>
                       <dd className="text-muted">{v}</dd>
                     </div>
                   ))}
                 </dl>
                 {alert.rule_deleted && (
-                  <p className="mt-2 text-[11px] leading-snug text-muted">
+                  <p className="mt-2 text-meta leading-snug text-muted">
                     This rule has been deleted, so it will not fire again. The
                     alert is kept because history outlives its rule.
                   </p>
@@ -330,7 +330,7 @@ export default function AlertDetailDrawer({
               every row in a 200-alert list would be an API storm for data
               nobody asked to see. */}
           <section>
-            <h4 className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-wider text-subtle">
+            <h4 className="mb-1.5 flex items-center justify-between gap-2 text-meta font-bold uppercase tracking-wider text-subtle">
               What else was happening
               {!showRelated && (
                 <Button
@@ -345,7 +345,7 @@ export default function AlertDetailDrawer({
               <RelatedSignals data={related} loading={relatedLoading}
                               error={relatedError} onOpenTab={onOpenTab} />
             ) : (
-              <p className="text-[11px] leading-snug text-muted">
+              <p className="text-meta leading-snug text-muted">
                 Other alerts, configuration changes, cloud activity, new security
                 findings and billed-spend movement around this alert. Shown so
                 you can investigate together — not as a claim that any of them
@@ -356,12 +356,12 @@ export default function AlertDetailDrawer({
 
           {!!alert.activity?.length && (
             <section>
-              <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+              <h4 className="mb-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
                 Activity
               </h4>
               <ul className="space-y-1.5">
                 {alert.activity.map((e) => (
-                  <li key={e.id} className="flex gap-2 text-[11px] leading-snug">
+                  <li key={e.id} className="flex gap-2 text-meta leading-snug">
                     <span className="w-20 shrink-0 text-subtle">
                       <When iso={e.at} />
                     </span>

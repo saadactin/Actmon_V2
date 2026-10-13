@@ -25,6 +25,15 @@ class BaseCloudProvider(ABC):
         scanner = getattr(self, "scanner", None)
         return list(getattr(scanner, "scan_failures", []) or [])
 
+    def scope_summary(self):
+        """How much of the account the last scan read, per scope, and why the
+        rest was not (denied with the IAM actions to grant, failed, or not
+        offered in a region). None for a scanner that does not count its
+        scopes — coverage then falls back to complete / incomplete."""
+        scanner = getattr(self, "scanner", None)
+        summary = getattr(scanner, "scope_summary", None)
+        return dict(summary) if summary else None
+
     @abstractmethod
     async def authenticate(self) -> bool:
         """Validate credentials and establish an authenticated session.

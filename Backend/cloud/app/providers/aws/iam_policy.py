@@ -145,6 +145,15 @@ def summarize_policy_documents(documents: Iterable[Any]) -> Dict[str, Any]:
                 if concrete is None:
                     # Wildcard — summarise per service instead of expanding.
                     for a in actions:
+                        # `Action: "*"` (or "*:*") names every service. It used
+                        # to be dropped here because "*" is not a service name,
+                        # so a role holding AdministratorAccess summarised to NO
+                        # grants and every IAM rule reported it SAFE. It is
+                        # recorded as "*:<access>", which the full-administrator
+                        # rule reads.
+                        if a.strip() == "*" or a.strip().startswith("*:"):
+                            broad.add(f"*:{access}")
+                            continue
                         svc = service_of(a) or service_of(res)
                         if svc and svc != "*":
                             broad.add(f"{svc}:{access}")

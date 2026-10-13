@@ -69,14 +69,14 @@ export default function SecurityScoreCard({ score, coveragePct, onExplain, expla
               {hasScore ? (
                 <>
                   <span className="text-4xl font-bold leading-none text-fg">{score.score}</span>
-                  <span className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                  <span className="mt-1 text-meta font-semibold uppercase tracking-wider text-muted">
                     Score
                   </span>
                 </>
               ) : (
                 <>
                   <Icon name="help" size={30} className="text-muted" />
-                  <span className="mt-1 max-w-[92px] text-[11px] font-semibold uppercase leading-tight tracking-wider text-muted">
+                  <span className="mt-1 max-w-[92px] text-meta font-semibold uppercase leading-tight tracking-wider text-muted">
                     No score
                   </span>
                 </>
@@ -112,7 +112,7 @@ export default function SecurityScoreCard({ score, coveragePct, onExplain, expla
         </div>
 
         {score?.grade_capped_by && (
-          <p className="mt-3 max-w-[15rem] text-left text-[11px] leading-relaxed text-muted">
+          <p className="mt-3 max-w-[15rem] text-left text-meta leading-relaxed text-muted">
             {score.grade_capped_by}
           </p>
         )}
@@ -173,7 +173,7 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
 
       {/* The arithmetic, in the order it was applied. */}
       <div>
-        <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+        <h4 className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
           Deductions
         </h4>
         <div className="overflow-hidden rounded-control border border-border">
@@ -197,7 +197,7 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
                   −{Number(line.deduction).toFixed(1)}
                 </span>
               </div>
-              <div className="mt-1 flex items-center gap-2 text-[11px] text-subtle">
+              <div className="mt-1 flex items-center gap-2 text-meta text-subtle">
                 <span>
                   {line.findings} finding{line.findings === 1 ? '' : 's'}
                   {line.worst ? ` · worst ${line.worst}` : ''}
@@ -206,7 +206,7 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
                 <span>budget {line.budget}</span>
               </div>
               {line.note && (
-                <p className="mt-1 text-[11px] leading-relaxed text-muted">{line.note}</p>
+                <p className="mt-1 text-meta leading-relaxed text-muted">{line.note}</p>
               )}
             </div>
           ))}
@@ -229,7 +229,7 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
           visible: a reader comparing "276 findings" with "−47.8 points" will
           otherwise conclude the number is made up. */}
       <div>
-        <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+        <h4 className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
           Findings not counted toward the score
         </h4>
         <div className="space-y-2">
@@ -247,7 +247,7 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
                   <Badge tone="neutral">{n}</Badge>
                 </div>
                 {excludedExplain[reason] && (
-                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                  <p className="mt-1 text-meta leading-relaxed text-muted">
                     {excludedExplain[reason]}
                   </p>
                 )}
@@ -257,7 +257,7 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
       </div>
 
       <div>
-        <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+        <h4 className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
           Reliability
         </h4>
         <div className="rounded-control border border-border bg-surface p-3 text-xs">
@@ -277,10 +277,10 @@ function ScoreExplanation({ score, explanation, coveragePct }) {
       </div>
 
       <div>
-        <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+        <h4 className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
           Methodology
         </h4>
-        <p className="text-[11px] leading-relaxed text-muted">
+        <p className="text-meta leading-relaxed text-muted">
           {explanation?.methodology || score?.methodology}
         </p>
       </div>

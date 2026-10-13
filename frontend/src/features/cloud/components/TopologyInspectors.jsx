@@ -40,7 +40,7 @@ export function EdgeEvidenceDrawer({ open, onClose, data, loading, onSelectNode 
         <div className="flex flex-col gap-4">
           <div className="rounded-card border border-border bg-sunken p-3">
             <span
-              className="inline-block rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide"
+              className="inline-block rounded-md px-2 py-0.5 text-meta font-bold uppercase tracking-wide"
               style={{ color: style.color, background: `${style.color}22` }}
             >
               {style.label}
@@ -64,9 +64,9 @@ export function EdgeEvidenceDrawer({ open, onClose, data, loading, onSelectNode 
                 >
                   <span className="h-8 w-1.5 shrink-0 rounded-full" style={{ background: meta.color }} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] font-bold uppercase tracking-wider text-subtle">{role}</span>
+                    <span className="block text-micro font-bold uppercase tracking-wider text-subtle">{role}</span>
                     <span className="block truncate text-[13px] font-semibold text-fg">{node.name}</span>
-                    <span className="block truncate text-[11px] text-muted">
+                    <span className="block truncate text-meta text-muted">
                       {meta.label} · {provider.label}{node.region ? ` · ${node.region}` : ''}
                     </span>
                   </span>
@@ -89,12 +89,12 @@ export function EdgeEvidenceDrawer({ open, onClose, data, loading, onSelectNode 
               ['Discovered', formatMoment(edge.evidence?.discovered_at)],
             ].map(([label, value]) => (
               <div key={label} className="flex items-start justify-between gap-3 px-3 py-2">
-                <dt className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</dt>
+                <dt className="shrink-0 text-meta font-semibold uppercase tracking-wide text-muted">{label}</dt>
                 <dd className="flex min-w-0 items-start gap-1.5 text-right">
                   {value ? (
                     <>
                       <span className={label.includes('value') || label === 'Evidence field'
-                        ? 'break-all font-mono text-[11px] text-fg'
+                        ? 'break-all font-mono text-meta text-fg'
                         : 'text-[12.5px] text-fg'}>
                         {value}
                       </span>
@@ -122,7 +122,7 @@ export function EdgeEvidenceDrawer({ open, onClose, data, loading, onSelectNode 
             </Notice>
           )}
 
-          <p className="text-[11px] leading-relaxed text-subtle">
+          <p className="text-meta leading-relaxed text-subtle">
             Every relationship in this topology is provider-confirmed: it was drawn from an
             identifier the provider itself reported, resolved exactly against the discovered
             inventory. There is no inferred or probabilistic relationship.
@@ -176,30 +176,30 @@ export function ImpactDrawer({ open, onClose, data, loading, onSelectNode }) {
             ].map(([label, value]) => (
               <div key={label} className="rounded-card border border-border bg-sunken p-2.5 text-center">
                 <p className="text-[18px] font-bold leading-none text-fg">{formatCount(value)}</p>
-                <p className="mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-subtle">{label}</p>
+                <p className="mt-1 text-meta font-semibold uppercase tracking-wide text-subtle">{label}</p>
               </div>
             ))}
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Blast radius</span>
+            <span className="text-meta font-semibold uppercase tracking-wide text-muted">Blast radius</span>
             <Badge tone={IMPACT_TONE[data.impact_level] || 'neutral'} size="sm">{data.impact_level}</Badge>
           </div>
-          <p className="-mt-2 text-[11px] leading-relaxed text-subtle">{data.impact_basis}</p>
+          <p className="-mt-2 text-meta leading-relaxed text-subtle">{data.impact_basis}</p>
 
           {Object.keys(data.by_dependency_class || {}).length > 0 && (
             <div>
-              <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+              <p className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                 By kind of dependency
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {Object.entries(data.by_dependency_class).map(([klass, count]) => (
-                  <span key={klass} className="rounded-md bg-sunken px-2 py-0.5 text-[11px] text-muted">
+                  <span key={klass} className="rounded-md bg-sunken px-2 py-0.5 text-meta text-muted">
                     <span className="font-semibold capitalize">{klass}</span> {count}
                   </span>
                 ))}
               </div>
-              <p className="mt-1.5 text-[11px] text-subtle">
+              <p className="mt-1.5 text-meta text-subtle">
                 A resource affected through two relationships is counted in both, so these do
                 not sum to the total.
               </p>
@@ -217,10 +217,10 @@ export function ImpactDrawer({ open, onClose, data, loading, onSelectNode }) {
             const rows = showAll ? group.rows : group.rows.slice(0, 20);
             return (
               <div key={group.label}>
-                <p className="mb-0.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-0.5 text-meta font-bold uppercase tracking-wider text-muted">
                   {group.label} <span className="text-subtle">({group.rows.length})</span>
                 </p>
-                <p className="mb-1.5 text-[11px] text-subtle">{group.hint}</p>
+                <p className="mb-1.5 text-meta text-subtle">{group.hint}</p>
                 <ul className="flex flex-col gap-1">
                   {rows.map((row) => {
                     const meta = typeMeta(row.type);
@@ -234,11 +234,11 @@ export function ImpactDrawer({ open, onClose, data, loading, onSelectNode }) {
                           <span className="h-5 w-1 shrink-0 rounded-sm" style={{ background: meta.color }} />
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-[12.5px] font-medium text-fg">{row.name}</span>
-                            <span className="block truncate text-[11px] text-subtle">
+                            <span className="block truncate text-meta text-subtle">
                               {meta.label} · {row.dependency_classes.join(', ')}
                             </span>
                           </span>
-                          <span className="shrink-0 text-[10px] font-bold text-subtle">{row.depth} hop</span>
+                          <span className="shrink-0 text-micro font-bold text-subtle">{row.depth} hop</span>
                         </button>
                       </li>
                     );
@@ -297,7 +297,7 @@ export function PathFinderDrawer({
         </p>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+          <span className="text-meta font-semibold uppercase tracking-wide text-muted">
             Narrow the lists
           </span>
           <input
@@ -310,15 +310,15 @@ export function PathFinderDrawer({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">From</span>
+          <span className="text-meta font-semibold uppercase tracking-wide text-muted">From</span>
           <Select value={source || ''} onChange={onChangeSource} options={options} placeholder="Select a resource…" />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">To</span>
+          <span className="text-meta font-semibold uppercase tracking-wide text-muted">To</span>
           <Select value={target || ''} onChange={onChangeTarget} options={options} placeholder="Select a resource…" />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+          <span className="text-meta font-semibold uppercase tracking-wide text-muted">
             Maximum hops
           </span>
           <Select
@@ -329,7 +329,7 @@ export function PathFinderDrawer({
         </label>
 
         {options.length === 300 && (
-          <p className="text-[11px] text-subtle">
+          <p className="text-meta text-subtle">
             Showing the first 300 matches — type above to narrow the list.
           </p>
         )}
@@ -359,7 +359,7 @@ export function PathFinderDrawer({
                 return (
                   <li key={node.id}>
                     {hop && (
-                      <div className="flex items-center gap-1.5 py-1 pl-4 text-[11px]">
+                      <div className="flex items-center gap-1.5 py-1 pl-4 text-meta">
                         <Icon name="chevron-down" size={12} className="text-subtle" />
                         <span
                           className="rounded px-1.5 py-px font-bold uppercase"
@@ -394,7 +394,7 @@ export function PathFinderDrawer({
                       <span className="h-5 w-1 shrink-0 rounded-sm" style={{ background: meta.color }} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px] font-medium text-fg">{node.name}</span>
-                        <span className="block truncate text-[11px] text-subtle">{meta.label}</span>
+                        <span className="block truncate text-meta text-subtle">{meta.label}</span>
                       </span>
                     </button>
                   </li>

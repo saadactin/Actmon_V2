@@ -19,6 +19,7 @@
  * uses the theme variables, which SVG resolves like any other CSS custom
  * property.
  */
+import { UNKNOWN_COLOR, providerBadgeStyle, providerColor } from './providerTheme';
 
 /* ── Edge styling ─────────────────────────────────────────────────────────── */
 /* `dash` marks a relationship that is not observed traffic. A permission is
@@ -154,16 +155,18 @@ export const CATEGORY_ORDER = [
 ];
 
 /* ── Providers ────────────────────────────────────────────────────────────── */
-/* Brand colours are pinned (external identity), the same rationale as
-   CloudDashboard's PROVIDER_BADGE_CLASSES. The provider NAME is always
-   rendered as text beside any colour, because colour alone is not an
+/* Brand colours stay pinned (external identity) but are applied through
+   `utils/providerTheme`, which mixes them against the live theme instead of
+   shipping the fixed light-palette swatches this map used to carry — those
+   rendered as near-white chips on the three dark themes. The provider NAME is
+   always rendered as text beside any colour, because colour alone is not an
    accessible way to say which cloud a resource is in. */
 export const PROVIDER_META = {
-  AWS: { color: '#ff9900', badge: 'bg-orange-50 text-orange-700 border-orange-200', label: 'AWS' },
-  Azure: { color: '#0078D4', badge: 'bg-sky-50 text-sky-700 border-sky-200', label: 'Azure' },
-  OCI: { color: '#c74634', badge: 'bg-red-50 text-red-700 border-red-200', label: 'OCI' },
-  Oracle: { color: '#c74634', badge: 'bg-red-50 text-red-700 border-red-200', label: 'OCI' },
-  Unknown: { color: '#94a3b8', badge: 'bg-slate-50 text-slate-700 border-slate-200', label: 'Unknown' },
+  AWS: { color: providerColor('AWS'), badgeStyle: providerBadgeStyle('AWS'), label: 'AWS' },
+  Azure: { color: providerColor('Azure'), badgeStyle: providerBadgeStyle('Azure'), label: 'Azure' },
+  OCI: { color: providerColor('OCI'), badgeStyle: providerBadgeStyle('OCI'), label: 'OCI' },
+  Oracle: { color: providerColor('OCI'), badgeStyle: providerBadgeStyle('OCI'), label: 'OCI' },
+  Unknown: { color: UNKNOWN_COLOR, badgeStyle: providerBadgeStyle(null), label: 'Unknown' },
 };
 
 export const providerMeta = (provider) => PROVIDER_META[provider] || PROVIDER_META.Unknown;
@@ -173,13 +176,18 @@ export const providerMeta = (provider) => PROVIDER_META[provider] || PROVIDER_ME
    the provider did not report has an unknown health, and saying so is the
    whole point — "it exists so it must be fine" is the inference the backend
    refuses to make and the UI must not undo. */
+/* Health is OUR vocabulary, not a vendor's, so unlike the provider hues above it
+   belongs to the theme: these read from the fixed status scale in tokens.css
+   (`--status-*`), the same five steps the agents list, the infra hosts and every
+   gauge grade against. The hexes that used to sit here (#16a34a, #dc2626, …)
+   were a sixth, private opinion about what "Failed" looks like. */
 export const HEALTH_META = {
-  Healthy: { tone: 'success', color: '#16a34a', label: 'Healthy' },
-  Warning: { tone: 'warning', color: '#d97706', label: 'In transition' },
-  Degraded: { tone: 'warning', color: '#ea580c', label: 'Degraded' },
-  Failed: { tone: 'danger', color: '#dc2626', label: 'Failed' },
-  Stopped: { tone: 'neutral', color: '#64748b', label: 'Stopped' },
-  Unknown: { tone: 'neutral', color: '#94a3b8', label: 'Not reported' },
+  Healthy: { tone: 'success', color: 'var(--status-good)', label: 'Healthy' },
+  Warning: { tone: 'warning', color: 'var(--status-warning)', label: 'In transition' },
+  Degraded: { tone: 'warning', color: 'var(--status-serious)', label: 'Degraded' },
+  Failed: { tone: 'danger', color: 'var(--status-critical)', label: 'Failed' },
+  Stopped: { tone: 'neutral', color: 'var(--status-unknown)', label: 'Stopped' },
+  Unknown: { tone: 'neutral', color: 'var(--status-unknown)', label: 'Not reported' },
 };
 
 export const healthMeta = (health) => HEALTH_META[health] || HEALTH_META.Unknown;

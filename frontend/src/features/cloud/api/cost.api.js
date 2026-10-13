@@ -196,3 +196,15 @@ export const setRecommendationState = async (fingerprint, payload) => {
   );
   return data;
 };
+
+/** The Cost tab's own refresh: re-query billing and re-ingest the last 30
+ *  days. Synchronous — the result says what was written or why the provider
+ *  refused. A 409 means a refresh or scan is already doing it. */
+export const refreshCost = async (accountId) => {
+  const { data } = await cloudAxios.post(`/cost/refresh/${accountId}`, null, {
+    // Billing APIs take 30-50s per call and Azure is serialised; the default
+    // timeout would report a failure for a refresh that is still running.
+    timeout: 300_000,
+  });
+  return data;
+};

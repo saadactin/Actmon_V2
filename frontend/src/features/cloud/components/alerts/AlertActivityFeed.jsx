@@ -80,16 +80,16 @@ export default function AlertActivityFeed({ data, loading, error, limit }) {
               <div className="flex flex-wrap items-center gap-1.5">
                 <Badge tone={m.tone} size="sm">{m.label}</Badge>
                 {e.rule_name && (
-                  <span className="truncate text-[11px] font-medium text-fg">
+                  <span className="truncate text-meta font-medium text-fg">
                     {e.rule_name}
                   </span>
                 )}
               </div>
-              <p className="mt-0.5 text-[11px] leading-snug text-muted">{e.summary}</p>
+              <p className="mt-0.5 text-meta leading-snug text-muted">{e.summary}</p>
               {/* Who did it, when the actor is known. RBAC is off by default in
                   this build, so an unauthenticated change genuinely has no
                   actor — and saying "unknown" is truer than omitting it. */}
-              <p className="mt-0.5 text-[10px] text-subtle">
+              <p className="mt-0.5 text-micro text-subtle">
                 <When iso={e.at} />
                 {' · '}
                 {e.actor || 'actor not recorded'}

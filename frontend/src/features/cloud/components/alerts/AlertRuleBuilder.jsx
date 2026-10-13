@@ -389,7 +389,7 @@ export default function AlertRuleBuilder({
                       <span className="block text-[12px] font-semibold text-fg">
                         Start from a template
                       </span>
-                      <span className="block text-[11px] leading-snug text-muted">
+                      <span className="block text-meta leading-snug text-muted">
                         Sensible defaults for the conditions most people want,
                         already filled in.
                       </span>
@@ -459,18 +459,18 @@ export default function AlertRuleBuilder({
                               condition with no explanation looks like a
                               missing feature rather than a fixable gap. */}
                           {unsupported && cond.support?.reason && (
-                            <p className="mt-2 flex gap-1.5 rounded border border-warning bg-warning-soft px-2 py-1.5 text-[11px] leading-snug text-fg">
+                            <p className="mt-2 flex gap-1.5 rounded border border-warning bg-warning-soft px-2 py-1.5 text-meta leading-snug text-fg">
                               <Icon name="info" size={12} className="mt-0.5 shrink-0 text-warning-fg" />
                               {cond.support.reason}
                             </p>
                           )}
                           {!unsupported && cond.support?.warning && (
-                            <p className="mt-2 flex gap-1.5 text-[11px] leading-snug text-muted">
+                            <p className="mt-2 flex gap-1.5 text-meta leading-snug text-muted">
                               <Icon name="info" size={12} className="mt-0.5 shrink-0 text-subtle" />
                               {cond.support.warning}
                             </p>
                           )}
-                          <p className="mt-1.5 text-[10px] uppercase tracking-wider text-subtle">
+                          <p className="mt-1.5 text-micro uppercase tracking-wider text-subtle">
                             Reads: {cond.source.replace(/_/g, ' ')}
                           </p>
                         </button>
@@ -522,7 +522,7 @@ export default function AlertRuleBuilder({
                   />
                 )}
                 {f.help && (
-                  <span className="mt-1 block text-[11px] leading-snug text-subtle">
+                  <span className="mt-1 block text-meta leading-snug text-subtle">
                     {f.help}
                   </span>
                 )}
@@ -540,7 +540,7 @@ export default function AlertRuleBuilder({
                 <div className="space-y-2">
                   {scopeKeys.map((key) => (
                     <label key={key} className="block">
-                      <span className="mb-1 block text-[11px] capitalize text-muted">
+                      <span className="mb-1 block text-meta capitalize text-muted">
                         {key.replace(/_/g, ' ')}
                       </span>
                       <Input
@@ -552,7 +552,7 @@ export default function AlertRuleBuilder({
                     </label>
                   ))}
                 </div>
-                <p className="mt-2 text-[11px] leading-snug text-subtle">
+                <p className="mt-2 text-meta leading-snug text-subtle">
                   A scope always narrows within this account. Nothing here can
                   widen a rule beyond it.
                 </p>
@@ -572,7 +572,7 @@ export default function AlertRuleBuilder({
                 placeholder="Critical security findings"
               />
               {touched && !draft.name.trim() && (
-                <span className="mt-1 block text-[11px] text-danger">
+                <span className="mt-1 block text-meta text-danger">
                   A rule name is required.
                 </span>
               )}
@@ -609,7 +609,7 @@ export default function AlertRuleBuilder({
                   </button>
                 ))}
               </div>
-              <p className="mt-1.5 text-[11px] leading-snug text-subtle">
+              <p className="mt-1.5 text-meta leading-snug text-subtle">
                 Severity sets the email subject prefix and how the alert is
                 ranked in the list. It does not change how the condition is
                 evaluated.
@@ -631,14 +631,14 @@ export default function AlertRuleBuilder({
                 })}
                 label="Also send to this account's default recipients"
               />
-              <p className="mt-1.5 text-[11px] leading-snug text-subtle">
+              <p className="mt-1.5 text-meta leading-snug text-subtle">
                 Resolved when the alert fires, so adding a default recipient
                 later reaches rules that already exist.
               </p>
               {draft.notification_config.use_account_defaults && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {accountRecipients.filter((r) => r.enabled).length === 0 ? (
-                    <span className="text-[11px] text-warning-fg">
+                    <span className="text-meta text-warning-fg">
                       This account has no default recipients configured yet.
                     </span>
                   ) : accountRecipients.filter((r) => r.enabled).map((r) => (
@@ -669,7 +669,7 @@ export default function AlertRuleBuilder({
                     key={email}
                     type="button"
                     onClick={() => removeRecipient(email)}
-                    className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-2 py-0.5 text-[11px] text-fg hover:bg-sunken"
+                    className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-2 py-0.5 text-meta text-fg hover:bg-sunken"
                   >
                     {email}
                     <Icon name="close" size={11} className="text-subtle" />
@@ -696,7 +696,7 @@ export default function AlertRuleBuilder({
                 // digest would be offering a setting with no effect.
                 disabled={draft.severity === 'CRITICAL'}
               />
-              <span className="mt-1 block text-[11px] leading-snug text-subtle">
+              <span className="mt-1 block text-meta leading-snug text-subtle">
                 {draft.severity === 'CRITICAL'
                   ? 'Critical alerts are always sent immediately and are never '
                     + 'batched into a digest, so this cannot be changed.'
@@ -726,7 +726,7 @@ export default function AlertRuleBuilder({
 
               {draft.escalate_after_seconds > 0 && (
                 <div className="mt-2">
-                  <span className="mb-1 block text-[11px] font-semibold text-fg">
+                  <span className="mb-1 block text-meta font-semibold text-fg">
                     Escalate to
                   </span>
                   <div className="flex gap-2">
@@ -747,7 +747,7 @@ export default function AlertRuleBuilder({
                         key={email}
                         type="button"
                         onClick={() => removeEscalation(email)}
-                        className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-2 py-0.5 text-[11px] text-fg hover:bg-sunken"
+                        className="inline-flex items-center gap-1 rounded-control border border-border bg-surface px-2 py-0.5 text-meta text-fg hover:bg-sunken"
                       >
                         {email}
                         <Icon name="close" size={11} className="text-subtle" />
@@ -755,7 +755,7 @@ export default function AlertRuleBuilder({
                     ))}
                   </div>
                   {!(draft.notification_config.escalation_recipients || []).length && (
-                    <p className="mt-1.5 flex gap-1.5 text-[11px] leading-snug text-warning-fg">
+                    <p className="mt-1.5 flex gap-1.5 text-meta leading-snug text-warning-fg">
                       <Icon name="alert" size={11} className="mt-0.5 shrink-0" />
                       Escalation is on but nobody is listed, so there would be
                       nobody to escalate to. This rule cannot be saved until you
@@ -765,7 +765,7 @@ export default function AlertRuleBuilder({
                 </div>
               )}
 
-              <p className="mt-2 text-[11px] leading-snug text-subtle">
+              <p className="mt-2 text-meta leading-snug text-subtle">
                 Escalation fires once, and stops as soon as anyone acknowledges
                 the alert — being picked up is what it is trying to achieve.
               </p>
@@ -774,14 +774,14 @@ export default function AlertRuleBuilder({
             {/* Said plainly, because a rule that records but never notifies is
                 a legitimate choice and a common accident. */}
             {effectiveRecipients.length === 0 && (
-              <p className="flex gap-1.5 rounded-control border border-warning bg-warning-soft px-2.5 py-2 text-[11px] leading-snug text-fg">
+              <p className="flex gap-1.5 rounded-control border border-warning bg-warning-soft px-2.5 py-2 text-meta leading-snug text-fg">
                 <Icon name="alert" size={12} className="mt-0.5 shrink-0 text-warning-fg" />
                 Nobody will be emailed. The rule will still record alerts in this
                 tab — add a recipient if you want to be told.
               </p>
             )}
 
-            <p className="text-[11px] leading-snug text-subtle">
+            <p className="text-meta leading-snug text-subtle">
               Email is the only delivery channel connected in this build. Teams,
               Slack, webhook and the rest are stored by the shared notification
               settings but no adapter sends them yet, so they are not offered
@@ -802,7 +802,7 @@ export default function AlertRuleBuilder({
                 onChange={(v) => set({ evaluation_interval_seconds: Number(v) })}
                 options={INTERVALS}
               />
-              <span className="mt-1 block text-[11px] leading-snug text-subtle">
+              <span className="mt-1 block text-meta leading-snug text-subtle">
                 Five minutes is the floor. Every source this reads is refreshed
                 by discovery rather than continuously, so a shorter interval
                 would re-read identical numbers.
@@ -818,7 +818,7 @@ export default function AlertRuleBuilder({
                 onChange={(v) => set({ cooldown_seconds: Number(v) })}
                 options={COOLDOWNS}
               />
-              <span className="mt-1 block text-[11px] leading-snug text-subtle">
+              <span className="mt-1 block text-meta leading-snug text-subtle">
                 Cooldown suppresses repeated email for the same condition. The
                 alert itself stays open throughout — this only affects the
                 mail.
@@ -845,7 +845,7 @@ export default function AlertRuleBuilder({
               </p>
 
               <label className="block">
-                <span className="mb-1 block text-[11px] text-muted">
+                <span className="mb-1 block text-meta text-muted">
                   How long the condition must hold
                 </span>
                 <Select
@@ -857,7 +857,7 @@ export default function AlertRuleBuilder({
               </label>
 
               <label className="mt-2 block">
-                <span className="mb-1 block text-[11px] text-muted">
+                <span className="mb-1 block text-meta text-muted">
                   How many evaluations must agree
                 </span>
                 <Select
@@ -868,7 +868,7 @@ export default function AlertRuleBuilder({
                 />
               </label>
 
-              <p className="mt-2 text-[11px] leading-snug text-subtle">
+              <p className="mt-2 text-meta leading-snug text-subtle">
                 A breach that has not cleared these bars is held back: no alert,
                 no email, nothing in the feed. If the condition clears first the
                 held breach is discarded entirely, so a spike that never became
@@ -876,7 +876,7 @@ export default function AlertRuleBuilder({
               </p>
 
               {draft.consecutive_breaches_required > 1 && (
-                <p className="mt-1.5 text-[11px] leading-snug text-muted">
+                <p className="mt-1.5 text-meta leading-snug text-muted">
                   At one evaluation every{' '}
                   {humanDuration(draft.evaluation_interval_seconds)}, that is up
                   to{' '}
@@ -897,7 +897,7 @@ export default function AlertRuleBuilder({
               label="Enabled"
             />
             {!draft.enabled && (
-              <p className="text-[11px] leading-snug text-muted">
+              <p className="text-meta leading-snug text-muted">
                 A disabled rule is stored but never evaluated. Nothing it has
                 already raised is affected.
               </p>
@@ -917,7 +917,7 @@ export default function AlertRuleBuilder({
                 </p>
                 <ul className="space-y-0.5">
                   {Object.entries(serverErrors).map(([field, message]) => (
-                    <li key={field} className="text-[11px] leading-snug text-fg">
+                    <li key={field} className="text-meta leading-snug text-fg">
                       <span className="font-semibold">{field.replace(/[._]/g, ' ')}:</span>{' '}
                       {message}
                     </li>
@@ -979,7 +979,7 @@ export default function AlertRuleBuilder({
               ))}
             </dl>
 
-            <p className="rounded-control border border-border px-3 py-2 text-[11px] leading-snug text-muted">
+            <p className="rounded-control border border-border px-3 py-2 text-meta leading-snug text-muted">
               The exact sentence this rule will show in the list, in the alert
               and in the email is generated on the server from this
               configuration, so it can never describe a different comparison

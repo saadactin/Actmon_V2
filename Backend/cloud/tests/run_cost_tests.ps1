@@ -48,6 +48,20 @@ $suites = @(
     # spend crosses 100%. Both cases are pinned. Alerts are raised through the
     # EXISTING cloud_alerts table and notification bridge, never a second one.
     @{ Name = "budgets + alert policies: dedupe, escalation, RBAC"; Args = @("tests\verify_cost_budgets.py") },
+    # Forecast-to-breach alerting (alert_on_forecast) and the scheduler that
+    # evaluates every budget and policy on its own, without a human posting
+    # /budgets/evaluate first. The load-bearing case: a forecast notice and a
+    # real breach notice at the SAME threshold must dedupe independently, and
+    # a forecast must go quiet once actual spend has already said the same
+    # thing -- otherwise a budget at 100% gets paged twice, forever.
+    @{ Name = "forecast-to-breach alerting + the budget scheduler's config"; Args = @("tests\verify_cost_budget_guardrails.py") },
+    # The FinOps scorecard: Inform/Optimize/Operate phases over the SAME
+    # components finops_health already scored, Crawl/Walk/Run maturity taken
+    # as the WEAKEST phase rather than an average, the budget-scoping bug fix
+    # (an unrelated account's budget no longer inflates this one's coverage),
+    # the new optimization-review signal, and per-client aggregation through
+    # the identical computation get_governance uses.
+    @{ Name = "FinOps scorecard: phases, maturity, budget-scoping fix, per-client aggregation"; Args = @("tests\verify_finops_scorecard.py") },
     # The recommendations engine. Two things carry the weight: savings in
     # different currencies are never summed and an unpriceable opportunity is
     # counted but never valued; and the fingerprint survives re-derivation, so

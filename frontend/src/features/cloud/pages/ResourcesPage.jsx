@@ -10,7 +10,7 @@ import CloudPageHeader from '../components/CloudPageHeader';
 import CloudToolbar from '../components/CloudToolbar';
 import { DiagnosticModal } from '../components/DiagnosticModal';
 import { DiscoveryStatus } from '../components/DiscoveryStatus';
-import { TriggerScanButton } from '../components/TriggerScanButton';
+import RefreshAllButton from '../components/refresh/RefreshAllButton';
 import ResourceDetailDrawer from '../components/ResourceDetailDrawer';
 import ResourceFacetRail from '../components/resources/ResourceFacetRail';
 import ResourceGroupPanel from '../components/resources/ResourceGroupPanel';
@@ -24,7 +24,7 @@ import { useCloudScope } from '../hooks/useCloudScope';
 import {
   useResourceQuery, useResourceReference,
 } from '../hooks/useResources';
-import { exportResourcesCsv } from '../api/resources.api';
+import { exportResourceAssessment, exportResourcesCsv } from '../api/resources.api';
 import {
   activeFilterCount, EMPTY_FILTERS, filtersFromSearchParams, filtersToSearchParams,
   formatCount, formatPct, relativeTime,
@@ -52,6 +52,7 @@ import {
 
 const GROUP_OPTIONS = [
   { id: '', label: 'No grouping' },
+  { id: 'service', label: 'Service' },
   { id: 'normalized_type', label: 'Category' },
   { id: 'resource_type', label: 'Resource type' },
   { id: 'status', label: 'Status' },
@@ -66,6 +67,12 @@ const GROUP_OPTIONS = [
 ];
 
 const ALL_SCOPE = 'ALL';
+
+// Mirrors MAX_RESOURCES_PER_EXPORT in
+// Backend/cloud/app/services/resource_assessment_service.py — checked here
+// too so the button disables with an explanation instead of the user
+// selecting 300 rows and only finding out at the request.
+const MAX_ASSESSMENT_RESOURCES = 200;
 
 export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) => {
   const navigate = useNavigate();
@@ -99,6 +106,12 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
   const [showDiagnostic, setShowDiagnostic] = useState(false);
   const [showRail, setShowRail] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [exportingAssessment, setExportingAssessment] = useState(false);
+
+  // A selection naming resources from a different account or filter set is
+  // worse than an empty one — reset rather than carry it across a scope change.
+  useEffect(() => { setSelectedIds([]); }, [activeScope, filters]);
 
   const applyFilters = useCallback((next) => {
     setPage(1);
@@ -165,6 +178,16 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
     }
   };
 
+  const handleExportAssessment = async () => {
+    if (!selectedIds.length || activeScope === ALL_SCOPE) return;
+    setExportingAssessment(true);
+    try {
+      await exportResourceAssessment(activeScope, selectedIds);
+    } finally {
+      setExportingAssessment(false);
+    }
+  };
+
   // ── Empty and error states, each saying the thing that is actually true ────
   const renderEmpty = () => {
     if (isError) {
@@ -221,7 +244,7 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
             onAddAccount: () => navigate('/cloud/accounts'),
           }}
         >
-          {selectedAccountId ? <TriggerScanButton accountId={selectedAccountId} /> : undefined}
+          {selectedAccountId ? <RefreshAllButton accountId={selectedAccountId} /> : undefined}
         </CloudToolbar>
       ) : undefined}
     />
@@ -245,24 +268,20 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
       {header}
 
       <div className="space-y-4">
-        {embedded && selectedAccountId && (
-          <div className="flex justify-end">
-            <TriggerScanButton accountId={selectedAccountId} />
-          </div>
-        )}
-
+        {/* No scan button in the tab: inside an account the header above every
+            tab has the one Refresh all, and the standalone page carries it in
+            its own header. */}
         {selectedAccountId && !crossAccount && <DiscoveryStatus accountId={selectedAccountId} />}
 
         {/* Stale inventory must never look like fresh inventory. */}
         {dataQuality?.partial && (
           <div className="flex flex-wrap items-center gap-2 rounded-control border border-warning bg-warning-soft px-3 py-2 text-[12px] text-warning-fg">
             <Icon name="clock" size={14} />
-            <span>
+            <span className="min-w-0 flex-1">
               {dataQuality.accounts?.some((a) => a.freshness?.stale)
                 ? 'Some accounts in this view have not been re-scanned recently — these rows describe what discovery last saw, not necessarily what is running now.'
                 : `Cost is known for ${formatPct(dataQuality.coverage?.cost)} of these resources; the rest report no per-resource billing.`}
             </span>
-            {selectedAccountId && <TriggerScanButton accountId={selectedAccountId} />}
           </div>
         )}
 
@@ -314,7 +333,8 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
 
           <Select
             value={groupBy}
-            onChange={(e) => { setGroupBy(e.target.value); setPage(1); }}
+            // Select hands over the chosen value, not the DOM event.
+            onChange={(value) => { setGroupBy(value); setPage(1); }}
             options={GROUP_OPTIONS}
             width="auto"
             size="sm"
@@ -342,6 +362,34 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
           >
             CSV
           </Button>
+
+          {selectedIds.length > 0 && (
+            <>
+              <span className="text-[12px] font-semibold text-muted">
+                {`${selectedIds.length} selected`}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="download"
+                loading={exportingAssessment}
+                disabled={activeScope === ALL_SCOPE || selectedIds.length > MAX_ASSESSMENT_RESOURCES}
+                onClick={handleExportAssessment}
+                title={
+                  activeScope === ALL_SCOPE
+                    ? 'Select a specific account (not "All accounts") to export an assessment.'
+                    : selectedIds.length > MAX_ASSESSMENT_RESOURCES
+                      ? `Up to ${MAX_ASSESSMENT_RESOURCES} resources per export — select fewer.`
+                      : 'Security, utilization, performance and cost-anomaly findings for the selected resources, as one CSV.'
+                }
+              >
+                Export Assessment
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
+                Clear selection
+              </Button>
+            </>
+          )}
 
           {filterCount > 0 && (
             <Button variant="ghost" size="sm" onClick={() => applyFilters(EMPTY_FILTERS)}>
@@ -388,13 +436,16 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
               onPageSize={(size) => { setPageSize(size); setPage(1); }}
               onOpen={setDrawerResource}
               emptyState={renderEmpty()}
+              selectable
+              selectedKeys={selectedIds}
+              onSelectionChange={setSelectedIds}
             />
 
             {/* Coverage is reported, not assumed. A figure nobody collected
                 reads as "not applicable" rather than 0%. */}
             {dataQuality?.coverage && (
               <div className="card flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 text-[12px]">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                <span className="text-meta font-semibold uppercase tracking-wider text-muted">
                   Data quality
                 </span>
                 {[

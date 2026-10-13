@@ -1,9 +1,14 @@
-"""Turn the rule engine's findings into structured, rankable recommendations.
+"""Turn optimization findings into structured, rankable Cost-tab recommendations.
 
-The rules themselves stay in `cost_service` where they already read real
-provider configuration and price real savings from OCI's public Price List
-API. This module does not re-derive them and does not invent new ones. It adds
-the four things a raw finding lacks:
+The findings come from the Resource Intelligence engine (`app.optimization`),
+the same ones the Intelligence tab lists, so the two tabs can never disagree
+about what is wrong or what it would save. `from_finding` maps one finding to
+the Cost tab's recommendation shape; the engine already carries the category,
+confidence, actionability and utilization evidence, and passes them through as
+`meta`. The legacy per-rule metadata below stays for recommendations that
+arrive without it (and for decisions recorded under the old rule names). This
+module does not re-derive, re-price or invent anything. It adds the four
+things the Cost tab needs:
 
 1.  **Category and actionability.** Why it matters, what to change, what the
     risk is, how to do it. A finding that says "this is idle" without saying
@@ -16,12 +21,12 @@ the four things a raw finding lacks:
 4.  **Lifecycle.** A human decision, joined back by fingerprint so it survives
     re-derivation.
 
-**Utilization is never inferred.** Several of these rules detect a *state*
-(stopped, zero node pools, no backend sets) which the provider reports as fact.
-None of them observe CPU, memory or request rates, because this product does
-not collect them. So every recommendation reports `utilization: not_available`
-rather than implying a resource is idle in the usage sense — the distinction
-section 41 insists on.
+**Utilization is never inferred.** A recommendation says it was measured only
+when the finding's evidence includes telemetry from the provider's monitoring
+API, and then names the figures. A finding that rests on the resource's
+reported *state* (stopped, zero node pools, no backend sets) says so, rather
+than implying a resource is idle in the usage sense — the distinction section
+41 insists on.
 """
 from __future__ import annotations
 
@@ -223,6 +228,210 @@ _DEFAULT_META = {
     "why": None, "action": None, "impact": None, "risk_note": None, "how": None,
 }
 
+# ── From the optimization engine ──────────────────────────────────────────────
+# The Cost tab lists the findings whose remedy SPENDS LESS: unused resources,
+# underutilized ones and cost-relevant configuration. A CONSTRAINED finding
+# (CPU saturated, storage nearly full, throttling) is fixed by spending more,
+# and a RISK finding is about reliability; both stay on the Intelligence tab
+# only, so the Cost tab never files an upsize under "savings".
+COST_TAB_SIGNALS = frozenset({"UNUSED", "UNDERUTILIZED", "CONFIGURATION"})
+
+# A finding's category on the Cost tab is the engine's own category, in the
+# same words the Intelligence tab uses ("Rightsizing", "Cleanup", …), so a
+# count on one tab is the count on the other. The legacy categories above
+# (Stopped resources, Idle resources, …) remain only for recommendations that
+# arrive without engine metadata.
+def _engine_category(finding: Dict[str, Any]) -> str:
+    from app.optimization.model import CATEGORY_LABEL
+
+    cat = finding.get("category")
+    return CATEGORY_LABEL.get(cat) or cat or ARCHITECTURE
+
+
+# A finding's status, in the Cost tab's workflow words. The decision record
+# can be finer (ACCEPTED and IN_PROGRESS are both "acknowledged" to the
+# finding), so it wins whenever the two agree on the group.
+_STATE_FROM_STATUS = {
+    "OPEN": STATE_NEW, "ACKNOWLEDGED": "REVIEWED",
+    "SUPPRESSED": "DISMISSED", "RESOLVED": "IMPLEMENTED",
+}
+_STATUS_FROM_STATE = {
+    STATE_NEW: "OPEN", "REVIEWED": "ACKNOWLEDGED", "ACCEPTED": "ACKNOWLEDGED",
+    "IN_PROGRESS": "ACKNOWLEDGED", "IMPLEMENTED": "RESOLVED", "DISMISSED": "SUPPRESSED",
+}
+
+
+def finding_status_for(state: str) -> Optional[str]:
+    """The finding status a Cost-tab decision corresponds to."""
+    return _STATUS_FROM_STATE.get(state)
+
+
+def on_cost_tab(finding: Dict[str, Any]) -> bool:
+    """Whether a finding belongs on the Cost tab's list.
+
+    Active findings, plus the ones a PERSON closed (suppressed, or marked
+    resolved) so "show closed" still shows the decision. A finding the analysis
+    resolved because the condition cleared is gone, exactly as the old
+    re-derived list dropped a recommendation whose condition had disappeared.
+    """
+    if finding.get("signal") not in COST_TAB_SIGNALS:
+        return False
+    status = finding.get("status") or "OPEN"
+    if status == "RESOLVED":
+        return (finding.get("resolution") or {}).get("kind") == "marked_by_user"
+    return status in ("OPEN", "ACKNOWLEDGED", "SUPPRESSED")
+
+
+def _parse_ts(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def resolve_state(status: Optional[str], status_changed_at, decision: Optional[Dict[str, Any]]) -> str:
+    """One workflow state from the finding's status and the Cost-tab decision.
+
+    The latest human word wins, whichever tab it was said in: a decision newer
+    than the finding's last status change stands; an older one gives way to
+    the finding (someone reopened it in Resource Intelligence, or the analysis
+    reopened it because the condition came back).
+    """
+    from_status = _STATE_FROM_STATUS.get(status or "OPEN", STATE_NEW)
+    if not decision or not decision.get("state"):
+        return from_status
+    state = decision["state"]
+    if _STATUS_FROM_STATE.get(state) == (status or "OPEN"):
+        return state
+    changed = _parse_ts(status_changed_at)
+    decided = _parse_ts(decision.get("decided_at"))
+    if changed is None or (decided is not None and decided >= changed):
+        return state
+    return from_status
+
+
+def _breakdown(lines: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The engine's arithmetic, in the {label, amount} rows the Cost tab draws."""
+    out = []
+    for line in lines or []:
+        label = line.get("component") or line.get("label") or ""
+        if line.get("monthly_cost") is not None:
+            amount = line["monthly_cost"]
+            if line.get("note"):
+                label = f"{label} · {line['note']}"
+        elif line.get("hourly_cost") is not None:
+            amount, label = line["hourly_cost"], f"{label} · per hour"
+        else:
+            amount = line.get("amount")
+        out.append({"label": label, "amount": amount})
+    return out
+
+
+def _utilization(finding: Dict[str, Any]) -> Dict[str, Any]:
+    measured = [e for e in finding.get("evidence") or []
+                if e.get("kind") == "telemetry" and e.get("value") is not None]
+    if measured:
+        figures = "; ".join(f"{e.get('label')} {e.get('display')}" for e in measured[:4])
+        # "Azure Monitor · Percentage CPU (…)" → "Azure Monitor": the service
+        # read, not every metric's full provenance (the drawer has that).
+        sources = sorted({str(e.get("source")).split(" · ")[0] for e in measured
+                          if e.get("source")})
+        return {
+            "available": True,
+            "reason": (f"Measured from {', '.join(sources) or 'the provider monitoring API'}: "
+                       f"{figures}."),
+            "metrics": [{"label": e.get("label"), "display": e.get("display"),
+                         "source": e.get("source")} for e in measured],
+        }
+    return {
+        "available": False,
+        "reason": (
+            "This finding rests on the resource's configuration and billing as the "
+            "provider reports them. It does not depend on utilization, so none is "
+            "claimed — idleness in the usage sense is neither measured nor implied."
+            if not finding.get("metrics_used") else
+            "This rule reads utilization, but no measured figure backs this finding "
+            "(see the finding in Resource Intelligence for what could not be read)."),
+    }
+
+
+def _impact_text(impact: Dict[str, Any]) -> Optional[str]:
+    parts = [f"{k.capitalize()}: {v}" for k, v in (impact or {}).items() if v]
+    return " ".join(parts) or None
+
+
+def from_finding(finding: Dict[str, Any], *, decisions: Optional[Dict[str, Any]] = None,
+                 legacy_rules: Sequence[str] = ()) -> Dict[str, Any]:
+    """One engine finding (a persisted row's or a preview's `to_dict()`) in the
+    Cost tab's recommendation shape.
+
+    `legacy_rules` are the old Cost-tab rule names the finding's rule
+    supersedes: a decision recorded against one of them, before the Cost tab
+    read this engine, still applies.
+    """
+    decisions = decisions or {}
+    fp = finding["fingerprint"]
+    decision = decisions.get(fp)
+    if decision is None:
+        for legacy in legacy_rules:
+            decision = decisions.get(recommendation_fingerprint(
+                account_id=finding.get("account_id"), rule=legacy,
+                resource_id=finding.get("resource_id")))
+            if decision:
+                break
+    s = finding.get("savings") or {}
+    priced = bool(s.get("priced")) and s.get("amount") is not None
+    assumptions = list(s.get("assumptions") or [])
+    if not priced and s.get("reason"):
+        assumptions.insert(0, f"Why there is no figure: {s['reason']}")
+    rule_id = finding.get("rule_id")
+    return {
+        "id": finding.get("id") or fp,
+        "rule": finding.get("title"),
+        "rule_id": rule_id,
+        "source": "optimization",
+        "account_id": finding.get("account_id"),
+        "description": finding.get("description"),
+        "potential_savings": s.get("amount") if priced else None,
+        "savings_currency": s.get("currency") if priced else None,
+        "savings_method": s.get("method") if priced else "NONE",
+        "savings_basis": s.get("basis") if priced else None,
+        "savings_breakdown": _breakdown(s.get("breakdown")) if priced else [],
+        "savings_assumptions": assumptions,
+        "affected_resource": finding.get("resource_name"),
+        "resource_id": finding.get("resource_id"),
+        "resource_type": finding.get("resource_type"),
+        "region": finding.get("region"),
+        "provider": finding.get("provider"),
+        "severity": finding.get("severity"),
+        "effort": finding.get("effort"),
+        "recommendation": finding.get("recommendation"),
+        "sub_resources": [],
+        "fingerprint": fp,
+        "finding_status": finding.get("status") or "OPEN",
+        "analysed": bool(finding.get("analysed", True)),
+        "last_verified": finding.get("last_verified_at"),
+        "utilization": _utilization(finding),
+        "state": resolve_state(finding.get("status"), finding.get("status_changed_at"), decision),
+        "decision": decision,
+        "meta": {
+            "category": _engine_category(finding),
+            "confidence": finding.get("confidence") or LOW,
+            "effort": finding.get("effort") or MEDIUM,
+            "risk": finding.get("risk") or MEDIUM,
+            "why": finding.get("rationale"),
+            "action": finding.get("recommendation"),
+            "impact": _impact_text(finding.get("impact")),
+            "risk_note": " ".join(finding.get("risk_notes") or []) or None,
+            "how": finding.get("remediation"),
+        },
+    }
+
 # ── Priority score (83, 84) ───────────────────────────────────────────────────
 # Published, not hidden, because a ranking nobody can interrogate is a ranking
 # nobody should trust. Maximum 100.
@@ -258,6 +467,7 @@ def unclassified_rules(optimizations: Sequence[Dict[str, Any]]) -> List[str]:
     return sorted({
         o.get("rule") for o in optimizations
         if o.get("rule") and o["rule"] not in RULES
+        and o.get("source") != "optimization"
     })
 
 
@@ -298,17 +508,19 @@ def enrich(
     out: List[Dict[str, Any]] = []
     for o in optimizations:
         rule = o.get("rule") or "Unknown"
-        meta = RULES.get(rule, _DEFAULT_META)
+        # A finding from the optimization engine brings its own metadata and
+        # identity; only a recommendation without them uses the legacy table.
+        meta = o.get("meta") or RULES.get(rule, _DEFAULT_META)
         amount = o.get("potential_savings")
         currency = o.get("savings_currency")
         priced = isinstance(amount, (int, float))
 
-        fingerprint = recommendation_fingerprint(
+        fingerprint = o.get("fingerprint") or recommendation_fingerprint(
             account_id=o.get("account_id") or account_id,
             rule=rule,
             resource_id=o.get("resource_id"),
         )
-        decision = decisions.get(fingerprint)
+        decision = o["decision"] if "decision" in o else decisions.get(fingerprint)
 
         priority = (
             _impact_points(amount if priced else None,
@@ -319,8 +531,9 @@ def enrich(
             + _SEVERITY_POINTS.get((o.get("severity") or "LOW").upper(), 1)
         )
 
+        rest = {k: v for k, v in o.items() if k != "meta"}
         out.append({
-            **o,
+            **rest,
             "recommendation_id": fingerprint,
             "fingerprint": fingerprint,
             "title": rule,
@@ -343,9 +556,10 @@ def enrich(
             "savings_source": o.get("savings_basis"),
             "priority_score": priority,
             "priority_formula": PRIORITY_FORMULA,
-            # Utilization is never claimed (41): none of these rules observe
-            # CPU, memory or request rates.
-            "utilization": {
+            # Utilization is never claimed (41) unless the finding measured
+            # it: an engine finding says which figures it read; a legacy
+            # recommendation observed no CPU, memory or request rates.
+            "utilization": o.get("utilization") or {
                 "available": False,
                 "reason": (
                     "This finding is based on the resource's reported STATE "
@@ -355,10 +569,10 @@ def enrich(
                     "measured nor claimed."
                 ),
             },
-            # Freshness (102): derived fresh on every analytics run, so this is
-            # genuinely now rather than a stored timestamp.
-            "last_verified": verified_at.isoformat(),
-            "state": (decision or {}).get("state", STATE_NEW),
+            # Freshness (102): an engine finding carries when its analysis
+            # last re-checked it; a re-derived one is genuinely now.
+            "last_verified": o.get("last_verified") or verified_at.isoformat(),
+            "state": o.get("state") or (decision or {}).get("state", STATE_NEW),
             "decision": decision,
         })
 
@@ -366,11 +580,16 @@ def enrich(
     return out
 
 
+_VERIFIED_METHODS = frozenset({"LIST_PRICE", "BILLED"})
+
+
 def savings_summary(recommendations: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """Savings split by how well they are known, per currency (85, 86).
 
     Three buckets, never one number:
-      verified     - priced from a provider price-list API.
+      verified     - priced from a provider price-list API, or the amount the
+                     provider's own billing API says the resource was billed
+                     (savings_method LIST_PRICE / BILLED).
       estimated    - priced by some other means. Currently always empty; the
                      bucket exists so an estimate can never be quietly counted
                      as verified when one is added.
@@ -392,7 +611,8 @@ def savings_summary(recommendations: Sequence[Dict[str, Any]]) -> Dict[str, Any]
             continue
         code = r.get("savings_currency") or "UNKNOWN"
         basis = (r.get("savings_basis") or "").lower()
-        bucket = verified if "price list" in basis else estimated
+        proven = (r.get("savings_method") in _VERIFIED_METHODS) or "price list" in basis
+        bucket = verified if proven else estimated
         bucket[code] = round(bucket.get(code, 0.0) + float(amount), 2)
 
     return {
@@ -406,8 +626,8 @@ def savings_summary(recommendations: Sequence[Dict[str, Any]]) -> Dict[str, Any]
         "note": (
             "Savings are grouped by currency and never summed across them. "
             "Unquantified opportunities are counted, not valued — a saving "
-            "that cannot be priced from a provider price list is reported as "
-            "NA rather than guessed."
+            "that neither the provider's billing nor its price list supports "
+            "is reported as NA rather than guessed."
         ),
     }
 

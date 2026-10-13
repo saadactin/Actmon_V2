@@ -51,6 +51,13 @@ class OCIScanner:
         # delete live resources that simply couldn't be listed.
         self.scan_failures: List[str] = []
 
+        # image OCID -> Image. OCI has no batch image read, and a tenancy runs
+        # many instances from few images, so this turns one call per instance
+        # into one call per distinct image for the whole sweep. Scoped to the
+        # scanner instance, so it lives exactly as long as one sweep does and
+        # cannot serve a stale image name into the next one.
+        self._image_cache: Dict[str, Any] = {}
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     # (connect, read) seconds. Without this an unreachable service/region hangs
@@ -137,12 +144,18 @@ class OCIScanner:
             ).data
             return [s.region_name for s in subscriptions if s.status == "READY"]
 
+        self._region_discovery_error = None
         try:
             regions = await loop.run_in_executor(scan_pool(), _fetch)
             logger.info("OCI subscribed regions: %s", regions)
             return regions or [self.auth.region]
         except Exception as exc:
             logger.warning("OCI region discovery failed, using home region: %s", exc)
+            # The home region alone is a SUBSET of the tenancy. Remembered so
+            # scan_all records the sweep as incomplete: otherwise the prune
+            # that follows a clean sweep deletes every resource in every other
+            # subscribed region because they were not in this listing.
+            self._region_discovery_error = str(exc)[:160]
             return [self.auth.region]
 
     # ── Compartment Discovery ─────────────────────────────────────────────────
@@ -328,6 +341,10 @@ class OCIScanner:
                             "memory_gb": inst.shape_config.memory_in_gbs if inst.shape_config else None,
                             "image_id": inst.image_id,
                             "fault_domain": inst.fault_domain,
+                            # CIS OCI 3.1. None when the API did not report it.
+                            "legacy_imds_disabled": getattr(
+                                getattr(inst, "instance_options", None),
+                                "are_legacy_imds_endpoints_disabled", None),
                             # Network placement, from the instance's primary VNIC.
                             "subnet_id": vnic_info.get("subnet_id"),
                             "nsg_ids": vnic_info.get("nsg_ids") or [],
@@ -354,9 +371,66 @@ class OCIScanner:
                         },
                     }
                 )
+            self._enrich_with_images(compute, region, results)
             return results
 
         return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── Image metadata ────────────────────────────────────────────────────────
+    def _enrich_with_images(self, compute, region: str,
+                            results: List[Dict[str, Any]]) -> None:
+        """Resolve each instance's image OCID to the OS it actually runs.
+
+        `image_id` is an opaque OCID. `get_image` turns it into
+        `operating_system` + `operating_system_version` ("Oracle Linux" /
+        "8"), which is the only thing here a vulnerability lookup could use.
+
+        OCI has no batch image read, so this is one call per DISTINCT image —
+        cached across the compartment, because a tenancy typically builds
+        dozens of instances from a handful of images. On the live tenancy that
+        is 52 instances resolved by a single-digit number of calls.
+
+        A failure is per image and non-fatal: the instance is still returned,
+        marked `not_collected`, and the reason is recorded on the sweep. An
+        image the caller may not read (a Marketplace image outside the
+        tenancy) is the common case and must not fail the compute scan.
+        """
+        image_ids = sorted({
+            r["config"].get("image_id") for r in results
+            if r["config"].get("image_id")
+        })
+        if not image_ids:
+            return
+
+        images: Dict[str, Any] = {}
+        failed: set = set()
+        for iid in image_ids:
+            cached = self._image_cache.get(iid)
+            if cached is not None:
+                images[iid] = cached
+                continue
+            try:
+                images[iid] = compute.get_image(iid).data
+                self._image_cache[iid] = images[iid]
+            except Exception as exc:  # noqa: BLE001
+                failed.add(iid)
+                self.scan_failures.append(
+                    f"Image [{region}] {iid[-24:]}: {str(exc)[:120]}")
+
+        for r in results:
+            cfg = r["config"]
+            iid = cfg.get("image_id")
+            if not iid:
+                continue
+            img = images.get(iid)
+            if img is None:
+                cfg["image_metadata_status"] = "not_collected"
+                continue
+            cfg["image_metadata_status"] = "collected"
+            cfg["image_name"] = getattr(img, "display_name", None)
+            cfg["image_os"] = getattr(img, "operating_system", None)
+            cfg["image_os_version"] = getattr(img, "operating_system_version", None)
+            cfg["image_created_at"] = str(getattr(img, "time_created", "")) or None
 
     # ── Block Volumes ─────────────────────────────────────────────────────────
 
@@ -1518,6 +1592,22 @@ class OCIScanner:
                                     if getattr(b, "ip_address", None)
                                 }),
                                 "listeners": list((lb.listeners or {}).keys()),
+                                # Which certificate each TLS listener serves, so
+                                # an expiring certificate can be reported as in
+                                # use (or not) instead of "use unknown".
+                                "listener_certificates": {
+                                    name: getattr(getattr(li, "ssl_configuration", None),
+                                                  "certificate_name", None)
+                                    for name, li in (lb.listeners or {}).items()
+                                    if getattr(li, "ssl_configuration", None)
+                                },
+                                "listener_certificate_ids": sorted({
+                                    cid
+                                    for li in (lb.listeners or {}).values()
+                                    for cid in (getattr(getattr(li, "ssl_configuration",
+                                                                None),
+                                                        "certificate_ids", None) or [])
+                                }),
                                 "lb_type": "LoadBalancer",
                             },
                             "metadata": {
@@ -1907,6 +1997,10 @@ class OCIScanner:
         self.scan_failures = []
         if not regions:
             self.scan_failures.append("region discovery returned nothing")
+        if getattr(self, "_region_discovery_error", None):
+            self.scan_failures.append(
+                f"Region discovery failed, only the home region was scanned: "
+                f"{self._region_discovery_error}")
         if not compartments:
             self.scan_failures.append("compartment discovery returned nothing")
 

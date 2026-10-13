@@ -4,6 +4,7 @@ import { CloudAccountList } from '../components/CloudAccountList';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { useAccountResourceCounts } from '../hooks/useResources';
 import { providerKeyOf } from '../utils/providerScope';
+import { providerInkStyle, providerTileStyle } from '../utils/providerTheme';
 import { useCloudStore } from '../state/cloudStore';
 import { usePermissions } from '@/hooks/usePermissions';
 import CloudPageHeader from '../components/CloudPageHeader';
@@ -16,10 +17,13 @@ import Button from '@/components/ui/Button';
 // Each card is a link to that provider's own accounts page (/cloud/{slug}-
 // accounts) — the same relationship the tech-servers page's KPI row would
 // have to a dedicated per-tech page, if Databases had a cross-tech list too.
+/* Colours come from the brand registry — the three `bg-orange-50`-style swatches
+   that used to be written out here were fixed light-theme values, so this KPI
+   row lost its provider colours entirely on the dark themes. */
 const PROVIDER_KPI = [
-  { key: 'AWS', slug: 'aws', label: 'AWS', iconBg: 'bg-orange-50', iconColor: 'text-orange-500', valueColor: 'text-orange-600' },
-  { key: 'Azure', slug: 'azure', label: 'Azure', iconBg: 'bg-sky-50', iconColor: 'text-sky-500', valueColor: 'text-sky-600' },
-  { key: 'OCI', slug: 'oci', label: 'OCI', iconBg: 'bg-red-50', iconColor: 'text-red-500', valueColor: 'text-red-600' },
+  { key: 'AWS', slug: 'aws', label: 'AWS' },
+  { key: 'Azure', slug: 'azure', label: 'Azure' },
+  { key: 'OCI', slug: 'oci', label: 'OCI' },
 ];
 
 export const CloudAccountsPage = () => {
@@ -59,9 +63,9 @@ export const CloudAccountsPage = () => {
             <Icon name="cloud" size={18} />
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">Total</p>
+            <p className="text-micro font-bold uppercase tracking-wide text-subtle">Total</p>
             <p className="text-2xl leading-none font-black text-fg">{totalAccounts}</p>
-            <p className="mt-0.5 truncate text-[10px] text-subtle">accounts</p>
+            <p className="mt-0.5 truncate text-micro text-subtle">accounts</p>
           </div>
         </div>
 
@@ -72,13 +76,16 @@ export const CloudAccountsPage = () => {
             onClick={() => navigate(`/cloud/${p.slug}-accounts`)}
             className="flex items-center gap-3 rounded-2xl border border-border bg-surface px-4 py-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-strong hover:shadow-md"
           >
-            <div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${p.iconBg} ${p.iconColor}`}>
+            <div
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border"
+              style={{ ...providerTileStyle(p.key), ...providerInkStyle(p.key) }}
+            >
               <Icon name="cloud" size={18} />
             </div>
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">{p.label}</p>
-              <p className={`text-2xl leading-none font-black ${p.valueColor}`}>{p.count}</p>
-              <p className="mt-0.5 truncate text-[10px] text-subtle">accounts</p>
+              <p className="text-micro font-bold uppercase tracking-wide text-subtle">{p.label}</p>
+              <p className="text-2xl leading-none font-black" style={providerInkStyle(p.key)}>{p.count}</p>
+              <p className="mt-0.5 truncate text-micro text-subtle">accounts</p>
             </div>
           </button>
         ))}
@@ -88,9 +95,9 @@ export const CloudAccountsPage = () => {
             <Icon name="boxes" size={18} />
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">Resources</p>
+            <p className="text-micro font-bold uppercase tracking-wide text-subtle">Resources</p>
             <p className="text-2xl leading-none font-black text-fg">{totalResources}</p>
-            <p className="mt-0.5 truncate text-[10px] text-subtle">discovered</p>
+            <p className="mt-0.5 truncate text-micro text-subtle">discovered</p>
           </div>
         </div>
       </div>

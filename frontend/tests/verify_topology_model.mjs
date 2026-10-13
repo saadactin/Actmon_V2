@@ -105,11 +105,21 @@ console.log('\n4. Oracle and OCI are one provider here too');
   check('providerMeta("Oracle") is labelled OCI',
     providerMeta('Oracle').label === 'OCI', providerMeta('Oracle').label);
   check('Oracle and OCI share a colour', providerMeta('Oracle').color === providerMeta('OCI').color);
-  check('Oracle and OCI share a badge class', providerMeta('Oracle').badge === providerMeta('OCI').badge);
+  check('Oracle and OCI share a badge style',
+    JSON.stringify(providerMeta('Oracle').badgeStyle) === JSON.stringify(providerMeta('OCI').badgeStyle));
   check('an unknown provider falls back to the Unknown entry, not undefined',
     providerMeta('nope') === PROVIDER_META.Unknown && providerMeta(undefined) === PROVIDER_META.Unknown);
-  check('every provider entry has a colour, badge and label',
-    Object.values(PROVIDER_META).every((m) => m.color && m.badge && m.label));
+  check('every provider entry has a colour, badge style and label',
+    Object.values(PROVIDER_META).every((m) => m.color && m.badgeStyle && m.label));
+  // The badge is an inline style now, not a Tailwind palette class: those were
+  // fixed light-theme swatches that painted a white chip on the dark themes.
+  check('a provider badge mixes against the theme instead of pinning a swatch',
+    Object.values(PROVIDER_META).every((m) => m.badgeStyle.backgroundColor.startsWith('color-mix(')),
+    JSON.stringify(PROVIDER_META.AWS.badgeStyle));
+  // Health is OUR vocabulary, so unlike the brand hues it must be themed.
+  check('every health colour is a design token, not a literal hex',
+    Object.values(HEALTH_META).every((m) => m.color.startsWith('var(--status-')),
+    Object.values(HEALTH_META).map((m) => m.color).join(', '));
 }
 
 console.log('\n5. Unknown resource types degrade to a label, never a blank');

@@ -3,6 +3,7 @@ import {
   Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import cn from '@/lib/cn';
+import { AlertTriangle } from 'lucide-react';
 import { axisTick, compact, exact } from '../../utils/costFormat';
 import { Panel, PanelEmpty, ViewLink } from './OverviewPrimitives';
 
@@ -44,18 +45,25 @@ function ChartTooltip({ active, payload, label, currency, source }) {
           </>
         )}
       </div>
-      {source && <div className="mt-1 border-t border-border pt-1 text-[10px] text-subtle">{`Source: ${source}`}</div>}
+      {source && <div className="mt-1 border-t border-border pt-1 text-micro text-subtle">{`Source: ${source}`}</div>}
     </div>
   );
 }
 
 export default function CostTrendPanel({
-  data, isLoading, error, days, onDaysChange, onOpenCost, total,
+  data, isLoading, error, days, onDaysChange, onOpenCost, total, region,
 }) {
   const [hoverRange] = useState(null);
 
   const series = data?.series || [];
   const currency = series.find((p) => p.currency)?.currency || total?.currency || null;
+
+  // Only meaningful when a region is actually selected — `get_history` only
+  // computes it then. `supported === false` means THIS account's provider
+  // (AWS) never stores a region on its daily history, not that there is no
+  // spend; an empty chart alone would read as the latter.
+  const regionCapability = region ? data?.region_capability : null;
+  const regionUnsupported = regionCapability?.supported === false;
 
   const points = useMemo(() => series.map((p) => ({
     date: p.date,
@@ -95,9 +103,10 @@ export default function CostTrendPanel({
       title="Billed Spend"
       icon="report"
       subtitle={
-        data?.period
+        (data?.period
           ? `${data.period.start || ''} → ${data.period.end || ''}`.trim()
-          : `Last ${days} days`
+          : `Last ${days} days`)
+        + (region ? ` · Scoped to ${region}` : '')
       }
       source={data?.source || 'Provider billing API'}
       action={<ViewLink onClick={onOpenCost}>Cost</ViewLink>}
@@ -107,15 +116,15 @@ export default function CostTrendPanel({
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <div className="text-2xl font-bold tabular-nums text-fg">
-            {total?.total_monthly_cost === null || total?.total_monthly_cost === undefined
+            {total?.total_monthly_cost_inr === null || total?.total_monthly_cost_inr === undefined
               ? <span className="text-subtle">NA</span>
-              : exact(total.total_monthly_cost, total.currency)}
+              : exact(total.total_monthly_cost_inr, 'INR')}
           </div>
-          <div className="text-[11px] text-muted">
+          <div className="text-meta text-muted">
             {total?.note || 'Billed spend'}
           </div>
           {comparison && (
-            <div className="mt-1 flex items-center gap-1.5 text-[11px]">
+            <div className="mt-1 flex items-center gap-1.5 text-meta">
               <span className={cn(
                 'font-semibold',
                 comparison.changePct > 0 ? 'text-danger' : 'text-success-fg',
@@ -138,7 +147,7 @@ export default function CostTrendPanel({
               onClick={() => onDaysChange(range.id)}
               aria-pressed={days === range.id}
               className={cn(
-                'rounded-control px-2 py-1 text-[11px] font-semibold transition-colors',
+                'rounded-control px-2 py-1 text-meta font-semibold transition-colors',
                 days === range.id
                   ? 'bg-accent text-accent-fg'
                   : 'border border-border text-muted hover:bg-sunken hover:text-fg',
@@ -151,10 +160,27 @@ export default function CostTrendPanel({
       </div>
 
       {points.length === 0 ? (
-        <PanelEmpty>
-          No daily billing history is available for this account. The provider
-          billing API returned no per-day records for this period.
-        </PanelEmpty>
+        regionUnsupported ? (
+          <div className="flex items-start gap-2 rounded-control border border-dashed border-border px-3 py-4 text-[12px]">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warning-fg" />
+            <div className="min-w-0">
+              <p className="font-semibold text-fg">
+                Per-region history isn&rsquo;t available for this account
+              </p>
+              <p className="mt-0.5 leading-snug text-muted">{regionCapability.reason}</p>
+              <p className="mt-1 leading-snug text-subtle">
+                The Billed Spend total above still reflects {region} — only this
+                daily trend chart is affected.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <PanelEmpty>
+            {region
+              ? `No daily billing history is available for ${region} over this period.`
+              : 'No daily billing history is available for this account. The provider billing API returned no per-day records for this period.'}
+          </PanelEmpty>
+        )
       ) : (
         <>
           <div className="h-[190px]">
@@ -197,7 +223,7 @@ export default function CostTrendPanel({
             </ResponsiveContainer>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2 text-[11px] text-muted">
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2 text-meta text-muted">
             {peak && (
               <span>
                 {'Highest day '}

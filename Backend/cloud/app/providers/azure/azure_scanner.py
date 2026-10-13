@@ -79,6 +79,56 @@ def _resource_group_of(resource_id: str | None) -> str | None:
         return None
 
 
+def _image_fields(vm) -> Dict[str, Any]:
+    """The VM's source image, in whatever form ARM reported it.
+
+    Two shapes exist and they are not interchangeable:
+
+    * A marketplace / platform image gives publisher, offer, sku and version —
+      enough to name an OS and look it up.
+    * A custom or specialised image gives only `id`, a managed-image or gallery
+      resource id. The OS behind it is not knowable from the VM model, and this
+      records that rather than guessing from the name.
+
+    `exact_version` is preferred over `version` where present, because `version`
+    is frequently the literal string "latest", which identifies nothing once
+    the image has been republished.
+
+    Returns only the keys it could fill. A VM with no storage profile
+    contributes nothing here, so the field is absent rather than null — the
+    difference the rule DSL's `is_null` vs missing distinction depends on.
+    """
+    profile = getattr(vm, "storage_profile", None)
+    ref = getattr(profile, "image_reference", None) if profile else None
+    if ref is None:
+        return {"image_metadata_status": "not_collected"}
+
+    out: Dict[str, Any] = {}
+    publisher = getattr(ref, "publisher", None)
+    offer = getattr(ref, "offer", None)
+    sku = getattr(ref, "sku", None)
+    version = getattr(ref, "exact_version", None) or getattr(ref, "version", None)
+    image_id = getattr(ref, "id", None)
+
+    if publisher or offer or sku:
+        out["image_publisher"] = publisher
+        out["image_offer"] = offer
+        out["image_sku"] = sku
+        out["image_version"] = version
+        # One readable string for the UI and for matching, assembled from the
+        # parts rather than parsed back out of them later.
+        out["image_reference"] = ":".join(
+            str(p) for p in (publisher, offer, sku, version) if p
+        )
+        out["image_metadata_status"] = "collected"
+    elif image_id:
+        out["image_id"] = image_id
+        out["image_metadata_status"] = "custom_image"
+    else:
+        out["image_metadata_status"] = "not_collected"
+    return out
+
+
 class AzureScanner:
     def __init__(self, auth: AzureAuth) -> None:
         self.auth = auth
@@ -161,6 +211,19 @@ class AzureScanner:
                                 and vm.storage_profile.os_disk
                                 else None
                             ),
+                            # The image this VM was built from. `os_type` says
+                            # only "Linux" or "Windows", which cannot tell
+                            # Ubuntu 18.04 from RHEL 9 and so cannot support a
+                            # vulnerability lookup. The image reference carries
+                            # publisher/offer/sku/version, which can.
+                            #
+                            # Already present on the VM model ARM returns, so
+                            # this costs no extra call. It is absent for a VM
+                            # built from a custom or specialised image, where
+                            # `image_id` holds the managed-image resource id
+                            # instead — both are recorded, and neither is
+                            # defaulted.
+                            **_image_fields(vm),
                             "power_state": power_state,
                             # Everything this VM is wired to. ARM gives these as
                             # full resource IDs on the VM model, so they resolve
@@ -278,6 +341,13 @@ class AzureScanner:
                             "access_tier": acc.access_tier,
                             # Real setting from the API; None = not reported
                             "allow_blob_public_access": getattr(acc, "allow_blob_public_access", None),
+                            # CIS Azure 9.3.4 / 9.3.6. Enums are stored as their
+                            # value ("TLS1_2"), never their repr.
+                            "enable_https_traffic_only": getattr(
+                                acc, "enable_https_traffic_only", None),
+                            "minimum_tls_version": getattr(
+                                getattr(acc, "minimum_tls_version", None), "value",
+                                getattr(acc, "minimum_tls_version", None)),
                         },
                         "metadata": {},
                         "cost_monthly": None,
@@ -666,6 +736,17 @@ class AzureScanner:
                             "attached_to_id": (
                                 pip.ip_configuration.id if pip.ip_configuration else None
                             ),
+                            # A NAT gateway holds its IPs through `nat_gateway`,
+                            # not an ip-configuration, so without this a NAT
+                            # gateway's address reads as unattached — and an
+                            # "unused IP" rule would recommend releasing the
+                            # egress address of a live subnet. The key is always
+                            # written (None when unassociated) so a reader can
+                            # tell "checked, none" from "not collected".
+                            "nat_gateway_id": (
+                                pip.nat_gateway.id
+                                if getattr(pip, "nat_gateway", None) else None
+                            ),
                             "fqdn": (
                                 pip.dns_settings.fqdn if pip.dns_settings else None
                             ),
@@ -801,15 +882,22 @@ class AzureScanner:
         # Generic catch-all — captures every OTHER resource type in the
         # subscription (App Services, Key Vaults, Cosmos DB, VNets, NSGs, disks…).
         # Dedupe against the detailed results so enriched records win.
-        seen_ids = {r["provider_resource_id"] for r in all_resources}
+        #
+        # Case-insensitively: ARM resource ids ARE case-insensitive, and the
+        # generic resources.list() returns some with a differently-cased
+        # resource group than the compute/network APIs ("resourceGroups/n8n"
+        # vs ".../N8N"). An exact match let 8 of TOR's 18 VMs through twice —
+        # a second, config-less row per VM that inflated the count to 26 and
+        # left analyses judging a copy with no size or power state.
+        seen_ids = {(r["provider_resource_id"] or "").lower() for r in all_resources}
         try:
             generic = await self._scan_generic()
             added = 0
             new_batch = []
             for r in generic:
-                if r["provider_resource_id"] not in seen_ids:
+                if (r["provider_resource_id"] or "").lower() not in seen_ids:
                     all_resources.append(r)
-                    seen_ids.add(r["provider_resource_id"])
+                    seen_ids.add((r["provider_resource_id"] or "").lower())
                     new_batch.append(r)
                     added += 1
             logger.info("Azure Generic: found %d resources (%d new)", len(generic), added)

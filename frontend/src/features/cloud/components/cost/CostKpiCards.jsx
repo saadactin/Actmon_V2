@@ -1,12 +1,12 @@
 /**
  * The Overview KPI row, and the per-provider cards an ALL view needs.
  *
- * The multi-currency rule is enforced here rather than in the page: when the
- * scope spans currencies there IS no single total, so the headline shows NA
- * with the currencies named, and the real figures appear as one card per
- * currency underneath. Nothing is ever converted — this product has no FX
- * source, and a converted headline would be a number nobody can reconcile
- * against an invoice.
+ * The dashboard's single display currency is INR. The backend attaches
+ * `amount_inr` to every per-currency total (`cost_money.convert_total`,
+ * via a live daily FX rate — see `fx_rate_service`), so the headline always
+ * has one honest number even when the scope spans currencies. The original
+ * per-currency figures still appear in the band underneath, unconverted, so
+ * the converted headline can always be reconciled back to an actual invoice.
  */
 import cn from '@/lib/cn';
 import Badge from '@/components/ui/Badge';
@@ -33,7 +33,7 @@ function Kpi({ icon: Icon, label, children, footer, tone = 'neutral', span }) {
         )}>
           <Icon size={13} aria-hidden />
         </span>
-        <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+        <p className="text-meta font-bold uppercase tracking-wider text-muted">
           {label}
         </p>
       </div>
@@ -46,32 +46,34 @@ function Kpi({ icon: Icon, label, children, footer, tone = 'neutral', span }) {
 /**
  * The headline spend figure for the scope.
  *
- * `totals` is the backend's per-currency breakdown. One currency -> a real
- * total. More than one -> NA plus the reason, because adding USD to INR is not
- * arithmetic, it is a category error.
+ * `totals` is the backend's per-currency breakdown plus `amount_inr`, the
+ * same total converted to INR with a live FX rate. The headline always shows
+ * `amount_inr` when it exists — single currency or mixed — so the dashboard
+ * has one consistent display currency. `amount_inr` is only null when the FX
+ * rate itself could not be obtained for every currency in scope (`na_reason`
+ * then explains why); that is the one case this still renders as NA.
  */
 export function SpendHeadline({ totals, period, source, change, onWhy }) {
   const mixed = totals?.mixed;
   const currencies = totals?.currencies || [];
+  const hasInr = !isMissing(totals?.amount_inr);
+  const unconverted = totals?.fx_unconverted
+    ? Object.keys(totals.fx_unconverted)
+    : [];
 
   return (
     <div className="rounded-card border border-border bg-surface p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">
+          <p className="text-meta font-bold uppercase tracking-wider text-muted">
             Total spend
             {period?.days ? ` — last ${period.days} days` : ''}
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-            {mixed ? (
-              <Amount value={null} size="xl" reason={totals?.na_reason} />
+            {hasInr ? (
+              <Amount value={totals.amount_inr} currency="INR" size="xl" />
             ) : (
-              <Amount
-                value={totals?.amount}
-                currency={totals?.currency}
-                size="xl"
-                reason={totals?.na_reason}
-              />
+              <Amount value={null} size="xl" reason={totals?.na_reason} />
             )}
             {change && <ChangeChip change={change} />}
           </div>
@@ -79,34 +81,62 @@ export function SpendHeadline({ totals, period, source, change, onWhy }) {
             className="mt-1.5"
             source={source}
             period={period}
-            currency={mixed ? null : totals?.currency}
+            currency={hasInr ? 'INR' : null}
           />
         </div>
 
-        {mixed && (
-          <div className="rounded-control border border-warning/30 bg-warning-soft px-3 py-2">
-            <p className="flex items-center gap-1.5 text-[11px] font-bold text-warning-fg">
+        {mixed && hasInr && (
+          <div className="rounded-control border border-border bg-sunken px-3 py-2">
+            <p className="flex items-center gap-1.5 text-meta font-bold text-fg">
               <AlertTriangle size={12} aria-hidden />
               Multiple billing currencies
             </p>
-            <p className="mt-0.5 max-w-xs text-[11px] leading-relaxed text-warning-fg/90">
+            <p className="mt-0.5 max-w-xs text-meta leading-relaxed text-subtle">
+              {currencies.join(', ')} are billed separately. The headline above
+              is converted to INR at today's rate{totals?.fx_as_of ? ` (${totals.fx_as_of})` : ''};
+              original per-currency totals are shown below.
+            </p>
+          </div>
+        )}
+
+        {!hasInr && mixed && (
+          <div className="rounded-control border border-warning/30 bg-warning-soft px-3 py-2">
+            <p className="flex items-center gap-1.5 text-meta font-bold text-warning-fg">
+              <AlertTriangle size={12} aria-hidden />
+              Multiple billing currencies
+            </p>
+            <p className="mt-0.5 max-w-xs text-meta leading-relaxed text-warning-fg/90">
               {currencies.join(', ')} are billed separately and are never added
               together. Per-currency totals are shown below.
+            </p>
+          </div>
+        )}
+
+        {hasInr && !mixed && unconverted.length > 0 && (
+          <div className="rounded-control border border-warning/30 bg-warning-soft px-3 py-2">
+            <p className="flex items-center gap-1.5 text-meta font-bold text-warning-fg">
+              <AlertTriangle size={12} aria-hidden />
+              FX rate unavailable
+            </p>
+            <p className="mt-0.5 max-w-xs text-meta leading-relaxed text-warning-fg/90">
+              Could not convert {unconverted.join(', ')} to INR right now;
+              excluded from the headline above.
             </p>
           </div>
         )}
       </div>
 
       {/* One real figure per currency. This is what the user actually reads
-          when the headline has to say NA. */}
-      {currencies.length > 0 && (
+          when the headline has to say NA. With a single currency it would only
+          repeat the headline figure, in a band of its own. */}
+      {currencies.length > 1 && (
         <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
           {currencies.map((code) => (
             <div
               key={code}
               className="rounded-control border border-border bg-sunken px-3 py-2"
             >
-              <p className="text-[10px] font-bold uppercase tracking-wider text-subtle">
+              <p className="text-micro font-bold uppercase tracking-wider text-subtle">
                 {code}
               </p>
               <p
@@ -146,7 +176,7 @@ export function ProviderSpendCards({ byService }) {
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {providers.map((p) => (
         <div key={p.provider} className="rounded-card border border-border bg-surface p-3.5">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-muted">
+          <p className="text-meta font-bold uppercase tracking-wider text-muted">
             {p.provider}
           </p>
           <div className="mt-1.5 space-y-1">
@@ -184,7 +214,7 @@ export default function CostKpiCards({
   const mtd = fc?.available ? fc.current_month?.month_to_date_actual : null;
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 lg:grid-cols-4">
       <Kpi icon={Activity} label="Daily average">
         <Amount
           value={dailyAverage}
@@ -193,7 +223,7 @@ export default function CostKpiCards({
           reason={fc?.reason || 'Needs stored billing history.'}
         />
         {fc?.available && (
-          <p className="mt-1 text-[10.5px] text-subtle">
+          <p className="mt-1 text-meta text-subtle">
             over {fc.observed_days} observed days
           </p>
         )}
@@ -203,7 +233,7 @@ export default function CostKpiCards({
         <Amount value={mtd} currency={currency} size="lg"
                 reason={fc?.reason || 'Needs stored billing history.'} />
         {fc?.available && (
-          <p className="mt-1 text-[10.5px] text-subtle">
+          <p className="mt-1 text-meta text-subtle">
             {fc.current_month.days_elapsed} of{' '}
             {fc.current_month.days_elapsed + fc.current_month.days_remaining} days
           </p>
@@ -214,7 +244,7 @@ export default function CostKpiCards({
         <Amount value={projected} currency={currency} size="lg"
                 reason={fc?.reason || 'Needs stored billing history.'} />
         {fc?.available ? (
-          <p className="mt-1 flex items-center gap-1 text-[10.5px] text-subtle">
+          <p className="mt-1 flex items-center gap-1 text-meta text-subtle">
             Run-rate projection
             <Badge tone={fc.confidence === 'high' ? 'success'
               : fc.confidence === 'low' ? 'danger' : 'warning'} size="xs">
@@ -222,7 +252,7 @@ export default function CostKpiCards({
             </Badge>
           </p>
         ) : (
-          <p className="mt-1 text-[10.5px] text-subtle">Run-rate projection</p>
+          <p className="mt-1 text-meta text-subtle">Run-rate projection</p>
         )}
       </Kpi>
 
@@ -231,11 +261,11 @@ export default function CostKpiCards({
           value={savings}
           currency={savingsCurrency || currency}
           size="lg"
-          reason="No savings could be priced from a provider price list."
+          reason="No open saving is supported by provider billing or a provider price list in this currency."
         />
-        <p className="mt-1 text-[10.5px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           {optimizationCount || 0} opportunities
-          {!isMissing(savings) && ' · priced from list rates'}
+          {!isMissing(savings) && ' · from billing and list rates'}
         </p>
       </Kpi>
 
@@ -246,7 +276,7 @@ export default function CostKpiCards({
               <Amount value={mom.to_amount} currency={currency} size="lg" />
               <ChangeChip change={mom.percent} />
             </div>
-            <p className="mt-1 text-[10.5px] text-subtle">
+            <p className="mt-1 text-meta text-subtle">
               {mom.from_month} → {mom.to_month}
               {mom.to_is_projection && ' (projected)'}
             </p>
@@ -255,7 +285,7 @@ export default function CostKpiCards({
           <>
             <Amount value={null} size="lg"
                     reason="Two complete months of stored history are needed." />
-            <p className="mt-1 text-[10.5px] text-subtle">Needs 60 days of history</p>
+            <p className="mt-1 text-meta text-subtle">Needs 60 days of history</p>
           </>
         )}
       </Kpi>
@@ -265,7 +295,7 @@ export default function CostKpiCards({
           {coverage?.days_covered ?? 0}
           <span className="ml-1 text-[12px] font-medium text-muted">days</span>
         </p>
-        <p className="mt-1 text-[10.5px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           {coverage?.records?.toLocaleString() ?? 0} billing facts
         </p>
       </Kpi>
@@ -275,7 +305,7 @@ export default function CostKpiCards({
         <p className="text-[20px] font-bold tabular-nums text-fg">
           {unmatchedCount ?? 0}
         </p>
-        <p className="mt-1 text-[10.5px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           billed but not in inventory
         </p>
       </Kpi>
@@ -289,7 +319,7 @@ export default function CostKpiCards({
               / Math.max(1, coverage.records) * 100, 0)
             : '—'}
         </p>
-        <p className="mt-1 text-[10.5px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           settled vs provisional facts
         </p>
       </Kpi>

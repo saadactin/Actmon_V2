@@ -39,6 +39,7 @@ from app.models.resource_cost import CloudResourceCost
 from app.models.security_finding import CloudSecurityFinding
 from app.security.model import ACTIVE_FINDING_STATUSES, SEVERITIES
 from app.services import resource_model as rm
+from app.services import resource_services as svc
 
 
 class QueryValidationError(ValueError):
@@ -84,11 +85,13 @@ SORT_FIELDS: Tuple[str, ...] = (
     "resource_name", "resource_type", "normalized_type", "region", "status",
     "cost", "risk", "finding_count", "updated_at", "discovered_at",
     "last_seen", "provider", "account", "tag_count", "environment", "owner",
+    "service",
 )
 
 GROUP_FIELDS: Tuple[str, ...] = (
     "provider", "account", "region", "resource_type", "normalized_type",
     "status", "risk", "environment", "owner", "resource_group", "compartment",
+    "service",
 )
 
 # Facet dimensions, mapped to the query field each one filters. A facet's own
@@ -104,6 +107,7 @@ FACET_DIMENSIONS: Dict[str, Optional[str]] = {
     "accounts": None,
     "types": "types",
     "categories": "categories",
+    "services": "services",
     "regions": "regions",
     "statuses": "statuses",
     "risk": "risk",
@@ -124,6 +128,7 @@ class ResourceQuery:
     providers: Tuple[str, ...] = ()
     types: Tuple[str, ...] = ()
     categories: Tuple[str, ...] = ()
+    services: Tuple[str, ...] = ()
     regions: Tuple[str, ...] = ()
     statuses: Tuple[str, ...] = ()
     risk: Tuple[str, ...] = ()
@@ -162,7 +167,7 @@ class ResourceQuery:
         """A copy with one dimension's filter cleared, for facet counting."""
         blanks: Dict[str, Any] = {
             "providers": (), "account_ids": (), "types": (), "categories": (),
-            "regions": (), "statuses": (), "risk": (), "environments": (),
+            "services": (), "regions": (), "statuses": (), "risk": (), "environments": (),
             "owners": (), "resource_groups": (), "compartments": (),
         }
         if dimension not in blanks:
@@ -201,6 +206,7 @@ def build_query(
     provider: Any = None,
     type: Any = None,          # noqa: A002 - matches the query-string name
     category: Any = None,
+    service: Any = None,
     region: Any = None,
     status: Any = None,
     risk: Any = None,
@@ -281,6 +287,7 @@ def build_query(
         providers=tuple(p.upper() for p in _as_tuple(provider)),
         types=_as_tuple(type),
         categories=categories,
+        services=tuple(s.lower() for s in _as_tuple(service)),
         regions=_as_tuple(region),
         statuses=statuses,
         risk=risks,
@@ -382,6 +389,8 @@ class ResourceQueryRepository:
             where.append(CloudResource.resource_type.in_(list(query.types)))
         if query.categories:
             where.append(CloudResource.normalized_type.in_(list(query.categories)))
+        if query.services:
+            where.append(CloudResource.service.in_(list(query.services)))
         if query.regions:
             where.append(CloudResource.region_or_zone.in_(list(query.regions)))
         if query.statuses:
@@ -770,7 +779,11 @@ class ResourceQueryRepository:
                 continue
             filter_field = FACET_DIMENSIONS[name]
             scoped = query if filter_field is None else query.without(filter_field)
-            out[name] = await self._facet(name, scoped, limit=limit)
+            # Services are a bounded catalogue (one estate of all three clouds
+            # is ~50), and a truncated service list would make a whole service
+            # unfilterable — so it is never cut at the generic cap.
+            cap = max(limit, 300) if name == "services" else limit
+            out[name] = await self._facet(name, scoped, limit=cap)
         return out
 
     async def _facet(
@@ -829,6 +842,7 @@ class ResourceQueryRepository:
             "providers": (CloudAccount.provider, None),
             "types": (CloudResource.resource_type, None),
             "categories": (CloudResource.normalized_type, rm.CATEGORY_LABELS.get),
+            "services": (CloudResource.service, svc.label_of),
             "regions": (CloudResource.region_or_zone, None),
             "statuses": (func.coalesce(CloudResource.normalized_status, rm.UNKNOWN), None),
             "environments": (CloudResource.environment, None),
@@ -848,7 +862,7 @@ class ResourceQueryRepository:
             .limit(limit)
         )).all()
 
-        return [
+        out = [
             {
                 "value": value,
                 "label": (labeller(value) if labeller else None) or value,
@@ -857,6 +871,11 @@ class ResourceQueryRepository:
             for value, count in rows
             if value is not None
         ]
+        if dimension == "services":
+            # Which cloud each service is, so the rail can section them.
+            for entry in out:
+                entry["provider"] = svc.provider_of(entry["value"])
+        return out
 
     async def groups(
         self, query: ResourceQuery, group_by: str, *, limit: int = 100
@@ -885,6 +904,7 @@ class ResourceQueryRepository:
             "owner": CloudResource.owner,
             "resource_group": CloudResource.resource_group,
             "compartment": CloudResource.compartment,
+            "service": CloudResource.service,
             "risk": case(
                 {rank: level for level, rank in RISK_RANK.items()},
                 value=risk_rank, else_=RISK_UNKNOWN,
@@ -923,7 +943,8 @@ class ResourceQueryRepository:
                 "value": value,
                 "label": (
                     rm.CATEGORY_LABELS.get(value, value)
-                    if group_by == "normalized_type" else value
+                    if group_by == "normalized_type"
+                    else svc.label_of(value) if group_by == "service" else value
                 ) or "Not set",
                 "resource_count": 0,
                 "risky_count": 0,

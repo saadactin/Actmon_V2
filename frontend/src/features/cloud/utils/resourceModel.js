@@ -195,8 +195,11 @@ export function relativeTime(iso) {
   const seconds = Math.round((Date.now() - then) / 1000);
   if (seconds < 0) return 'in the future';
   if (seconds < 60) return 'just now';
+  // Each unit with how many of it make the NEXT one: 60 minutes to the hour,
+  // 24 hours to the day. (Pairing each unit with its own size instead read
+  // 12 days as "5 days ago" and never rolled 30 hours over into a day.)
   const units = [
-    ['minute', 60], ['hour', 60], ['day', 24], ['month', 30.44], ['year', 12],
+    ['minute', 60], ['hour', 24], ['day', 30.44], ['month', 12], ['year', Infinity],
   ];
   let value = seconds / 60;
   let unit = 'minute';
@@ -242,6 +245,7 @@ export const EMPTY_FILTERS = {
   providers: [],
   types: [],
   categories: [],
+  services: [],
   regions: [],
   statuses: [],
   risk: [],
@@ -263,7 +267,7 @@ export const EMPTY_FILTERS = {
 };
 
 const ARRAY_KEYS = [
-  'providers', 'types', 'categories', 'regions', 'statuses', 'risk',
+  'providers', 'types', 'categories', 'services', 'regions', 'statuses', 'risk',
   'environments', 'owners', 'resourceGroups', 'compartments',
 ];
 
@@ -304,6 +308,7 @@ const URL_KEYS = {
   providers: 'provider',
   types: 'type',
   categories: 'category',
+  services: 'service',
   regions: 'region',
   statuses: 'status',
   risk: 'risk',

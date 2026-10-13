@@ -61,7 +61,7 @@ export default function IamAccessReviewPanel({ accountId }) {
           <div key={s.label} className="card flex items-center gap-3 p-card">
             <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${s.tone}`}>{s.icon}</div>
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">{s.label}</div>
+              <div className="text-micro font-semibold uppercase tracking-wide text-muted">{s.label}</div>
               <div className="text-xl font-bold text-fg">{s.count}</div>
             </div>
           </div>
@@ -90,12 +90,12 @@ export default function IamAccessReviewPanel({ accountId }) {
                   {f.wildcard_grants && (
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
                       {f.wildcard_grants.map((g) => (
-                        <span key={g} className="rounded-md bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning-fg">
+                        <span key={g} className="rounded-md bg-warning-soft px-2 py-0.5 text-meta font-semibold text-warning-fg">
                           {g}
                         </span>
                       ))}
                       {f.concrete_grant_count > 0 && (
-                        <span className="rounded-md bg-neutral-soft px-2 py-0.5 text-[11px] text-muted">
+                        <span className="rounded-md bg-neutral-soft px-2 py-0.5 text-meta text-muted">
                           +{f.concrete_grant_count} scoped grant{f.concrete_grant_count !== 1 ? 's' : ''}
                         </span>
                       )}
@@ -106,7 +106,7 @@ export default function IamAccessReviewPanel({ accountId }) {
                   {f.statements && (
                     <div className="mt-2.5 flex flex-col gap-1">
                       {f.statements.map((s, i) => (
-                        <code key={i} className="rounded-control bg-sunken px-2 py-1 text-[11px] text-fg">
+                        <code key={i} className="rounded-control bg-sunken px-2 py-1 text-meta text-fg">
                           {s.raw}
                         </code>
                       ))}

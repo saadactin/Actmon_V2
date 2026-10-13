@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import Tabs from '@/components/ui/Tabs';
@@ -29,7 +29,7 @@ import {
   useSetRecipientEnabled, useSetRuleEnabled, useSilenceAlert, useSilenceRule,
   useTestRule, useUpdateAlertSettings, useUpdateRule,
 } from '../hooks/useAlerts';
-import { statesFor } from '../utils/alertModel';
+import { seedFromLink, statesFor } from '../utils/alertModel';
 import { slugForProvider } from '../utils/providerScope';
 
 /**
@@ -155,6 +155,24 @@ export default function AlertsPage({ embedded = false, accountId, account }) {
     setBuilderOpen(true);
   };
 
+  // "Create alert" from a finding lands here as ?newRule=<condition>&config=…:
+  // open the builder seeded with it once the catalog is loaded, then drop the
+  // parameters so a reload does not open it again.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const condition = searchParams.get('newRule');
+    if (!condition || !capabilities.data) return;
+    const seed = seedFromLink(condition, searchParams.get('config'), capabilities.data);
+    const next = new URLSearchParams(searchParams);
+    next.delete('newRule');
+    next.delete('config');
+    setSearchParams(next, { replace: true });
+    if (seed) {
+      setTab('rules');
+      openBuilder({ template: seed });
+    }
+  }, [searchParams, capabilities.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const closeBuilder = () => {
     setBuilderOpen(false);
     setEditing(null);
@@ -225,13 +243,16 @@ export default function AlertsPage({ embedded = false, accountId, account }) {
                     onChange={setDays} />
           )}
           {canManage && (
+            // Not a refresh, and deliberately not labelled like one: it runs
+            // the alert rules over the data already collected. Refresh all, in
+            // the account header, is what re-reads the provider.
             <Button
-              size="sm" variant="ghost" icon="refresh"
+              size="sm" variant="ghost" icon="zap"
               loading={runNow.isPending}
               onClick={() => runNow.mutate()}
-              title="Run an evaluation pass now instead of waiting for the next tick."
+              title="Evaluate the alert rules that are due now, over the data already collected, instead of waiting for the next evaluation tick. It does not re-read the provider — Refresh all does."
             >
-              Evaluate now
+              Run alert rules now
             </Button>
           )}
           {canManage && (tab === 'rules' || tab === 'dashboard') && (
@@ -306,7 +327,7 @@ export default function AlertsPage({ embedded = false, accountId, account }) {
 
           <section className="card p-4">
             <h3 className="mb-2 text-[13px] font-bold text-fg">Recent alert activity</h3>
-            <p className="mb-2 text-[11px] leading-snug text-muted">
+            <p className="mb-2 text-meta leading-snug text-muted">
               What the alerting system itself did — rules changed, alerts
               triggered and resolved, every notification attempt. Provider
               activity (who changed a cloud resource) stays in the Event Log tab.

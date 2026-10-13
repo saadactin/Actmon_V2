@@ -336,15 +336,33 @@ async def set_recommendation_state(
             detail="A reason is required when dismissing a recommendation.",
         )
 
+    from app.repository.optimization_repo import OptimizationRepository
+    from app.services.cost_recommendation_service import finding_status_for
+
+    actor = principal.name or principal.role
     row = await CostRecommendationRepository(db).set_state(
         fingerprint=fingerprint,
         account_id=account_id,
         state=state,
         reason=reason,
-        actor=principal.name or principal.role,
+        actor=actor,
         snapshot=snapshot,
     )
-    return row.to_dict()
+    out = row.to_dict()
+    # The Cost tab's recommendations are Resource Intelligence findings, so
+    # the same decision moves the finding's status there too (ACCEPTED →
+    # acknowledged, IMPLEMENTED → resolved, DISMISSED → suppressed). A
+    # fingerprint with no finding (a legacy recommendation) is decision-only.
+    opt = OptimizationRepository(db)
+    finding = (await opt.get(account_id, fingerprint) if account_id
+               else await opt.by_fingerprint(fingerprint))
+    target = finding_status_for(state)
+    if finding is not None and target and finding.status != target:
+        await opt.set_status(account_id=finding.account_id, key=finding.fingerprint,
+                             status=target, reason=reason, actor=actor)
+        await db.commit()
+    out["finding_status"] = finding.status if finding is not None else None
+    return out
 
 
 @router.get("/recommendations/decisions/{account_id}")

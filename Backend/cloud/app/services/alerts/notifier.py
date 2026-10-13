@@ -261,8 +261,15 @@ async def queue_email(
     cc: Sequence[str] = (),
     bcc: Sequence[str] = (),
     context: Optional[Dict[str, Any]] = None,
+    attachments: Sequence[Dict[str, Any]] = (),
+    source: str = "cloud_alerts",
 ) -> Tuple[bool, str]:
     """Insert one notification_queue row. Returns (queued, message).
+
+    `attachments` are `{filename, content_type, content_b64}` dicts, carried in
+    the payload for the database service's email adapter to attach. A
+    dispatcher that predates attachment support ignores the key and sends the
+    body alone, so the message degrades rather than fails.
 
     The payload carries `subject`/`html`/`text` alongside `context`. The
     dispatcher's email adapter prefers a pre-rendered body when one is present
@@ -289,8 +296,14 @@ async def queue_email(
         "recipients_override": list(to),
         "cc_override": list(cc),
         "bcc_override": list(bcc),
-        "source": "cloud_alerts",
+        "source": source,
     }
+    if attachments:
+        payload["attachments"] = [
+            {"filename": a["filename"], "content_type": a.get("content_type")
+             or "application/octet-stream", "content_b64": a["content_b64"]}
+            for a in attachments
+        ]
     try:
         await db.execute(text(
             "INSERT INTO notification_queue "

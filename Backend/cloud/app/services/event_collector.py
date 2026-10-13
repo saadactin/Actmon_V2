@@ -555,9 +555,16 @@ async def collect_all_accounts(*, only_auto: bool = True) -> List[CollectionOutc
     async with AsyncSessionLocal() as db:
         accounts = await CloudAccountRepository(db).list_all()
 
+    from app.services import fetch_policy
+
     outcomes: List[CollectionOutcome] = []
     for account in accounts:
         if only_auto and not account.auto_discovery:
+            continue
+        # The background loop is not a refresh, and AWS is read only during one
+        # (see fetch_policy). Its events still arrive: every refresh, manual or
+        # scheduled, collects them, and so does the Event Log's own Collect.
+        if only_auto and fetch_policy.refresh_only(account.provider):
             continue
         try:
             outcomes.append(await collect_account(account.id))

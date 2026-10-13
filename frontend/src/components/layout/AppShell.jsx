@@ -44,9 +44,16 @@ export default function AppShell({ user, onSignOut }) {
     <div className="flex h-screen flex-col overflow-hidden bg-bg text-fg">
       {navHidden ? <ShowNavTab onShow={toggleNav} /> : <TopNav user={user} onSignOut={onSignOut} />}
 
-      {/* Content column — the only part that scrolls */}
+      {/* Content column — the only part that scrolls.
+          `relative` is load-bearing: it makes <main> the containing block for
+          absolutely positioned descendants. Without it, an element like an
+          sr-only table caption (position: absolute, 1px) deep in a long page
+          was positioned against <body>, so it stretched the DOCUMENT past the
+          viewport: the window grew its own scrollbar, scrolling past the end of
+          <main> showed a blank band a screen tall, and scrolling back up moved
+          <main> while the window stayed down — the page seemed to lock. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <main className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {/* Full-bleed pages (the Add Data catalogue and the setup / deploy
               wizards) draw their own chrome edge-to-edge using Tailwind's fixed
               `-mx-6 md:-mx-8`. For those routes the container switches to the

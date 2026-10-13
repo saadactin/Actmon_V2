@@ -109,7 +109,7 @@ export default function AlertSettingsPanel({
               <Icon name="clock" size={15} className="text-accent-text" />
               Retention
             </h3>
-            <p className="mt-0.5 text-[11px] leading-snug text-muted">
+            <p className="mt-0.5 text-meta leading-snug text-muted">
               {data?.scope}
             </p>
           </div>
@@ -118,7 +118,7 @@ export default function AlertSettingsPanel({
           </Badge>
         </div>
 
-        <p className="mt-3 flex gap-2 rounded-control border border-border bg-sunken px-3 py-2 text-[11px] leading-snug text-muted">
+        <p className="mt-3 flex gap-2 rounded-control border border-border bg-sunken px-3 py-2 text-meta leading-snug text-muted">
           <Icon name="info" size={13} className="mt-0.5 shrink-0 text-subtle" />
           <span>{data?.note}</span>
         </p>
@@ -144,11 +144,11 @@ export default function AlertSettingsPanel({
                 />
                 <span className="text-[12px] text-muted">days</span>
               </div>
-              <span className="mt-1 block text-[11px] leading-snug text-subtle">
+              <span className="mt-1 block text-meta leading-snug text-subtle">
                 {f.help}
               </span>
               {errors[f.key] && (
-                <span className="mt-1 block text-[11px] text-danger">{errors[f.key]}</span>
+                <span className="mt-1 block text-meta text-danger">{errors[f.key]}</span>
               )}
             </label>
           ))}
@@ -160,7 +160,7 @@ export default function AlertSettingsPanel({
               onChange={(v) => setDraft((d) => ({ ...d, pruning_enabled: v }))}
               label="Delete data that has passed its retention period"
             />
-            <p className="mt-1.5 text-[11px] leading-snug text-subtle">
+            <p className="mt-1.5 text-meta leading-snug text-subtle">
               Off by default. While this is off nothing is ever deleted and the
               figures below are only a projection. Deletion cannot be undone.
             </p>
@@ -173,7 +173,7 @@ export default function AlertSettingsPanel({
           <Icon name="globe" size={15} className="text-accent-text" />
           Email timestamps
         </h3>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted">
+        <p className="mt-0.5 text-meta leading-snug text-muted">
           Everything is stored in UTC. This is only how times are rendered in
           alert email, which has no browser to ask — the Alerts tab itself uses
           your own browser&rsquo;s timezone.
@@ -187,12 +187,12 @@ export default function AlertSettingsPanel({
             onChange={(v) => setDraft((d) => ({ ...d, display_timezone: v }))}
           />
           {errors.display_timezone && (
-            <span className="mt-1 block text-[11px] text-danger">
+            <span className="mt-1 block text-meta text-danger">
               {errors.display_timezone}
             </span>
           )}
         </div>
-        <p className="mt-2 text-[11px] text-subtle">
+        <p className="mt-2 text-meta text-subtle">
           Emails read, for example, <code className="text-fg">17 Sep 2026, 10:42 IST</code>
           {' '}— the zone is always named.
         </p>
@@ -205,7 +205,7 @@ export default function AlertSettingsPanel({
               <Icon name="moon" size={15} className="text-accent-text" />
               Quiet hours
             </h3>
-            <p className="mt-0.5 text-[11px] leading-snug text-muted">
+            <p className="mt-0.5 text-meta leading-snug text-muted">
               Hold non-critical email until morning. Alerts still open, still
               appear here and still count as active — only the mail waits.
             </p>
@@ -227,7 +227,7 @@ export default function AlertSettingsPanel({
             {[['quiet_hours_start', 'From'], ['quiet_hours_end', 'Until']].map(
               ([key, label]) => (
                 <label key={key} className="block">
-                  <span className="mb-1 block text-[11px] font-semibold text-fg">
+                  <span className="mb-1 block text-meta font-semibold text-fg">
                     {label}
                   </span>
                   <Input
@@ -239,14 +239,14 @@ export default function AlertSettingsPanel({
                     onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
                   />
                   {errors[key] && (
-                    <span className="mt-1 block text-[11px] text-danger">
+                    <span className="mt-1 block text-meta text-danger">
                       {errors[key]}
                     </span>
                   )}
                 </label>
               ),
             )}
-            <span className="pb-2 text-[11px] text-subtle">
+            <span className="pb-2 text-meta text-subtle">
               in {draft.display_timezone || 'Asia/Kolkata'}
             </span>
           </div>
@@ -262,7 +262,7 @@ export default function AlertSettingsPanel({
             />
             {/* Stated rather than left to the switch label, because turning
                 this off is the one setting here that can lose an incident. */}
-            <p className="mt-1.5 text-[11px] leading-snug text-subtle">
+            <p className="mt-1.5 text-meta leading-snug text-subtle">
               {draft.quiet_hours_critical_bypass === false
                 ? 'Critical alerts will also be held until morning. A 3am '
                   + 'critical you were not told about is usually worse than '
@@ -324,7 +324,7 @@ export default function AlertSettingsPanel({
             </Button>
           )}
           {data?.last_pruned_at && (
-            <span className="text-[11px] text-subtle">
+            <span className="text-meta text-subtle">
               Last run <When iso={data.last_pruned_at} />
             </span>
           )}
@@ -334,7 +334,7 @@ export default function AlertSettingsPanel({
       {canManage && (
         <div className="flex items-center justify-end gap-2">
           {dirty && (
-            <span className="text-[11px] text-muted">Unsaved changes</span>
+            <span className="text-meta text-muted">Unsaved changes</span>
           )}
           <Button
             variant="primary"

@@ -1,18 +1,17 @@
-import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getResourceDetail, getResourceMetrics } from '../api/resources.api';
-import { useCloudAccounts } from '../hooks/useCloudAccounts';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { getResourceDetail } from '../api/resources.api';
 import {
-  AlertTriangle, Activity, BarChart3, Braces,
+  AlertTriangle, Braces,
   Calendar, ClipboardList, Clock, Cloud, Cpu, Database, DollarSign,
-  Globe, HardDrive, Inbox, Info, MapPin, Megaphone, Package,
+  Globe, HardDrive, Inbox, MapPin, Megaphone, Package,
   Scale, Server, Settings, Boxes, Table2, Tag, Tags, Timer, Zap,
 } from 'lucide-react';
-import { DiagnosticModal } from '../components/DiagnosticModal';
+import { MonitoringTabContent } from '../components/ResourceMetricsPanel';
+import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import { slugForProvider } from '../utils/providerScope';
 import { rawStatusTone, statusMeta } from '../utils/resourceModel';
+import { exact } from '../utils/costFormat';
 import CloudPageHeader from '../components/CloudPageHeader';
 import CloudSection from '../components/CloudSection';
 import Badge from '@/components/ui/Badge';
@@ -248,211 +247,6 @@ function TypeSpecificPanel({ resource }) {
   return null;
 }
 
-/** Empty metrics panel that can explain itself, instead of a dead-end message. */
-function MetricsEmpty({ diagnostic, source }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <CloudSection bodyClassName="p-0 flex flex-col items-center justify-center py-16 px-6 text-center">
-      <BarChart3 size={40} className="mb-3 text-subtle" />
-      <h3 className="text-base font-semibold text-fg">No Metrics Available</h3>
-      <p className="mt-1 max-w-md text-sm text-muted">
-        No monitoring datapoints were returned for this resource in the last 24 hours.
-      </p>
-      <button
-        onClick={() => setOpen(true)}
-        className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-accent-text hover:opacity-80"
-      >
-        <Info size={14} /> Why are metrics unavailable?
-      </button>
-      {open && (
-        <DiagnosticModal
-          title="Why are metrics unavailable?"
-          items={[
-            diagnostic
-              ? { scope: source || 'Monitoring', category: diagnostic.category, message: diagnostic.message }
-              : {
-                scope: source || 'Monitoring',
-                category: 'unknown',
-                message:
-                    'No diagnostic detail was returned by the backend for this resource. Re-open the tab to retry, '
-                    + 'and check the cloud service logs if it keeps happening.',
-              },
-          ]}
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </CloudSection>
-  );
-}
-
-function MonitoringTabContent({ resourceId }) {
-  const { data: metricsData, isLoading, isError } = useQuery({
-    queryKey: ['resource-metrics', resourceId],
-    queryFn: () => getResourceMetrics(resourceId),
-    enabled: !!resourceId,
-    staleTime: 5 * 60_000, // refresh every 5 min
-    refetchInterval: 5 * 60_000,
-  });
-
-  if (isLoading) {
-    return <PageLoading title="Fetching metrics…" minHeight={200} />;
-  }
-
-  if (isError || !metricsData || !metricsData.metrics) {
-    return <MetricsEmpty diagnostic={metricsData?.diagnostic} />;
-  }
-
-  const { metrics } = metricsData;
-  const isRealtime = metricsData.realtime === true;
-  const { source } = metricsData;
-
-  // API returns only real datapoints: series may be empty arrays, or metrics may be {} entirely.
-  const metricNames = Object.keys(metrics);
-  const hasAnyData = metricNames.some((name) => (metrics[name] || []).length > 0);
-
-  if (metricNames.length === 0 || !hasAnyData) {
-    return <MetricsEmpty diagnostic={metricsData.diagnostic} source={source} />;
-  }
-
-  // Y-axis / tooltip number formatting — "Execute Count" can run into the
-  // millions, which needs abbreviating (1.2M) rather than a wall of zeros.
-  const formatCompactNumber = (value) => {
-    const abs = Math.abs(value);
-    if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-    if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-    if (abs >= 1_000) return `${(value / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}K`;
-    return Number.isInteger(value) ? `${value}` : value.toFixed(2);
-  };
-
-  return (
-    <div className="flex flex-col gap-gutter">
-      {/* Data source badge */}
-      <div className="flex flex-wrap items-center gap-3">
-        {isRealtime && source ? (
-          <Badge tone="success" size="xs">
-            <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
-            Live — {source}
-          </Badge>
-        ) : (
-          <Badge tone="neutral" size="xs">
-            <AlertTriangle size={12} />
-            No live data — NA
-          </Badge>
-        )}
-        <span className="text-[11px] text-muted">Last 24h</span>
-      </div>
-
-      {Object.entries(metrics).map(([metricName, dataPoints]) => {
-        if (!dataPoints || dataPoints.length === 0) {
-          return (
-            <CloudSection key={metricName}>
-              <div className="flex items-center justify-between gap-4">
-                <h4 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-fg">
-                  <Activity size={16} className="text-subtle" />
-                  {metricName}
-                </h4>
-                <span className="text-[11px] font-semibold text-subtle">NA</span>
-              </div>
-              <p className="mt-2 text-xs text-subtle">No datapoints returned for this metric.</p>
-            </CloudSection>
-          );
-        }
-
-        const chartData = dataPoints.map((dp) => ({
-          time: new Date(dp.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          value: dp.value,
-        }));
-
-        const seriesMax = Math.max(...chartData.map((d) => d.value));
-
-        // Semantic per-metric-category colouring, drawn from the theme's chart
-        // palette (not brand colours) so it follows light/dark and any accent.
-        const mn = metricName.toLowerCase();
-        let strokeColor = 'var(--chart-1)';
-        if (mn.includes('error') || mn.includes('throttle')) {
-          strokeColor = 'var(--chart-8)';
-        } else if (mn.includes('duration') || mn.includes('latency')) {
-          strokeColor = 'var(--chart-7)';
-        } else if (mn.includes('memory') || mn.includes('capacity') || mn.includes('count') || mn.includes('object')) {
-          strokeColor = 'var(--chart-3)';
-        } else if (mn.includes('network') || mn.includes('disk')) {
-          strokeColor = 'var(--chart-4)';
-        }
-
-        // The gradient id is derived from the metric name (e.g. "CPU Utilization
-        // (%)"), which contains spaces/parens — invalid inside a url(#...) fill
-        // reference. An unresolvable reference silently falls back to solid
-        // black, which is why every chart was rendering as a black wedge.
-        const gradientId = `chart-grad-${metricName.replace(/[^a-zA-Z0-9]/g, '-')}`;
-
-        return (
-          <CloudSection key={metricName}>
-            <div className="mb-3 flex items-center justify-between gap-4">
-              <h4 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-fg">
-                <Activity size={16} style={{ color: strokeColor }} />
-                {metricName}
-                <span className="text-[11px] font-normal normal-case tracking-normal text-subtle">(Last 24h)</span>
-              </h4>
-              <span className="text-[11px] font-semibold text-muted">
-                Max: <span className="font-bold text-fg">{formatCompactNumber(seriesMax)}</span>
-              </span>
-            </div>
-            <div className="h-40">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={strokeColor} stopOpacity={0.25} />
-                      <stop offset="100%" stopColor={strokeColor} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
-                  <XAxis
-                    dataKey="time"
-                    tick={{ fill: 'var(--chart-axis)', fontSize: 11 }}
-                    axisLine={{ stroke: 'var(--chart-grid)' }}
-                    tickLine={false}
-                    minTickGap={24}
-                  />
-                  <YAxis
-                    tick={{ fill: 'var(--chart-axis)', fontSize: 11 }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={44}
-                    tickFormatter={formatCompactNumber}
-                  />
-                  <Tooltip
-                    cursor={{ stroke: strokeColor, strokeWidth: 1, strokeDasharray: '3 3' }}
-                    contentStyle={{
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 8,
-                      boxShadow: 'var(--shadow-md)',
-                    }}
-                    itemStyle={{ color: 'var(--fg)', fontSize: 12, fontWeight: 600 }}
-                    labelStyle={{ color: 'var(--fg-subtle)', fontSize: 11, marginBottom: 2 }}
-                    formatter={(value) => [formatCompactNumber(value), metricName]}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="value"
-                    stroke={strokeColor}
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    fillOpacity={1}
-                    fill={`url(#${gradientId})`}
-                    activeDot={{ r: 4, fill: strokeColor, stroke: 'var(--surface)', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CloudSection>
-        );
-      })}
-    </div>
-  );
-}
-
 /* ─── main component ─────────────────────────────────────────────────── */
 export const ResourceDetailPage = () => {
   const { resourceId, tab: tabSlug } = useParams();
@@ -511,10 +305,12 @@ export const ResourceDetailPage = () => {
   const tagCount = Object.keys(tags).length;
   const configCount = Object.keys(config).length;
 
-  /* Cost display: only assert a currency symbol/code when the API provides one */
+  /* Cost display: `exact()` returns 'NA' for a missing value and only shows a
+     symbol when the API actually told us a currency — same rule every other
+     cost figure in this app follows (see utils/costFormat.js). */
   const costCurrency = resource.cost_currency ?? resource.currency ?? null;
   const costText = resource.cost_monthly != null
-    ? `${costCurrency ? `${costCurrency} ` : ''}${Number(resource.cost_monthly).toFixed(2)}`
+    ? exact(resource.cost_monthly, costCurrency)
     : null;
 
   /* Stats depending on type */
@@ -676,7 +472,7 @@ export const ResourceDetailPage = () => {
                 {resource.ip_address}
               </span>
             )}
-            <span className="font-mono text-[11px] text-subtle break-all">{resource.provider_resource_id}</span>
+            <span className="font-mono text-meta text-subtle break-all">{resource.provider_resource_id}</span>
           </span>
         )}
         leading={(
@@ -696,7 +492,7 @@ export const ResourceDetailPage = () => {
           </div>
         )}
         tabs={(
-          <div className="no-scrollbar flex gap-1 overflow-x-auto" role="tablist">
+          <div className="flex flex-wrap gap-x-1" role="tablist">
             {TABS.map((tab) => (
               <button
                 key={tab}
@@ -728,7 +524,7 @@ export const ResourceDetailPage = () => {
           const StatIcon = s.icon;
           return (
             <div key={s.label} className="min-w-[110px] rounded-control border border-border bg-sunken px-4 py-2.5">
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              <div className="flex items-center gap-1.5 text-micro font-semibold uppercase tracking-wide text-muted">
                 <StatIcon size={12} className="text-subtle" />
                 {s.label}
               </div>

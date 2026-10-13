@@ -179,6 +179,87 @@ ALERT_MANAGE_RULES = "alerts:manage_rules"
 ALERT_MANAGE_RECIPIENTS = "alerts:manage_recipients"
 ALERT_TEST = "alerts:test"
 
+# ---- Clients, organisation onboarding and client reports ------------------
+#   clients:view     — the client list, the portfolio view, a client's accounts.
+#                      Every role: it is a grouping of data each role can
+#                      already read account by account.
+#   clients:manage   — create, rename, delete a client; assign accounts to it.
+#                      Administrator-only, because assignment decides whose
+#                      report an account's bill appears in.
+#   clients:onboard  — list an AWS organisation or Azure tenant and create
+#                      accounts from it. It stores new cloud credentials, so it
+#                      sits with resources:discover at the administrator level.
+#   reports:export   — generate and download a client's PDF. Its own
+#                      permission for the reason cost:export is: an itemized
+#                      report leaves the building the moment it is downloaded.
+#   reports:manage   — schedules and recipients. Decides whose inbox this
+#                      system writes to every month, like alerts:manage_recipients.
+CLIENT_VIEW = "clients:view"
+CLIENT_MANAGE = "clients:manage"
+CLIENT_ONBOARD = "clients:onboard"
+REPORT_EXPORT = "reports:export"
+REPORT_MANAGE = "reports:manage"
+
+# ---- Resource Intelligence ---------------------------------------------------
+#   intelligence:view     — the findings workspace, evidence, telemetry, health.
+#                           Every role, like security:view and cost:view: it
+#                           reads what those two already expose.
+#   intelligence:triage   — acknowledge, reopen, mark resolved. Analyst-level,
+#                           beside security:triage.
+#   intelligence:suppress — suppress a finding so it stops counting. Admin-only,
+#                           for the reason security:suppress is.
+# Running an analysis contacts the provider's monitoring API, so it needs
+# resources:discover — the same permission as "Refresh all", which runs it.
+# A SECURITY finding shown here keeps the Security Center's own permissions.
+INTELLIGENCE_VIEW = "intelligence:view"
+INTELLIGENCE_TRIAGE = "intelligence:triage"
+INTELLIGENCE_SUPPRESS = "intelligence:suppress"
+
+# ---- Identity & Access (CIEM) ------------------------------------------------
+# This surface is the most sensitive read in the product and the only one with a
+# write path that changes a customer's IAM, so it splits further than the others.
+#
+#   identity:view       — the dashboard, the identity table, dormancy, MFA state,
+#                         credential age. Granted to every role, like the other
+#                         view permissions.
+#   identity:view_raw   — policy documents, trust policies, OCI policy statements
+#                         and the full decision trace. Gated exactly as the raw
+#                         event, topology and security payloads are, and for a
+#                         sharper reason: a policy document is a precise map of
+#                         what an identity can reach and is the single most useful
+#                         artefact to an attacker who has a foothold.
+#   identity:query      — the permission explorer and the "who can access this?"
+#                         reverse query. Separated from view because a reverse
+#                         query over an estate is reconnaissance in a way a table
+#                         is not: "who can delete backups" answers, in one call,
+#                         the question an intruder most wants answered. Analyst
+#                         and above.
+#   identity:analyze    — run collection and analysis. Contacts provider APIs and
+#                         writes, so it sits with resources:discover.
+#   identity:request    — raise an access or right-sizing request. Deliberately
+#                         granted to viewer: the person who needs elevation is
+#                         usually not an administrator, and making them ask an
+#                         administrator to ask on their behalf is how JIT gets
+#                         abandoned for standing access.
+#   identity:approve    — approve or reject. Administrator-only, and the service
+#                         additionally refuses self-approval, because an approval
+#                         workflow one person can complete alone is decoration.
+#   identity:apply      — execute an approved change against the provider. The
+#                         only permission in the product that can alter a
+#                         customer's IAM. Administrator-only, and still gated
+#                         behind CIEM_ENABLE_WRITE at the service layer.
+#   identity:audit      — read the CIEM audit trail of who requested, who
+#                         approved and what changed. With the audit roles, beside
+#                         events:view_access_log.
+IDENTITY_VIEW = "identity:view"
+IDENTITY_VIEW_RAW = "identity:view_raw"
+IDENTITY_QUERY = "identity:query"
+IDENTITY_ANALYZE = "identity:analyze"
+IDENTITY_REQUEST = "identity:request"
+IDENTITY_APPROVE = "identity:approve"
+IDENTITY_APPLY = "identity:apply"
+IDENTITY_AUDIT = "identity:audit"
+
 ROLE_VIEWER = "viewer"
 ROLE_ANALYST = "security_analyst"
 ROLE_ADMIN = "administrator"
@@ -193,7 +274,10 @@ ROLE_AUDIT_ADMIN = "audit_admin"
 # when/where — and the payload needs the analyst role.
 ROLE_PERMISSIONS = {
     ROLE_VIEWER: {VIEW, TOPOLOGY_VIEW, SECURITY_VIEW, COST_VIEW, RESOURCE_VIEW,
-                  ALERT_VIEW},
+                  ALERT_VIEW, CLIENT_VIEW, INTELLIGENCE_VIEW,
+                  # Can see the identity picture and ask for elevation; cannot
+                  # run a reverse query, approve, or change anything.
+                  IDENTITY_VIEW, IDENTITY_REQUEST},
     ROLE_ANALYST: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY,
         TOPOLOGY_VIEW, TOPOLOGY_VIEW_RAW, TOPOLOGY_EXPORT,
@@ -211,6 +295,14 @@ ROLE_PERMISSIONS = {
         # Works the alert queue and can test why a rule is quiet; cannot
         # change what is watched or whose inbox it reaches.
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST,
+        # Can produce and download a client's report; cannot schedule one or
+        # decide who receives it.
+        CLIENT_VIEW, REPORT_EXPORT,
+        # Works the findings queue; cannot suppress.
+        INTELLIGENCE_VIEW, INTELLIGENCE_TRIAGE,
+        # Investigates identities, including the policy documents and the
+        # reverse query. Cannot approve an elevation or apply a change.
+        IDENTITY_VIEW, IDENTITY_VIEW_RAW, IDENTITY_QUERY, IDENTITY_REQUEST,
     },
     ROLE_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -223,6 +315,10 @@ ROLE_PERMISSIONS = {
         RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
         ALERT_MANAGE_RECIPIENTS,
+        CLIENT_VIEW, CLIENT_MANAGE, CLIENT_ONBOARD, REPORT_EXPORT, REPORT_MANAGE,
+        INTELLIGENCE_VIEW, INTELLIGENCE_TRIAGE, INTELLIGENCE_SUPPRESS,
+        IDENTITY_VIEW, IDENTITY_VIEW_RAW, IDENTITY_QUERY, IDENTITY_ANALYZE,
+        IDENTITY_REQUEST, IDENTITY_APPROVE, IDENTITY_APPLY, IDENTITY_AUDIT,
     },
     ROLE_AUDIT_ADMIN: {
         VIEW, SEARCH, VIEW_RAW, EXPORT, SAVE_QUERY, COLLECT, CONFIGURE,
@@ -236,6 +332,10 @@ ROLE_PERMISSIONS = {
         RESOURCE_DISCOVER, RESOURCE_ACTION, RESOURCE_ADMIN,
         ALERT_VIEW, ALERT_TRIAGE, ALERT_TEST, ALERT_MANAGE_RULES,
         ALERT_MANAGE_RECIPIENTS,
+        CLIENT_VIEW, CLIENT_MANAGE, CLIENT_ONBOARD, REPORT_EXPORT, REPORT_MANAGE,
+        INTELLIGENCE_VIEW, INTELLIGENCE_TRIAGE, INTELLIGENCE_SUPPRESS,
+        IDENTITY_VIEW, IDENTITY_VIEW_RAW, IDENTITY_QUERY, IDENTITY_ANALYZE,
+        IDENTITY_REQUEST, IDENTITY_APPROVE, IDENTITY_APPLY, IDENTITY_AUDIT,
     },
 }
 

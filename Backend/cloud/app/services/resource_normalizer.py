@@ -15,13 +15,14 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resource import CloudResource
 from app.models.resource_cost import SOURCE_PROVIDER_BILLING, CloudResourceCost
 from app.services import resource_capabilities as caps
 from app.services import resource_model as rm
+from app.services import resource_services as svc
 
 logger = logging.getLogger("cloud_svc.resource_normalizer")
 
@@ -34,8 +35,14 @@ logger = logging.getLogger("cloud_svc.resource_normalizer")
 _ID_CHUNK = 5_000
 
 
-def normalized_values(resource: CloudResource) -> Dict[str, Any]:
-    """The normalized projection of one resource row. Pure."""
+def normalized_values(resource: CloudResource, *,
+                      provider: Optional[str] = None) -> Dict[str, Any]:
+    """The normalized projection of one resource row. Pure.
+
+    `provider` is the account's cloud. Without it the service is inferred from
+    the resource ID, which is unambiguous for Azure (ARM ids) and OCI (OCIDs)
+    but not for every AWS id — so callers that know the account pass it.
+    """
     verdict = rm.normalize_status(
         resource.resource_type, resource.status, resource.config
     )
@@ -47,6 +54,8 @@ def normalized_values(resource: CloudResource) -> Dict[str, Any]:
         "normalized_status": verdict.normalized,
         "status_reason": verdict.reason,
         "normalized_type": type_info.category,
+        "service": svc.service_of(resource.resource_type, resource.provider_resource_id,
+                                  provider).key,
         "environment": rm.environment_of(tags),
         "owner": rm.owner_of(tags),
         "attachment_state": rm.attachment_state(resource.resource_type, resource.config),
@@ -89,14 +98,20 @@ async def renormalize_account(
     to its own current value. A column present in the SET clause does not get
     its onupdate default applied, so the timestamp survives untouched.
     """
+    from app.models.cloud_account import CloudAccount
+
+    provider = (await db.execute(
+        select(CloudAccount.provider).where(CloudAccount.id == account_id)
+    )).scalar()
     stmt = select(CloudResource).where(CloudResource.account_id == account_id)
     if only_missing:
-        stmt = stmt.where(CloudResource.normalized_status.is_(None))
+        stmt = stmt.where(or_(CloudResource.normalized_status.is_(None),
+                              CloudResource.service.is_(None)))
 
     rows = list((await db.execute(stmt)).scalars().all())
     changed = 0
     for row in rows:
-        values = normalized_values(row)
+        values = normalized_values(row, provider=provider)
         if all(getattr(row, key) == value for key, value in values.items()):
             continue
         await db.execute(
@@ -155,10 +170,12 @@ async def mark_seen(
 
 
 async def accounts_needing_backfill(db: AsyncSession) -> List[uuid.UUID]:
-    """Accounts with at least one row that has never been normalized."""
+    """Accounts with at least one row that has never been normalized — or
+    predates a projection column added later (service)."""
     rows = (await db.execute(
         select(CloudResource.account_id)
-        .where(CloudResource.normalized_status.is_(None))
+        .where(or_(CloudResource.normalized_status.is_(None),
+                   CloudResource.service.is_(None)))
         .group_by(CloudResource.account_id)
     )).all()
     return [row[0] for row in rows]

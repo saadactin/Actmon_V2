@@ -33,7 +33,7 @@ export default function AlertSummaryStrip({ summary, loading, error, onFilter })
           <Icon name="alert" size={14} className="text-warning-fg" />
           The alert summary could not be loaded
         </p>
-        <p className="mt-0.5 text-[11px] leading-snug text-muted">
+        <p className="mt-0.5 text-meta leading-snug text-muted">
           {error?.response?.data?.detail || error?.message
             || 'This figure could not be read.'}{' '}
           The rules and history below load separately and may still be fine.
@@ -51,7 +51,7 @@ export default function AlertSummaryStrip({ summary, loading, error, onFilter })
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 xl:grid-cols-5">
         <Kpi
           label="Active alerts"
           icon="bell-ring"
@@ -115,19 +115,19 @@ export default function AlertSummaryStrip({ summary, loading, error, onFilter })
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-control border border-border bg-sunken px-3 py-2">
-        <span className="flex items-center gap-1.5 text-[11px]">
+        <span className="flex items-center gap-1.5 text-meta">
           <Icon name={system.icon} size={12} className="text-subtle" />
           <span className="text-muted">System</span>
           <Badge tone={system.tone} size="sm">{system.label}</Badge>
         </span>
-        <span className="text-[11px] text-muted">
+        <span className="text-meta text-muted">
           Last evaluation{' '}
           <span className="font-medium text-fg">
             <When iso={s.last_evaluation_at} never="never — no rule has run yet" />
           </span>
         </span>
         {typeof s.rules_never_evaluated === 'number' && s.rules_never_evaluated > 0 && (
-          <span className="text-[11px] text-muted">
+          <span className="text-meta text-muted">
             <span className="font-medium text-fg">{s.rules_never_evaluated}</span>{' '}
             rule(s) awaiting their first run
           </span>
@@ -138,7 +138,7 @@ export default function AlertSummaryStrip({ summary, loading, error, onFilter })
           </Badge>
         )}
         {s.system_detail && (
-          <span className="w-full text-[11px] leading-snug text-muted">
+          <span className="w-full text-meta leading-snug text-muted">
             {s.system_detail}
           </span>
         )}

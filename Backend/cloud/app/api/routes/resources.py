@@ -18,8 +18,10 @@ has to change to keep working.
 """
 from __future__ import annotations
 
+import csv
+import io
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -39,6 +41,9 @@ from app.services.resource_action_service import (
     ActionError, ResourceActionService, available_actions,
 )
 from app.services.resource_view_service import ResourceViewService, ViewValidationError
+from app.services.resource_assessment_service import (
+    MAX_RESOURCES_PER_EXPORT, TooManyResourcesError, build_assessment_rows,
+)
 
 router = APIRouter(prefix="/cloud/resources", tags=["Resources"])
 
@@ -52,6 +57,7 @@ def resource_filters(
     provider: Optional[List[str]] = Query(None),
     type: Optional[List[str]] = Query(None),           # noqa: A002
     category: Optional[List[str]] = Query(None),
+    service: Optional[List[str]] = Query(None, description="Provider service key, e.g. aws.lambda, azure.app-service, oci.compute"),
     region: Optional[List[str]] = Query(None),
     status: Optional[List[str]] = Query(None, description="Normalized status, not the provider's own word"),
     risk: Optional[List[str]] = Query(None, description="CRITICAL|HIGH|MEDIUM|LOW|INFO|NONE|UNKNOWN"),
@@ -79,6 +85,7 @@ def resource_filters(
 ) -> Dict[str, Any]:
     return {
         "q": q, "provider": provider, "type": type, "category": category,
+        "service": service,
         "region": region, "status": status, "risk": risk,
         "environment": environment, "owner": owner,
         "resource_group": resource_group, "compartment": compartment,
@@ -417,7 +424,7 @@ async def get_resource_facets(
 @router.get("/groups/{account_id}")
 async def get_resource_groups(
     account_id: str,
-    group_by: str = Query(..., description="provider|account|region|resource_type|normalized_type|status|risk|environment|owner|resource_group|compartment"),
+    group_by: str = Query(..., description="provider|account|region|resource_type|normalized_type|status|risk|environment|owner|resource_group|compartment|service"),
     filters: Dict[str, Any] = Depends(resource_filters),
     svc: ResourceQueryService = Depends(get_resource_query_service),
     _: rbac.Principal = Depends(rbac.require(rbac.RESOURCE_VIEW)),
@@ -460,6 +467,78 @@ async def export_resources(
         headers={
             "Content-Disposition": f'attachment; filename="resources-{stamp}.csv"',
             "X-Resource-Rows": str(meta["rows"]),
+        },
+    )
+
+
+_ASSESSMENT_CSV_COLUMNS = (
+    ("account_name", "Account"), ("provider", "Provider"), ("region", "Region"),
+    ("resource_name", "Resource"), ("resource_type", "Type"),
+    ("provider_resource_id", "Provider Resource ID"),
+    ("assessment_category", "Category"), ("severity", "Severity"),
+    ("title", "Title"), ("detail", "Detail"), ("metric_value", "Metric/Value"),
+    ("status", "Status"), ("detected_at", "Detected At"),
+)
+
+
+def _assessment_csv_cell(value: Any) -> str:
+    """Neutralise a value a spreadsheet would evaluate as a formula.
+
+    Same defence `topology.py`'s export uses, for the same reason: a resource
+    name, tag or finding title here is attacker-influenced text, and a value
+    starting with `=`, `+`, `-` or `@` is executed by Excel/Sheets on open.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
+class AssessmentExportRequest(BaseModel):
+    account_id: uuid.UUID
+    resource_ids: List[uuid.UUID]
+
+
+@router.post("/assessment-export")
+async def export_resource_assessment(
+    body: AssessmentExportRequest,
+    db: AsyncSession = Depends(get_db),
+    _: rbac.Principal = Depends(rbac.require(rbac.RESOURCE_EXPORT)),
+):
+    """CSV combining security, utilization, performance and account-wide cost
+    anomalies for the given resources — one row per finding/metric/anomaly.
+
+    Gated on `resources:export`, the same permission the plain inventory
+    export uses: this is also a file built to leave the building, just a
+    richer one. See `resource_assessment_service` for what each column means
+    and why anomalies are labelled account-wide rather than per-resource.
+    """
+    if not body.resource_ids:
+        raise HTTPException(status_code=400, detail="resource_ids must not be empty.")
+    try:
+        rows = await build_assessment_rows(db, body.account_id, body.resource_ids)
+    except TooManyResourcesError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([label for _, label in _ASSESSMENT_CSV_COLUMNS])
+    for row in rows:
+        writer.writerow([_assessment_csv_cell(row.get(key)) for key, _ in _ASSESSMENT_CSV_COLUMNS])
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    return Response(
+        # A leading BOM so Excel (which guesses encoding from the first bytes,
+        # not from the Content-Type header) reads this as UTF-8 rather than
+        # mojibake-ing any non-ASCII resource name or finding text.
+        content="﻿" + buffer.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="resource-assessment-{stamp}.csv"',
+            "X-Assessment-Rows": str(len(rows)),
+            "X-Resources-Requested": str(len(body.resource_ids)),
         },
     )
 

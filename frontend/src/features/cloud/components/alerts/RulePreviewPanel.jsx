@@ -29,7 +29,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
   if (error) {
     return (
       <div className={cn('rounded-control border border-border p-3', className)}>
-        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-muted">
+        <p className="flex items-start gap-1.5 text-meta leading-snug text-muted">
           <Icon name="info" size={12} className="mt-0.5 shrink-0 text-subtle" />
           The preview could not be evaluated just now. This does not prevent you
           saving the rule — it only means this panel cannot show what it would
@@ -56,11 +56,11 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
       <div className={cn('rounded-control border border-dashed border-border p-3',
         className)}
       >
-        <p className="text-[11px] leading-snug text-muted">
+        <p className="text-meta leading-snug text-muted">
           {data.reason || 'Finish the condition to see what this rule would do.'}
         </p>
         {data.supported === false && (
-          <p className="mt-1.5 flex gap-1.5 text-[11px] leading-snug text-warning-fg">
+          <p className="mt-1.5 flex gap-1.5 text-meta leading-snug text-warning-fg">
             <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
             This condition cannot be evaluated for this account.
           </p>
@@ -77,7 +77,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
       loading && 'opacity-60 transition-opacity', className)}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-        <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-subtle">
+        <span className="flex items-center gap-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
           <Icon name="eye" size={12} />
           Alert preview
         </span>
@@ -95,7 +95,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
           ['On resolve', s.on_resolve],
         ].filter(([, v]) => v).map(([k, v]) => (
           <div key={k} className="flex gap-3">
-            <dt className="w-20 shrink-0 text-[10px] font-bold uppercase tracking-wider text-subtle">
+            <dt className="w-20 shrink-0 text-micro font-bold uppercase tracking-wider text-subtle">
               {k}
             </dt>
             <dd className={cn(
@@ -139,7 +139,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
         </dl>
 
         {data.explain?.detail && (
-          <p className="mt-1.5 text-[11px] leading-snug text-muted">
+          <p className="mt-1.5 text-meta leading-snug text-muted">
             {data.explain.detail}
           </p>
         )}
@@ -149,7 +149,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
             count the evaluator never produced is not a zero. */}
         {!!data.samples?.length && (
           <div className="mt-2 border-t border-border pt-2">
-            <p className="mb-1 text-[11px] text-muted">
+            <p className="mb-1 text-meta text-muted">
               Currently matching{' '}
               <span className="font-semibold text-fg">
                 {data.samples.length}
@@ -160,7 +160,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
             <ul className="space-y-0.5">
               {data.samples.slice(0, 5).map((x, i) => (
                 // eslint-disable-next-line react/no-array-index-key
-                <li key={`${x.name}-${i}`} className="truncate text-[11px] text-fg">
+                <li key={`${x.name}-${i}`} className="truncate text-meta text-fg">
                   {x.name}
                   {x.type && <span className="text-subtle"> · {x.type}</span>}
                 </li>
@@ -170,7 +170,7 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
         )}
 
         {fires && (
-          <p className="mt-2 flex gap-1.5 text-[11px] leading-snug text-muted">
+          <p className="mt-2 flex gap-1.5 text-meta leading-snug text-muted">
             <Icon name="info" size={11} className="mt-0.5 shrink-0 text-subtle" />
             Saving this enabled will open an alert on the next evaluation. If
             that is not what you want, raise the threshold or add a minimum
@@ -179,14 +179,14 @@ export default function RulePreviewPanel({ data, loading, error, className }) {
         )}
 
         {data.warning && (
-          <p className="mt-2 flex gap-1.5 text-[11px] leading-snug text-warning-fg">
+          <p className="mt-2 flex gap-1.5 text-meta leading-snug text-warning-fg">
             <Icon name="alert" size={11} className="mt-0.5 shrink-0" />
             {data.warning}
           </p>
         )}
       </div>
 
-      <p className="border-t border-border px-3 py-1.5 text-[10px] text-subtle">
+      <p className="border-t border-border px-3 py-1.5 text-micro text-subtle">
         Evaluated against live data. Nothing has been created or sent.
       </p>
     </div>

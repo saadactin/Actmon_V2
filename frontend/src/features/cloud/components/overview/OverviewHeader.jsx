@@ -1,9 +1,8 @@
 import Badge from '@/components/ui/Badge';
-import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
 import CopyButton from '@/components/ui/CopyButton';
 import { formatDateTime, relativeTime } from '../../utils/resourceModel';
-import AccountRefreshControl from './AccountRefreshControl';
+import { compact } from '../../utils/costFormat';
 import { FreshnessBadge, Kpi, Panel, PanelEmpty } from './OverviewPrimitives';
 
 /**
@@ -36,7 +35,7 @@ const IDENTITY = {
   ],
 };
 
-export function AccountIdentity({ account, accountId, freshness }) {
+export function AccountIdentity({ account, freshness }) {
   const provider = account?.provider === 'Oracle' ? 'OCI' : account?.provider;
   const rows = (IDENTITY[provider] || IDENTITY.AWS)
     .map(([label, get]) => [label, get(account || {})])
@@ -52,7 +51,10 @@ export function AccountIdentity({ account, accountId, freshness }) {
           {freshness && (
             <FreshnessBadge
               severity={freshness.severity}
-              label={freshness.label}
+              /* The header's "Last refreshed" formats its time with the same
+                 function, so the two cannot read "1 hours" and "2 hours" for
+                 one scan, as the server's floored label did beside it. */
+              label={freshness.observed_at ? relativeTime(freshness.observed_at) : undefined}
               title={
                 freshness.observed_at
                   ? `Inventory last observed ${formatDateTime(freshness.observed_at)}`
@@ -65,8 +67,8 @@ export function AccountIdentity({ account, accountId, freshness }) {
         <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
           {rows.map(([label, value]) => (
             <div key={label} className="flex min-w-0 items-baseline gap-1.5">
-              <dt className="text-[10px] font-bold uppercase tracking-wider text-subtle">{label}</dt>
-              <dd className="flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted">
+              <dt className="text-micro font-bold uppercase tracking-wider text-subtle">{label}</dt>
+              <dd className="flex min-w-0 items-center gap-1 font-mono text-meta text-muted">
                 <span className="max-w-[26rem] truncate" title={String(value)}>{String(value)}</span>
                 <CopyButton text={String(value)} label="" variant="ghost" />
               </dd>
@@ -75,12 +77,8 @@ export function AccountIdentity({ account, accountId, freshness }) {
         </dl>
       </div>
 
-      {/* Refresh, not "Run Discovery". A refresh runs the same provider sweep
-          discovery does and then the rest — cost, security, events — so
-          offering both here would be two buttons where the second is a subset
-          of the first. Discovery on its own is still reachable from the
-          Discovery panel lower down, where it is the panel's own action. */}
-      <AccountRefreshControl account={account} accountId={accountId} />
+      {/* No refresh button here: the account header above every tab has the
+          one "Refresh all", which runs discovery and everything after it. */}
     </div>
   );
 }
@@ -94,7 +92,7 @@ export function AccountIdentity({ account, accountId, freshness }) {
  * run — they are omitted entirely when the run predates change recording,
  * rather than printed as three zeros.
  */
-export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, onRunDiscovery }) {
+export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic }) {
   const latest = discovery?.latest;
   const lastOk = discovery?.last_successful;
   const changes = discovery?.changes;
@@ -105,17 +103,14 @@ export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, 
     : null;
 
   return (
+    /* Status only. Its "Run" button started a plain discovery — a subset of
+       the header's Refresh all, under a different name. */
     <Panel
       title="Discovery"
       icon="refresh"
       loading={isLoading}
       error={error}
       dense
-      action={(
-        <Button variant="ghost" size="sm" icon="refresh" onClick={onRunDiscovery}>
-          Run
-        </Button>
-      )}
     >
       {!latest ? (
         <PanelEmpty>
@@ -126,7 +121,7 @@ export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, 
           {failed && (
             <div className="flex items-start gap-2 rounded-control border border-danger bg-danger-soft px-3 py-2">
               <Icon name="alert" size={14} className="mt-0.5 shrink-0 text-danger" />
-              <div className="min-w-0 text-[11px] leading-snug">
+              <div className="min-w-0 text-meta leading-snug">
                 <p className="font-semibold text-danger">The most recent scan failed</p>
                 <p className="mt-0.5 text-muted">
                   {latest.error_detail
@@ -175,7 +170,7 @@ export function DiscoveryPanel({ discovery, isLoading, error, onOpenDiagnostic, 
               {changes.DELETED > 0 && <Badge tone="warning" size="xs">{`-${changes.DELETED} removed`}</Badge>}
             </div>
           ) : (
-            <p className="border-t border-border pt-2 text-[11px] leading-snug text-subtle">
+            <p className="border-t border-border pt-2 text-meta leading-snug text-subtle">
               This run recorded no change entries. Change recording begins with
               the first sweep after drift capture was enabled, so an older run
               has nothing to report rather than nothing to show.
@@ -201,17 +196,22 @@ const Row = ({ label, value, title }) => (
  * that produced it — so the count you clicked is the set you land on.
  */
 export function OverviewKpis({
-  summary, cost, posture, isLoading, costLoading, postureLoading,
+  summary, cost, region, posture, isLoading, costLoading, postureLoading,
   costError, postureError, onNavigate,
 }) {
   const score = posture?.score;
   const bySeverity = posture?.findings_summary?.by_severity || {};
 
-  const costValue = cost?.total_monthly_cost;
-  const costUnavailable = costValue === null || costValue === undefined;
+  // `total_monthly_cost_inr` is the account's native spend converted with a
+  // live FX rate (see `cost_service.estimate_costs` / `fx_rate_service`), so
+  // an AWS (USD) account and an OCI (INR) account read in the same unit here.
+  const costValueInr = cost?.total_monthly_cost_inr;
+  const costUnavailable = costValueInr === null || costValueInr === undefined;
 
+  // 24px gutter and a 200px floor, so these line up with the Dashboard's and
+  // Infra's stat rows; at the old 160px a 30px value had nowhere to go.
   return (
-    <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(160px,1fr))]">
+    <div className="grid gap-gutter-lg [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
       <Kpi
         label="Resources"
         icon="boxes"
@@ -222,11 +222,11 @@ export function OverviewKpis({
       />
 
       <Kpi
-        label="Billed Spend"
+        label={region ? `Billed Spend — ${region}` : 'Billed Spend'}
         icon="report"
         loading={costLoading}
         unavailable={costUnavailable}
-        value={costUnavailable ? 'NA' : formatMoney(costValue, cost?.currency)}
+        value={costUnavailable ? 'NA' : compact(costValueInr, 'INR')}
         sub={costError ? 'Billing query failed' : cost?.note?.slice(0, 48) || 'Last 30 days'}
         title={
           costUnavailable
@@ -283,16 +283,3 @@ export function OverviewKpis({
   );
 }
 
-function formatMoney(amount, currency) {
-  if (amount === null || amount === undefined) return 'NA';
-  const SYMBOLS = { USD: '$', INR: '₹', EUR: '€', GBP: '£' };
-  const symbol = SYMBOLS[currency] || (currency ? `${currency} ` : '');
-  const n = Number(amount);
-  if (currency === 'INR') {
-    if (n >= 1e7) return `${symbol}${(n / 1e7).toFixed(2)}Cr`;
-    if (n >= 1e5) return `${symbol}${(n / 1e5).toFixed(2)}L`;
-  }
-  if (n >= 1e6) return `${symbol}${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${symbol}${(n / 1e3).toFixed(1)}K`;
-  return `${symbol}${n.toFixed(2)}`;
-}

@@ -289,7 +289,7 @@ export const ResourceTable = ({ accountId }) => {
             >
               <m.Icon className="h-3.5 w-3.5" />
               <span>{type}</span>
-              <span className={cn('rounded-full px-1.5 text-[11px] font-bold', active ? 'bg-current/10' : 'bg-sunken text-subtle')}>
+              <span className={cn('rounded-full px-1.5 text-meta font-bold', active ? 'bg-current/10' : 'bg-sunken text-subtle')}>
                 {count}
               </span>
             </button>
@@ -318,7 +318,7 @@ export const ResourceTable = ({ accountId }) => {
               >
                 <ChipIcon className="h-3.5 w-3.5" />
                 <span>{label}</span>
-                <span className={cn('rounded-full px-1.5 text-[11px] font-bold', active ? 'bg-current/10' : 'bg-sunken text-subtle')}>
+                <span className={cn('rounded-full px-1.5 text-meta font-bold', active ? 'bg-current/10' : 'bg-sunken text-subtle')}>
                   {count}
                 </span>
               </button>
@@ -347,7 +347,7 @@ export const ResourceTable = ({ accountId }) => {
               className="h-4 w-4 rounded border-border accent-[var(--accent)] focus:ring-2 focus:ring-accent"
             />
             Hide default resources
-            <span className="rounded-full bg-sunken px-1.5 text-[11px] font-bold text-subtle">{defaultCount}</span>
+            <span className="rounded-full bg-sunken px-1.5 text-meta font-bold text-subtle">{defaultCount}</span>
           </label>
         )}
       </div>

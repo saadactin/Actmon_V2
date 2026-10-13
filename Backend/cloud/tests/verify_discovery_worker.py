@@ -100,12 +100,23 @@ class FakeProvider:
     def scan_failures(self):
         return list(FakeProvider.failures)
 
+    summary: dict | None = None
+    summary_raises: Exception | None = None
+
+    def scope_summary(self):
+        if FakeProvider.summary_raises:
+            raise FakeProvider.summary_raises
+        return FakeProvider.summary
+
     @classmethod
-    def reset(cls, resources=None, failures=None, raise_on_auth=None, stream=True):
+    def reset(cls, resources=None, failures=None, raise_on_auth=None, stream=True,
+              summary=None, summary_raises=None):
         cls.resources = resources or []
         cls.failures = failures or []
         cls.raise_on_auth = raise_on_auth
         cls.stream = stream
+        cls.summary = summary
+        cls.summary_raises = summary_raises
         cls.calls = {}
 
 
@@ -124,9 +135,11 @@ def _resource(pid, name, **over):
 # ── Patching ────────────────────────────────────────────────────────────────
 CALLS = {"schedule_after_discovery": 0, "ingest_recent": 0, "prewarm": 0,
          "assess_sweep_complete": None,
-         "assess": 0, "collect_identity": 0, "storage_alerts": 0}
+         "assess": 0, "collect_identity": 0, "storage_alerts": 0,
+         "collect_credentials": 0, "credentials_before_assess": None}
 INGEST_RESULT = {"ok": True, "inserted": 3, "updated": 1}
 INGEST_RAISES: Exception | None = None
+CREDENTIALS_RAISE: Exception | None = None
 
 
 def install_patches():
@@ -182,6 +195,9 @@ def install_patches():
         async def assess(self, account_id, **kw):
             CALLS["assess"] += 1
             CALLS["assess_sweep_complete"] = kw.get("sweep_complete")
+            CALLS["assess_scope_summary"] = kw.get("scope_summary")
+            # Certificates must be collected BEFORE the assessment reads them.
+            CALLS["credentials_before_assess"] = CALLS["collect_credentials"] > 0
             # The real shape the worker destructures. A thinner stub makes the
             # worker raise KeyError, which it then swallows and stamps
             # security FAILED -- a green-looking test that exercised the
@@ -193,6 +209,19 @@ def install_patches():
                 "alerts": {"created": 0, "resolved": 0},
             }
     sec_mod.SecurityCenterService = _FakeSecurityCenter
+
+    import app.services.credential_service as cred_mod
+
+    class _FakeCredentials:
+        def __init__(self, db):
+            self.db = db
+
+        async def collect(self, account_id, account=None):
+            CALLS["collect_credentials"] += 1
+            if CREDENTIALS_RAISE:
+                raise CREDENTIALS_RAISE
+            return {"scopes_ok": 2, "scopes_failed": 0, "objects": 3}
+    cred_mod.CredentialService = _FakeCredentials
 
 
 def reset_calls():
@@ -325,8 +354,13 @@ async def test_partial_sweep_never_prunes():
 
     # Now a sweep that sees only one AND reports a failed scope. Pruning here
     # is what deleted 62 live OCI resources.
+    summary = {"provider": "AWS", "attempted": 32, "read": 30, "unread": 2,
+               "denied": {"Redshift": {"regions": ["ap-south-1", "us-east-1"],
+                                       "actions": ["redshift:DescribeClusters"]}},
+               "failed": [], "not_offered": {}, "missing_permissions": ["redshift:DescribeClusters"],
+               "regions_unknown": False}
     FakeProvider.reset(resources=[_resource("i-1", "a")],
-                       failures=["ap-south-1: AuthFailure"])
+                       failures=["ap-south-1: AuthFailure"], summary=summary)
     job_id = await run_scan(account_id)
 
     async with AsyncSessionLocal() as db:
@@ -346,8 +380,24 @@ async def test_partial_sweep_never_prunes():
     check("but the incompleteness is RECORDED on the job, so stale rows have "
           "a stated reason rather than looking like a clean result",
           detail and "Incomplete sweep" in detail, str(detail)[:90])
-    check("and the recorded reason names the failing scope",
-          detail and "AuthFailure" in detail, str(detail)[:90])
+    check("and the recorded reason says what share was read and what was denied",
+          detail and "30 of 32 scopes read" in detail and "Redshift (2 regions)" in detail,
+          str(detail)[:120])
+    async with AsyncSessionLocal() as db:
+        stored = (await db.get(DiscoveryJob, job_id)).scope_summary
+    check("the sweep's scope summary is stored on the job, for every later assessment",
+          (stored or {}).get("read") == 30, str(stored)[:80])
+    check("...and handed to the security assessment",
+          (CALLS.get("assess_scope_summary") or {}).get("attempted") == 32)
+
+    # A provider whose summary itself breaks must not cost the sweep.
+    FakeProvider.reset(resources=[_resource("i-1", "a")],
+                       failures=["ap-south-1: AuthFailure"],
+                       summary_raises=RuntimeError("summary exploded"))
+    job_id2 = await run_scan(account_id)
+    status2, detail2, _ = await job_status(job_id2)
+    check("a broken scope summary never fails the discovery",
+          status2 == "COMPLETED" and "AuthFailure" in (detail2 or ""), f"{status2} {str(detail2)[:60]}")
 
     # The same guard, threaded into the security assessment: on an incomplete
     # sweep an absent finding may only mean its resource failed to enumerate,
@@ -443,6 +493,36 @@ async def test_refresh_stamping():
     check("the resources detail states how many were found",
           "1" in ((components.get("resources") or {}).get("detail") or ""),
           str((components.get("resources") or {}).get("detail")))
+    check("a sweep that read everything is not marked incomplete",
+          (components.get("resources") or {}).get("incomplete") is False,
+          str(components.get("resources")))
+
+    # An incomplete sweep refreshed what it read and kept the rest. It used to
+    # be stamped plain SUCCEEDED, so the refresh graded "Successful" beside an
+    # inventory coverage of 80.1%.
+    async with AsyncSessionLocal() as db:
+        partial = CloudAccountRefresh(
+            account_id=account_id, provider="AWS", trigger_type="manual",
+            status="RUNNING", started_at=datetime.now(timezone.utc),
+            components={}, created_at=datetime.now(timezone.utc),
+        )
+        db.add(partial)
+        await db.commit()
+        await db.refresh(partial)
+        partial_id = partial.id
+    FakeProvider.reset(resources=[_resource("i-1", "a")],
+                       failures=["Redshift [r1]: AccessDenied"],
+                       summary={"provider": "AWS", "attempted": 10, "read": 8,
+                                "denied": {}, "failed": []})
+    reset_calls()
+    await run_scan(account_id, refresh_id=partial_id)
+    async with AsyncSessionLocal() as db:
+        res = ((await db.get(CloudAccountRefresh, partial_id)).components or {}).get(
+            "resources") or {}
+    check("an incomplete sweep stamps resources SUCCEEDED but incomplete",
+          res.get("status") == "SUCCEEDED" and res.get("incomplete") is True, str(res))
+    check("...and says how much of the account it read",
+          "8 of 10 scopes read" in (res.get("detail") or ""), str(res.get("detail")))
 
     # Drift detail now carries a real count (the other change made today).
     drift = components.get("drift") or {}
@@ -587,6 +667,39 @@ async def test_auth_failure_skips_rather_than_fails():
           CALLS["ingest_recent"] == 0, str(CALLS["ingest_recent"]))
 
 
+async def test_credential_collection():
+    section("J2. Certificates and secrets are collected before the assessment, and "
+            "their failure never fails the scan")
+    global CREDENTIALS_RAISE
+
+    async with AsyncSessionLocal() as db:
+        account = await make_account(db, "creds")
+        account_id = account.id
+
+    FakeProvider.reset(resources=[_resource("i-1", "a")])
+    reset_calls()
+    CREDENTIALS_RAISE = None
+    job_id = await run_scan(account_id)
+    status, _d, _f = await job_status(job_id)
+    check("credential collection runs once per discovery",
+          CALLS["collect_credentials"] == 1, str(CALLS["collect_credentials"]))
+    check("...and before the security assessment, which reads what it collected",
+          CALLS["credentials_before_assess"] is True, str(CALLS["credentials_before_assess"]))
+
+    FakeProvider.reset(resources=[_resource("i-1", "a")])
+    reset_calls()
+    CREDENTIALS_RAISE = RuntimeError("vault exploded")
+    try:
+        job_id = await run_scan(account_id)
+        status, _d, _f = await job_status(job_id)
+    finally:
+        CREDENTIALS_RAISE = None
+    check("a collector that raises does not fail the discovery job",
+          status == "COMPLETED", str(status))
+    check("...and the security assessment still runs",
+          CALLS["assess"] == 1, str(CALLS["assess"]))
+
+
 async def test_unknown_provider():
     section("J. An unknown provider fails cleanly")
 
@@ -644,6 +757,7 @@ async def main():
         await test_cost_detached_for_plain_discovery()
         await test_cost_failure_is_isolated()
         await test_auth_failure_skips_rather_than_fails()
+        await test_credential_collection()
         await test_unknown_provider()
     finally:
         # Let any detached cost/prewarm task finish before the fixtures go,

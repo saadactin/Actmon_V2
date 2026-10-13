@@ -19,7 +19,7 @@ import {
   useOverviewInventory, useRecentChanges, useRecentEvents, useRecentResources,
   useSecurityPosture, useTopCostResources, useTopologySummary,
 } from '../hooks/useCloudOverview';
-import { useTriggerDiscovery } from '../hooks/useDiscovery';
+import { useRefreshAll } from '../hooks/useAccountRefresh';
 import { slugForProvider } from '../utils/providerScope';
 
 /**
@@ -43,17 +43,24 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
   const navigate = useNavigate();
   const [costDays, setCostDays] = useState(30);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
-  // Region narrows the panels whose data is region-aware. It deliberately does
-  // NOT narrow cost, posture or scan state: this estate's billing is reported
-  // per account, the assessment is scored per account, and a scan is an account
-  // operation. Pretending otherwise would put a region label on an
-  // account-wide number, which is worse than not offering the filter.
+  // Region narrows inventory AND the billed-spend total/trend below — every
+  // provider's billing row already carries its own region (AWS's REGION
+  // GroupBy, Azure's ResourceLocation, OCI's region groupBy), so scoping cost
+  // to a region is answering the same question with a subset, not a
+  // different question. It deliberately does NOT narrow posture or scan
+  // state: those are scored/run per account, not per region, and a region
+  // label on an account-wide number would be worse than not offering it.
+  // The one real gap is AWS's STORED daily history (the trend chart, not the
+  // total): Cost Explorer's two-dimension GroupBy cap means AWS's ingested
+  // history carries no region at all — `costSeries.data.region_capability`
+  // says so explicitly so the trend panel can explain it instead of just
+  // showing an empty chart.
   const [region, setRegion] = useState(null);
 
   const inventory = useOverviewInventory(accountId, region);
   const posture = useSecurityPosture(accountId);
-  const costTotal = useCostTotal(accountId);
-  const costSeries = useCostSeries(accountId, costDays);
+  const costTotal = useCostTotal(accountId, region);
+  const costSeries = useCostSeries(accountId, costDays, region);
   const recent = useRecentResources(accountId, 6);
   const topCost = useTopCostResources(accountId, 5);
   const changes = useChangeSummary(accountId, 30);
@@ -65,7 +72,7 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
   // panel here, so an alerting problem cannot blank the inventory or the
   // posture beside it.
   const alertSummary = useAlertSummary(accountId);
-  const triggerDiscovery = useTriggerDiscovery();
+  const { run: runRefresh } = useRefreshAll(accountId);
   const { data: diagnostics, isLoading: diagnosticsLoading } = useAccountDiagnostics(
     accountId, showDiagnostic,
   );
@@ -110,11 +117,12 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
   const onAttention = useCallback((item) => {
     if (item.action === 'discovery') {
       if (item.id === 'discovery-failed') setShowDiagnostic(true);
-      else triggerDiscovery.mutate(accountId);
+      // The same refresh the header button starts — never a plain scan.
+      else runRefresh();
       return;
     }
     go(item.action, item.filters);
-  }, [accountId, go, triggerDiscovery]);
+  }, [go, runRefresh]);
 
   // "Nothing needs attention" is only a true statement when the systems that
   // would have raised something actually ran.
@@ -125,7 +133,6 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
     <div className="space-y-4">
       <AccountIdentity
         account={account}
-        accountId={accountId}
         freshness={accountFreshness}
       />
 
@@ -133,7 +140,7 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
           resources — a filter with a single option is furniture. */}
       {(facets?.regions || []).length > 1 && (
         <div className="card flex flex-wrap items-center gap-2 px-4 py-2.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+          <span className="text-meta font-semibold uppercase tracking-wider text-muted">
             Region
           </span>
           <button
@@ -161,14 +168,14 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
               }`}
             >
               {facet.label}
-              <span className="ml-1.5 text-[10px] opacity-70">{facet.count}</span>
+              <span className="ml-1.5 text-micro opacity-70">{facet.count}</span>
             </button>
           ))}
           {region && (
-            <span className="ml-auto text-[11px] text-muted">
-              Inventory panels are scoped to
+            <span className="ml-auto text-meta text-muted">
+              Inventory and billed spend are scoped to
               <span className="font-semibold text-fg">{` ${region}`}</span>
-              {'. Cost, security and discovery remain account-wide.'}
+              {'. Security and discovery remain account-wide.'}
             </span>
           )}
         </div>
@@ -177,6 +184,7 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
       <OverviewKpis
         summary={summary}
         cost={costTotal.data}
+        region={region}
         posture={posture.data}
         isLoading={inventory.isLoading}
         costLoading={costTotal.isLoading}
@@ -197,6 +205,7 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
         <CostTrendPanel
           data={costSeries.data}
           total={costTotal.data}
+          region={region}
           isLoading={costSeries.isLoading}
           error={costSeries.isError ? costSeries.error : null}
           days={costDays}
@@ -313,7 +322,6 @@ export default function CloudOverview({ account, accountId, providerSlug }) {
             isLoading={discovery.isLoading}
             error={discovery.isError ? discovery.error : null}
             onOpenDiagnostic={() => setShowDiagnostic(true)}
-            onRunDiscovery={() => triggerDiscovery.mutate(accountId)}
           />
         </div>
       </div>

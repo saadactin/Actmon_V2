@@ -43,13 +43,13 @@ function Row({ label, value, mono, copy, reason }) {
   const empty = value === null || value === undefined || value === '';
   return (
     <div className="flex items-start justify-between gap-3 px-3.5 py-2">
-      <dt className="shrink-0 pt-0.5 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</dt>
+      <dt className="shrink-0 pt-0.5 text-meta font-semibold uppercase tracking-wide text-muted">{label}</dt>
       <dd className="flex min-w-0 items-start gap-1.5 text-right">
         {empty ? (
           <NotAvailable reason={reason} />
         ) : (
           <>
-            <span className={mono ? 'break-all font-mono text-[11.5px] text-fg' : 'break-words text-[13px] text-fg'}>
+            <span className={mono ? 'break-all font-mono text-meta text-fg' : 'break-words text-[13px] text-fg'}>
               {String(value)}
             </span>
             {copy && <CopyButton text={String(value)} label="" size="sm" variant="ghost" className="shrink-0" />}
@@ -71,14 +71,14 @@ function Section({ title, count, children, defaultOpen = true, hint }) {
         className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left hover:bg-sunken"
       >
         <Icon name={open ? 'chevron-down' : 'chevron-right'} size={13} className="shrink-0 text-subtle" />
-        <span className="flex-1 text-[11px] font-bold uppercase tracking-wider text-muted">{title}</span>
+        <span className="flex-1 text-meta font-bold uppercase tracking-wider text-muted">{title}</span>
         {count !== undefined && count !== null && (
-          <span className="shrink-0 rounded-full bg-sunken px-1.5 text-[10px] font-bold text-subtle">{count}</span>
+          <span className="shrink-0 rounded-full bg-sunken px-1.5 text-micro font-bold text-subtle">{count}</span>
         )}
       </button>
       {open && (
         <div className="pb-3">
-          {hint && <p className="px-3.5 pb-2 text-[11px] leading-relaxed text-subtle">{hint}</p>}
+          {hint && <p className="px-3.5 pb-2 text-meta leading-relaxed text-subtle">{hint}</p>}
           {children}
         </div>
       )}
@@ -250,20 +250,20 @@ function RelationshipList({ items, onSelect, onExplain, emptyLabel }) {
                 <span className="h-6 w-1 shrink-0 rounded-sm" style={{ background: meta.color }} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12.5px] font-medium text-fg">{item.name || '—'}</span>
-                  <span className="block truncate text-[11px] text-subtle">
+                  <span className="block truncate text-meta text-subtle">
                     {meta.label}
                     {item.label ? ` · ${item.label}` : ''}
                   </span>
                 </span>
                 <span
-                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[9.5px] font-bold uppercase"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-micro font-bold uppercase"
                   style={{ color: style.color, background: `${style.color}22` }}
                 >
                   {style.label}
                 </span>
                 {item.observed === false && (
                   <span
-                    className="shrink-0 text-[9.5px] font-bold text-subtle"
+                    className="shrink-0 text-micro font-bold text-subtle"
                     title="A capability granted by policy. NOT evidence that any access occurred."
                   >
                     MAY
@@ -367,10 +367,10 @@ export default function TopologyResourcePanel({
           <span className="mt-0.5 h-9 w-1.5 shrink-0 rounded-full" style={{ background: meta.color }} />
           <div className="min-w-0 flex-1">
             <div className="mb-1 flex flex-wrap items-center gap-1.5">
-              <span className={`rounded border px-1.5 py-px text-[10px] font-bold ${provider.badge}`}>
+              <span className="rounded border px-1.5 py-px text-micro font-bold" style={provider.badgeStyle}>
                 {provider.label}
               </span>
-              <span className="text-[10.5px] font-bold uppercase tracking-wide" style={{ color: meta.color }}>
+              <span className="text-meta font-bold uppercase tracking-wide" style={{ color: meta.color }}>
                 {meta.label}
               </span>
             </div>
@@ -400,7 +400,7 @@ export default function TopologyResourcePanel({
             type="button"
             onClick={() => setTab(entry.id)}
             aria-current={tab === entry.id}
-            className={`rounded-t-control px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors ${
+            className={`rounded-t-control px-2.5 py-1.5 text-meta font-semibold transition-colors ${
               tab === entry.id ? 'bg-surface text-fg' : 'text-muted hover:text-fg'
             }`}
           >
@@ -442,7 +442,7 @@ export default function TopologyResourcePanel({
                   <p className="text-[12px] font-semibold text-danger-fg">
                     Reachable from the internet · {node.exposure_severity}
                   </p>
-                  <p className="mt-1 text-[11.5px] text-danger-fg/90">
+                  <p className="mt-1 text-meta text-danger-fg/90">
                     Public address <span className="font-mono">{node.exposure_public_ip}</span>
                   </p>
                   {node.exposure_open_ports?.length > 0 && (
@@ -450,14 +450,14 @@ export default function TopologyResourcePanel({
                       {node.exposure_open_ports.map((port) => (
                         <li
                           key={`${port.protocol}-${port.port}-${port.label}`}
-                          className="rounded bg-surface/70 px-1.5 py-0.5 text-[10.5px] font-semibold text-danger-fg"
+                          className="rounded bg-surface/70 px-1.5 py-0.5 text-meta font-semibold text-danger-fg"
                         >
                           {port.port ? `${port.port} ` : ''}{port.label}
                         </li>
                       ))}
                     </ul>
                   )}
-                  <p className="mt-2 text-[11px] leading-relaxed text-danger-fg/80">
+                  <p className="mt-2 text-meta leading-relaxed text-danger-fg/80">
                     Confidence: {node.exposure_confidence}. Determined from the rules on the
                     security groups actually attached to this resource, not from its name.
                   </p>
@@ -473,7 +473,7 @@ export default function TopologyResourcePanel({
                   {node.broad_access.map((grant) => (
                     <span
                       key={grant}
-                      className="rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold"
+                      className="rounded-md px-1.5 py-0.5 text-meta font-semibold"
                       style={{ color: edgeStyle('permission').color, background: `${edgeStyle('permission').color}20` }}
                     >
                       {grant}
@@ -486,12 +486,12 @@ export default function TopologyResourcePanel({
             <Section title="Dependencies" count={(detail.depends_on?.length || 0) + (detail.depended_on_by?.length || 0)}
               hint="Direction of reliance, not of the stored relationship: an instance names its
                     subnet, so removing the subnet is what would affect the instance.">
-              <p className="px-3.5 pb-1.5 text-[10.5px] font-bold uppercase tracking-wider text-subtle">
+              <p className="px-3.5 pb-1.5 text-meta font-bold uppercase tracking-wider text-subtle">
                 This depends on
               </p>
               <RelationshipList items={detail.depends_on} onSelect={onSelectNode} onExplain={onExplainEdge}
                 emptyLabel="Nothing discovered that this resource relies on." />
-              <p className="px-3.5 pb-1.5 pt-3 text-[10.5px] font-bold uppercase tracking-wider text-subtle">
+              <p className="px-3.5 pb-1.5 pt-3 text-meta font-bold uppercase tracking-wider text-subtle">
                 Depends on this
               </p>
               <RelationshipList items={detail.depended_on_by} onSelect={onSelectNode} onExplain={onExplainEdge}
@@ -513,9 +513,9 @@ export default function TopologyResourcePanel({
                 <ul className="mx-3.5 flex flex-col gap-1.5">
                   {detail.unresolved_references.map((ref) => (
                     <li key={`${ref.field}-${ref.value}`} className="rounded-control border border-border bg-sunken p-2">
-                      <p className="text-[11.5px] font-semibold text-fg">{ref.field}</p>
-                      <p className="mt-0.5 break-all font-mono text-[10.5px] text-muted">{ref.value}</p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-subtle">{ref.explanation}</p>
+                      <p className="text-meta font-semibold text-fg">{ref.field}</p>
+                      <p className="mt-0.5 break-all font-mono text-meta text-muted">{ref.value}</p>
+                      <p className="mt-1 text-meta leading-relaxed text-subtle">{ref.explanation}</p>
                     </li>
                   ))}
                 </ul>
@@ -605,7 +605,7 @@ export default function TopologyResourcePanel({
               <Section title="Tags" count={Object.keys(detail.tags).length} defaultOpen={false}>
                 <div className="mx-3.5 flex flex-wrap gap-1">
                   {Object.entries(detail.tags).map(([key, value]) => (
-                    <span key={key} className="rounded bg-sunken px-1.5 py-0.5 text-[10.5px] text-muted">
+                    <span key={key} className="rounded bg-sunken px-1.5 py-0.5 text-meta text-muted">
                       <span className="font-semibold">{key}</span>
                       {value ? `: ${value}` : ''}
                     </span>
@@ -652,7 +652,7 @@ export default function TopologyResourcePanel({
                       Download
                     </Button>
                   </div>
-                  <pre className="max-h-80 overflow-auto rounded-control border border-border bg-sunken p-2 font-mono text-[10.5px] leading-relaxed text-fg">
+                  <pre className="max-h-80 overflow-auto rounded-control border border-border bg-sunken p-2 font-mono text-meta leading-relaxed text-fg">
                     {JSON.stringify(detail.raw_data, null, 2)}
                   </pre>
                 </div>
@@ -681,7 +681,7 @@ export default function TopologyResourcePanel({
                     .
                   </p>
                   {node.last_drift_at && (
-                    <p className="mt-1 text-[11.5px] text-muted">Most recent: {formatMoment(node.last_drift_at)}</p>
+                    <p className="mt-1 text-meta text-muted">Most recent: {formatMoment(node.last_drift_at)}</p>
                   )}
                   <Button variant="secondary" size="sm" className="mt-2 w-full" iconRight="external"
                     onClick={() => onViewDrift?.(node)}>
@@ -708,7 +708,7 @@ export default function TopologyResourcePanel({
                     .
                   </p>
                   {node.last_event_at && (
-                    <p className="mt-1 text-[11.5px] text-muted">Most recent: {formatMoment(node.last_event_at)}</p>
+                    <p className="mt-1 text-meta text-muted">Most recent: {formatMoment(node.last_event_at)}</p>
                   )}
                   <Button variant="secondary" size="sm" className="mt-2 w-full" iconRight="external"
                     onClick={() => onViewEvents?.(node)}>

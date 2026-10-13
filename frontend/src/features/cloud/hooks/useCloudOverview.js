@@ -72,16 +72,18 @@ export const useSecurityPosture = (accountId) => useQuery({
   ...PROVIDER_QUERY,
 });
 
-export const useCostTotal = (accountId) => useQuery({
-  queryKey: ['cloudOverview', 'costTotal', accountId],
-  queryFn: () => getCostTotal(accountId),
+/** `region` is part of the key for the same reason it is on inventory above:
+ *  narrowing the scope is a different question, not the same answer filtered. */
+export const useCostTotal = (accountId, region = null) => useQuery({
+  queryKey: ['cloudOverview', 'costTotal', accountId, region],
+  queryFn: () => getCostTotal(accountId, region),
   enabled: !!accountId,
   ...PROVIDER_QUERY,
 });
 
-export const useCostSeries = (accountId, days = 30) => useQuery({
-  queryKey: ['cloudOverview', 'costSeries', accountId, days],
-  queryFn: () => getCostSeries(accountId, days),
+export const useCostSeries = (accountId, days = 30, region = null) => useQuery({
+  queryKey: ['cloudOverview', 'costSeries', accountId, days, region],
+  queryFn: () => getCostSeries(accountId, days, region),
   enabled: !!accountId,
   ...PROVIDER_QUERY,
 });

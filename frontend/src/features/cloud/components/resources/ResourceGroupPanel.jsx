@@ -21,6 +21,7 @@ import {
  *  clickable rather than silently doing nothing. */
 const FILTER_KEY = {
   normalized_type: 'categories',
+  service: 'services',
   resource_type: 'types',
   status: 'statuses',
   risk: 'risk',
@@ -56,7 +57,7 @@ export default function ResourceGroupPanel({ groups, groupBy, filters, onFilter 
 
   return (
     <div className="card overflow-hidden">
-      <div className="border-b border-border bg-sunken px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+      <div className="border-b border-border bg-sunken px-4 py-2 text-meta font-semibold uppercase tracking-wider text-muted">
         {`Grouped — ${sorted.length} group${sorted.length === 1 ? '' : 's'}`}
       </div>
       <div className="grid gap-px bg-border [grid-template-columns:repeat(auto-fill,minmax(230px,1fr))]">
@@ -82,7 +83,7 @@ export default function ResourceGroupPanel({ groups, groupBy, filters, onFilter 
               <div className="mt-1 text-lg font-bold tabular-nums text-fg">
                 {formatCount(group.resource_count)}
               </div>
-              <div className="mt-0.5 space-y-0.5 text-[11px] text-muted">
+              <div className="mt-0.5 space-y-0.5 text-meta text-muted">
                 {(group.cost_by_currency || []).length > 0 ? (
                   group.cost_by_currency.map((c) => (
                     <div key={c.currency} title={exact(c.amount, c.currency)}>

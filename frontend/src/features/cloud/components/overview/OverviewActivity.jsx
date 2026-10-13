@@ -25,7 +25,7 @@ export function RecentlyDiscovered({ rows, isLoading, error, onOpenResource, onO
       loading={isLoading}
       error={error}
       empty={!isLoading && !error && (rows || []).length === 0}
-      emptyMessage="No resources have been discovered yet. Run a discovery scan."
+      emptyMessage="No resources have been discovered yet. Use Refresh all at the top of the page."
       dense
     >
       <div className="space-y-1">
@@ -47,17 +47,17 @@ export function RecentlyDiscovered({ rows, isLoading, error, onOpenResource, onO
                 <span className="block truncate text-[12px] font-semibold text-fg">
                   {row.resource_name || row.provider_resource_id}
                 </span>
-                <span className="block truncate text-[11px] text-subtle">
+                <span className="block truncate text-meta text-subtle">
                   {[row.type_label || row.resource_type, row.region].filter(Boolean).join(' · ')}
                 </span>
               </span>
               <span className="shrink-0 text-right">
                 <Badge tone={status.tone} size="xs">{status.label}</Badge>
-                <span className="mt-0.5 block text-[10px] text-subtle">
+                <span className="mt-0.5 block text-micro text-subtle">
                   {relativeTime(row.discovered_at) || '—'}
                 </span>
               </span>
-              <span className={`w-20 shrink-0 text-right text-[11px] tabular-nums ${cost.available ? 'font-semibold text-fg' : 'text-subtle'}`} title={cost.title}>
+              <span className={`w-20 shrink-0 text-right text-meta tabular-nums ${cost.available ? 'font-semibold text-fg' : 'text-subtle'}`} title={cost.title}>
                 {cost.text}
               </span>
             </button>
@@ -107,11 +107,11 @@ export function RecentChanges({ changes, summary, isLoading, error, onOpenDrift 
                 <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-fg">
                   {change.resource_name || change.provider_resource_id}
                 </span>
-                <span className="shrink-0 text-[10px] text-subtle" title={change.detected_at}>
+                <span className="shrink-0 text-micro text-subtle" title={change.detected_at}>
                   {relativeTime(change.detected_at)}
                 </span>
               </div>
-              <div className="truncate text-[11px] text-muted" title={change.summary || change.field_path}>
+              <div className="truncate text-meta text-muted" title={change.summary || change.field_path}>
                 {change.summary || change.field_path || change.change_type}
               </div>
             </div>
@@ -176,11 +176,11 @@ export function RecentEvents({ events, isLoading, error, onOpenEvents }) {
                 <span className="block truncate text-[12px] text-fg">
                   {event.event_name || event.action || 'Event'}
                 </span>
-                <span className="block truncate text-[11px] text-subtle">
+                <span className="block truncate text-meta text-subtle">
                   {[event.actor_name || 'Unknown actor', event.resource_name].filter(Boolean).join(' · ')}
                 </span>
               </span>
-              <span className="shrink-0 text-[10px] text-subtle" title={event.occurred_at}>
+              <span className="shrink-0 text-micro text-subtle" title={event.occurred_at}>
                 {relativeTime(event.occurred_at)}
               </span>
             </button>
@@ -219,7 +219,7 @@ export function TopRisks({ posture, isLoading, error, onOpenResource, onOpenSecu
                 <span className="block truncate text-[12px] font-semibold text-fg">
                   {risk.resource_name || risk.resource_key || 'Resource'}
                 </span>
-                <span className="block truncate text-[11px] text-muted" title={risk.title}>
+                <span className="block truncate text-meta text-muted" title={risk.title}>
                   {risk.title || risk.rule_id}
                 </span>
               </span>
@@ -267,7 +267,7 @@ export function TopCostResources({ rows, isLoading, error, capabilities, onOpenR
                 <span className="block truncate text-[12px] font-semibold text-fg">
                   {row.resource_name || row.provider_resource_id}
                 </span>
-                <span className="block truncate text-[11px] text-subtle">
+                <span className="block truncate text-meta text-subtle">
                   {[row.type_label || row.resource_type, row.region].filter(Boolean).join(' · ')}
                 </span>
               </span>
@@ -297,17 +297,17 @@ export function TopologySnapshot({ topology, isLoading, error, onOpenTopology })
           <div className="text-xl font-bold tabular-nums text-fg">
             {formatCount(topology?.confirmed_relationships)}
           </div>
-          <div className="text-[11px] text-muted">Confirmed relationships</div>
+          <div className="text-meta text-muted">Confirmed relationships</div>
         </div>
         <div>
           <div className="text-xl font-bold tabular-nums text-fg">
             {formatCount(topology?.isolated)}
           </div>
-          <div className="text-[11px] text-muted">Isolated resources</div>
+          <div className="text-meta text-muted">Isolated resources</div>
         </div>
       </div>
       {topology?.resolved_pct != null && (
-        <p className="mt-2 border-t border-border pt-2 text-[11px] text-muted">
+        <p className="mt-2 border-t border-border pt-2 text-meta text-muted">
           {`${topology.resolved_pct}% of references between resources resolved to a known target.`}
           {topology.unsupported_type > 0
             && ` ${formatCount(topology.unsupported_type)} reference(s) point at resource types the graph does not model yet.`}
@@ -354,7 +354,7 @@ export function DataQualityPanel({ dataQuality, monitoring, isLoading, error }) 
       {/* Coverage is not health. A resource whose state the provider never
           reported is not a broken resource, and this panel must not be read
           as if it were. */}
-      <p className="mt-2 border-t border-border pt-2 text-[11px] leading-snug text-subtle">
+      <p className="mt-2 border-t border-border pt-2 text-meta leading-snug text-subtle">
         Coverage describes what the platform knows, not whether the resources are
         healthy. A gap usually means the provider does not report that field for
         that resource type.

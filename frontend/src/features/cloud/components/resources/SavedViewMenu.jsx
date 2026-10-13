@@ -135,7 +135,7 @@ export default function SavedViewMenu({
             onClick={() => { setOpen(false); setSaving(false); }}
           />
           <div className="absolute right-0 z-30 mt-1 max-h-[26rem] w-80 overflow-y-auto rounded-control border border-border bg-surface p-1.5 shadow-lg">
-            <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-subtle">
+            <p className="px-2 py-1 text-micro font-bold uppercase tracking-wider text-subtle">
               Standing questions
             </p>
             {BUILT_INS.map((view) => (
@@ -146,12 +146,12 @@ export default function SavedViewMenu({
                 className="w-full rounded-control px-2 py-1.5 text-left hover:bg-sunken"
               >
                 <span className="block text-[12px] font-semibold text-fg">{view.name}</span>
-                <span className="block text-[11px] leading-snug text-muted">{view.hint}</span>
+                <span className="block text-meta leading-snug text-muted">{view.hint}</span>
               </button>
             ))}
 
             <div className="my-1 border-t border-border" />
-            <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-subtle">
+            <p className="px-2 py-1 text-micro font-bold uppercase tracking-wider text-subtle">
               Saved views
             </p>
 
@@ -176,12 +176,12 @@ export default function SavedViewMenu({
                     {view.name}
                   </span>
                   {view.description && (
-                    <span className="block truncate text-[11px] text-muted">{view.description}</span>
+                    <span className="block truncate text-meta text-muted">{view.description}</span>
                   )}
                   {/* A view that quietly lost a filter would return more rows
                       than it used to and still look like it worked. */}
                   {view.dropped_filters?.length > 0 && (
-                    <span className="block text-[11px] text-warning-fg">
+                    <span className="block text-meta text-warning-fg">
                       {`${view.dropped_filters.length} filter(s) no longer supported`}
                     </span>
                   )}
@@ -207,7 +207,7 @@ export default function SavedViewMenu({
                   size="sm"
                   autoFocus
                 />
-                {error && <p className="text-[11px] text-danger">{error}</p>}
+                {error && <p className="text-meta text-danger">{error}</p>}
                 <div className="flex gap-1.5">
                   <Button type="submit" variant="primary" size="sm" loading={save.isPending} disabled={!name.trim()}>
                     Save

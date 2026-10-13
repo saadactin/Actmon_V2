@@ -54,6 +54,13 @@ class DiscoveryRepository:
             job.error_detail = detail[:2000]
             await self.db.flush()
 
+    async def set_scope_summary(self, job_id: uuid.UUID, summary) -> None:
+        """What the sweep read, per scope (None when the scanner does not say)."""
+        job = await self.db.get(DiscoveryJob, job_id)
+        if job:
+            job.scope_summary = summary
+            await self.db.flush()
+
     async def fail_job(self, job_id: uuid.UUID, error: str) -> None:
         job = await self.db.get(DiscoveryJob, job_id)
         if job:

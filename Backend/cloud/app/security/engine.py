@@ -42,18 +42,21 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
 
 from app.security import controls as ctl
+from app.security import credentials as credx
 from app.security import exposure as exp
 from app.security import identity as ident
+from app.security import secrets
 from app.security import ports as portcat
 from app.security import registry as reg
 from app.security import scoring
 from app.security.model import (
-    ASSESS_COMPLETE, ASSESS_FAILED, ASSESS_PARTIAL, AWS, AZURE, CAT_EXPOSURE,
-    CAT_IAM, CONF_HIGH, CONF_MEDIUM, CONF_UNKNOWN, COV_ENCRYPTION, COV_EXPOSURE,
-    COV_IAM, COV_INVENTORY, COV_NETWORK, COVERAGE_DIMENSIONS, COVERAGE_LABEL,
-    COVERAGE_MEANING, CRITICAL, EXPOSED, EXPOSURE_UNKNOWN, HIGH, INFO, MEDIUM,
-    NOT_APPLICABLE, NOT_SCANNED, OCI, OPEN, SAFE, SecurityFinding, UNKNOWN,
-    VULNERABLE, fingerprint, normalize_provider, severity_rank,
+    ASSESS_COMPLETE, ASSESS_FAILED, ASSESS_PARTIAL, AWS, AZURE, CAT_ENCRYPTION,
+    CAT_EXPOSURE, CAT_IAM, CONF_HIGH, CONF_MEDIUM, CONF_UNKNOWN, COV_CREDENTIALS,
+    COV_ENCRYPTION, COV_EXPOSURE, COV_IAM, COV_INVENTORY, COV_NETWORK,
+    COVERAGE_DIMENSIONS, COVERAGE_LABEL, COVERAGE_MEANING, CRITICAL, EXPOSED,
+    EXPOSURE_UNKNOWN, HIGH, INFO, MEDIUM, NOT_APPLICABLE, NOT_SCANNED, OCI, OPEN,
+    SAFE, SCORING_COVERAGE_DIMENSIONS, SecurityFinding, UNKNOWN, VULNERABLE,
+    fingerprint, normalize_provider, severity_rank,
 )
 
 logger = logging.getLogger("cloud_svc.security.engine")
@@ -115,7 +118,11 @@ class Assessment(NamedTuple):
 
     @property
     def coverage_pct(self) -> Optional[float]:
-        pcts = [c.pct for c in self.coverage if c.pct is not None]
+        # Only the dimensions that gate the score — see
+        # model.SCORING_COVERAGE_DIMENSIONS for why certificate stores are
+        # reported beside this figure rather than averaged into it.
+        pcts = [c.pct for c in self.coverage
+                if c.pct is not None and c.dimension in SCORING_COVERAGE_DIMENSIONS]
         return round(sum(pcts) / len(pcts), 1) if pcts else None
 
     @property
@@ -163,6 +170,44 @@ class _Coverage:
         return [CoverageDimension(k, v[0], v[1]) for k, v in self._d.items()]
 
 
+def sweep_reasons(summary: Dict[str, Any]) -> List[str]:
+    """Why an incomplete sweep was incomplete, in words, from its scope summary."""
+    read, attempted = int(summary.get("read") or 0), int(summary.get("attempted") or 0)
+    pct = round(100.0 * read / attempted, 1) if attempted else 0.0
+    out = [f"The last discovery sweep read {read} of {attempted} scopes ({pct}%). Findings "
+           "are not resolved from an incomplete sweep, and resources in the scopes it "
+           "could not read may be missing."]
+    denied = summary.get("denied") or {}
+    if denied:
+        services = ", ".join(
+            f"{label} ({len(e.get('regions') or [])} "
+            f"region{'' if len(e.get('regions') or []) == 1 else 's'})"
+            for label, e in sorted(denied.items()))
+        actions = ", ".join(summary.get("missing_permissions") or [])
+        tail = (" — or attach the AWS managed policy ReadOnlyAccess, which includes them"
+                if summary.get("provider") == "AWS" else "")
+        out.append(f"Not permitted for these credentials: {services}. Grant {actions}{tail}.")
+    failed = summary.get("failed") or []
+    # `failed` is capped at 50; the counts are not.
+    n_failed = int(summary.get("failed_count") or len(failed))
+    if n_failed:
+        transient = (int(summary["failed_transient"])
+                     if summary.get("failed_transient") is not None
+                     else sum(1 for f in failed if f.get("transient")))
+        names = ", ".join(f.get("scope", "?") for f in failed[:5])
+        out.append(
+            f"{n_failed} scope(s) did not answer"
+            + (f" ({transient} dropped the connection and will be retried on the next "
+               "scan)" if transient else "")
+            + (f": {names}{'…' if n_failed > 5 else ''}" if names else "") + ".")
+    not_offered = summary.get("not_offered") or {}
+    if not_offered:
+        out.append("Not counted, because the service is not offered there: " + ", ".join(
+            f"{label} in {len(regions)} region{'' if len(regions) == 1 else 's'}"
+            for label, regions in sorted(not_offered.items())) + ".")
+    return out
+
+
 def assess(
     *,
     account_id: str,
@@ -170,8 +215,11 @@ def assess(
     resources: Sequence[Any],
     grants: Sequence[Any] = (),
     identity_state: Optional[Any] = None,
+    credentials: Sequence[Any] = (),
+    credential_sources: Sequence[Any] = (),
     sweep_complete: bool = True,
     failed_scopes: int = 0,
+    scope_summary: Optional[Dict[str, Any]] = None,
     discovery_scan_id: Optional[str] = None,
     inventory_last_discovered: Optional[datetime] = None,
     now: Optional[datetime] = None,
@@ -205,7 +253,19 @@ def assess(
             identity_review={},
         )
 
-    if not sweep_complete or failed_scopes:
+    summary = scope_summary or {}
+    # A sweep that counted its scopes says how much it read. Coverage is that
+    # share — 218 of 266 is 82%, not the 0% that any single failed scope used
+    # to produce — and the reasons name what was not read and why.
+    counted = (bool(summary.get("attempted")) and summary.get("read") is not None
+               and not summary.get("regions_unknown")
+               and int(summary["read"]) < int(summary["attempted"]))
+    if (not sweep_complete or failed_scopes) and counted:
+        read, attempted = int(summary["read"]), int(summary["attempted"])
+        cov.determined(COV_INVENTORY, read)
+        cov.undetermined(COV_INVENTORY, attempted - read)
+        incomplete.extend(sweep_reasons(summary))
+    elif not sweep_complete or failed_scopes:
         incomplete.append(
             f"The last discovery sweep did not enumerate every scope"
             + (f" ({failed_scopes} failed)" if failed_scopes else "")
@@ -282,12 +342,17 @@ def assess(
                                    f"passed.",
                 )
             outcomes = list(_iter_outcomes(result))
+            # Per resource type as well, for controls that a framework numbers
+            # per kind while one rule covers several (CIS OCI 5.2.1 / 5.2.2).
+            typed = ctl.stat_key(rule.rule_id, resource.resource_type)
             if not outcomes:
                 # A rule returning None means "does not apply to this resource",
                 # which is a real answer and is recorded as such.
                 _bump(rule_stats, rule.rule_id, NOT_APPLICABLE)
+                _bump(rule_stats, typed, NOT_APPLICABLE)
             for outcome in outcomes:
                 _bump(rule_stats, rule.rule_id, outcome.verdict)
+                _bump(rule_stats, typed, outcome.verdict)
                 _account_coverage(cov, rule, outcome)
                 if outcome.verdict not in (VULNERABLE, UNKNOWN, NOT_SCANNED):
                     continue
@@ -417,9 +482,47 @@ def assess(
         else:
             _bump(rule_stats, "AZURE_RBAC_NOT_COLLECTED", NOT_SCANNED)
 
+    # ── Certificates, secrets and keys ───────────────────────────────────────
+    # Evaluated from the credential inventory, which has its own per-store
+    # completeness (see models/credential_inventory.py). A store that could not
+    # be read is a coverage gap and a NOT_SCANNED finding — never a pass — but
+    # it does not make the whole assessment PARTIAL: that would stop every
+    # other finding in the account from ever resolving because one Key Vault
+    # refused its data plane.
+    cred = credx.analyse(provider=prov, objects=credentials, sources=credential_sources,
+                         now=started)
+    cov.determined(COV_CREDENTIALS, cred.scopes_ok)
+    cov.undetermined(COV_CREDENTIALS, cred.scopes_failed)
+    for risk in cred.risks:
+        findings.append(_credential_finding(
+            risk, provider=prov, account_id=str(account_id), started=started,
+            discovery_scan_id=discovery_scan_id))
+    for rid, verdicts in cred.rule_stats.items():
+        for verdict, n in verdicts.items():
+            _bump(rule_stats, rid, verdict, n=n)
+
+    # ── Secrets left in configuration ────────────────────────────────────────
+    # Reads the inventory already loaded above, so it costs no extra I/O. The
+    # analyser never returns the secret itself — see secrets.py — so nothing
+    # here can leak one into a finding, an alert e-mail or a log line.
+    #
+    # Surfaces the scanner does not collect produce one INFO finding each, so
+    # "no secrets found" cannot be read as "we looked everywhere".
+    sec = secrets.analyse(provider=prov, account_id=str(account_id),
+                          resources=resources)
+    for risk in sec.risks:
+        findings.append(_secret_finding(
+            risk, provider=prov, account_id=str(account_id), started=started,
+            discovery_scan_id=discovery_scan_id))
+    for rid, verdicts in sec.rule_stats.items():
+        for verdict, n in verdicts.items():
+            _bump(rule_stats, rid, verdict, n=n)
+
     # ── Compliance citations ─────────────────────────────────────────────────
+    # Provider-aware: a cross-cloud rule firing on an OCI account must not
+    # carry CIS AWS citations just because the same rule is mapped there.
     for f in findings:
-        f.compliance = ctl.mappings_for_rule(f.rule_id)
+        f.compliance = ctl.mappings_for_rule(f.rule_id, provider=prov)
 
     findings.sort(key=lambda f: (
         severity_rank(f.severity),
@@ -448,7 +551,7 @@ def assess(
         account_id=str(account_id), provider=prov, outcome=outcome,
         findings=findings, exposures=exposures, coverage=cov.result(),
         resources_evaluated=len(resources), rules_evaluated=rules_run,
-        subjects_evaluated=len(resources) + len(grants),
+        subjects_evaluated=len(resources) + len(grants) + cred.objects_evaluated,
         started_at=started, finished_at=finished, incomplete_reasons=incomplete,
         identity_review=identity_review, rule_stats=rule_stats,
     )
@@ -875,6 +978,95 @@ def _identity_finding(risk: ident.IdentityRisk, *, provider: str, account_id: st
         severity=risk.severity,
         category=CAT_IAM,
         verdict=VULNERABLE,
+        confidence=risk.confidence,
+        status=OPEN,
+        evidence=dict(risk.evidence),
+        first_detected_at=started,
+        last_detected_at=started,
+        discovery_scan_id=discovery_scan_id,
+    )
+
+
+def _credential_finding(risk: "credx.CredentialRisk", *, provider: str, account_id: str,
+                        started: datetime,
+                        discovery_scan_id: Optional[str]) -> SecurityFinding:
+    """A certificate / secret / key finding.
+
+    The object has no row in cloud_resources — it lives in the credential
+    inventory — so, like a role assignment, it takes the resource slot with its
+    own provider id. That id is what the fingerprint hangs off, so a renewed
+    certificate with a new ARN is a new object, and a certificate whose expiry
+    merely moved is the same finding with an updated description.
+    """
+    rule = reg.RULES[risk.rule_id]
+    return SecurityFinding(
+        rule_id=rule.rule_id,
+        rule_version=rule.version,
+        provider=provider,
+        account_id=account_id,
+        fingerprint=fingerprint(
+            provider=provider, account_id=account_id, rule_id=rule.rule_id,
+            resource_key=risk.subject_key, discriminator=risk.discriminator,
+        ),
+        resource_key=risk.subject_key,
+        resource_id=None,
+        resource_name=risk.name,
+        resource_type=risk.resource_type,
+        region=risk.region,
+        title=rule.title,
+        description=f"{rule.description} {risk.detail}",
+        rationale=rule.rationale,
+        remediation=rule.remediation,
+        severity=risk.severity,
+        category=CAT_ENCRYPTION,
+        verdict=risk.verdict,
+        confidence=risk.confidence,
+        status=OPEN,
+        evidence=dict(risk.evidence),
+        first_detected_at=started,
+        last_detected_at=started,
+        discovery_scan_id=discovery_scan_id,
+        affected_count=risk.affected_count,
+        affected_sample=list(risk.affected_sample),
+    )
+
+
+def _secret_finding(risk: "secrets.SecretRisk", *, provider: str, account_id: str,
+                    started: datetime,
+                    discovery_scan_id: Optional[str]) -> SecurityFinding:
+    """A credential found in configuration or in a tag.
+
+    The fingerprint hangs off the resource key AND the location within it, so
+    two secrets in one Lambda are two findings that resolve independently —
+    removing one environment variable should close one finding, not both.
+
+    `risk.evidence` is built by the analyser and already contains only
+    non-reversible material; this function adds nothing to it, so there is one
+    place to audit for leakage rather than two.
+    """
+    rule = reg.RULES[risk.rule_id]
+    return SecurityFinding(
+        rule_id=rule.rule_id,
+        rule_version=rule.version,
+        provider=provider,
+        account_id=account_id,
+        fingerprint=fingerprint(
+            provider=provider, account_id=account_id, rule_id=rule.rule_id,
+            resource_key=risk.resource_key or risk.discriminator,
+            discriminator=risk.discriminator,
+        ),
+        resource_key=risk.resource_key,
+        resource_id=risk.resource_id,
+        resource_name=risk.resource_name,
+        resource_type=risk.resource_type,
+        region=risk.region,
+        title=rule.title,
+        description=f"{rule.description} {risk.detail}",
+        rationale=rule.rationale,
+        remediation=rule.remediation,
+        severity=risk.severity,
+        category=CAT_IAM,
+        verdict=risk.verdict,
         confidence=risk.confidence,
         status=OPEN,
         evidence=dict(risk.evidence),

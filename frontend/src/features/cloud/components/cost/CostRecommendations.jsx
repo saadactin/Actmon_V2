@@ -7,13 +7,17 @@
  * with one somebody guessed, and drops everything that could not be priced at
  * all. Verified, estimated and unquantified stay apart, and each currency
  * stays apart from the others.
+ *
+ * The recommendations are Resource Intelligence findings (the same rows, the
+ * same evidence and status), so each one links to its full drawer there.
  */
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Badge from '@/components/ui/Badge';
 import CloudSection from '../CloudSection';
 import {
-  AlertTriangle, CheckCircle2, ChevronRight, CircleDashed, Gauge, Info,
+  AlertTriangle, ArrowUpRight, CheckCircle2, ChevronRight, CircleDashed, Gauge, Info,
   PiggyBank, ShieldQuestion,
 } from 'lucide-react';
 import { compact, exact, isMissing } from '../../utils/costFormat';
@@ -36,7 +40,7 @@ export function SavingsSummary({ summary }) {
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       <div className="rounded-card border border-border bg-surface p-3.5">
-        <p className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted">
+        <p className="flex items-center gap-1.5 text-meta font-bold uppercase tracking-wider text-muted">
           <CheckCircle2 size={12} className="text-success-fg" aria-hidden />
           Verified savings
         </p>
@@ -52,13 +56,13 @@ export function SavingsSummary({ summary }) {
         ) : (
           <p className="mt-1.5 text-[19px] font-bold text-muted">NA</p>
         )}
-        <p className="mt-1 text-[10.5px] text-subtle">
-          priced from a provider price list
+        <p className="mt-1 text-meta text-subtle">
+          from provider billing or a provider price list
         </p>
       </div>
 
       <div className="rounded-card border border-border bg-surface p-3.5">
-        <p className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted">
+        <p className="flex items-center gap-1.5 text-meta font-bold uppercase tracking-wider text-muted">
           <Gauge size={12} className="text-warning-fg" aria-hidden />
           Estimated savings
         </p>
@@ -74,20 +78,20 @@ export function SavingsSummary({ summary }) {
         ) : (
           <p className="mt-1.5 text-[19px] font-bold text-muted">NA</p>
         )}
-        <p className="mt-1 text-[10.5px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           priced by another basis
         </p>
       </div>
 
       <div className="rounded-card border border-border bg-surface p-3.5">
-        <p className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wider text-muted">
+        <p className="flex items-center gap-1.5 text-meta font-bold uppercase tracking-wider text-muted">
           <ShieldQuestion size={12} className="text-subtle" aria-hidden />
           Unquantified
         </p>
         <p className="mt-1.5 text-[19px] font-bold tabular-nums text-fg">
           {summary.unquantified_count ?? 0}
         </p>
-        <p className="mt-1 text-[10.5px] text-subtle">
+        <p className="mt-1 text-meta text-subtle">
           real opportunities that cannot be priced
         </p>
       </div>
@@ -124,7 +128,7 @@ export function SavingsByCategory({ categories }) {
 }
 
 /** One recommendation row, expandable into its full actionability block. */
-function RecommendationRow({ r, onOpen }) {
+function RecommendationRow({ r, accountRoute }) {
   const [open, setOpen] = useState(false);
   const act = r.actionability || {};
   return (
@@ -144,7 +148,7 @@ function RecommendationRow({ r, onOpen }) {
           <span className="text-[15px] font-bold tabular-nums text-fg">
             {r.priority_score}
           </span>
-          <span className="text-[9px] uppercase tracking-wide text-subtle">score</span>
+          <span className="text-micro uppercase tracking-wide text-subtle">score</span>
         </span>
 
         <span className="min-w-0 flex-1">
@@ -159,10 +163,10 @@ function RecommendationRow({ r, onOpen }) {
               <Badge tone={STATE_TONE[r.state] || 'neutral'} size="xs">{r.state}</Badge>
             )}
           </span>
-          <span className="mt-0.5 block text-[11.5px] leading-relaxed text-muted">
+          <span className="mt-0.5 block text-meta leading-relaxed text-muted">
             {r.description}
           </span>
-          <span className="mt-1 block text-[10.5px] text-subtle">
+          <span className="mt-1 block text-meta text-subtle">
             {r.affected_resource} · effort {r.effort} · risk {r.risk}
           </span>
         </span>
@@ -173,7 +177,7 @@ function RecommendationRow({ r, onOpen }) {
               ? <span className="text-muted">NA</span>
               : compact(r.potential_savings, r.savings_currency)}
           </span>
-          <span className="block text-[10px] text-subtle">
+          <span className="block text-micro text-subtle">
             {isMissing(r.potential_savings) ? 'not priceable' : 'per month'}
           </span>
         </span>
@@ -187,12 +191,12 @@ function RecommendationRow({ r, onOpen }) {
 
       {open && (
         <div className="space-y-3 border-t border-border px-3 py-3">
-          <dl className="space-y-2 text-[11.5px] leading-relaxed">
+          <dl className="space-y-2 text-meta leading-relaxed">
             {[['Why', act.why], ['What to change', act.action],
               ['Expected impact', act.expected_impact], ['Risk', act.risk],
               ['How', act.how]].map(([label, value]) => (
               <div key={label}>
-                <dt className="font-bold uppercase tracking-wider text-[10px] text-muted">
+                <dt className="font-bold uppercase tracking-wider text-micro text-muted">
                   {label}
                 </dt>
                 <dd className="text-fg">
@@ -206,10 +210,10 @@ function RecommendationRow({ r, onOpen }) {
               visible arithmetic is a number to be taken on faith. */}
           {(r.savings_breakdown || []).length > 0 && (
             <div className="rounded-control border border-border bg-sunken p-2.5">
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+              <p className="mb-1 text-micro font-bold uppercase tracking-wider text-muted">
                 Calculation
               </p>
-              <ul className="space-y-0.5 text-[11.5px] tabular-nums text-fg">
+              <ul className="space-y-0.5 text-meta tabular-nums text-fg">
                 {r.savings_breakdown.map((line, i) => (
                   <li key={i} className="flex justify-between gap-3">
                     <span className="text-muted">{line.label || line.description}</span>
@@ -218,7 +222,7 @@ function RecommendationRow({ r, onOpen }) {
                 ))}
               </ul>
               {r.savings_source && (
-                <p className="mt-1.5 border-t border-border pt-1.5 text-[10.5px] text-subtle">
+                <p className="mt-1.5 border-t border-border pt-1.5 text-meta text-subtle">
                   {r.savings_source}
                 </p>
               )}
@@ -227,24 +231,35 @@ function RecommendationRow({ r, onOpen }) {
 
           {(r.savings_assumptions || []).length > 0 && (
             <div>
-              <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+              <p className="mb-1 text-micro font-bold uppercase tracking-wider text-muted">
                 Assumptions
               </p>
-              <ul className="list-disc space-y-0.5 pl-4 text-[11.5px] text-muted">
+              <ul className="list-disc space-y-0.5 pl-4 text-meta text-muted">
                 {r.savings_assumptions.map((a, i) => <li key={i}>{a}</li>)}
               </ul>
             </div>
           )}
 
-          <div className="rounded-control border border-border bg-sunken p-2.5 text-[11px] text-muted">
+          <div className="rounded-control border border-border bg-sunken p-2.5 text-meta text-muted">
             <p className="flex items-center gap-1.5 font-semibold text-fg">
               <Info size={11} aria-hidden /> Utilization
             </p>
             <p className="mt-0.5 leading-relaxed">{r.utilization?.reason}</p>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] text-subtle">
-            <span>Last checked {new Date(r.last_verified).toLocaleString('en-GB')}</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-meta text-subtle">
+            <span>
+              {r.analysed === false ? 'Previewed' : 'Last checked'}{' '}
+              {r.last_verified ? new Date(r.last_verified).toLocaleString('en-GB') : 'NA'}
+            </span>
+            {r.source === 'optimization' && r.analysed !== false && accountRoute && (
+              <Link
+                to={`${accountRoute}/intelligence?finding=optimization:${r.fingerprint}`}
+                className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+              >
+                Evidence in Resource Intelligence <ArrowUpRight size={11} aria-hidden />
+              </Link>
+            )}
             <span title={r.priority_formula} className="cursor-help underline decoration-dotted">
               How is the score calculated?
             </span>
@@ -255,8 +270,28 @@ function RecommendationRow({ r, onOpen }) {
   );
 }
 
+/** Accounts whose recommendations are a preview, or could not be read. */
+function SourceNotice({ sources }) {
+  const partial = (sources || []).filter((s) => s.mode !== 'analysed');
+  if (!partial.length) return null;
+  return (
+    <div className="rounded-control border border-warning bg-warning-soft p-2.5 text-meta leading-relaxed text-fg">
+      {partial.map((s) => (
+        <p key={s.account_id} className="flex gap-1.5">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0 text-warning-fg" aria-hidden />
+          <span>
+            <span className="font-semibold">{s.account_name}</span>
+            {' — '}
+            {s.reason || 'Recommendations for this account are unavailable.'}
+          </span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export default function CostRecommendations({
-  recommendations, savingsSummary, savingsByCategory,
+  recommendations, savingsSummary, savingsByCategory, sources, accountRoute,
 }) {
   const [showClosed, setShowClosed] = useState(false);
   const rows = (recommendations || []).filter(
@@ -265,10 +300,11 @@ export default function CostRecommendations({
 
   return (
     <div className="space-y-4">
+      <SourceNotice sources={sources} />
       <SavingsSummary summary={savingsSummary} />
 
       {savingsSummary?.note && (
-        <p className="rounded-control border border-border bg-sunken p-2.5 text-[11px] leading-relaxed text-muted">
+        <p className="rounded-control border border-border bg-sunken p-2.5 text-meta leading-relaxed text-muted">
           <Info size={11} className="mr-1 inline align-[-1px]" aria-hidden />
           {savingsSummary.note}
         </p>
@@ -284,7 +320,7 @@ export default function CostRecommendations({
         title="Ranked opportunities"
         description="Ordered by a published score combining savings, confidence, effort, risk and severity — not by severity alone"
         action={(
-          <label className="flex items-center gap-1.5 text-[11.5px] text-muted">
+          <label className="flex items-center gap-1.5 text-meta text-muted">
             <input
               type="checkbox"
               checked={showClosed}
@@ -298,7 +334,7 @@ export default function CostRecommendations({
         {rows.length ? (
           <ul className="space-y-2">
             {rows.map((r) => (
-              <RecommendationRow key={r.recommendation_id || r.id} r={r} />
+              <RecommendationRow key={r.recommendation_id || r.id} r={r} accountRoute={accountRoute} />
             ))}
           </ul>
         ) : (
@@ -307,8 +343,9 @@ export default function CostRecommendations({
             <p className="text-[13px] font-medium text-fg">
               No open optimization opportunities
             </p>
-            <p className="mt-1 text-[11.5px] text-muted">
-              Nothing in the current inventory matches an optimization rule.
+            <p className="mt-1 text-meta text-muted">
+              No finding from the latest Resource Intelligence analysis would reduce spend.
+              Findings that need more data before they can be decided are listed there.
             </p>
           </div>
         )}

@@ -2,10 +2,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import {
   Server, DollarSign, ShieldAlert, LayoutDashboard, Share2,
-  GitCompareArrows, ScrollText, BellRing,
+  GitCompareArrows, ScrollText, BellRing, Lightbulb, KeyRound,
 } from 'lucide-react';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
+import { providerTileStyle } from '../utils/providerTheme';
+import AccountRefreshBar from '../components/refresh/AccountRefreshBar';
+import TabRefreshButton from '../components/refresh/TabRefreshButton';
+import { DELEGATED_TABS } from '../utils/tabRefreshModel';
 import Tabs from '@/components/ui/Tabs';
 import CloudOverview from './CloudOverview';
 import { ResourcesPage } from './ResourcesPage';
@@ -15,6 +19,8 @@ import { CloudTopologyPage } from './CloudTopologyPage';
 import { ConfigDriftPage } from './ConfigDriftPage';
 import { EventLogPage } from './EventLogPage';
 import AlertsPage from './AlertsPage';
+import ResourceIntelligencePage from './ResourceIntelligencePage';
+import IdentityAccessPage from './IdentityAccessPage';
 
 // NOTE: `getSecurityGrade` used to live here — a second, independent mapping
 // from score to letter grade, feeding a card that was itself scored by a
@@ -24,6 +30,10 @@ import AlertsPage from './AlertsPage';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  // Second, because it is where "what is wrong and what do I do" is answered:
+  // optimization findings from the telemetry-backed engine, beside the
+  // Security Center's findings (read from its table, not re-evaluated).
+  { id: 'intelligence', label: 'Intelligence', icon: Lightbulb },
   { id: 'resources', label: 'Resources', icon: Server },
   { id: 'cost', label: 'Cost', icon: DollarSign },
   // One tab replaces the former Security, Compliance and Alerts trio. They were
@@ -33,6 +43,12 @@ const TABS = [
   // none of the 82 CRITICAL AWS findings had ever produced an alert. The
   // Security Center's own tabs are all views over one canonical finding set.
   { id: 'security', label: 'Security Center', icon: ShieldAlert },
+  // Beside the Security Center because it answers the other half of the same
+  // question. The Security Center asks "what is wrong with this estate"; this
+  // asks "who can reach it, what can they actually do, and how much of that
+  // access is being used". Its findings land in the Security Center's table
+  // rather than in a second one.
+  { id: 'identity', label: 'Identity & Access', icon: KeyRound },
   { id: 'topology', label: 'Topology', icon: Share2 },
   // Beside Alerts on purpose: an alert says a condition is true now, drift says
   // what changed to make it true.
@@ -77,13 +93,28 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         hideBreadcrumbs
         backTo={`/cloud/${routeProviderSlug}-accounts`}
         leading={(
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-border bg-white">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border" style={providerTileStyle(scopedAccount?.provider)}>
             <ProviderLogo provider={scopedAccount?.provider} size={28} />
           </span>
         )}
         title={scopedAccount?.account_name || 'Account'}
         description={[scopedAccount?.provider, scopedAccount?.tenant_or_region || scopedAccount?.environment].filter(Boolean).join(' · ')}
-        tabs={<Tabs tabs={TABS} value={tab} onChange={setTab} />}
+        /* "Refresh all" for the whole account, in the header every tab
+           shares — every tab re-reads when it finishes. Each tab also has its
+           own narrower "Refresh <tab>" beside the tab strip (below). */
+        actions={routeAccountId && (
+          <AccountRefreshBar account={scopedAccount} accountId={routeAccountId} />
+        )}
+        tabs={(
+          <>
+            <Tabs tabs={TABS} value={tab} onChange={setTab} className="min-w-0 flex-1" />
+            {/* The Security Center's refresh sits on its own sub-tab strip,
+                where it can be specific to the sub-tab. */}
+            {routeAccountId && !DELEGATED_TABS.includes(tab) && (
+              <TabRefreshButton accountId={routeAccountId} tabKey={tab} className="ml-auto pl-3" />
+            )}
+          </>
+        )}
       />
 
       {/* Overview is its own component now. It was ~230 lines of inline JSX
@@ -98,14 +129,29 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         />
       )}
 
+      {tab === 'intelligence' && (
+        <ResourceIntelligencePage
+          key={routeAccountId}
+          accountId={routeAccountId}
+          providerSlug={routeProviderSlug}
+        />
+      )}
       {tab === 'resources' && <ResourcesPage embedded accountId={routeAccountId} />}
       {tab === 'cost' && (
-        <CostIntelligencePage key={routeAccountId} embedded accountId={routeAccountId} />
+        <CostIntelligencePage
+          key={routeAccountId}
+          embedded
+          accountId={routeAccountId}
+          providerSlug={routeProviderSlug}
+        />
       )}
       {/* Keyed on the account so switching accounts resets the tab, filters and
           any open finding rather than carrying another account's triage across. */}
       {tab === 'security' && (
         <SecurityCenterPage key={routeAccountId} embedded accountId={routeAccountId} />
+      )}
+      {tab === 'identity' && (
+        <IdentityAccessPage key={routeAccountId} embedded accountId={routeAccountId} />
       )}
       {tab === 'topology' && <CloudTopologyPage embedded accountId={routeAccountId} />}
       {/* 'compliance' is still a Security Center view, so a bookmarked URL from

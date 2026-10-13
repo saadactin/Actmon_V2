@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+﻿import { useMemo, useState } from 'react';
 import Icon from '@/components/ui/Icon';
 import cn from '@/lib/cn';
 import {
@@ -27,12 +27,12 @@ const Section = ({ title, children, count, defaultOpen = true }) => {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center justify-between px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted hover:text-fg"
+        className="flex w-full items-center justify-between px-3 py-1.5 text-meta font-semibold uppercase tracking-wider text-muted hover:text-fg"
       >
         <span>{title}</span>
         <span className="flex items-center gap-1">
           {count > 0 && (
-            <span className="rounded-full bg-accent-soft px-1.5 text-[10px] font-bold text-accent-text">
+            <span className="rounded-full bg-accent-soft px-1.5 text-micro font-bold text-accent-text">
               {count}
             </span>
           )}
@@ -84,10 +84,81 @@ const Row = ({ label, count, active, onClick, icon: IconComponent, tone, title }
         not facet, so for some of them we genuinely do not know the count —
         and printing 0 would state that we do. */}
     {typeof count === 'number' && (
-      <span className="shrink-0 tabular-nums text-[11px] text-subtle">{formatCount(count)}</span>
+      <span className="shrink-0 tabular-nums text-meta text-subtle">{formatCount(count)}</span>
     )}
   </button>
 );
+
+/**
+ * Services, sectioned by cloud when the scope spans more than one, with a
+ * search box once the list is long. Azure alone runs to thirty-odd services,
+ * and a flat list mixing "Amazon S3" with "Storage Accounts" would hide which
+ * cloud each belongs to.
+ */
+const PROVIDER_ORDER = ['AWS', 'AZURE', 'OCI'];
+
+function ServiceSection({ services, selectedValues, onToggle }) {
+  const [term, setTerm] = useState('');
+  const groups = useMemo(() => {
+    const needle = term.trim().toLowerCase();
+    const shown = services.filter((f) => !needle
+      || String(f.label || f.value).toLowerCase().includes(needle)
+      || selectedValues.includes(f.value));
+    const byProvider = new Map();
+    shown.forEach((f) => {
+      const p = f.provider || 'OTHER';
+      if (!byProvider.has(p)) byProvider.set(p, []);
+      byProvider.get(p).push(f);
+    });
+    return [...byProvider.entries()]
+      .sort(([a], [b]) => {
+        const ia = PROVIDER_ORDER.indexOf(a); const ib = PROVIDER_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+      })
+      .map(([provider, rows]) => [provider, [...rows].sort((x, y) => y.count - x.count
+        || String(x.label).localeCompare(String(y.label)))]);
+  }, [services, term, selectedValues]);
+  const sectioned = groups.length > 1;
+
+  return (
+    <>
+      {services.length > 8 && (
+        <div className="px-1.5 pb-1">
+          <input
+            type="search"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder="Find a service…"
+            aria-label="Find a service"
+            className="w-full rounded-control border border-border bg-surface px-2 py-1 text-[12px] text-fg placeholder:text-subtle focus:border-accent focus:outline-none"
+          />
+        </div>
+      )}
+      {groups.map(([provider, rows]) => (
+        <div key={provider}>
+          {sectioned && (
+            <div className="px-2 pb-0.5 pt-1.5 text-micro font-semibold uppercase tracking-wider text-subtle">
+              {providerLabel(provider)}
+            </div>
+          )}
+          {rows.map((f) => (
+            <Row
+              key={f.value}
+              label={f.label}
+              count={f.count}
+              active={selectedValues.includes(f.value)}
+              onClick={() => onToggle(f.value)}
+              title={`${f.label} (${providerLabel(f.provider)})`}
+            />
+          ))}
+        </div>
+      ))}
+      {groups.length === 0 && (
+        <div className="px-2 py-1.5 text-[12px] text-subtle">No service matches “{term}”.</div>
+      )}
+    </>
+  );
+}
 
 export default function ResourceFacetRail({
   facets, filters, onChange, reference, summary, isGlobal, error,
@@ -138,6 +209,16 @@ export default function ResourceFacetRail({
           {facets.accounts.map((f) => (
             <Row key={f.value} label={f.label} count={f.count} active={false} onClick={undefined} />
           ))}
+        </Section>
+      )}
+
+      {(facets.services || []).length > 0 && (
+        <Section title="Service" count={selected('services').length}>
+          <ServiceSection
+            services={facets.services}
+            selectedValues={selected('services')}
+            onToggle={(value) => toggle('services', value)}
+          />
         </Section>
       )}
 

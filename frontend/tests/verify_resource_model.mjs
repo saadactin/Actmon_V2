@@ -20,6 +20,7 @@ const rich = {
   q: 'payment-api',
   providers: ['AWS', 'Azure'],
   categories: ['COMPUTE'],
+  services: ['aws.lambda', 'azure.app-service'],
   statuses: ['STOPPED', 'UNKNOWN'],
   risk: ['CRITICAL'],
   attachment: 'UNATTACHED',
@@ -39,6 +40,12 @@ check('hasCost=true survives', back.hasCost === true);
 check('stale survives', back.stale === true);
 check('numeric cost bound survives as a number', back.costMin === 100, typeof back.costMin);
 check('includeDefaults=false survives', back.includeDefaults === false);
+check('multi-value service survives (a shared "Lambda + App Service" link)',
+  JSON.stringify(back.services) === JSON.stringify(['aws.lambda', 'azure.app-service']),
+  JSON.stringify(back.services));
+check('...written as ?service=', filtersToSearchParams(rich).getAll('service').length === 2);
+check('...and counted as two active filters',
+  activeFilterCount({ ...EMPTY_FILTERS, services: ['aws.s3', 'oci.compute'] }) === 2);
 
 console.log('\n2. An empty filter produces a clean URL');
 const emptyUrl = filtersToSearchParams(EMPTY_FILTERS).toString();
@@ -80,6 +87,13 @@ check('null percent is not 0%', formatPct(null) === 'Not applicable');
 check('a real 0 percent prints as 0%', formatPct(0) === '0%');
 check('null timestamp is null, not "just now"', relativeTime(null) === null);
 check('a real timestamp formats', /ago|just now/.test(relativeTime(new Date(Date.now() - 6e4).toISOString())));
+const ago = (ms) => relativeTime(new Date(Date.now() - ms).toISOString());
+const H = 3600e3;
+check('2 hours reads "2 hours ago"', ago(2 * H) === '2 hours ago', ago(2 * H));
+check('30 hours rolls over into a day', ago(30 * H) === '1 day ago', ago(30 * H));
+check('12 days reads "12 days ago", not "5 days ago"', ago(12 * 24 * H) === '12 days ago', ago(12 * 24 * H));
+check('45 days reads "1 month ago"', ago(45 * 24 * H) === '1 month ago', ago(45 * 24 * H));
+check('400 days reads "1 year ago"', ago(400 * 24 * H) === '1 year ago', ago(400 * 24 * H));
 
 console.log(`\n=== ${pass} passed, ${fail} failed ===`);
 process.exit(fail ? 1 : 0);

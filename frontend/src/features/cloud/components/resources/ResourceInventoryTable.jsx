@@ -36,6 +36,7 @@ export const COLUMNS = [
   { key: 'risk', label: 'Risk', sortable: true, sortKey: 'risk', width: 92, default: true },
   { key: 'name', label: 'Resource', sortable: true, sortKey: 'resource_name', always: true },
   { key: 'type', label: 'Type', sortable: true, sortKey: 'resource_type', default: true },
+  { key: 'service', label: 'Service', sortable: true, sortKey: 'service', default: false },
   { key: 'provider', label: 'Provider', sortable: true, sortKey: 'provider', default: false },
   { key: 'account', label: 'Account', sortable: true, sortKey: 'account', default: false },
   { key: 'region', label: 'Region', sortable: true, sortKey: 'region', default: true },
@@ -115,13 +116,13 @@ const Cell = {
     const meta = riskMeta(row.risk?.level);
     if (row.risk?.level === 'UNKNOWN') {
       return (
-        <span className="text-[11px] text-subtle" title={row.risk?.reason || undefined}>
+        <span className="text-meta text-subtle" title={row.risk?.reason || undefined}>
           Not assessed
         </span>
       );
     }
     if (row.risk?.level === 'NONE') {
-      return <span className="text-[11px] text-subtle">—</span>;
+      return <span className="text-meta text-subtle">—</span>;
     }
     return (
       <Badge tone={meta.tone} size="xs" title={`${row.risk.finding_count} open finding(s)`}>
@@ -154,7 +155,7 @@ const Cell = {
               <Badge tone="neutral" size="xs" className="uppercase tracking-wide">default</Badge>
             )}
           </div>
-          <div className="truncate text-[11px] text-subtle" title={row.provider_resource_id}>
+          <div className="truncate text-meta text-subtle" title={row.provider_resource_id}>
             {row.provider_resource_id}
           </div>
         </div>
@@ -165,9 +166,14 @@ const Cell = {
   type: (row) => (
     <div className="min-w-0">
       <div className="truncate text-fg">{row.type_label || row.resource_type}</div>
-      <div className="truncate text-[11px] text-subtle">{row.category_label}</div>
+      {/* The service first: "AWS Lambda" says more than "Serverless". */}
+      <div className="truncate text-meta text-subtle" title={row.service_label || row.category_label}>
+        {[row.service_label, row.category_label].filter(Boolean).join(' · ')}
+      </div>
     </div>
   ),
+
+  service: (row) => <span className="truncate text-muted">{row.service_label || <span className="text-subtle">—</span>}</span>,
 
   provider: (row) => <span className="text-muted">{providerLabel(row.provider)}</span>,
   account: (row) => <span className="truncate text-muted">{row.account_name || '—'}</span>,
@@ -215,7 +221,7 @@ const Cell = {
       {row.tag_count}
     </Badge>
   ) : (
-    <span className="text-[11px] text-subtle">None</span>
+    <span className="text-meta text-subtle">None</span>
   )),
 
   related: (row) => {
@@ -293,6 +299,7 @@ const SkeletonRows = ({ columns, count = 8 }) => Array.from({ length: count }).m
 export default function ResourceInventoryTable({
   data, isLoading, isFetching, columnKeys, sort, onSort, page, pageSize,
   onPage, onPageSize, onOpen, emptyState,
+  selectable = false, selectedKeys, onSelectionChange,
 }) {
   const columns = useMemo(
     () => COLUMNS.filter((c) => columnKeys.includes(c.key)),
@@ -320,6 +327,9 @@ export default function ResourceInventoryTable({
         virtualize
         virtualizeThreshold={60}
         maxBodyHeight={700}
+        selectable={selectable}
+        selectedKeys={selectedKeys}
+        onSelectionChange={onSelectionChange}
         empty={emptyState || (
           <EmptyState icon="search" title="No resources match your filters" body="Try clearing a filter." />
         )}
@@ -344,7 +354,7 @@ export default function ResourceInventoryTable({
       />
 
       {isFetching && !isLoading && (
-        <div className="border-t border-border bg-sunken px-card py-1.5 text-[11px] text-muted">
+        <div className="border-t border-border bg-sunken px-card py-1.5 text-meta text-muted">
           Updating…
         </div>
       )}

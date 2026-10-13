@@ -28,7 +28,8 @@ const key = (...parts) => [...ROOT, ...parts];
 const ASSESSMENT_SCOPED = [
   'overview', 'findings', 'finding', 'compliance', 'control', 'exposure',
   'identity', 'coverage', 'trends', 'score', 'diagnostics', 'alerts',
-  'multiCloud',
+  'multiCloud', 'attackPaths', 'vulnerabilities', 'threats', 'incidents',
+  'ransomware',
 ];
 
 export const useSecurityMeta = () => useQuery({
@@ -97,6 +98,45 @@ export const useIdentity = (accountId, enabled = true) => useQuery({
   queryFn: () => api.getIdentity(accountId),
   enabled: !!accountId && enabled,
   staleTime: 60_000,
+});
+
+// Attack paths are derived from the topology graph, which is itself cached
+// behind an inventory fingerprint, so a repeat view inside one generation
+// costs nothing. The longer staleTime reflects that the answer cannot change
+// until discovery runs again.
+export const useAttackPaths = (accountId, options = {}, enabled = true) => useQuery({
+  queryKey: key('attackPaths', accountId, options.maxDepth ?? 6, options.limit ?? 100),
+  queryFn: () => api.getAttackPaths(accountId, options),
+  enabled: !!accountId && enabled,
+  staleTime: 120_000,
+});
+
+export const useVulnerabilities = (accountId, enabled = true) => useQuery({
+  queryKey: key('vulnerabilities', accountId),
+  queryFn: () => api.getVulnerabilities(accountId),
+  enabled: !!accountId && enabled,
+  staleTime: 120_000,
+});
+
+export const useThreats = (accountId, days = 30, enabled = true) => useQuery({
+  queryKey: key('threats', accountId, days),
+  queryFn: () => api.getThreats(accountId, { days }),
+  enabled: !!accountId && enabled,
+  staleTime: 120_000,
+});
+
+export const useIncidents = (accountId, days = 30, enabled = true) => useQuery({
+  queryKey: key('incidents', accountId, days),
+  queryFn: () => api.getIncidents(accountId, { days }),
+  enabled: !!accountId && enabled,
+  staleTime: 120_000,
+});
+
+export const useRansomware = (accountId, enabled = true) => useQuery({
+  queryKey: key('ransomware', accountId),
+  queryFn: () => api.getRansomware(accountId),
+  enabled: !!accountId && enabled,
+  staleTime: 120_000,
 });
 
 export const useCoverage = (accountId, enabled = true) => useQuery({

@@ -100,17 +100,17 @@ export default function SecurityFindings({ accountId, meta, initialFilters }) {
               <Badge tone="neutral" size="xs">not scored</Badge>
             )}
           </div>
-          <div className="mt-0.5 truncate-safe text-[11px] text-subtle">{f.rule_id}</div>
+          <div className="mt-0.5 truncate-safe text-meta text-subtle">{f.rule_id}</div>
         </div>
       ),
       resource: f.resource_name
         ? (
           <div className="min-w-0">
             <div className="truncate-safe text-[13px] text-fg">{f.resource_name}</div>
-            <div className="truncate-safe text-[11px] text-subtle">{f.resource_type}</div>
+            <div className="truncate-safe text-meta text-subtle">{f.resource_type}</div>
           </div>
         )
-        : <span className="text-[11px] text-subtle">Account-wide</span>,
+        : <span className="text-meta text-subtle">Account-wide</span>,
       category: (
         <span className="inline-flex items-center gap-1.5 text-[12px] text-muted">
           <Icon name={categoryIcon(f.category)} size={13} />
@@ -118,7 +118,7 @@ export default function SecurityFindings({ accountId, meta, initialFilters }) {
         </span>
       ),
       verdict: <Badge tone={verdictMeta(f.verdict).tone}>{verdictMeta(f.verdict).label}</Badge>,
-      age: <span className="text-[11px] text-muted">{formatDateTime(f.first_detected_at)}</span>,
+      age: <span className="text-meta text-muted">{formatDateTime(f.first_detected_at)}</span>,
     },
     sort: {
       severity: f.severity, title: f.title, resource: f.resource_name || '',
@@ -331,7 +331,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
                 {statusMeta(statusDraft).label}
               </p>
               {STATUS_NEEDS_REASON[statusDraft] && (
-                <p className="mt-1 text-[11px] leading-relaxed text-accent-text">
+                <p className="mt-1 text-meta leading-relaxed text-accent-text">
                   {STATUS_NEEDS_REASON[statusDraft]}
                 </p>
               )}
@@ -344,7 +344,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
-              {err && <p className="mt-2 text-[11px] text-danger">{err}</p>}
+              {err && <p className="mt-2 text-meta text-danger">{err}</p>}
             </div>
           )}
 
@@ -374,6 +374,12 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
           {f.rationale && (
             <Section title="Why it matters">
               <p className="leading-relaxed text-muted">{f.rationale}</p>
+            </Section>
+          )}
+
+          {f.risk_context && (
+            <Section title="Risk in context">
+              <RiskContext ctx={f.risk_context} />
             </Section>
           )}
 
@@ -425,7 +431,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
             {f.evidence?._withheld ? (
               <p className="text-xs italic text-muted">{f.evidence._withheld}</p>
             ) : (
-              <pre className="max-h-72 overflow-auto rounded-control border border-border bg-sunken p-3 text-[11px] leading-relaxed text-fg">
+              <pre className="max-h-72 overflow-auto rounded-control border border-border bg-sunken p-3 text-meta leading-relaxed text-fg">
                 {JSON.stringify(f.evidence ?? {}, null, 2)}
               </pre>
             )}
@@ -436,7 +442,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
               <div className="max-h-56 overflow-auto rounded-control border border-border">
                 {f.affected_sample.map((s) => (
                   <div key={s.resource_id || s.resource_key}
-                    className="flex items-center justify-between border-b border-border px-2.5 py-1.5 text-[11px] last:border-0">
+                    className="flex items-center justify-between border-b border-border px-2.5 py-1.5 text-meta last:border-0">
                     <span className="truncate-safe text-fg">{s.resource_name || s.resource_key}</span>
                     <span className="ml-2 shrink-0 text-subtle">{s.resource_type}</span>
                   </div>
@@ -450,7 +456,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
               <div className="space-y-2">
                 {Object.entries(f.compliance).map(([framework, refs]) => (
                   <div key={framework} className="rounded-control border border-border p-2.5">
-                    <div className="text-[11px] font-bold uppercase tracking-wider text-muted">
+                    <div className="text-meta font-bold uppercase tracking-wider text-muted">
                       {framework}
                     </div>
                     <ul className="mt-1 space-y-0.5">
@@ -461,7 +467,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
                   </div>
                 ))}
               </div>
-              <p className="mt-2 text-[11px] italic leading-relaxed text-subtle">
+              <p className="mt-2 text-meta italic leading-relaxed text-subtle">
                 Informative cross-walks to the published control text, not a certified
                 assessment.
               </p>
@@ -481,7 +487,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
                       {a.state}
                     </Badge>
                   </div>
-                  <div className="mt-1 text-[11px] text-subtle">
+                  <div className="mt-1 text-meta text-subtle">
                     Seen {a.occurrence_count}× · notified {a.notification_count || 0}×
                     {a.notification_status ? ` · ${a.notification_status}` : ''}
                   </div>
@@ -497,12 +503,12 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
                   <li key={`${e.at}-${i}`} className="flex gap-2.5">
                     <Icon name="dot" size={12} className="mt-1 shrink-0 text-subtle" />
                     <div className="min-w-0">
-                      <div className="text-[11px] font-semibold text-fg">
+                      <div className="text-meta font-semibold text-fg">
                         {e.event.replace(/_/g, ' ')}
                       </div>
-                      <div className="text-[11px] text-subtle">{formatDateTime(e.at)}</div>
+                      <div className="text-meta text-subtle">{formatDateTime(e.at)}</div>
                       {e.detail && (
-                        <div className="text-[11px] leading-relaxed text-muted">{e.detail}</div>
+                        <div className="text-meta leading-relaxed text-muted">{e.detail}</div>
                       )}
                     </div>
                   </li>
@@ -535,7 +541,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
           )}
 
           <Section title="How to fix it">
-            <pre className="whitespace-pre-wrap rounded-control border border-info-soft bg-info-soft p-3 text-[11px] leading-relaxed text-fg">
+            <pre className="whitespace-pre-wrap rounded-control border border-info-soft bg-info-soft p-3 text-meta leading-relaxed text-fg">
               {f.remediation}
             </pre>
           </Section>
@@ -545,10 +551,103 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
   );
 }
 
+/**
+ * What the rule's severity means on THIS resource.
+ *
+ * Shown BESIDE the declared severity, never instead of it. The rule's verdict
+ * about the condition is the stable thing a finding has — two scans, same
+ * condition, same severity — and rewriting it in place would destroy that. So
+ * this renders the arithmetic: the base, every signed factor, and the result.
+ *
+ * The undetermined list is not padding. "Internet reachability could not be
+ * determined" and "this resource is confirmed private" are opposite facts that
+ * a model which silently skipped both would render identically, and the second
+ * is the one that would quietly talk an operator out of acting.
+ */
+function RiskContext({ ctx }) {
+  const DIRECTION = {
+    AMPLIFIER: { tone: 'danger', sign: '+' },
+    DAMPENER: { tone: 'success', sign: '' },
+    NEUTRAL: { tone: 'neutral', sign: '' },
+  };
+  const moved = ctx.contextual_band !== ctx.base_severity;
+
+  return (
+    <div className="space-y-2.5 rounded-control border border-border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-micro uppercase tracking-wide text-muted">Rule severity</span>
+        <Badge tone={severityTone(ctx.base_severity)}>{ctx.base_severity}</Badge>
+        <Icon name="arrow-right" size={13} className="text-subtle" />
+        <span className="text-micro uppercase tracking-wide text-muted">In context</span>
+        <Badge tone={severityTone(ctx.contextual_band)}>{ctx.contextual_band}</Badge>
+        <span className="font-mono text-micro tabular-nums text-subtle">
+          {ctx.adjusted_points} pts
+        </span>
+      </div>
+
+      {!ctx.determined && (
+        <p className="text-micro leading-relaxed text-muted">
+          Nothing about this resource&apos;s context could be confirmed either way, so the
+          contextual band is simply the rule&apos;s own severity. The checks that could not
+          be made are listed below.
+        </p>
+      )}
+      {moved && ctx.determined && (
+        <p className="text-micro leading-relaxed text-muted">
+          Context moved this from {ctx.base_severity} to {ctx.contextual_band}. Every
+          adjustment is listed below and sums to the total.
+        </p>
+      )}
+
+      <ul className="space-y-1.5">
+        <li className="flex items-baseline justify-between gap-2 border-b border-border pb-1.5">
+          <span className="text-micro text-muted">Base ({ctx.base_severity})</span>
+          <span className="font-mono text-micro tabular-nums text-fg">{ctx.base_points}</span>
+        </li>
+        {ctx.factors.map((fac) => {
+          const d = DIRECTION[fac.direction] || DIRECTION.NEUTRAL;
+          return (
+            <li key={fac.factor_id}>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-micro font-medium text-fg">
+                  <Badge tone={d.tone} size="xs">
+                    {fac.direction === 'NEUTRAL' ? 'Not determined' : fac.direction.toLowerCase()}
+                  </Badge>
+                  {fac.label}
+                </span>
+                <span className="font-mono text-micro tabular-nums text-subtle">
+                  {fac.delta === 0 ? '0' : `${d.sign}${fac.delta}`}
+                </span>
+              </div>
+              <p className="mt-0.5 text-micro leading-relaxed text-subtle">{fac.explanation}</p>
+              <p className="mt-0.5 text-micro text-subtle">
+                <span className="text-muted">Source:</span> {fac.source}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="flex items-baseline justify-between gap-2 border-t border-border pt-1.5">
+        <span className="text-micro font-semibold text-fg">Contextual risk</span>
+        <span className="font-mono text-micro tabular-nums text-fg">
+          {ctx.adjusted_points} → {ctx.contextual_band}
+        </span>
+      </div>
+
+      {ctx.clamp_applied && (
+        <p className="rounded-control bg-warning-soft p-2 text-micro leading-relaxed text-warning-fg">
+          {ctx.clamp_applied}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, children }) {
   return (
     <div>
-      <h4 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">{title}</h4>
+      <h4 className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">{title}</h4>
       {children}
     </div>
   );
@@ -561,7 +660,7 @@ function Rows({ rows }) {
     <dl className="divide-y divide-border overflow-hidden rounded-control border border-border">
       {visible.map(([label, value]) => (
         <div key={label} className="flex gap-3 px-2.5 py-1.5">
-          <dt className="w-40 shrink-0 text-[11px] text-muted">{label}</dt>
+          <dt className="w-40 shrink-0 text-meta text-muted">{label}</dt>
           <dd className="min-w-0 break-words text-[12px] text-fg">{value}</dd>
         </div>
       ))}

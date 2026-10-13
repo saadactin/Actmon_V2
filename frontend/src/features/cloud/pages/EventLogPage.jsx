@@ -154,11 +154,11 @@ const StatCard = ({
             {value}
           </span>
         )}
-        <span className="block truncate text-[11px] text-muted">{label}</span>
+        <span className="block truncate text-meta text-muted">{label}</span>
         {/* When the card is filtering, its own hint is replaced by the fact
             that it is — the state the user needs is "this one is on and
             clicking removes it", not the static description. */}
-        <span className="block truncate text-[10px] text-subtle">
+        <span className="block truncate text-micro text-subtle">
           {active ? 'Filtering · click to remove' : hint}
         </span>
       </span>
@@ -181,7 +181,7 @@ const SourceStatusBar = ({ sources, onOpenDetail }) => {
   if (!sources?.providers?.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-subtle">
+      <span className="text-micro font-bold uppercase tracking-wider text-subtle">
         Event sources
       </span>
       {sources.providers.map((p) => {
@@ -203,10 +203,10 @@ const SourceStatusBar = ({ sources, onOpenDetail }) => {
             className="inline-flex items-center gap-1.5 rounded-control border border-border bg-surface px-2 py-1 transition-colors hover:border-accent"
           >
             <ProviderLogo provider={p.provider} size={13} />
-            <span className="text-[11px] font-semibold text-fg">{p.provider}</span>
+            <span className="text-meta font-semibold text-fg">{p.provider}</span>
             <Badge tone={meta.tone} size="xs">{meta.label}</Badge>
             {p.scopes_failing > 0 && p.scopes_healthy > 0 && (
-              <span className="text-[10px] text-subtle tabular-nums">
+              <span className="text-micro text-subtle tabular-nums">
                 {p.scopes_healthy}/{p.scopes}
               </span>
             )}
@@ -216,7 +216,7 @@ const SourceStatusBar = ({ sources, onOpenDetail }) => {
       <button
         type="button"
         onClick={onOpenDetail}
-        className="text-[11px] font-semibold text-accent-text hover:text-accent-hover"
+        className="text-meta font-semibold text-accent-text hover:text-accent-hover"
       >
         Collection health
       </button>
@@ -257,7 +257,7 @@ const TimelineBars = ({ timeline, onPick }) => {
           );
         })}
       </div>
-      <p className="mt-1.5 flex flex-wrap items-center gap-3 text-[10px] text-subtle">
+      <p className="mt-1.5 flex flex-wrap items-center gap-3 text-micro text-subtle">
         <span className="inline-flex items-center gap-1">
           <span className="h-2 w-2 rounded-sm bg-accent/60" /> events
         </span>
@@ -285,7 +285,7 @@ const TimelineFeed = ({ events, onOpen }) => {
         return (
           <li key={e.id}>
             {newDay && (
-              <p className="mt-3 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-subtle">
+              <p className="mt-3 mb-1.5 text-micro font-bold uppercase tracking-wider text-subtle">
                 {date}
               </p>
             )}
@@ -295,7 +295,7 @@ const TimelineFeed = ({ events, onOpen }) => {
               className="flex w-full gap-3 border-l-2 border-border py-2 pl-3 text-left transition-colors hover:border-accent hover:bg-sunken"
             >
               <span
-                className="w-[68px] shrink-0 font-mono text-[11px] text-muted tabular-nums"
+                className="w-[68px] shrink-0 font-mono text-meta text-muted tabular-nums"
                 title={formatUtc(e.timestamp)}
               >
                 {formatEventTime(e.timestamp, { withZone: false }).split(' ')[1]}
@@ -312,7 +312,7 @@ const TimelineFeed = ({ events, onOpen }) => {
                     </Badge>
                   )}
                 </span>
-                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
+                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta text-muted">
                   <span className="inline-flex items-center gap-1">
                     <ActorIcon size={11} className="text-subtle" />
                     {e.actor_name || 'Unidentified principal'}
@@ -353,7 +353,7 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-[11.5px] leading-relaxed text-muted">
+        <p className="text-meta leading-relaxed text-muted">
           Collection runs on an interval and checkpoints each scope separately, so one
           unreadable region or compartment cannot stall or silently skip the others.
         </p>
@@ -365,7 +365,7 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
           repeated on every page load. */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-card border border-border bg-surface p-3">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-subtle">
+          <p className="text-meta font-bold uppercase tracking-wide text-subtle">
             Application retention
           </p>
           <div className="mt-1.5 flex items-center gap-2">
@@ -387,24 +387,24 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
               Save
             </Button>
           </div>
-          <p className="mt-1.5 text-[10.5px] leading-relaxed text-subtle">
+          <p className="mt-1.5 text-meta leading-relaxed text-subtle">
             How long ACTMON keeps collected events. Changing this is recorded in the
             Event Log&apos;s own access log.
           </p>
         </div>
         <div className="rounded-card border border-border bg-surface p-3">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-subtle">
+          <p className="text-meta font-bold uppercase tracking-wide text-subtle">
             Provider retention
           </p>
           <dl className="mt-1.5 space-y-1">
             {Object.entries(data.retention?.provider_days || {}).map(([provider, days]) => (
-              <div key={provider} className="flex items-center justify-between gap-2 text-[11.5px]">
+              <div key={provider} className="flex items-center justify-between gap-2 text-meta">
                 <dt className="text-muted">{provider}</dt>
                 <dd className="font-semibold text-fg tabular-nums">{days} days</dd>
               </div>
             ))}
           </dl>
-          <p className="mt-1.5 text-[10.5px] leading-relaxed text-subtle">
+          <p className="mt-1.5 text-meta leading-relaxed text-subtle">
             A hard ceiling. Raising application retention above these figures cannot
             retrieve older events — the provider will not serve them.
           </p>
@@ -417,12 +417,12 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
           from the feed until it is fixed.
           <ul className="mt-1.5 space-y-1">
             {failing.slice(0, 5).map((s) => (
-              <li key={s.id} className="text-[11px]">
+              <li key={s.id} className="text-meta">
                 <span className="font-mono">{s.scope}</span> — {s.last_error}
               </li>
             ))}
             {failing.length > 5 && (
-              <li className="text-[11px] italic">…and {failing.length - 5} more.</li>
+              <li className="text-meta italic">…and {failing.length - 5} more.</li>
             )}
           </ul>
         </Notice>
@@ -444,13 +444,13 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
             <p className="text-[16px] font-semibold text-fg tabular-nums">
               {typeof value === 'number' ? formatCount(value) : (value ?? '—')}
             </p>
-            <p className="text-[10.5px] text-muted">{label}</p>
+            <p className="text-meta text-muted">{label}</p>
           </div>
         ))}
       </div>
 
       <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">
+        <p className="mb-1.5 text-meta font-bold uppercase tracking-wide text-subtle">
           Collection scopes ({data.scopes?.length || 0})
         </p>
         {!data.scopes?.length ? (
@@ -459,9 +459,9 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
           </p>
         ) : (
           <div className="max-h-72 overflow-y-auto rounded-card border border-border">
-            <table className="w-full text-[11px]">
+            <table className="w-full text-meta">
               <thead className="sticky top-0 bg-sunken">
-                <tr className="text-left text-[10px] uppercase tracking-wide text-subtle">
+                <tr className="text-left text-micro uppercase tracking-wide text-subtle">
                   <th className="px-2 py-1.5">Scope</th>
                   <th className="px-2 py-1.5">Status</th>
                   <th className="px-2 py-1.5">Checkpoint</th>
@@ -475,11 +475,11 @@ const CollectionHealthPanel = ({ accountId, onClose }) => {
                   return (
                     <tr key={s.id} className="border-t border-border">
                       <td className="max-w-[280px] px-2 py-1.5">
-                        <span className="block truncate font-mono text-[10.5px] text-fg" title={s.scope}>
+                        <span className="block truncate font-mono text-meta text-fg" title={s.scope}>
                           {s.provider} · {s.scope}
                         </span>
                         {s.last_error && (
-                          <span className="block truncate text-[10px] text-danger-fg" title={s.last_error}>
+                          <span className="block truncate text-micro text-danger-fg" title={s.last_error}>
                             {s.last_error}
                           </span>
                         )}
@@ -544,7 +544,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
 
   const refreshMs = REFRESH_INTERVALS.find((r) => r.id === refreshId)?.ms || 0;
 
-  // How far back "Collect now" asks the provider to read. The time-range
+  // How far back "Load events for the last Nh" asks the provider to read. The time-range
   // selector only filters events that are ALREADY stored, so without this the
   // button fetched nothing older than the last checkpoint and there was no way
   // to back-fill — selecting 7 days then collecting appeared to do nothing.
@@ -722,7 +722,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
       cells: {
         when: (
           <span
-            className="whitespace-nowrap font-mono text-[11px] text-muted tabular-nums"
+            className="whitespace-nowrap font-mono text-meta text-muted tabular-nums"
             title={`${formatEventTime(e.timestamp)}\n${formatUtc(e.timestamp)}\nCollected ${relativeTime(e.ingested_at)}`}
           >
             {formatEventTime(e.timestamp, { withZone: false })}
@@ -731,7 +731,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
         provider: (
           <span className="inline-flex items-center gap-1.5">
             <ProviderLogo provider={e.provider} size={14} />
-            <span className="text-[11.5px] font-semibold text-fg">{e.provider}</span>
+            <span className="text-meta font-semibold text-fg">{e.provider}</span>
           </span>
         ),
         actor: (
@@ -742,7 +742,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 {e.actor_name || <span className="italic text-subtle">Unidentified</span>}
               </span>
             </p>
-            <p className="truncate text-[10.5px] text-subtle">
+            <p className="truncate text-meta text-subtle">
               {e.actor_type === 'Human' ? 'user'
                 : e.actor_type === 'RootAccount' ? 'root / tenancy admin'
                   : e.actor_type === 'IAMRole' ? 'assumed role'
@@ -757,7 +757,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
             <p className="truncate text-[12.5px] font-medium text-fg" title={e.api_operation || e.event_name}>
               {e.event_name}
             </p>
-            <p className="flex items-center gap-1 truncate text-[10.5px] text-subtle">
+            <p className="flex items-center gap-1 truncate text-meta text-subtle">
               <Badge tone={RISK_TONE[e.risk_level] || 'neutral'} size="xs">{e.risk_level}</Badge>
               {e.event_category}
               {e.has_change && (
@@ -775,16 +775,16 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 || <span className="italic text-subtle">Not reported</span>}
             </p>
             {e.resource_type && (
-              <p className="truncate text-[10.5px] text-subtle">{e.resource_type}</p>
+              <p className="truncate text-meta text-subtle">{e.resource_type}</p>
             )}
           </div>
         ),
         scope: (
           <div className="min-w-0">
-            <p className="truncate text-[11px] text-muted" title={e.account_ref || e.subscription_id || undefined}>
+            <p className="truncate text-meta text-muted" title={e.account_ref || e.subscription_id || undefined}>
               {e.account_ref || e.subscription_id || '—'}
             </p>
-            <p className="truncate text-[10.5px] text-subtle">
+            <p className="truncate text-meta text-subtle">
               {e.region || e.compartment_name || e.resource_group
                 || <span className="italic">not reported</span>}
             </p>
@@ -794,7 +794,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           <div className="min-w-0">
             <Badge tone={STATUS_TONE[e.status] || 'neutral'} size="xs">{e.status}</Badge>
             {e.error_code && (
-              <p className="mt-0.5 truncate font-mono text-[10px] text-danger-fg" title={e.error_code}>
+              <p className="mt-0.5 truncate font-mono text-micro text-danger-fg" title={e.error_code}>
                 {e.error_code}
               </p>
             )}
@@ -802,10 +802,10 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
         ),
         source: (
           <div className="min-w-0">
-            <p className="truncate font-mono text-[10.5px] text-muted">
+            <p className="truncate font-mono text-meta text-muted">
               {e.source_ip || <span className="font-sans italic text-subtle">Not available</span>}
             </p>
-            <p className="truncate text-[10.5px] text-subtle">
+            <p className="truncate text-meta text-subtle">
               {e.access_method || <span className="italic">method unknown</span>}
             </p>
           </div>
@@ -852,27 +852,20 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           <SourceStatusBar sources={sources} onOpenDetail={() => setShowHealth(true)} />
           <div className="flex flex-wrap items-center gap-2">
             {refreshMs > 0 && <LiveBadge label="Live" />}
+            {/* "Live view", not "Auto-refresh": this only re-reads the events
+                already stored, every N seconds. The account header's "Auto
+                refresh" is the provider schedule, and the two used one name.
+                The toolbar's "Collect now" is gone for the same reason — the
+                header's Refresh all collects events with everything else. */}
             <Select
               value={refreshId}
               onChange={setRefreshId}
               width="auto"
               size="sm"
               options={REFRESH_INTERVALS.map((r) => ({
-                id: r.id, label: r.id === '0' ? 'Auto-refresh: off' : `Every ${r.label}`,
+                id: r.id, label: r.id === '0' ? 'Live view: off' : `Live view: every ${r.label}`,
               }))}
             />
-            {canCollect && (
-              <Button
-                size="sm"
-                variant="secondary"
-                icon="refresh"
-                loading={collect.isPending}
-                onClick={collectNow}
-                title={`Fetch audit events for the selected window (last ${lookbackHours}h) from the provider now, instead of waiting for the next scheduled collection. The provider's own retention still caps how far back this can reach.`}
-              >
-                Collect now
-              </Button>
-            )}
           </div>
         </div>
 
@@ -936,7 +929,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
 
         {/* ── Time range ──────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-subtle">
+          <span className="text-micro font-bold uppercase tracking-wider text-subtle">
             Time range
           </span>
           {TIME_RANGES.slice(0, 7).map((r) => (
@@ -944,7 +937,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
               key={r.id}
               type="button"
               onClick={() => { setRange(r.id); setUseCustom(false); setPage(1); }}
-              className={`rounded-control border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+              className={`rounded-control border px-2.5 py-1 text-meta font-semibold transition-colors ${
                 !useCustom && range === r.id
                   ? 'border-accent bg-accent-soft text-accent-text'
                   : 'border-border bg-surface text-muted hover:text-fg'
@@ -956,7 +949,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           <button
             type="button"
             onClick={() => setUseCustom((v) => !v)}
-            className={`rounded-control border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+            className={`rounded-control border px-2.5 py-1 text-meta font-semibold transition-colors ${
               useCustom
                 ? 'border-accent bg-accent-soft text-accent-text'
                 : 'border-border bg-surface text-muted hover:text-fg'
@@ -966,14 +959,14 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           </button>
           {/* Timestamps are stored in UTC and converted once for display. Said
               out loud so nobody has to infer which zone they are reading. */}
-          <span className="ml-auto text-[10.5px] text-subtle" title={`Stored in UTC, shown in ${localZone()}.`}>
+          <span className="ml-auto text-meta text-subtle" title={`Stored in UTC, shown in ${localZone()}.`}>
             Times shown in {localZone()} ({zone}) · stored in UTC
           </span>
         </div>
 
         {useCustom && (
           <div className="flex flex-wrap items-end gap-3 rounded-card border border-border bg-surface p-3">
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Start ({zone})</span>
               <input
                 type="datetime-local"
@@ -982,7 +975,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">End ({zone})</span>
               <input
                 type="datetime-local"
@@ -991,7 +984,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
               />
             </label>
-            <p className="max-w-md text-[10.5px] leading-relaxed text-subtle">
+            <p className="max-w-md text-meta leading-relaxed text-subtle">
               Entered in your local timezone and converted to UTC for the query. Leaving
               the end blank means &ldquo;until now&rdquo;.
             </p>
@@ -1008,7 +1001,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
         {cardFilterCount > 0 && (
           <div className="flex flex-wrap items-center gap-2 rounded-control border border-accent bg-accent-soft px-3 py-1.5">
             <Filter size={12} className="shrink-0 text-accent-text" />
-            <span className="text-[11px] text-fg">
+            <span className="text-meta text-fg">
               One card is filtering the table below. The counts themselves
               cover the whole window and do not change as you switch between
               them.
@@ -1016,7 +1009,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
             <button
               type="button"
               onClick={clearCardFilters}
-              className="ml-auto text-[11px] font-semibold text-accent-text hover:underline"
+              className="ml-auto text-meta font-semibold text-accent-text hover:underline"
             >
               Clear it
             </button>
@@ -1084,7 +1077,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 type="button"
                 disabled={empty && filters.category !== chip.id}
                 onClick={() => setFilter('category')(filters.category === chip.id ? '' : chip.id)}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-meta font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
                   filters.category === chip.id
                     ? 'border-accent bg-accent-soft text-accent-text'
                     : 'border-border bg-surface text-muted hover:text-fg'
@@ -1092,7 +1085,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
               >
                 {chip.label}
                 {count > 0 && (
-                  <span className="text-[10px] tabular-nums text-subtle">{formatCount(count)}</span>
+                  <span className="text-micro tabular-nums text-subtle">{formatCount(count)}</span>
                 )}
               </button>
             );
@@ -1132,7 +1125,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
-            className={`inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-meta font-semibold transition-colors ${
               showAdvanced || activeFilterCount > 4
                 ? 'border-accent bg-accent-soft text-accent-text'
                 : 'border-border bg-surface text-muted hover:text-fg'
@@ -1144,7 +1137,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
             <button
               type="button"
               onClick={clearFilters}
-              className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent-text hover:text-accent-hover"
+              className="inline-flex items-center gap-1 text-meta font-semibold text-accent-text hover:text-accent-hover"
             >
               <X size={12} /> Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
             </button>
@@ -1153,11 +1146,11 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
 
         {showAdvanced && (
           <div className="grid gap-3 rounded-card border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Action</span>
               <Select value={filters.action} onChange={setFilter('action')} options={ACTION_OPTIONS} size="sm" />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Resource type</span>
               <Select
                 value={filters.resourceType} onChange={setFilter('resourceType')} size="sm"
@@ -1167,7 +1160,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 ]}
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Region / location</span>
               <Select
                 value={filters.region} onChange={setFilter('region')} size="sm"
@@ -1177,7 +1170,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 ]}
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Actor</span>
               <Select
                 value={filters.actor} onChange={setFilter('actor')} size="sm"
@@ -1187,7 +1180,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 ]}
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Event name</span>
               <Select
                 value={filters.eventName} onChange={setFilter('eventName')} size="sm"
@@ -1197,7 +1190,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 ]}
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Access method</span>
               <Select
                 value={filters.accessMethod} onChange={setFilter('accessMethod')} size="sm"
@@ -1207,7 +1200,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 ]}
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Account / subscription</span>
               <Select
                 value={filters.accountRef} onChange={setFilter('accountRef')} size="sm"
@@ -1218,7 +1211,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 ]}
               />
             </label>
-            <label className="text-[11px] font-semibold text-muted">
+            <label className="text-meta font-semibold text-muted">
               <span className="mb-1 block">Source IP</span>
               <Input
                 value={filters.sourceIp || ''}
@@ -1227,7 +1220,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 placeholder="e.g. 10.20.30.40"
               />
             </label>
-            <label className="col-span-full flex items-center gap-2 text-[11.5px] text-muted">
+            <label className="col-span-full flex items-center gap-2 text-meta text-muted">
               <input
                 type="checkbox"
                 checked={filters.excludeReadOnly}
@@ -1235,13 +1228,13 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                 className="h-3.5 w-3.5 rounded-xs border-strong"
               />
               Hide read-only operations
-              <span className="text-[10.5px] text-subtle">
+              <span className="text-meta text-subtle">
                 (reads are most of an audit trail&apos;s volume and rarely what an
                 investigation is looking for; events whose provider did not state a
                 read-only flag are kept)
               </span>
             </label>
-            <p className="col-span-full text-[10.5px] leading-relaxed text-subtle">
+            <p className="col-span-full text-meta leading-relaxed text-subtle">
               Searchable fields:{' '}
               {(facets?.query_capabilities?.searchable_fields || []).join(', ') || '—'}.
               {' '}The raw provider payload is deliberately not searched — scanning every
@@ -1255,7 +1248,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
           <button
             type="button"
             onClick={() => setShowQueries((v) => !v)}
-            className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted hover:text-fg"
+            className="inline-flex items-center gap-1.5 text-meta font-semibold text-muted hover:text-fg"
           >
             <Star size={12} /> Saved queries
             {showQueries ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -1276,7 +1269,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                   key={v.id}
                   type="button"
                   onClick={() => setView(v.id)}
-                  className={`rounded-control px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                  className={`rounded-control px-2.5 py-1 text-meta font-semibold transition-colors ${
                     view === v.id ? 'bg-accent-soft text-accent-text' : 'text-muted hover:text-fg'
                   }`}
                 >
@@ -1393,12 +1386,17 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                       : 'Every event source is collecting normally, so nothing was recorded in the selected window. Control-plane audit events only cover changes made through the cloud API — a change made inside a VM leaves no event here.'
                 }
                 action={
+                  // Kept, and only here: loading OLDER history for the chosen
+                  // window is something a refresh does not do — it collects
+                  // forward from the last checkpoint. Named for that, so it is
+                  // not mistaken for a second refresh button.
                   canCollect ? (
-                    <Button size="sm" variant="secondary" icon="refresh"
+                    <Button size="sm" variant="secondary" icon="history"
                       loading={collect.isPending}
                       onClick={collectNow}
+                      title={`Fetch audit events for the selected window (last ${lookbackHours}h) from the provider. The provider's own retention still caps how far back this can reach.`}
                     >
-                      Collect the last {lookbackHours}h
+                      Load events for the last {lookbackHours}h
                     </Button>
                   ) : undefined
                 }
@@ -1436,7 +1434,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                         type="button"
                         disabled={count === 0 && filters.minRisk !== level}
                         onClick={() => setFilter('minRisk')(filters.minRisk === level ? '' : level)}
-                        className={`flex w-full items-center justify-between gap-2 rounded-control px-2 py-1 text-[11.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                        className={`flex w-full items-center justify-between gap-2 rounded-control px-2 py-1 text-meta transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                           filters.minRisk === level
                             ? 'bg-accent-soft font-semibold text-accent-text'
                             : 'text-muted hover:bg-sunken'
@@ -1475,10 +1473,10 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                         >
                           <ActorIcon size={12} className="shrink-0 text-subtle" />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-[11.5px] font-medium text-fg">
+                            <span className="block truncate text-meta font-medium text-fg">
                               {a.actor_name}
                             </span>
-                            <span className="block truncate text-[10px] text-subtle">
+                            <span className="block truncate text-micro text-subtle">
                               {a.actor_type}
                               {a.high_risk > 0 && ` · ${a.high_risk} high risk`}
                               {a.failed > 0 && ` · ${a.failed} failed`}
@@ -1508,10 +1506,10 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                         className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left transition-colors hover:bg-sunken"
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[11.5px] font-medium text-fg" title={r.resource_id}>
+                          <span className="block truncate text-meta font-medium text-fg" title={r.resource_id}>
                             {r.resource_name || r.resource_id}
                           </span>
-                          <span className="block truncate text-[10px] text-subtle">
+                          <span className="block truncate text-micro text-subtle">
                             {r.resource_type} · {relativeTime(r.last_seen)}
                           </span>
                         </span>
@@ -1535,7 +1533,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
                         onClick={() => setFilter('provider')(
                           filters.provider === provider ? '' : provider,
                         )}
-                        className={`flex w-full items-center justify-between gap-2 rounded-control px-2 py-1 text-[11.5px] transition-colors ${
+                        className={`flex w-full items-center justify-between gap-2 rounded-control px-2 py-1 text-meta transition-colors ${
                           filters.provider === provider
                             ? 'bg-accent-soft font-semibold text-accent-text'
                             : 'text-muted hover:bg-sunken'
@@ -1558,7 +1556,7 @@ export const EventLogPage = ({ embedded = false, accountId }) => {
 
             {/* Says out loud what this feed does and does not cover, so an
                 empty page is never mistaken for a quiet cloud. */}
-            <p className="flex items-start gap-1.5 px-1 text-[10.5px] leading-relaxed text-subtle">
+            <p className="flex items-start gap-1.5 px-1 text-meta leading-relaxed text-subtle">
               <Eye size={12} className="mt-0.5 shrink-0" />
               This is control-plane activity: calls made to the cloud provider&apos;s
               management API, as the provider recorded them. Changes made inside a
@@ -1607,7 +1605,7 @@ const SavedQueriesPanel = ({
   return (
     <div className="space-y-3 rounded-card border border-border bg-surface p-3">
       {items.length === 0 ? (
-        <p className="text-[11.5px] text-muted">
+        <p className="text-meta text-muted">
           No saved queries yet. Set up a filter combination you use often and save it here.
         </p>
       ) : (
@@ -1618,7 +1616,7 @@ const SavedQueriesPanel = ({
                 type="button"
                 onClick={() => onRun(q)}
                 title={q.description || 'Run this saved query'}
-                className="py-1 text-[11px] font-semibold text-fg hover:text-accent-text"
+                className="py-1 text-meta font-semibold text-fg hover:text-accent-text"
               >
                 {q.name}
               </button>
@@ -1665,12 +1663,12 @@ const SavedQueriesPanel = ({
             Save current filters
           </Button>
           {activeCount === 0 && (
-            <span className="text-[10.5px] text-subtle">
+            <span className="text-meta text-subtle">
               Set at least one filter before saving.
             </span>
           )}
           {error && (
-            <span className="text-[10.5px] text-danger-fg">
+            <span className="text-meta text-danger-fg">
               {error?.response?.data?.detail || 'Could not save that query.'}
             </span>
           )}

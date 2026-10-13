@@ -10,8 +10,9 @@
  * provider-backed queries along with it.
  */
 import {
-  componentProgress, isActive, isTerminal, mentionsAccount, outcomeMessage,
-  REFRESHED_ROOTS, shouldInvalidate,
+  busyRefusal, busyView, componentProgress, isActive, isBusy, isTerminal,
+  lastRefreshedView, mentionsAccount, outcomeMessage, REFRESH_ALL_LABEL,
+  REFRESHED_ROOTS, shouldInvalidate, syncDecision,
 } from '../refreshModel.js';
 
 let pass = 0;
@@ -195,6 +196,102 @@ eq('no refresh, no message', outcomeMessage(null), null);
   check(`${status} never reads as a plain success`,
     !/^Account refresh completed\.$/.test(msg), msg);
 });
+
+/* ── One name ────────────────────────────────────────────────────────────── */
+eq('the one refresh control is called Refresh all', REFRESH_ALL_LABEL, 'Refresh all');
+
+/* ── Every tab re-reads when the account's data changes ──────────────────── */
+// The old header invalidated only when the SAME mounted instance watched its
+// own refresh finish: start one, switch tabs, and nothing re-read.
+const V1 = '2026-09-29T09:04:52+00:00';
+const V2 = '2026-09-29T09:06:33+00:00';
+eq('first sighting records the version without re-reading',
+  syncDecision(undefined, V1), { invalidate: false, remember: true });
+eq('a newer version re-reads every tab', syncDecision(V1, V2),
+  { invalidate: true, remember: true });
+eq('the same version does nothing', syncDecision(V2, V2),
+  { invalidate: false, remember: false });
+eq('an older version (a lagging poll) does nothing', syncDecision(V2, V1),
+  { invalidate: false, remember: false });
+eq('no version yet does nothing', syncDecision(V1, null),
+  { invalidate: false, remember: false });
+eq('an unparseable version does nothing', syncDecision(V1, 'soon'),
+  { invalidate: false, remember: false });
+check('versions compare as instants, not strings: +05:30 vs Z',
+  syncDecision('2026-09-29T09:10:00Z', '2026-09-29T14:45:00+05:30').invalidate);
+
+/* ── Busy: a refresh OR a plain scan ─────────────────────────────────────── */
+check('a running refresh is busy', isBusy({ is_running: true, is_busy: true }));
+check('a plain scan is busy too', isBusy({ is_running: false, is_busy: true }));
+check('an older payload without is_busy falls back to is_running',
+  isBusy({ is_running: true }));
+check('nothing running is not busy', !isBusy({ is_running: false, is_busy: false }));
+check('no payload is not busy', !isBusy(null));
+
+const running = busyView({
+  current: { status: 'RUNNING', components: COMPONENTS },
+}, null);
+eq('a running refresh shows stages, not a percentage', running.text, '3 of 6 · Cost data');
+eq('...and its components', running.kind, 'refresh');
+eq('...and how many resources its sweep has committed so far',
+  busyView({ current: { status: 'RUNNING', components: COMPONENTS },
+    current_scan: { job_id: 'j', resources_found: 223 } }, null).text,
+  '3 of 6 · Cost data · 223 found so far');
+const scanning = busyView({ current: null, active_scan: { job_id: 'j', resources_found: 1234 } }, null);
+eq('a plain scan says it is scanning, with what it has found',
+  scanning.text, `Scanning · ${(1234).toLocaleString()} found so far`);
+eq('...and has no refresh components to show', scanning.components, null);
+eq('nothing running shows nothing', busyView({ current: null, active_scan: null }, null), null);
+const lagging = busyView({ current: { status: 'RUNNING', components: COMPONENTS } },
+  { status: 'SUCCEEDED', components: COMPONENTS });
+check('a watched record that already finished defers to the poll, not the other way',
+  lagging && lagging.kind === 'refresh');
+
+/* ── Last refreshed ──────────────────────────────────────────────────────── */
+const partialLast = lastRefreshedView({ last_refreshed: {
+  at: V2, status: 'PARTIAL', scopes_read: 218, scopes_attempted: 272,
+  note: 'Resource discovery was incomplete.',
+} });
+check('a partial refresh says Partial', partialLast.partial);
+check('...and why, with the scope count', partialLast.detail.includes('218 of 272 scopes read')
+  && partialLast.detail.includes('Resource discovery was incomplete.'), partialLast.detail);
+eq('it carries the time for the header', partialLast.at, V2);
+const cleanLast = lastRefreshedView({ last_refreshed: { at: V2, status: 'SUCCEEDED' } });
+check('a clean refresh is not Partial and carries no reason',
+  !cleanLast.partial && cleanLast.detail === null);
+eq('never refreshed has no time', lastRefreshedView({ last_refreshed: null }).at, null);
+
+/* ── A refused start is the answer, not an error ─────────────────────────── */
+const err409 = (detail) => ({ response: { status: 409, data: { detail } } });
+eq('409 with a refresh latches onto it',
+  busyRefusal(err409({ refresh: { refresh_id: 'r1' } })), { kind: 'refresh', refreshId: 'r1' });
+eq('409 with a plain scan says a scan is running',
+  busyRefusal(err409({ scan: { job_id: 'j1' } })), { kind: 'scan', jobId: 'j1' });
+eq('a 500 is a real error', busyRefusal({ response: { status: 500, data: { detail: 'x' } } }), null);
+eq('a network error is a real error', busyRefusal({ message: 'Network Error' }), null);
+
+/* ── An incomplete sweep ─────────────────────────────────────────────────── */
+const incomplete = {
+  ...COMPONENTS,
+  resources: { label: 'Resource discovery', status: 'SUCCEEDED', incomplete: true },
+  cost: { label: 'Cost data', status: 'SUCCEEDED' },
+  security: { label: 'Security assessment', status: 'SUCCEEDED' },
+  events: { label: 'Event collection', status: 'SUCCEEDED' },
+};
+eq('a SUCCEEDED-but-incomplete component is named', componentProgress(incomplete).incomplete,
+  ['Resource discovery']);
+eq('...and is not counted as failed', componentProgress(incomplete).failed, []);
+const incompleteMsg = outcomeMessage({ status: 'PARTIAL', components: incomplete });
+check('the outcome says it read only part of the account',
+  incompleteMsg.includes('Resource discovery read only part of the account'), incompleteMsg);
+check('...never that the refresh completed', !incompleteMsg.startsWith('Account refresh completed'));
+const bothMsg = outcomeMessage({
+  status: 'PARTIAL',
+  components: { ...incomplete, cost: { label: 'Cost data', status: 'FAILED' } },
+});
+check('a failure and an incomplete sweep are both named',
+  bothMsg.includes('Cost data could not be updated')
+  && bothMsg.includes('Resource discovery read only part of the account'), bothMsg);
 
 /* ── Report ──────────────────────────────────────────────────────────────── */
 console.log('\nAccount refresh — model tests\n');

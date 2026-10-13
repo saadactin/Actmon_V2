@@ -11,6 +11,7 @@
  * engine, freshness from discovery - and items are ordered by an explicit
  * severity rank, then by count. There is no score and no weighting.
  */
+import { REFRESH_ALL_LABEL } from './refreshModel';
 import { relativeTime } from './resourceModel';
 
 const RANK = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, INFO: 3 };
@@ -115,7 +116,9 @@ export function buildAttentionItems({
       count: null,
       message: 'The most recent discovery scan failed — inventory may be out of date',
       action: 'discovery',
-      actionLabel: 'Run Discovery',
+      // What the click does: it opens the diagnostic, which says why. It was
+      // labelled "Run Discovery" while doing exactly that.
+      actionLabel: 'View diagnostic',
     });
   } else if (freshness?.severity === 'CRITICALLY_STALE' || freshness?.severity === 'STALE') {
     items.push({
@@ -126,7 +129,7 @@ export function buildAttentionItems({
         ? `Inventory was last confirmed ${relativeTime(freshness.observed_at)}`
         : 'This account has never completed a discovery sweep',
       action: 'discovery',
-      actionLabel: 'Run Discovery',
+      actionLabel: REFRESH_ALL_LABEL,
     });
   }
 

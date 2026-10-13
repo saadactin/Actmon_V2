@@ -3,13 +3,71 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+import re
+import threading
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.providers.aws.aws_auth import AWSAuth
 from app.providers.aws.iam_policy import summarize_policy_documents
 from app.providers.scan_pool import scan_pool, is_denial, is_transient
 
 logger = logging.getLogger("cloud_svc.aws.scanner")
+
+# What AWS answers when an operation does not exist in a region at all — Bedrock
+# custom models in us-east-2 is "UnknownOperationException", in ap-south-2 a
+# "ValidationException: Unknown operation". Nothing can live there, so it is
+# neither a failure nor a gap in the inventory, and must not be counted as one.
+_NOT_OFFERED_CODES = {"UnknownOperationException", "InvalidAction", "UnsupportedOperation"}
+_DENIED_ACTION = re.compile(r"perform: ([a-z0-9-]+:[A-Za-z0-9*]+)")
+
+# The IAM actions each scanner calls, from the calls it makes. A denial is
+# reported with the whole set, so the permission can be fixed in one change
+# instead of one action per scan.
+SCANNER_ACTIONS: Dict[str, Tuple[str, ...]] = {
+    "EC2": ("ec2:DescribeInstances",),
+    "EBS": ("ec2:DescribeVolumes", "ec2:DescribeInstances"),
+    "RDS": ("rds:DescribeDBInstances",),
+    "DBCluster": ("rds:DescribeDBClusters",),
+    "ElastiCache": ("elasticache:DescribeReplicationGroups", "elasticache:DescribeCacheClusters"),
+    "Redshift": ("redshift:DescribeClusters",),
+    "Lambda": ("lambda:ListFunctions", "lambda:ListEventSourceMappings", "lambda:ListTags"),
+    "EKS": ("eks:ListClusters", "eks:DescribeCluster"),
+    "ELB": ("elasticloadbalancing:DescribeLoadBalancers",
+            "elasticloadbalancing:DescribeTargetGroups",
+            "elasticloadbalancing:DescribeTargetHealth"),
+    "DynamoDB": ("dynamodb:ListTables", "dynamodb:DescribeTable"),
+    "VPC": ("ec2:DescribeVpcs",),
+    "Subnet": ("ec2:DescribeSubnets",),
+    "SecurityGroup": ("ec2:DescribeSecurityGroups",),
+    "APIGateway": ("apigateway:GET",),
+    "Bedrock": ("bedrock:ListCustomModels", "bedrock:ListAgents", "bedrock:ListKnowledgeBases"),
+    "S3": ("s3:ListAllMyBuckets", "s3:GetBucketLocation", "s3:GetBucketPublicAccessBlock",
+           "s3:GetBucketVersioning", "s3:GetEncryptionConfiguration",
+           "s3:GetLifecycleConfiguration"),
+    "IAM": ("iam:ListRoles", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies",
+            "iam:GetRolePolicy", "iam:GetPolicy", "iam:GetPolicyVersion"),
+}
+
+
+def _aws_error(exc: BaseException) -> Tuple[Optional[str], str]:
+    err = (getattr(exc, "response", None) or {}).get("Error") or {}
+    return err.get("Code"), str(err.get("Message") or exc)
+
+
+def is_not_offered(exc: BaseException) -> bool:
+    """The operation does not exist in this region (see _NOT_OFFERED_CODES)."""
+    code, message = _aws_error(exc)
+    if code in _NOT_OFFERED_CODES:
+        return True
+    return code == "ValidationException" and "unknown operation" in message.lower()
+
+
+def denied_action(exc: BaseException) -> Optional[str]:
+    """The IAM action a denial names ("... not authorized to perform:
+    redshift:DescribeClusters ..."), or None."""
+    m = _DENIED_ACTION.search(str(exc))
+    return m.group(1) if m else None
 
 
 class AWSScanner:
@@ -28,6 +86,117 @@ class AWSScanner:
         # Scopes that failed to enumerate this run. Non-empty means the sweep
         # is INCOMPLETE and must not be pruned against (see BaseCloudProvider).
         self.scan_failures: list[str] = []
+        # What happened to every (service, region) scope, for coverage: how
+        # much of the account was actually read, and why the rest was not.
+        self.scope_summary: Optional[Dict[str, Any]] = None
+        self._outcomes: Dict[Tuple[str, str], Tuple[str, Optional[str], bool]] = {}
+        self._denied_actions: Dict[str, set] = {}
+        self._denied_services: set = set()
+        self._denied_ops: set = set()
+        self._lock = threading.Lock()
+
+    # ── Scope outcomes ────────────────────────────────────────────────────────
+    _RANK = {"read": 0, "not_offered": 1, "failed": 2, "denied": 3}
+
+    def _mark(self, label: str, region: str, outcome: str,
+              exc: Optional[BaseException] = None, *, skip_service: bool = True) -> None:
+        """Record a scope's outcome. The worst wins: a scope read in part and
+        denied in part (Bedrock's three calls) counts as denied, not read.
+
+        `skip_service` — a denial of the scanner's one call means the service
+        is denied account-wide, so its other regions are skipped. A denial of
+        ONE of several calls (Bedrock's agents) says nothing about the others,
+        which is why _subcall passes False and skips per operation instead."""
+        with self._lock:
+            prev = self._outcomes.get((label, region))
+            if prev is None or self._RANK[outcome] > self._RANK[prev[0]]:
+                self._outcomes[(label, region)] = (
+                    outcome, str(exc)[:160] if exc is not None else None,
+                    bool(exc is not None and is_transient(exc)))
+            if outcome == "denied":
+                if skip_service:
+                    self._denied_services.add(label)
+                action = denied_action(exc) if exc is not None else None
+                if action:
+                    self._denied_actions.setdefault(label, set()).add(action)
+
+    def _subcall(self, label: str, region: str, fn, op: str):
+        """One of several calls inside a scanner (Bedrock's models, agents and
+        knowledge bases). Retries a dropped connection; an operation that does
+        not exist in the region is simply absent; a denial or any other error
+        is RECORDED rather than swallowed — it used to be logged at debug and
+        returned as "no resources", so a denied Bedrock read looked like an
+        account with no Bedrock at all.
+
+        A denied operation is denied account-wide, so it is not called again in
+        the other regions — but the scanner's OTHER operations still are, and
+        what they return is kept."""
+        with self._lock:
+            already = (label, op) in self._denied_ops
+        if already:
+            self._mark(label, region, "denied", skip_service=False)
+            return None
+        for attempt in range(self._TRANSIENT_ATTEMPTS):
+            try:
+                return fn()
+            except Exception as exc:  # noqa: BLE001
+                if is_not_offered(exc):
+                    return None
+                if is_transient(exc) and attempt < self._TRANSIENT_ATTEMPTS - 1:
+                    time.sleep(2 * (attempt + 1))
+                    continue
+                refused = is_denial(exc)
+                self._mark(label, region, "denied" if refused else "failed", exc,
+                           skip_service=False)
+                with self._lock:
+                    if refused:
+                        self._denied_ops.add((label, op))
+                    self.scan_failures.append(f"{label} [{region}]: {str(exc)[:160]}")
+                return None
+        return None
+
+    def _build_scope_summary(self, regions: List[str], labels: List[str]) -> Dict[str, Any]:
+        """How much of the account this sweep read, and exactly why the rest
+        was not — per service, with the IAM actions a denial needs."""
+        total = len(regions) * len(labels) + 2          # + S3 and IAM (global)
+        read = 0
+        not_offered: Dict[str, List[str]] = {}
+        denied: Dict[str, Dict[str, Any]] = {}
+        failed: List[Dict[str, Any]] = []
+        for (label, region), (outcome, detail, transient) in sorted(self._outcomes.items()):
+            if outcome == "read":
+                read += 1
+            elif outcome == "not_offered":
+                not_offered.setdefault(label, []).append(region)
+            elif outcome == "denied":
+                denied.setdefault(label, {"regions": []})["regions"].append(region)
+            else:
+                failed.append({"scope": f"{label} [{region}]", "error": detail,
+                               "transient": transient})
+        for label, entry in denied.items():
+            observed = self._denied_actions.get(label, set())
+            entry["observed_actions"] = sorted(observed)
+            entry["actions"] = sorted(set(SCANNER_ACTIONS.get(label, ())) | observed)
+        applicable = total - sum(len(v) for v in not_offered.values())
+        return {
+            "provider": "AWS",
+            "regions": len(regions),
+            "services": len(labels) + 2,
+            "attempted": applicable,
+            "read": read,
+            "unread": max(0, applicable - read),
+            "not_offered": not_offered,
+            "denied": denied,
+            "failed": failed[:50],
+            # The list is capped for size; these count all of them, so a bad
+            # sweep is not reported as "50 did not answer".
+            "failed_count": len(failed),
+            "failed_transient": sum(1 for f in failed if f["transient"]),
+            "missing_permissions": sorted({a for e in denied.values() for a in e["actions"]}),
+            # One region scanned because the region list itself failed: the
+            # ratio above would describe one region, not the account.
+            "regions_unknown": bool(getattr(self, "_region_discovery_error", None)),
+        }
 
     # ── EC2 Instances ─────────────────────────────────────────────────────────
     async def _scan_ec2(self, region: str) -> List[Dict[str, Any]]:
@@ -86,9 +255,81 @@ class AWSScanner:
                                 "raw_data": inst,
                             }
                         )
+            self._enrich_with_images(ec2, region, results)
             return results
 
         return await loop.run_in_executor(scan_pool(), _fetch)
+
+    # ── AMI metadata ──────────────────────────────────────────────────────────
+    def _enrich_with_images(self, ec2, region: str, results: List[Dict[str, Any]]) -> None:
+        """Resolve each instance's AMI to the OS it actually runs.
+
+        `ImageId` alone is an opaque identifier. What a vulnerability check
+        needs is the platform and version behind it — "Windows Server 2019
+        Datacenter", "Amazon Linux 2 5.10" — and that costs one batched call
+        per region rather than one per instance.
+
+        Queried by FILTER, not by `ImageIds=`. `describe_images(ImageIds=[...])`
+        raises `InvalidAMIID.NotFound` for the whole batch if a single AMI has
+        been deregistered since the instance launched, which is common on
+        long-lived hosts and would have lost the metadata for every other
+        instance in the region. A filter silently omits what it cannot find,
+        and the instances it omitted are then marked `image_not_found` rather
+        than left looking uncollected.
+
+        Three outcomes, kept distinct because a vulnerability engine must not
+        read them as the same thing:
+          collected      - the AMI was described; its fields are below.
+          image_not_found - the call succeeded but this AMI is gone or not
+                            visible to us. Nothing can be said about its OS.
+          not_collected  - the call was denied or failed. Also nothing can be
+                           said, but for a reason the operator can fix.
+        """
+        image_ids = sorted({
+            r["config"].get("image_id") for r in results
+            if r["config"].get("image_id")
+        })
+        if not image_ids:
+            return
+
+        images: Dict[str, Dict[str, Any]] = {}
+        failed = False
+        # Chunked: a filter value list is not unbounded, and an account with
+        # hundreds of distinct AMIs would otherwise build one oversized request.
+        for i in range(0, len(image_ids), 180):
+            chunk = image_ids[i:i + 180]
+            page = self._subcall(
+                "EC2", region,
+                lambda c=chunk: ec2.describe_images(
+                    Filters=[{"Name": "image-id", "Values": c}]),
+                "DescribeImages",
+            )
+            if page is None:
+                failed = True
+                continue
+            for img in page.get("Images", []):
+                images[img["ImageId"]] = img
+
+        for r in results:
+            cfg = r["config"]
+            aid = cfg.get("image_id")
+            if not aid:
+                continue
+            img = images.get(aid)
+            if img is None:
+                cfg["image_metadata_status"] = "not_collected" if failed else "image_not_found"
+                continue
+            cfg["image_metadata_status"] = "collected"
+            cfg["image_name"] = img.get("Name")
+            cfg["image_description"] = img.get("Description")
+            # `PlatformDetails` is the licensing-grade string ("Red Hat
+            # Enterprise Linux", "Windows"); `Platform` on the instance is only
+            # ever "windows" or absent, so it cannot distinguish two Linuxes.
+            cfg["image_platform_details"] = img.get("PlatformDetails")
+            cfg["image_created_at"] = img.get("CreationDate")
+            cfg["image_owner_id"] = img.get("OwnerId")
+            cfg["image_architecture"] = img.get("Architecture")
+            r["metadata"]["image_deprecation_time"] = img.get("DeprecationTime")
 
     # ── EBS Volumes ───────────────────────────────────────────────────────────
     async def _scan_ebs(self, region: str) -> List[Dict[str, Any]]:
@@ -1124,90 +1365,69 @@ class AWSScanner:
         loop = asyncio.get_event_loop()
 
         def _fetch():
+            # Three calls, each through _subcall: a call that does not exist in
+            # the region (custom models outside a few regions) is simply
+            # absent, and a denial is RECORDED. They used to be caught and
+            # logged at debug, so a denied Bedrock read returned "no resources"
+            # and the sweep looked complete.
             results = []
-            # Bedrock Custom Models
-            try:
-                bd = self.auth.get_client("bedrock", region)
-                models = bd.list_custom_models().get("modelSummaries", [])
-                for m in models:
-                    results.append(
-                        {
-                            "provider_resource_id": m["modelArn"],
-                            "resource_type": "BedrockModel",
-                            "resource_name": m["modelName"],
-                            "region_or_zone": region,
-                            "status": m.get("status"),
-                            "ip_address": None,
-                            "config": {
-                                "base_model_arn": m.get("baseModelArn"),
-                                "hyperparameters": m.get("hyperParameters"),
-                            },
-                            "metadata": {
-                                "creation_time": str(m.get("creationTime")),
-                            },
-                            "cost_monthly": None,
-                            "tags": {},
-                            "raw_data": m,
-                        }
-                    )
-            except Exception as e:
-                logger.debug("Bedrock Model scan failed in %s: %s", region, e)
+            models = self._subcall("Bedrock", region, lambda: self.auth.get_client(
+                "bedrock", region).list_custom_models().get("modelSummaries", []), "ListCustomModels") or []
+            for m in models:
+                results.append({
+                    "provider_resource_id": m["modelArn"],
+                    "resource_type": "BedrockModel",
+                    "resource_name": m["modelName"],
+                    "region_or_zone": region,
+                    "status": m.get("status"),
+                    "ip_address": None,
+                    "config": {
+                        "base_model_arn": m.get("baseModelArn"),
+                        "hyperparameters": m.get("hyperParameters"),
+                    },
+                    "metadata": {"creation_time": str(m.get("creationTime"))},
+                    "cost_monthly": None,
+                    "tags": {},
+                    "raw_data": m,
+                })
 
-            # Bedrock Agents
-            try:
-                bda = self.auth.get_client("bedrock-agent", region)
-                agents = bda.list_agents().get("agentSummaries", [])
-                for a in agents:
-                    results.append(
-                        {
-                            "provider_resource_id": a["agentId"],
-                            "resource_type": "BedrockAgent",
-                            "resource_name": a["agentName"],
-                            "region_or_zone": region,
-                            "status": a.get("agentStatus"),
-                            "ip_address": None,
-                            "config": {
-                                "description": a.get("description"),
-                                "latest_version": a.get("latestAgentVersion"),
-                            },
-                            "metadata": {
-                                "updated_at": str(a.get("updatedAt")),
-                            },
-                            "cost_monthly": None,
-                            "tags": {},
-                            "raw_data": a,
-                        }
-                    )
-            except Exception as e:
-                logger.debug("Bedrock Agent scan failed in %s: %s", region, e)
+            agents = self._subcall("Bedrock", region, lambda: self.auth.get_client(
+                "bedrock-agent", region).list_agents().get("agentSummaries", []), "ListAgents") or []
+            for a in agents:
+                results.append({
+                    "provider_resource_id": a["agentId"],
+                    "resource_type": "BedrockAgent",
+                    "resource_name": a["agentName"],
+                    "region_or_zone": region,
+                    "status": a.get("agentStatus"),
+                    "ip_address": None,
+                    "config": {
+                        "description": a.get("description"),
+                        "latest_version": a.get("latestAgentVersion"),
+                    },
+                    "metadata": {"updated_at": str(a.get("updatedAt"))},
+                    "cost_monthly": None,
+                    "tags": {},
+                    "raw_data": a,
+                })
 
-            # Bedrock Knowledge Bases
-            try:
-                bda = self.auth.get_client("bedrock-agent", region)
-                kbs = bda.list_knowledge_bases().get("knowledgeBaseSummaries", [])
-                for kb in kbs:
-                    results.append(
-                        {
-                            "provider_resource_id": kb["knowledgeBaseId"],
-                            "resource_type": "BedrockKnowledgeBase",
-                            "resource_name": kb["name"],
-                            "region_or_zone": region,
-                            "status": kb.get("status"),
-                            "ip_address": None,
-                            "config": {
-                                "description": kb.get("description"),
-                            },
-                            "metadata": {
-                                "updated_at": str(kb.get("updatedAt")),
-                            },
-                            "cost_monthly": None,
-                            "tags": {},
-                            "raw_data": kb,
-                        }
-                    )
-            except Exception as e:
-                logger.debug("Bedrock Knowledge Base scan failed in %s: %s", region, e)
-
+            kbs = self._subcall("Bedrock", region, lambda: self.auth.get_client(
+                "bedrock-agent", region).list_knowledge_bases().get(
+                    "knowledgeBaseSummaries", []), "ListKnowledgeBases") or []
+            for kb in kbs:
+                results.append({
+                    "provider_resource_id": kb["knowledgeBaseId"],
+                    "resource_type": "BedrockKnowledgeBase",
+                    "resource_name": kb["name"],
+                    "region_or_zone": region,
+                    "status": kb.get("status"),
+                    "ip_address": None,
+                    "config": {"description": kb.get("description")},
+                    "metadata": {"updated_at": str(kb.get("updatedAt"))},
+                    "cost_monthly": None,
+                    "tags": {},
+                    "raw_data": kb,
+                })
             return results
 
         return await loop.run_in_executor(scan_pool(), _fetch)
@@ -1221,16 +1441,47 @@ class AWSScanner:
             resp = ec2.describe_regions(Filters=[{"Name": "opt-in-status", "Values": ["opt-in-not-required", "opted-in"]}])
             return [r["RegionName"] for r in resp.get("Regions", [])]
 
+        self._region_discovery_error = None
         try:
             return await loop.run_in_executor(scan_pool(), _fetch)
-        except Exception:
+        except Exception as exc:
+            # One region is a subset of the account. Remembered so scan_all
+            # records the sweep as incomplete rather than letting the prune
+            # delete everything in the regions that were never listed.
+            self._region_discovery_error = str(exc)[:160]
             return [self.auth.region]
+
+    # The regional scanners, in the order they are dispatched.
+    def _regional_scanners(self):
+        return [
+            (self._scan_ec2, "EC2"),
+            (self._scan_ebs, "EBS"),
+            (self._scan_rds, "RDS"),
+            (self._scan_db_clusters, "DBCluster"),
+            (self._scan_elasticache, "ElastiCache"),
+            (self._scan_redshift, "Redshift"),
+            (self._scan_lambda, "Lambda"),
+            (self._scan_eks, "EKS"),
+            (self._scan_elb, "ELB"),
+            (self._scan_dynamodb, "DynamoDB"),
+            (self._scan_vpc, "VPC"),
+            (self._scan_subnet, "Subnet"),
+            (self._scan_security_group, "SecurityGroup"),
+            (self._scan_apigateway, "APIGateway"),
+            (self._scan_bedrock, "Bedrock"),
+        ]
 
     async def scan_all(self, on_batch=None) -> List[Dict[str, Any]]:
         """Scan all resource types across all enabled AWS regions in parallel.
 
         If on_batch is provided, it is awaited with each non-empty batch as it is
         discovered, for incremental persistence / live progress.
+
+        Every (service, region) scope ends with a recorded outcome - read,
+        denied, failed, or not offered in that region - and `scope_summary`
+        says how much of the account was actually read and why the rest was
+        not. Coverage is computed from it, rather than dropping to 0% the
+        moment one scope of 272 fails.
         """
         regions = await self._get_regions()
         logger.info("AWS scanning %d regions concurrently: %s", len(regions), regions)
@@ -1238,6 +1489,18 @@ class AWSScanner:
         all_resources: List[Dict[str, Any]] = []
         permission_errors = []
         self.scan_failures = []
+        self._outcomes = {}
+        self._denied_actions = {}
+        # A denied IAM action is denied account-wide, not per-region, so once a
+        # service comes back AccessDenied there is no point paying for the same
+        # call in the other 17 regions. Bedrock and API Gateway alone were
+        # burning dozens of slow round trips to re-learn the same denial.
+        self._denied_services = set()
+        self._denied_ops = set()
+        if getattr(self, "_region_discovery_error", None):
+            self.scan_failures.append(
+                f"Region discovery failed, only {self.auth.region} was scanned: "
+                f"{self._region_discovery_error}")
 
         async def _emit(batch):
             if batch and on_batch:
@@ -1246,66 +1509,63 @@ class AWSScanner:
                 except Exception as cb_exc:
                     logger.warning("AWS on_batch callback failed: %s", cb_exc)
 
-        # S3 is global
-        try:
-            s3_resources = await self._scan_s3()
-            all_resources.extend(s3_resources)
-            logger.info("AWS S3: found %d buckets", len(s3_resources))
-            await _emit(s3_resources)
-        except Exception as exc:
-            logger.warning("AWS S3 scan failed: %s", exc)
-            if "AccessDenied" in str(exc) or "UnauthorizedOperation" in str(exc):
-                permission_errors.append(str(exc))
+        # S3 and IAM are global.
+        for label, scan in (("S3", self._scan_s3), ("IAM", self._scan_iam_role)):
+            try:
+                found = await scan()
+                all_resources.extend(found)
+                self._mark(label, "global", "read")
+                logger.info("AWS %s: found %d", label, len(found))
+                await _emit(found)
+            except Exception as exc:
+                logger.warning("AWS %s scan failed: %s", label, exc)
+                # Recorded as a failed scope like every regional scanner's
+                # failure. Without it a dropped connection during list_buckets
+                # left the sweep looking complete, and the prune that follows a
+                # complete sweep deleted every S3 bucket (or IAM role) from the
+                # inventory - the partial-scan prune bug.
+                self.scan_failures.append(f"{label} [global]: {str(exc)[:160]}")
+                self._mark(label, "global", "denied" if is_denial(exc) else "failed", exc)
+                if is_denial(exc):
+                    permission_errors.append(str(exc))
 
-        # IAM Roles are global
-        try:
-            iam_resources = await self._scan_iam_role()
-            all_resources.extend(iam_resources)
-            logger.info("AWS IAM: found %d roles", len(iam_resources))
-            await _emit(iam_resources)
-        except Exception as exc:
-            logger.warning("AWS IAM scan failed: %s", exc)
-            if "AccessDenied" in str(exc) or "UnauthorizedOperation" in str(exc):
-                permission_errors.append(str(exc))
-
-        # Build list of async tasks for per-region scanning
-        tasks = []
-
-        # 18 regions x 11 services is ~200 blocking calls. Dispatching them all
+        # 18 regions x 15 services is ~270 blocking calls. Dispatching them all
         # at once just queues them in the thread pool while flooding DNS/TLS, and
         # each stalled call burns its full connect timeout plus retries. Bounding
         # the in-flight count keeps the pool saturated without the pile-up, and
         # lets results stream out steadily rather than in one late burst.
         sem = asyncio.Semaphore(self._MAX_CONCURRENT_SCANS)
 
-        # A denied IAM action is denied account-wide, not per-region, so once a
-        # service comes back AccessDenied there is no point paying for the same
-        # call in the other 17 regions. Bedrock and API Gateway alone were
-        # burning dozens of slow round trips to re-learn the same denial.
-        denied_services: set = set()
-
         async def run_scanner(scanner_fn, region: str, label: str):
-            if label in denied_services:
+            if label in self._denied_services:
+                # Not read: skipped because the service is denied account-wide.
+                self._mark(label, region, "denied")
                 return []
             async with sem:
-                if label in denied_services:  # denial may have landed while queued
+                if label in self._denied_services:  # denial may have landed while queued
+                    self._mark(label, region, "denied")
                     return []
                 last: Exception | None = None
                 for attempt in range(self._TRANSIENT_ATTEMPTS):
                     try:
                         results = await scanner_fn(region)
+                        self._mark(label, region, "read")
                         logger.info("AWS %s [%s]: found %d resources", label, region, len(results))
                         await _emit(results)
                         return results
                     except Exception as exc:
                         last = exc
+                        if is_not_offered(exc):
+                            # Nothing can exist here: not a failure, not a gap.
+                            self._mark(label, region, "not_offered")
+                            return []
                         if is_denial(exc):
                             break
                         if attempt == self._TRANSIENT_ATTEMPTS - 1 or not is_transient(exc):
                             break
                         backoff = 2 * (attempt + 1)
                         logger.info(
-                            "AWS %s [%s] hit a dropped connection (attempt %d/%d) — retrying "
+                            "AWS %s [%s] hit a dropped connection (attempt %d/%d) - retrying "
                             "in %ss so a blocked call is not mistaken for an empty result.",
                             label, region, attempt + 1, self._TRANSIENT_ATTEMPTS, backoff,
                         )
@@ -1317,41 +1577,27 @@ class AWSScanner:
                 self.scan_failures.append(f"{label} [{region}]: {msg[:160]}")
                 if is_denial(exc):
                     permission_errors.append(msg)
-                    denied_services.add(label)
+                    self._mark(label, region, "denied", exc)
                     logger.info(
-                        "AWS %s is not permitted for these credentials — skipping it "
+                        "AWS %s is not permitted for these credentials - skipping it "
                         "in the remaining regions.", label,
                     )
+                else:
+                    self._mark(label, region, "failed", exc)
                 return []
 
-        for region in regions:
-            for scanner_fn, label in [
-                (self._scan_ec2, "EC2"),
-                (self._scan_ebs, "EBS"),
-                (self._scan_rds, "RDS"),
-                (self._scan_db_clusters, "DBCluster"),
-                (self._scan_elasticache, "ElastiCache"),
-                (self._scan_redshift, "Redshift"),
-                (self._scan_lambda, "Lambda"),
-                (self._scan_eks, "EKS"),
-                (self._scan_elb, "ELB"),
-                (self._scan_dynamodb, "DynamoDB"),
-                (self._scan_vpc, "VPC"),
-                (self._scan_subnet, "Subnet"),
-                (self._scan_security_group, "SecurityGroup"),
-                (self._scan_apigateway, "APIGateway"),
-                (self._scan_bedrock, "Bedrock"),
-            ]:
-                tasks.append(run_scanner(scanner_fn, region, label))
-
-        # Execute all scans concurrently
+        scanners = self._regional_scanners()
+        tasks = [run_scanner(fn, region, label) for region in regions for fn, label in scanners]
         if tasks:
-            results_list = await asyncio.gather(*tasks)
-            for results in results_list:
+            for results in await asyncio.gather(*tasks):
                 all_resources.extend(results)
+
+        self.scope_summary = self._build_scope_summary(regions, [label for _, label in scanners])
+        logger.info("AWS sweep: %d of %d applicable scopes read (%d not offered in their region)",
+                    self.scope_summary["read"], self.scope_summary["attempted"],
+                    sum(len(v) for v in self.scope_summary["not_offered"].values()))
 
         if len(all_resources) == 0 and len(permission_errors) > 0:
             raise PermissionError("Missing required AWS IAM permissions (ReadOnlyAccess). AWS returned AccessDenied/UnauthorizedOperation during the scan.")
 
         return all_resources
-

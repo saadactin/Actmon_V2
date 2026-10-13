@@ -111,14 +111,14 @@ export default function TopologyList({
             <span className="min-w-0">
               <span className="block truncate font-medium text-fg">{node.name || '—'}</span>
               {node.provider_id && (
-                <span className="block truncate font-mono text-[10.5px] text-subtle">{node.provider_id}</span>
+                <span className="block truncate font-mono text-meta text-subtle">{node.provider_id}</span>
               )}
             </span>
           </span>
         ),
         type: <span className="text-muted">{meta.label}</span>,
         provider: (
-          <span className={`rounded border px-1.5 py-px text-[10px] font-bold ${provider.badge}`}>
+          <span className="rounded border px-1.5 py-px text-micro font-bold" style={provider.badgeStyle}>
             {provider.label}
           </span>
         ),
@@ -192,28 +192,28 @@ export default function TopologyList({
         source: source ? (
           <span className="block truncate">
             <span className="font-medium text-fg">{source.name}</span>
-            <span className="block truncate text-[10.5px] text-subtle">{typeMeta(source.type).label}</span>
+            <span className="block truncate text-meta text-subtle">{typeMeta(source.type).label}</span>
           </span>
         ) : <span className="italic text-subtle">—</span>,
         relationship: (
           <span className="inline-flex flex-col gap-0.5">
             <span
-              className="w-fit rounded px-1.5 py-px text-[10px] font-bold uppercase"
+              className="w-fit rounded px-1.5 py-px text-micro font-bold uppercase"
               style={{ color: style.color, background: `${style.color}22` }}
             >
               {style.label}
             </span>
-            {edge.label && <span className="truncate text-[10.5px] text-subtle">{edge.label}</span>}
+            {edge.label && <span className="truncate text-meta text-subtle">{edge.label}</span>}
           </span>
         ),
         target: target ? (
           <span className="block truncate">
             <span className="font-medium text-fg">{target.name}</span>
-            <span className="block truncate text-[10.5px] text-subtle">{typeMeta(target.type).label}</span>
+            <span className="block truncate text-meta text-subtle">{typeMeta(target.type).label}</span>
           </span>
         ) : <span className="italic text-subtle">—</span>,
         evidence: (
-          <span className="block truncate font-mono text-[10.5px] text-muted" title={edge.evidence?.value || ''}>
+          <span className="block truncate font-mono text-meta text-muted" title={edge.evidence?.value || ''}>
             {edge.evidence?.field || '—'}
           </span>
         ),
@@ -247,7 +247,7 @@ export default function TopologyList({
             {label}
           </button>
         ))}
-        <p className="ml-auto pr-2 text-[11px] text-subtle">
+        <p className="ml-auto pr-2 text-meta text-subtle">
           {pane === 'resources'
             ? 'Select a row to open the resource.'
             : 'Select a row to see why the relationship exists.'}

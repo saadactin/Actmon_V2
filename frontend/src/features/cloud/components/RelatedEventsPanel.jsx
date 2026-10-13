@@ -61,7 +61,7 @@ export default function RelatedEventsPanel({
 
   if (isError) {
     return (
-      <p className="text-[11.5px] leading-relaxed text-muted">
+      <p className="text-meta leading-relaxed text-muted">
         Could not look up related events
         {error?.response?.status ? ` (HTTP ${error.response.status})` : ''}.
         {error?.response?.status === 404
@@ -78,12 +78,12 @@ export default function RelatedEventsPanel({
     <>
       {events.length === 0 ? (
         <div className="space-y-1.5">
-          <p className="text-[11.5px] font-semibold text-fg">
+          <p className="text-meta font-semibold text-fg">
             {degraded
               ? 'No matching event — but collection is degraded'
               : 'No control-plane event recorded for this change'}
           </p>
-          <p className="text-[11px] leading-relaxed text-muted">
+          <p className="text-meta leading-relaxed text-muted">
             {degraded
               ? 'One or more audit sources is not collecting, so this absence is not evidence that nobody made the change. Check collection health on the Event Log tab.'
               : 'The audit trail has no management-API call against this resource in the window before the change was detected. That can mean the change was made inside the instance rather than through the cloud API, that a provider-internal process made it, or that it predates audit collection for this account.'}
@@ -91,7 +91,7 @@ export default function RelatedEventsPanel({
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+          <p className="flex flex-wrap items-center gap-1.5 text-meta text-muted">
             <ScrollText size={12} className="shrink-0 text-accent-text" />
             <span className="font-semibold text-fg">
               {events.length} control-plane event{events.length === 1 ? '' : 's'}
@@ -118,7 +118,7 @@ export default function RelatedEventsPanel({
                       <Badge tone={RISK_TONE[e.risk_level] || 'neutral'} size="xs">
                         {e.risk_level}
                       </Badge>
-                      <span className="text-[11.5px] font-semibold text-fg">
+                      <span className="text-meta font-semibold text-fg">
                         {e.event_name}
                       </span>
                       {e.status !== 'Success' && (
@@ -127,13 +127,13 @@ export default function RelatedEventsPanel({
                         </Badge>
                       )}
                       <span
-                        className="ml-auto text-[10px] text-subtle"
+                        className="ml-auto text-micro text-subtle"
                         title={formatEventTime(e.timestamp)}
                       >
                         {relativeTime(e.timestamp)}
                       </span>
                     </div>
-                    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10.5px] text-muted">
+                    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta text-muted">
                       <span className="inline-flex items-center gap-1">
                         <ActorIcon size={10} className="text-subtle" />
                         {e.actor_name || 'Unidentified principal'}
@@ -148,7 +148,7 @@ export default function RelatedEventsPanel({
             })}
           </ul>
 
-          <p className="text-[10px] leading-relaxed text-subtle">
+          <p className="text-micro leading-relaxed text-subtle">
             {data.note}
           </p>
         </div>

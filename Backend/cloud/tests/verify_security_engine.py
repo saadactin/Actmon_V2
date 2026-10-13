@@ -293,17 +293,27 @@ eq("one HIGH caps the grade at B", s.grade, "B")
 print("\n=== §79 Compliance: one finding, many citations ===")
 # ═════════════════════════════════════════════════════════════════════════════
 
-mapping = ctl.mappings_for_rule("AWS_SG_SSH_WORLD_OPEN")
-check("a security-group rule maps to all three frameworks",
-      set(mapping) == {"SOC2", "HIPAA", "PCI-DSS"}, str(sorted(mapping)))
+mapping = ctl.mappings_for_rule("AWS_SG_SSH_WORLD_OPEN", provider="AWS")
+SG_FRAMEWORKS = ["CIS-AWS", "HIPAA", "ISO27001", "PCI-DSS", "RBI", "SEBI-CSCRF", "SOC2"]
+check("a security-group rule maps to every framework covering boundary protection",
+      sorted(mapping) == SG_FRAMEWORKS, str(sorted(mapping)))
+check("...including its own cloud's CIS benchmark, cited by recommendation number",
+      any(ref.startswith("6.3 ") for ref in mapping.get("CIS-AWS", [])),
+      str(mapping.get("CIS-AWS")))
 
 f = finding(CRITICAL, rule_id="AWS_SG_SSH_WORLD_OPEN")
 f.compliance = mapping
-out = comp.build(findings=[f], rule_stats={"AWS_SG_SSH_WORLD_OPEN": {VULNERABLE: 1}})
-eq("one finding breaching three frameworks appears ONCE",
+out = comp.build(findings=[f], rule_stats={"AWS_SG_SSH_WORLD_OPEN": {VULNERABLE: 1}},
+                 provider="AWS")
+eq("one finding breaching seven frameworks appears ONCE",
    out["total_violations"], 1)
-eq("...carrying all three framework citations",
-   sorted(out["violations"][0]["frameworks"]), ["HIPAA", "PCI-DSS", "SOC2"])
+eq("...carrying every framework citation",
+   sorted(out["violations"][0]["frameworks"]), SG_FRAMEWORKS)
+
+# A cross-cloud rule's finding on OCI must not carry another cloud's benchmark.
+oci_map = ctl.mappings_for_rule("EXPOSURE_MANAGEMENT_PORT_WORLD_OPEN", provider="OCI")
+check("a cross-cloud finding on OCI carries no CIS AWS or CIS Azure citation",
+      "CIS-AWS" not in oci_map and "CIS-AZURE" not in oci_map, str(sorted(oci_map)))
 
 # Categories deliberately outside the control map produce no violation.
 f2 = finding(LOW, CAT_GOVERNANCE, rule_id="GOVERNANCE_MISSING_OWNERSHIP_TAGS")

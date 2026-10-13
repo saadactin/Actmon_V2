@@ -29,14 +29,10 @@ export const STATUS_TONE = {
   Unknown: 'neutral',
 };
 
-/** Provider brand colours are pinned (external identity) — the same rationale
-    as CloudDashboard's PROVIDER_BADGE_CLASSES. Never tokenized. */
-export const PROVIDER_BADGE_CLASSES = {
-  AWS: 'bg-orange-50 text-orange-700 border-orange-200',
-  Azure: 'bg-sky-50 text-sky-700 border-sky-200',
-  OCI: 'bg-red-50 text-red-700 border-red-200',
-  Oracle: 'bg-red-50 text-red-700 border-red-200',
-};
+/* The provider badge classes that used to live here had no importer left, and
+   were a fourth copy of the brand palette besides. `utils/providerTheme`
+   (`providerBadgeStyle`) is the one definition now — import it there rather
+   than restating the hues here. */
 
 /** The named time ranges, matching the backend's own vocabulary exactly so a
     UI choice cannot describe a window the API will not honour. */
@@ -298,8 +294,8 @@ export const SOURCE_STATUS_ADVICE = {
     'The provider could not be reached. This says nothing about the credentials — '
     + 'it is a network or provider-side failure, and collection will retry.',
   NeverRun:
-    'No collection has run for this source yet. Use "Collect now" to fetch the '
-    + 'first window.',
+    'No collection has run for this source yet. Refresh all collects it, along '
+    + 'with the rest of the account.',
   Delayed:
     'A collection stopped at its per-run page budget and will continue from where '
     + 'it left off. Recent events may not have arrived yet.',

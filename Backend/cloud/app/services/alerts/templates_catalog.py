@@ -261,6 +261,23 @@ TEMPLATES: Dict[str, Template] = {t.key: t for t in (
         notify_on_resolution=True,
     ),
     Template(
+        key="certificate_expiry",
+        label="Certificate expiring",
+        summary="A certificate expires within 30 days, or already has.",
+        rationale="An expired certificate is an outage with a date on it; 30 days is "
+                  "enough to renew, validate and redeploy without a change freeze "
+                  "getting in the way.",
+        condition_type=catalog.CREDENTIAL_EXPIRY,
+        condition_config={"kind": "CERTIFICATE", "within_days": 30,
+                          "include_expired": "yes", "operator": catalog.OP_GT,
+                          "threshold": 0},
+        severity="HIGH",
+        suggested_name="Certificates expiring within 30 days",
+        evaluation_interval_seconds=3600,
+        cooldown_seconds=86400,
+        notify_on_resolution=True,
+    ),
+    Template(
         key="stopped_resources",
         label="Stopped resources piling up",
         summary="More than ten resources are stopped.",
@@ -300,6 +317,7 @@ RECOMMENDED: Sequence[str] = (
     "critical_drift",
     "critical_events",
     "event_collection_broken",
+    "certificate_expiry",
 )
 
 
@@ -340,7 +358,11 @@ def validate_all() -> List[str]:
         probe = dict(template.condition_config)
         for field in template.needs_input:
             if field == "currency":
-                probe.setdefault(field, "USD")
+                # INR, not USD: budgets/alerts in this product are evaluated
+                # and displayed in INR (see `fx_rate_service`) — matching the
+                # dummy value here to that keeps this dry-run probe testing
+                # the same assumption the UI's own currency field makes.
+                probe.setdefault(field, "INR")
             else:
                 probe.setdefault(field, 1)
         try:

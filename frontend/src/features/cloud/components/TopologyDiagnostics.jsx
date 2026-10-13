@@ -35,8 +35,8 @@ function Stat({ label, value, hint, tone }) {
       <p className={`text-[19px] font-bold leading-none ${tone === 'danger' ? 'text-danger-fg' : tone === 'warning' ? 'text-warning-fg' : 'text-fg'}`}>
         {value}
       </p>
-      <p className="mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-subtle">{label}</p>
-      {hint && <p className="mt-1 text-[10.5px] leading-relaxed text-subtle">{hint}</p>}
+      <p className="mt-1 text-meta font-semibold uppercase tracking-wide text-subtle">{label}</p>
+      {hint && <p className="mt-1 text-meta leading-relaxed text-subtle">{hint}</p>}
     </div>
   );
 }
@@ -47,13 +47,13 @@ function TabButton({ active, children, onClick, count }) {
       type="button"
       onClick={onClick}
       aria-current={active}
-      className={`rounded-control px-2.5 py-1.5 text-[11.5px] font-semibold transition-colors ${
+      className={`rounded-control px-2.5 py-1.5 text-meta font-semibold transition-colors ${
         active ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-sunken hover:text-fg'
       }`}
     >
       {children}
       {count !== undefined && count !== null && (
-        <span className="ml-1.5 rounded-full bg-sunken px-1.5 text-[10px] font-bold text-subtle">{count}</span>
+        <span className="ml-1.5 rounded-full bg-sunken px-1.5 text-micro font-bold text-subtle">{count}</span>
       )}
     </button>
   );
@@ -127,7 +127,7 @@ export default function TopologyDiagnosticsDrawer({
 
             {coverage?.definition && (
               <div className="rounded-card border border-border bg-sunken p-3">
-                <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">
                   What this measures
                 </p>
                 <p className="text-[12px] leading-relaxed text-muted">{coverage.definition}</p>
@@ -145,7 +145,7 @@ export default function TopologyDiagnosticsDrawer({
 
             {coverage?.by_provider?.length > 0 && (
               <div>
-                <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                   By provider
                 </p>
                 <div className="divide-y divide-border overflow-hidden rounded-card border border-border">
@@ -153,7 +153,7 @@ export default function TopologyDiagnosticsDrawer({
                     const provider = providerMeta(row.provider);
                     return (
                       <div key={row.provider} className="flex items-center gap-3 px-3 py-2">
-                        <span className={`shrink-0 rounded border px-1.5 py-px text-[10px] font-bold ${provider.badge}`}>
+                        <span className="shrink-0 rounded border px-1.5 py-px text-micro font-bold" style={provider.badgeStyle}>
                           {provider.label}
                         </span>
                         <span className="flex-1 text-[12px] text-muted">
@@ -171,7 +171,7 @@ export default function TopologyDiagnosticsDrawer({
 
             {diagnostics?.inventory && (
               <div className="rounded-card border border-border bg-sunken p-3">
-                <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">
                   How current this is
                 </p>
                 <p className="text-[12px] leading-relaxed text-muted">{diagnostics.inventory.note}</p>
@@ -198,7 +198,7 @@ export default function TopologyDiagnosticsDrawer({
 
             {diagnostics?.rules && (
               <div>
-                <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                   Relationship rules
                 </p>
                 <p className="mb-2 text-[12px] text-muted">
@@ -208,8 +208,8 @@ export default function TopologyDiagnosticsDrawer({
                 <ul className="flex flex-col gap-1.5">
                   {diagnostics.rules.excluded_fields.map((row) => (
                     <li key={row.field} className="rounded-control border border-border bg-sunken p-2">
-                      <p className="font-mono text-[11px] font-semibold text-fg">{row.field}</p>
-                      <p className="mt-0.5 text-[11px] leading-relaxed text-subtle">{row.reason}</p>
+                      <p className="font-mono text-meta font-semibold text-fg">{row.field}</p>
+                      <p className="mt-0.5 text-meta leading-relaxed text-subtle">{row.reason}</p>
                     </li>
                   ))}
                 </ul>
@@ -242,7 +242,7 @@ export default function TopologyDiagnosticsDrawer({
                   <div key={row.gap} className="px-3 py-2.5">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-[12.5px] font-semibold text-fg">{row.gap}</p>
-                      <span className="shrink-0 rounded-full bg-sunken px-2 text-[11px] font-bold text-muted">
+                      <span className="shrink-0 rounded-full bg-sunken px-2 text-meta font-bold text-muted">
                         {formatCount(row.count)}
                       </span>
                     </div>
@@ -251,10 +251,10 @@ export default function TopologyDiagnosticsDrawer({
                         {REFERENCE_CLASS_LABEL[row.reference_class] || row.reference_class}
                       </Badge>
                       {row.providers?.map((provider) => (
-                        <span key={provider} className="text-[10.5px] text-subtle">{provider}</span>
+                        <span key={provider} className="text-meta text-subtle">{provider}</span>
                       ))}
                     </div>
-                    <p className="mt-1.5 text-[11.5px] leading-relaxed text-subtle">{row.explanation}</p>
+                    <p className="mt-1.5 text-meta leading-relaxed text-subtle">{row.explanation}</p>
                   </div>
                 ))}
               </div>
@@ -262,7 +262,7 @@ export default function TopologyDiagnosticsDrawer({
 
             {unresolved?.references?.length > 0 && (
               <div>
-                <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                   Individual references
                 </p>
                 <div className="flex flex-col gap-1.5">
@@ -280,20 +280,20 @@ export default function TopologyDiagnosticsDrawer({
                           <span className="block truncate text-[12px] font-semibold text-fg hover:underline">
                             {ref.resource_name || ref.provider_resource_id}
                           </span>
-                          <span className="block truncate text-[11px] text-subtle">
+                          <span className="block truncate text-meta text-subtle">
                             {typeMeta(ref.resource_type).label} · {ref.provider}
                             {ref.region ? ` · ${ref.region}` : ''}
                           </span>
                         </button>
-                        <span className="shrink-0 text-[10px] font-bold uppercase text-subtle">
+                        <span className="shrink-0 text-micro font-bold uppercase text-subtle">
                           {ref.relationship}
                         </span>
                       </div>
-                      <p className="mt-1 font-mono text-[10.5px] text-muted">
+                      <p className="mt-1 font-mono text-meta text-muted">
                         {ref.field} = <span className="break-all text-fg">{ref.value}</span>
                       </p>
                       {ref.expected_type && (
-                        <p className="mt-0.5 text-[10.5px] text-subtle">
+                        <p className="mt-0.5 text-meta text-subtle">
                           Expected a {ref.expected_type}
                         </p>
                       )}
@@ -301,7 +301,7 @@ export default function TopologyDiagnosticsDrawer({
                   ))}
                 </div>
                 {unresolved.references.length > 120 && (
-                  <p className="mt-2 text-[11px] text-subtle">
+                  <p className="mt-2 text-meta text-subtle">
                     Showing the first 120 of {formatCount(unresolved.references.length)}. Group
                     totals above cover all of them.
                   </p>
@@ -334,17 +334,17 @@ export default function TopologyDiagnosticsDrawer({
                   <p className="text-[12.5px] font-semibold text-fg">
                     {ISOLATION_LABEL[row.reason] || row.reason}
                   </p>
-                  <span className="shrink-0 rounded-full bg-surface px-2 text-[11px] font-bold text-muted">
+                  <span className="shrink-0 rounded-full bg-surface px-2 text-meta font-bold text-muted">
                     {formatCount(row.count)}
                   </span>
                 </div>
-                <p className="mt-1.5 text-[11.5px] leading-relaxed text-subtle">{row.explanation}</p>
+                <p className="mt-1.5 text-meta leading-relaxed text-subtle">{row.explanation}</p>
               </div>
             ))}
 
             {isolated?.resources?.length > 0 && (
               <div>
-                <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <p className="mb-1.5 text-meta font-bold uppercase tracking-wider text-muted">
                   Resources
                 </p>
                 <div className="flex flex-col gap-1">
@@ -360,12 +360,12 @@ export default function TopologyDiagnosticsDrawer({
                         <span className="h-5 w-1 shrink-0 rounded-sm" style={{ background: meta.color }} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[12.5px] font-medium text-fg">{row.name}</span>
-                          <span className="block truncate text-[11px] text-subtle">
+                          <span className="block truncate text-meta text-subtle">
                             {meta.label} · {row.provider}
                             {row.region ? ` · ${row.region}` : ''}
                           </span>
                         </span>
-                        <span className="shrink-0 text-[10px] font-semibold text-subtle">
+                        <span className="shrink-0 text-micro font-semibold text-subtle">
                           {ISOLATION_LABEL[row.reason] || row.reason}
                         </span>
                       </button>
@@ -373,7 +373,7 @@ export default function TopologyDiagnosticsDrawer({
                   })}
                 </div>
                 {isolated.resources.length > 150 && (
-                  <p className="mt-2 text-[11px] text-subtle">
+                  <p className="mt-2 text-meta text-subtle">
                     Showing the first 150 of {formatCount(isolated.resources.length)}.
                   </p>
                 )}
@@ -410,7 +410,7 @@ export default function TopologyDiagnosticsDrawer({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                        <span className={`rounded border px-1.5 py-px text-[10px] font-bold ${provider.badge}`}>
+                        <span className="rounded border px-1.5 py-px text-micro font-bold" style={provider.badgeStyle}>
                           {provider.label}
                         </span>
                         <Badge tone={state.tone} size="sm">{state.label}</Badge>
@@ -419,7 +419,7 @@ export default function TopologyDiagnosticsDrawer({
                         )}
                       </div>
                       <p className="truncate text-[13px] font-semibold text-fg">{account.account_name}</p>
-                      <p className="text-[11px] text-subtle">
+                      <p className="text-meta text-subtle">
                         {formatCount(account.resources)} resources
                         {account.environment ? ` · ${account.environment}` : ''}
                         {account.last_discovery ? ` · scanned ${formatAge(
@@ -429,14 +429,14 @@ export default function TopologyDiagnosticsDrawer({
                     </div>
                   </div>
                   {account.explanation && (
-                    <p className="mt-2 text-[11.5px] leading-relaxed text-muted">{account.explanation}</p>
+                    <p className="mt-2 text-meta leading-relaxed text-muted">{account.explanation}</p>
                   )}
                   {account.last_job_error && (
                     <details className="mt-2">
-                      <summary className="cursor-pointer text-[11px] font-semibold text-muted hover:text-fg">
+                      <summary className="cursor-pointer text-meta font-semibold text-muted hover:text-fg">
                         Provider error
                       </summary>
-                      <p className="mt-1 break-words rounded-control border border-border bg-sunken p-2 font-mono text-[10.5px] leading-relaxed text-muted">
+                      <p className="mt-1 break-words rounded-control border border-border bg-sunken p-2 font-mono text-meta leading-relaxed text-muted">
                         {account.last_job_error}
                       </p>
                     </details>
@@ -488,12 +488,12 @@ export default function TopologyDiagnosticsDrawer({
                   <p className="truncate text-[12.5px] font-semibold text-fg">
                     {snapshot.label || 'Untitled snapshot'}
                   </p>
-                  <p className="text-[11px] text-subtle">
+                  <p className="text-meta text-subtle">
                     {formatMoment(snapshot.taken_at)}
                     {snapshot.taken_by ? ` · ${snapshot.taken_by}` : ''}
                     {snapshot.scope ? ` · scope ${snapshot.scope === 'ALL' ? 'all clouds' : snapshot.scope.slice(0, 8)}` : ''}
                   </p>
-                  <p className="mt-1 text-[11px] text-muted">
+                  <p className="mt-1 text-meta text-muted">
                     {formatCount(snapshot.node_count)} resources · {formatCount(snapshot.edge_count)} relationships
                   </p>
                 </div>
@@ -518,7 +518,7 @@ export default function TopologyDiagnosticsDrawer({
                   )}
                   {!diffLoading && diff?.summary && (
                     <>
-                      <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted">
+                      <p className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">
                         Versus {diff.compared_with?.label}
                       </p>
                       <div className="grid grid-cols-2 gap-1.5">
@@ -531,7 +531,7 @@ export default function TopologyDiagnosticsDrawer({
                         ].map(([label, value]) => (
                           <div key={label} className="rounded-control border border-border bg-sunken px-2 py-1.5">
                             <p className="text-[14px] font-bold leading-none text-fg">{formatCount(value)}</p>
-                            <p className="mt-0.5 text-[10px] uppercase tracking-wide text-subtle">{label}</p>
+                            <p className="mt-0.5 text-micro uppercase tracking-wide text-subtle">{label}</p>
                           </div>
                         ))}
                       </div>
@@ -541,14 +541,14 @@ export default function TopologyDiagnosticsDrawer({
                         ['Removed resources', diff.removed_resources, 'danger'],
                       ].map(([label, rows, tone]) => (rows?.length ? (
                         <div key={label} className="mt-3">
-                          <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                          <p className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">
                             {label} ({rows.length})
                           </p>
                           <ul className="flex flex-col gap-0.5">
                             {rows.slice(0, 25).map((row) => (
                               <li
                                 key={row.key}
-                                className="flex items-center gap-1.5 text-[11.5px]"
+                                className="flex items-center gap-1.5 text-meta"
                               >
                                 <span
                                   aria-hidden="true"
@@ -567,7 +567,7 @@ export default function TopologyDiagnosticsDrawer({
                             ))}
                           </ul>
                           {rows.length > 25 && (
-                            <p className="mt-1 text-[10.5px] text-subtle">
+                            <p className="mt-1 text-meta text-subtle">
                               …and {rows.length - 25} more
                             </p>
                           )}
@@ -576,12 +576,12 @@ export default function TopologyDiagnosticsDrawer({
 
                       {diff.changed_relationships?.length > 0 && (
                         <div className="mt-3">
-                          <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                          <p className="mb-1 text-meta font-bold uppercase tracking-wider text-muted">
                             Changed relationships ({diff.changed_relationships.length})
                           </p>
                           <ul className="flex flex-col gap-1">
                             {diff.changed_relationships.slice(0, 20).map((row) => (
-                              <li key={`${row.source}-${row.target}-${row.type}`} className="text-[11px] text-muted">
+                              <li key={`${row.source}-${row.target}-${row.type}`} className="text-meta text-muted">
                                 <span className="font-semibold text-fg">{row.type}</span>
                                 {': '}
                                 <span className="line-through">{row.before_label || '—'}</span>
@@ -593,7 +593,7 @@ export default function TopologyDiagnosticsDrawer({
                         </div>
                       )}
 
-                      <p className="mt-3 text-[10.5px] leading-relaxed text-subtle">
+                      <p className="mt-3 text-meta leading-relaxed text-subtle">
                         {diff.identity_note}
                       </p>
                     </>

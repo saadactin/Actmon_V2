@@ -572,18 +572,21 @@ def freshness(observed_at: Optional[datetime], *, now: Optional[datetime] = None
 
 
 def _age_label(age_seconds: float) -> str:
+    def ago(n: int, unit: str) -> str:
+        return f"{n} {unit}{'' if n == 1 else 's'} ago"   # never "1 hours ago"
+
     minutes = age_seconds / 60.0
     if minutes < 2:
         return "just now"
     if minutes < 60:
-        return f"{int(minutes)} minutes ago"
+        return ago(int(minutes), "minute")
     hours = minutes / 60.0
     if hours < 48:
-        return f"{int(hours)} hours ago"
+        return ago(int(hours), "hour")
     days = hours / 24.0
     if days < 60:
-        return f"{int(days)} days ago"
-    return f"{int(days / 30)} months ago"
+        return ago(int(days), "day")
+    return ago(int(days / 30), "month")
 
 
 # ── Tags, environment, owner ─────────────────────────────────────────────────

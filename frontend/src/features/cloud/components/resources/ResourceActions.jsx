@@ -44,7 +44,7 @@ export default function ResourceActions({ resource }) {
       {!anySupported && (
         <div className="flex items-start gap-2 rounded-control border border-border bg-sunken px-3 py-2.5">
           <Icon name="info" size={14} className="mt-0.5 shrink-0 text-info-fg" />
-          <p className="text-[11px] leading-snug text-muted">
+          <p className="text-meta leading-snug text-muted">
             This platform reads from
             {` ${resource.provider}`}
             {' '}
@@ -77,7 +77,7 @@ export default function ResourceActions({ resource }) {
                       : <Badge tone="neutral" size="xs">Unavailable</Badge>}
                   </span>
                   {!action.supported && action.reason && (
-                    <span className="mt-0.5 block text-[11px] leading-snug text-muted">
+                    <span className="mt-0.5 block text-meta leading-snug text-muted">
                       {action.reason}
                     </span>
                   )}
@@ -94,7 +94,7 @@ export default function ResourceActions({ resource }) {
                   {preview.isLoading ? (
                     <InlineLoading label="Checking…" className="py-3" />
                   ) : preview.isError ? (
-                    <p className="text-[11px] text-danger">
+                    <p className="text-meta text-danger">
                       {preview.error?.response?.data?.detail?.error?.message
                         || 'This action could not be evaluated.'}
                     </p>
@@ -103,7 +103,7 @@ export default function ResourceActions({ resource }) {
                       {GATES.map(([key, label, reasonKey]) => {
                         const pass = preview.data[key];
                         return (
-                          <div key={key} className="flex items-start gap-2 text-[11px]">
+                          <div key={key} className="flex items-start gap-2 text-meta">
                             <Icon
                               name={pass ? 'check' : 'close'}
                               size={12}
@@ -127,18 +127,18 @@ export default function ResourceActions({ resource }) {
                           different answers and only one is reassuring. */}
                       {preview.data.destructive && (
                         <div className="rounded-control bg-sunken px-2.5 py-2">
-                          <p className="text-[11px] font-semibold text-fg">
+                          <p className="text-meta font-semibold text-fg">
                             {preview.data.dependencies.length > 0
                               ? `${preview.data.dependencies.length} resource(s) depend on this`
                               : 'Dependencies'}
                           </p>
                           {preview.data.dependency_note && (
-                            <p className="mt-0.5 text-[11px] leading-snug text-muted">
+                            <p className="mt-0.5 text-meta leading-snug text-muted">
                               {preview.data.dependency_note}
                             </p>
                           )}
                           {preview.data.dependencies.slice(0, 6).map((dep) => (
-                            <p key={dep.id} className="mt-0.5 truncate text-[11px] text-muted">
+                            <p key={dep.id} className="mt-0.5 truncate text-meta text-muted">
                               {`${dep.name || dep.id} · ${dep.type || 'resource'} (${dep.relation})`}
                             </p>
                           ))}
@@ -146,14 +146,14 @@ export default function ResourceActions({ resource }) {
                       )}
 
                       {preview.data.warnings?.map((warning) => (
-                        <p key={warning} className="flex items-start gap-1.5 text-[11px] text-warning-fg">
+                        <p key={warning} className="flex items-start gap-1.5 text-meta text-warning-fg">
                           <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
                           {warning}
                         </p>
                       ))}
 
                       <div className="flex items-center justify-between border-t border-border pt-2">
-                        <span className="text-[11px] text-muted">
+                        <span className="text-meta text-muted">
                           {preview.data.safe
                             ? 'All checks passed.'
                             : 'Blocked by at least one check.'}

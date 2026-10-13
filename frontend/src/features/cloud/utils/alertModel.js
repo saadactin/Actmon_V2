@@ -188,3 +188,38 @@ export const statesFor = (value) => {
   if (!value) return ['OPEN', 'ACKNOWLEDGED'];
   return [value];
 };
+
+/**
+ * A rule-builder seed from a "Create alert" link (the Intelligence drawer
+ * sends `?newRule=<condition>&config=<json>`). The alert category is looked up
+ * in the backend's own catalog, so a link can never seed a condition this
+ * build does not have: an unknown condition returns null and nothing opens.
+ */
+export function seedFromLink(condition, configJson, capabilities) {
+  if (!condition || !capabilities?.categories) return null;
+  let config = {};
+  try {
+    const parsed = JSON.parse(configJson || '{}');
+    config = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    config = {};
+  }
+  for (const cat of capabilities.categories) {
+    const cond = (cat.conditions || []).find((c) => c.key === condition);
+    if (!cond) continue;
+    // Only keys the condition declares — the backend would drop the rest.
+    const allowed = new Set((cond.fields || []).map((f) => f.key));
+    const clean = Object.fromEntries(Object.entries(config).filter(([k]) => allowed.has(k)));
+    return {
+      label: cond.label,
+      suggested_name: cond.label,
+      rationale: cond.summary,
+      condition_type: cond.key,
+      condition_config: clean,
+      category: cat.key,
+      severity: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(clean.severity_filter)
+        ? clean.severity_filter : 'MEDIUM',
+    };
+  }
+  return null;
+}

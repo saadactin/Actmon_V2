@@ -9,11 +9,15 @@ import Tabs from '@/components/ui/Tabs';
 import { InlineLoading } from '@/components/ui/Loading';
 import cn from '@/lib/cn';
 import RelatedEventsPanel from './RelatedEventsPanel';
+import { MonitoringTabContent } from './ResourceMetricsPanel';
 import ResourceActions from './resources/ResourceActions';
+import { FindingDrawer } from './security/SecurityFindings';
 import { useResourceDrift } from '../hooks/useDrift';
-import { useResourceDetail, useResourceMetrics } from '../hooks/useResources';
+import { useResourceDetail } from '../hooks/useResources';
+import { useFindings } from '../hooks/useSecurityCenter';
 import { useNeighbors } from '../hooks/useTopology';
 import { slugForProvider } from '../utils/providerScope';
+import { severityTone } from '../utils/securityModel';
 import { edgeStyle, typeMeta } from '../utils/topologyModel';
 import {
   costText, formatDateTime, freshnessMeta, providerLabel, relativeTime, riskMeta,
@@ -41,11 +45,11 @@ const maskValue = (key, value) => (SENSITIVE.test(key) && value ? '••••�
 
 const Row = ({ label, value, mono, title, copy }) => (
   <div className="flex items-start justify-between gap-3 border-b border-border py-2 last:border-b-0">
-    <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted">
+    <span className="shrink-0 text-meta font-semibold uppercase tracking-wider text-muted">
       {label}
     </span>
     <span
-      className={cn('min-w-0 flex-1 break-words text-right text-[12px] text-fg', mono && 'font-mono text-[11px]')}
+      className={cn('min-w-0 flex-1 break-words text-right text-[12px] text-fg', mono && 'font-mono text-meta')}
       title={title}
     >
       {value === null || value === undefined || value === ''
@@ -63,7 +67,7 @@ const Row = ({ label, value, mono, title, copy }) => (
 const Section = ({ title, children, action }) => (
   <section className="mb-5">
     <div className="mb-1.5 flex items-center justify-between">
-      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{title}</h4>
+      <h4 className="text-meta font-semibold uppercase tracking-wider text-muted">{title}</h4>
       {action}
     </div>
     {children}
@@ -79,12 +83,25 @@ const Empty = ({ children }) => (
 export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
   const navigate = useNavigate();
   const [tab, setTab] = useState('overview');
+  const [selectedFinding, setSelectedFinding] = useState(null);
 
   const resourceId = resource?.id || null;
   const { data: detail, isLoading } = useResourceDetail(open ? resourceId : null);
-  const { data: metrics, isLoading: metricsLoading } = useResourceMetrics(
-    open && tab === 'metrics' ? resourceId : null,
+
+  // The findings behind this resource's severity counts — fetched by the
+  // provider's own id, which is what the security engine stamps on every
+  // per-resource finding as `resource_key` (see engine.py `_build`). Scoped
+  // to exactly this resource, not re-filtered client-side from the account's
+  // full findings list, which would mean paging through everything to find
+  // the handful that apply here.
+  const { data: findingsData, isLoading: findingsLoading } = useFindings(
+    resource?.account_id,
+    { resource_key: resource?.provider_resource_id, limit: 50 },
+    open && tab === 'risk' && !!resource?.provider_resource_id && resource?.risk?.finding_count > 0,
   );
+  const findings = findingsData?.findings || [];
+
+  const closeDrawer = () => { setSelectedFinding(null); onClose(); };
 
   // Relationships come from the topology engine, which already resolved them.
   // Building a second relationship model here would give the drawer and the
@@ -141,9 +158,10 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
   ];
 
   return (
+    <>
     <Drawer
       open={open}
-      onClose={onClose}
+      onClose={closeDrawer}
       width={580}
       title={resource.resource_name || resource.provider_resource_id}
       subtitle={`${resource.type_label || resource.resource_type} · ${providerLabel(resource.provider)}${resource.account_name ? ` · ${resource.account_name}` : ''}${resource.region ? ` · ${resource.region}` : ''}`}
@@ -286,11 +304,54 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
             ) : (
               <>
                 <Row label="Highest severity" value={<Badge tone={risk.tone} size="xs">{risk.label}</Badge>} />
-                {Object.entries(resource.risk.severity_counts || {})
-                  .filter(([, n]) => n > 0)
-                  .map(([severity, n]) => (
-                    <Row key={severity} label={severity} value={n} />
-                  ))}
+                {findingsLoading ? (
+                  <InlineLoading label="Loading findings…" className="py-6" />
+                ) : findings.length > 0 ? (
+                  <>
+                    <p className="mb-2 mt-1 text-meta text-subtle">
+                      Click a finding to see what it is and how to fix it.
+                    </p>
+                    <div className="divide-y divide-border rounded-control border border-border">
+                      {findings.map((f) => (
+                        <button
+                          key={f.fingerprint}
+                          type="button"
+                          onClick={() => setSelectedFinding(f.fingerprint)}
+                          className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left hover:bg-sunken"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Badge tone={severityTone(f.severity)} size="xs">{f.severity}</Badge>
+                              <span className="text-meta text-subtle">{f.category}</span>
+                              {!f.scores && (
+                                // This finding is real (a deprecated runtime, an idle
+                                // resource) but it is not an attack-surface risk, so it
+                                // is labelled rather than left to look like one.
+                                <Badge tone="neutral" size="xs">not a security risk</Badge>
+                              )}
+                            </div>
+                            <div className="mt-1 truncate-safe text-[12px] font-semibold text-fg">
+                              {f.title}
+                            </div>
+                          </div>
+                          <Icon name="chevron-right" size={14} className="mt-1 shrink-0 text-subtle" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {Object.entries(resource.risk.severity_counts || {})
+                      .filter(([, n]) => n > 0)
+                      .map(([severity, n]) => (
+                        <Row key={severity} label={severity} value={n} />
+                      ))}
+                    <p className="mt-2 text-meta text-subtle">
+                      The findings behind these counts could not be loaded here — open
+                      Security for the full list.
+                    </p>
+                  </>
+                )}
               </>
             )}
           </Section>
@@ -328,7 +389,7 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
               return (
                 <>
                   {neighbors.truncated && (
-                    <p className="mb-2 text-[11px] text-warning-fg">
+                    <p className="mb-2 text-meta text-warning-fg">
                       Showing part of a large neighbourhood; open Topology for the whole graph.
                     </p>
                   )}
@@ -343,7 +404,7 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
                         onClick={() => { onClose(); navigate(`/cloud/resources/${otherId}`); }}
                         className="flex w-full items-start justify-between gap-3 border-b border-border py-2 text-left last:border-b-0 hover:bg-sunken"
                       >
-                        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                        <span className="shrink-0 text-meta font-semibold uppercase tracking-wider text-muted">
                           {/* The edge's own label where the engine wrote one —
                               it is specific to the relationship it found,
                               rather than the generic name for its kind. */}
@@ -353,7 +414,7 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
                           <span className="block truncate text-[12px] font-semibold text-fg">
                             {other?.name || otherId}
                           </span>
-                          <span className="block truncate text-[11px] text-subtle">
+                          <span className="block truncate text-meta text-subtle">
                             {[typeMeta(other?.type).label, other?.status, other?.region]
                               .filter(Boolean).join(' · ')}
                           </span>
@@ -394,15 +455,15 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
                       <span className="min-w-0 flex-1 text-[12px] font-semibold text-fg">
                         {change.summary || change.field_path || change.change_type}
                       </span>
-                      <span className="shrink-0 text-[11px] text-subtle" title={change.detected_at}>
+                      <span className="shrink-0 text-meta text-subtle" title={change.detected_at}>
                         {relativeTime(change.detected_at)}
                       </span>
                     </div>
                     {change.field_path && change.summary && (
-                      <div className="mt-0.5 font-mono text-[11px] text-subtle">{change.field_path}</div>
+                      <div className="mt-0.5 font-mono text-meta text-subtle">{change.field_path}</div>
                     )}
                     {(change.old_value !== undefined || change.new_value !== undefined) && (
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-meta">
                         <span className="rounded bg-danger-soft px-1.5 py-0.5 font-mono text-danger-fg">
                           {/* An absent old value and an empty one are different
                               things; the drift layer flags which with
@@ -491,37 +552,20 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
         )}
 
         {tab === 'metrics' && (
-          <Section title="Monitoring">
-            {metricsLoading ? <InlineLoading label="Loading metrics…" className="py-8" />
-              : !metrics?.metrics || Object.keys(metrics.metrics).length === 0 ? (
-                <Empty>
-                  {metrics?.message
-                    || 'No metrics were returned for this resource. That can mean the provider publishes none for this resource type, the monitoring permission is missing, or the resource is stopped — the full page reports which.'}
-                </Empty>
-              ) : (
-                Object.entries(metrics.metrics).map(([name, series]) => (
-                  <Row
-                    key={name}
-                    label={name}
-                    value={
-                      Array.isArray(series) && series.length
-                        ? `${series.length} datapoint${series.length === 1 ? '' : 's'}`
-                        : null
-                    }
-                  />
-                ))
-              )}
-          </Section>
+          // Same chart component the full resource page uses (ResourceMetricsPanel) —
+          // real CPU/memory/network/disk series with charts, not a bare datapoint
+          // count, and it explains itself when a provider genuinely has nothing.
+          <MonitoringTabContent resourceId={resourceId} />
         )}
 
         {tab === 'raw' && (
           <Section title="Raw provider response">
             {isLoading ? <InlineLoading label="Loading…" className="py-8" /> : (
               <>
-                <p className="mb-2 text-[11px] text-muted">
+                <p className="mb-2 text-meta text-muted">
                   Exactly what the provider returned, before normalization.
                 </p>
-                <pre className="max-h-[420px] overflow-auto rounded-control border border-border bg-sunken p-3 font-mono text-[11px] text-muted">
+                <pre className="max-h-[420px] overflow-auto rounded-control border border-border bg-sunken p-3 font-mono text-meta text-muted">
                   {JSON.stringify(detail?.raw_data ?? detail?.config ?? {}, null, 2)}
                 </pre>
               </>
@@ -530,7 +574,15 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
         )}
       </div>
     </Drawer>
+
+    <FindingDrawer
+      accountId={resource.account_id}
+      findingKey={selectedFinding}
+      onClose={() => setSelectedFinding(null)}
+    />
+    </>
   );
 };
+
 
 export default ResourceDetailDrawer;

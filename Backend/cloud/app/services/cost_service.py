@@ -8,98 +8,22 @@ hardcoded price tables, no invented savings figures.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.pricing import oci_pricing
 from app.providers import capabilities as provider_caps
 from app.repository.resource_repo import ResourceRepository
-from app.services import cost_errors, cost_metrics, cost_money
+from app.services import cost_errors, cost_metrics, cost_money, fetch_policy, fx_rate_service
 
 logger = logging.getLogger("cloud_svc.cost")
 
-
-def _attach_oci_savings(opt: Dict[str, Any], resource, prices, currency: str) -> None:
-    """Enrich one OCI optimization with a real monthly-savings estimate and the
-    math behind it (from OCI's public list prices). Leaves potential_savings as
-    None (NA) whenever we cannot price it honestly — never guesses."""
-    opt.setdefault("savings_currency", None)
-    opt.setdefault("savings_breakdown", [])
-    opt.setdefault("savings_assumptions", [])
-    opt.setdefault("savings_basis", None)
-
-    if resource is None:
-        return
-    cfg = resource.config or {}
-    rule = opt.get("rule")
-    total: Optional[float] = None
-    lines: List[Dict[str, Any]] = []
-    assumptions: List[str] = []
-
-    if rule == "Stopped OCI Compute Instance":
-        gb = cfg.get("attached_storage_gb")
-        total, lines = oci_pricing.block_volume_breakdown(gb, prices, label="Attached storage")
-        if total is not None:
-            boot = cfg.get("boot_volume_gb")
-            blk = cfg.get("block_volume_gb")
-            detail = []
-            if boot is not None:
-                detail.append(f"boot volume {boot} GB")
-            if blk is not None:
-                detail.append(f"block volumes {blk} GB")
-            assumptions = [
-                "Stopping the instance already ends OCPU and RAM billing; the remaining "
-                "waste is its boot + block-volume storage, which keeps billing until the "
-                "volumes are deleted (terminating the instance deletes the boot volume).",
-                "Balanced performance tier (10 VPU/GB) assumed — OCI's default for boot "
-                "and most block volumes.",
-            ]
-            if detail:
-                assumptions.append("Provisioned storage measured from the OCI Block "
-                                   "Storage API: " + ", ".join(detail) + ".")
-        else:
-            assumptions = [
-                "Volume sizes were not captured for this instance (older scan), so the "
-                "storage saving cannot be quantified yet — re-run discovery to populate it.",
-            ]
-
-    elif rule == "Stopped Autonomous Database":
-        tbs = cfg.get("data_storage_size_tbs")
-        total, lines = oci_pricing.adb_storage_breakdown(tbs, prices, label="Autonomous DB storage")
-        if total is not None:
-            assumptions = [
-                "A stopped Autonomous Database stops CPU billing but keeps billing its "
-                "provisioned storage until the database is terminated.",
-                "Storage billed at 1 TB = 1024 GB.",
-            ]
-
-    elif rule == "Enable Autonomous Database Auto-Scaling":
-        # Honesty: enabling auto-scaling does NOT yield a fixed monthly saving — it adds
-        # burst capacity and can raise cost at peak. The saving only exists if the BASE
-        # capacity is lowered, which needs usage data we don't collect. So: NA.
-        assumptions = [
-            "No fixed monthly saving. Auto-scaling matches capacity to demand and can "
-            "increase cost during peaks — the cost win only comes from reducing the BASE "
-            "ECPU/OCPU count if the database is over-provisioned, which requires usage "
-            "metrics this tool does not yet collect.",
-        ]
-
-    opt["potential_savings"] = total
-    opt["savings_breakdown"] = lines
-    opt["savings_assumptions"] = assumptions
-    if total is not None:
-        opt["savings_currency"] = currency
-        opt["savings_basis"] = (
-            "OCI public Price List API — PAY_AS_YOU_GO list price. This is the public "
-            "list rate, not your account's negotiated or committed-use discount, so the "
-            "actual saving may be lower."
-        )
 
 # Real billing-API lookups are slow (2-10s) and rate-limited, so cache per account.
 # Cache entries are (stored_at, rows, errored). A transient failure (timeout,
@@ -117,6 +41,20 @@ _real_cost_by_resource_cache: Dict[str, Tuple[float, Dict[str, Dict[str, Any]], 
 _cost_report_cache: Dict[Tuple[str, int], Tuple[float, List[Dict[str, Any]], bool]] = {}
 MAX_REPORT_DAYS = 365
 
+# Which query each cache answers, as recorded in cloud_cost_snapshots. Keyed by
+# the cache object itself because that is all `_cached_fetch` is handed.
+_SNAPSHOT_KIND = {
+    id(_real_cost_cache): "summary",
+    id(_daily_cost_cache): "daily",
+    id(_real_cost_by_resource_cache): "by_resource",
+    id(_cost_report_cache): "report",
+}
+
+#: Diagnostic category for a refresh-only provider (AWS) that has nothing saved
+#: yet. Not an error: nobody has refreshed the account since the data could be
+#: kept, and the page will not call the provider on its own to find out.
+AWAITING_REFRESH = "awaiting_refresh"
+
 
 # Cache entries are (stored_at, rows, errored[, last_good_at]). The fourth
 # element is read by index rather than unpacked, so an older 3-tuple written
@@ -126,6 +64,11 @@ def _cache_get(cache: dict, key) -> Any:
     if not cached:
         return None
     stored_at, rows, errored = cached[0], cached[1], cached[2]
+    # A fifth element marks an entry for a refresh-only provider (AWS). Its age
+    # is not a reason to drop it: nothing but a refresh may replace it, so it
+    # stays the answer until one does.
+    if len(cached) > 4 and cached[4] and not errored:
+        return rows
     ttl = _FAILURE_TTL_SECONDS if errored else _REAL_COST_TTL_SECONDS
     return rows if time.time() - stored_at < ttl else None
 
@@ -206,13 +149,22 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None
     diagnostic instead of a bare "NA" — see get_cost_diagnostic().
     """
     entry = cache.get(key)
-    fresh = _cache_get(cache, key)
+    provider_name = getattr(account, "provider", None) if account else None
+
+    # AWS bills per call, so it is read only during a refresh (see
+    # fetch_policy). Outside one — a page view, a poll — serve what the last
+    # refresh saved and never call the provider, however old that is.
+    refresh_gated = account is not None and fetch_policy.refresh_only(provider_name)
+    if refresh_gated and not fetch_policy.in_refresh():
+        return await _serve_saved(cache, key, empty, account)
+
+    # Inside a refresh it is always re-read: the user asked for the latest, and
+    # a 10-minute-old cache entry is not that.
+    fresh = None if refresh_gated else _cache_get(cache, key)
     if fresh is not None:
-        cost_metrics.record(getattr(account, "provider", None) if account else None,
-                            "cache_hits")
+        cost_metrics.record(provider_name, "cache_hits")
         return fresh
 
-    provider_name = getattr(account, "provider", None) if account else None
     cost_metrics.record(provider_name, "cache_misses")
 
     exc: Exception | None = None
@@ -234,7 +186,11 @@ async def _cached_fetch(cache: dict, key, label: str, fetch, empty, account=None
                 record_count=(len(value) if hasattr(value, "__len__") else None),
             )
             now = time.time()
-            cache[key] = (now, value, False, now)
+            if refresh_gated:
+                cache[key] = (now, value, False, now, True)
+                await _save_snapshot(cache, key, value, account, now)
+            else:
+                cache[key] = (now, value, False, now)
             if account is not None:
                 _cost_error_reason.pop(str(account.id), None)
             return value
@@ -448,6 +404,179 @@ def get_cost_diagnostic(account_id) -> Optional[Dict[str, Any]]:
     return _cost_error_reason.get(str(account_id))
 
 
+# ── Refresh-only providers: serve what the last refresh saved ─────────────────
+# For AWS (see fetch_policy) a page view never calls the provider. These are the
+# pieces `_cached_fetch` uses instead: the snapshot a refresh saved, and for a
+# day-by-day report, the stored billing facts every refresh ingests.
+
+def _snapshot_ident(cache: dict, key) -> Tuple[str, int]:
+    """(kind, window_days) naming this cache slot in cloud_cost_snapshots."""
+    kind = _SNAPSHOT_KIND.get(id(cache), "other")
+    window = int(key[1]) if isinstance(key, tuple) and len(key) > 1 else 0
+    return kind, window
+
+
+async def _save_snapshot(cache: dict, key, value: Any, account, fetched_epoch: float) -> None:
+    """Keep a refresh's answer so it survives a restart. Never raises: a failed
+    save costs the next restart its data, which must not fail the refresh."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.cost_fact import CloudCostSnapshot
+
+    kind, window = _snapshot_ident(cache, key)
+    try:
+        payload = json.loads(json.dumps(value, default=str))
+        stmt = pg_insert(CloudCostSnapshot).values(
+            id=uuid.uuid4(), account_id=account.id, kind=kind, window_days=window,
+            payload=payload,
+            fetched_at=datetime.fromtimestamp(fetched_epoch, tz=timezone.utc),
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_cost_snapshot_account_kind_window",
+            set_={"payload": stmt.excluded.payload,
+                  "fetched_at": stmt.excluded.fetched_at},
+        )
+        async with AsyncSessionLocal() as db:
+            await db.execute(stmt)
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not save the %s cost snapshot for account %s: %s",
+                       kind, getattr(account, "id", "?"), exc)
+
+
+async def _load_snapshot(account, kind: str, window: int) -> Optional[Tuple[Any, float]]:
+    """(payload, fetched_at epoch) of the saved answer, or None if there is none."""
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.cost_fact import CloudCostSnapshot
+
+    try:
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(
+                select(CloudCostSnapshot.payload, CloudCostSnapshot.fetched_at)
+                .where(CloudCostSnapshot.account_id == account.id,
+                       CloudCostSnapshot.kind == kind,
+                       CloudCostSnapshot.window_days == window)
+            )).first()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read the %s cost snapshot for account %s: %s",
+                       kind, getattr(account, "id", "?"), exc)
+        return None
+    if row is None:
+        return None
+    return row[0], row[1].timestamp()
+
+
+def _fact_to_report_row(billing_date, service, usage_type, region, amount, currency) -> Dict[str, Any]:
+    """One stored billing fact in the shape `AWSProvider.get_cost_report` returns,
+    which is the shape ingestion stored it from (see normalize_report_rows)."""
+    return {
+        "date": billing_date.isoformat(),
+        "service": service,
+        "resource_type": usage_type,
+        "region": region,
+        "cost": round(float(amount), 4),
+        "currency": currency,
+    }
+
+
+async def _report_rows_from_facts(account, days: int) -> List[Dict[str, Any]]:
+    """The day-by-day report for [today - days, today) from stored billing facts.
+
+    Same window the live query covers (Cost Explorer's End is exclusive). Every
+    refresh re-ingests the last 30 days and a backfill fills older history, so
+    this is the report as of the last refresh. A fact with no amount is left
+    out rather than shown as zero; AWS ingestion never writes one.
+    """
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.cost_fact import CloudCostFact
+
+    today = date.today()
+    start = today - timedelta(days=days)
+    try:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(
+                select(CloudCostFact.billing_date, CloudCostFact.service,
+                       CloudCostFact.usage_type, CloudCostFact.region,
+                       CloudCostFact.amount, CloudCostFact.currency)
+                .where(CloudCostFact.account_id == account.id,
+                       CloudCostFact.billing_date >= start,
+                       CloudCostFact.billing_date < today,
+                       CloudCostFact.amount.isnot(None))
+                .order_by(CloudCostFact.billing_date)
+            )).all()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read stored cost facts for account %s: %s",
+                       getattr(account, "id", "?"), exc)
+        return []
+    return [_fact_to_report_row(*r) for r in rows]
+
+
+def _record_awaiting_refresh(account) -> None:
+    """Say why a refresh-only account shows no cost, unless something more
+    specific is already known -- a permission error from the last refresh is the
+    better answer, and this must not paper over it."""
+    aid = str(account.id)
+    if aid in _cost_error_reason:
+        return
+    _cost_error_reason[aid] = {
+        "category": AWAITING_REFRESH,
+        "message": ("AWS cost is read from AWS only when this account is refreshed, "
+                    "and no refresh has saved cost data for it yet."),
+        "retry_after_seconds": None,
+        "http_status": None,
+        "provider": getattr(account, "provider", None),
+        "terminal": True,
+        "retryable": False,
+        "required_permission": None,
+        "explanation": ("Opening a page never calls AWS, because AWS charges for "
+                        "every billing query. Click Refresh, or wait for the "
+                        "scheduled refresh."),
+        "occurred_at": time.time(),
+    }
+
+
+async def _serve_saved(cache: dict, key, empty, account):
+    """What a page view gets for a refresh-only provider. Never calls it.
+
+    In order: for a day-by-day report, the stored billing facts; otherwise the
+    value in memory from the last refresh; otherwise the snapshot that refresh
+    saved (after a restart); otherwise `empty`, with a diagnostic that says
+    "refresh to load this" rather than an error.
+    """
+    provider_name = getattr(account, "provider", None)
+    kind, window = _snapshot_ident(cache, key)
+
+    if kind == "report":
+        rows = await _report_rows_from_facts(account, window)
+        if rows:
+            cost_metrics.record(provider_name, "cache_hits")
+            return rows
+
+    entry = cache.get(key)
+    if entry is not None and (entry[1] or not entry[2]):
+        cost_metrics.record(provider_name, "cache_hits")
+        return entry[1]
+
+    saved = await _load_snapshot(account, kind, window)
+    if saved is not None:
+        payload, fetched_epoch = saved
+        # Stamped with when the refresh fetched it, so the freshness panel says
+        # "9 hours ago" rather than passing a restored value off as new.
+        cache[key] = (fetched_epoch, payload, False, fetched_epoch, True)
+        cost_metrics.record(provider_name, "cache_hits")
+        return payload
+
+    _record_awaiting_refresh(account)
+    return empty
+
+
 #: Diagnostic category -> what it means for a total that came back empty.
 #: Phrased as what happened to the QUERY, because that is what is known. Only
 #: the last entry is a statement about the account's actual spend.
@@ -475,6 +604,11 @@ _EMPTY_TOTAL_REASON: Dict[str, str] = {
     "provider_error": (
         "The provider returned an error for the billing query, so no spend "
         "could be read for this account."
+    ),
+    AWAITING_REFRESH: (
+        "AWS cost is read from AWS only during a refresh, and nothing has been "
+        "saved for this account yet. Click Refresh, or wait for the scheduled "
+        "refresh. This is not a spend of zero."
     ),
 }
 
@@ -1001,13 +1135,43 @@ async def prewarm_cost_cache(account) -> None:
     first load hits a warm cache instead of a cold 30-50s provider billing
     call. Exceptions are swallowed — the caller doesn't await this to block
     on it, and a failed pre-warm just means the next real request pays the
-    normal (now-short, 20s) failure-cache cost instead of the full one."""
-    await asyncio.gather(
-        fetch_real_costs(account),
-        fetch_daily_costs(account),
-        fetch_real_costs_by_resource(account),
-        return_exceptions=True,
-    )
+    normal (now-short, 20s) failure-cache cost instead of the full one.
+
+    Only ever called by a refresh — a discovery scan, Refresh all, or the Cost
+    tab's Refresh — so it runs as one: this is the one place AWS cost is read."""
+    with fetch_policy.refresh_activity():
+        await asyncio.gather(
+            fetch_real_costs(account),
+            fetch_daily_costs(account),
+            fetch_real_costs_by_resource(account),
+            return_exceptions=True,
+        )
+
+
+def expire_account_cost_cache(account_id) -> int:
+    """Expire this account's cached billing results without discarding them.
+
+    Used by the Cost tab's own refresh, which must re-ask the provider rather
+    than re-serve a 14-minute-old answer. The VALUES are kept and only the
+    timestamp is zeroed: if the provider then fails (a 429, a dropped TLS
+    handshake), `_cached_fetch` still serves the last good numbers as stale,
+    exactly as it would at the natural end of the TTL. Deleting the entries
+    instead would turn one throttled refresh into an NA page.
+
+    Returns how many cache slots were expired.
+    """
+    aid = str(account_id)
+    expired = 0
+    for cache in (_real_cost_cache, _daily_cost_cache,
+                  _real_cost_by_resource_cache, _cost_report_cache):
+        for key in [k for k in cache
+                    if k == aid or (isinstance(k, tuple) and k and k[0] == aid)]:
+            entry = cache[key]
+            stored_at, rows, errored = entry[0], entry[1], entry[2]
+            last_good = entry[3] if len(entry) > 3 else (None if errored else stored_at)
+            cache[key] = (0.0, rows, errored, last_good)
+            expired += 1
+    return expired
 
 
 #: Where a provider gave us a charge with no region attached. A real label
@@ -1064,11 +1228,43 @@ def _single_currency(values: List[Optional[str]]) -> Optional[str]:
     return None
 
 
-async def estimate_costs(account_id: uuid.UUID, db: AsyncSession) -> Dict[str, Any]:
+#: AWS Cost Explorer's own literal value for a charge its REGION dimension
+#: cannot place anywhere (global services, data transfer, tax, support) — not
+#: this codebase's convention, AWS's. Treated the same as a missing region
+#: everywhere a region is matched, below.
+_AWS_NO_REGION = "NoRegion"
+
+
+def _region_matches(row_region: Optional[str], selected: str) -> bool:
+    """Whether a billing row belongs to the region someone picked in the UI.
+
+    `selected == "global"` means "resources with no specific region" — the
+    same convention `app.utils.regions.GLOBAL` uses for inventory — so it
+    matches a row whose region is missing entirely, including AWS's literal
+    "NoRegion" GroupBy value. A real region name is matched case-insensitively
+    since the three providers are not consistent about casing (OCI/AWS codes
+    are lower-case, Azure locations vary).
+    """
+    code = (row_region or "").strip()
+    if selected.strip().lower() == "global":
+        return not code or code.lower() == _AWS_NO_REGION.lower()
+    return code.lower() == selected.strip().lower()
+
+
+async def estimate_costs(
+    account_id: uuid.UUID, db: AsyncSession, region: Optional[str] = None,
+) -> Dict[str, Any]:
     """Account cost summary from the provider billing API (real values or NA).
 
     Kept under its historical name because the /cost-estimate route and the
     dashboard consume it; it no longer fabricates config-based estimates.
+
+    `region` narrows the total to one region's spend. This is honest to offer
+    because every provider's billing row here already carries a real region
+    (AWS's REGION GroupBy dimension, Azure's ResourceLocation, OCI's region
+    groupBy — see each provider's `get_cost_data()`), unlike the STORED daily
+    history behind the cost trend chart, where AWS specifically never
+    populates `region` (see `AWSCostProvider.get_cost_report`'s own comment).
     """
     from app.repository.cloud_account_repo import CloudAccountRepository
 
@@ -1076,36 +1272,67 @@ async def estimate_costs(account_id: uuid.UUID, db: AsyncSession) -> Dict[str, A
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    rows = await fetch_real_costs(account)
-    total = round(sum(float(r.get("monthly_cost") or 0) for r in rows), 2) if rows else None
-    currency = _single_currency([r.get("currency") for r in rows]) if rows else None
+    all_rows = await fetch_real_costs(account)
+    # Filtering, not re-querying: every row already carries its own region, so
+    # narrowing to one is a sum over a subset, not a different question asked
+    # of the provider. A region with no matching row is a real, reportable
+    # zero (the provider would have returned a row for it if it had spent
+    # anything there) — never NA, which stays reserved for "we don't know".
+    rows = (
+        [r for r in all_rows if _region_matches(r.get("region"), region)]
+        if region else all_rows
+    )
+    # `all_rows` being non-empty is what "we have an answer" means here — even
+    # when the region-filtered `rows` is empty, that is a real zero for that
+    # region (a provider that billed anything there would have returned a
+    # matching row), never NA, which stays reserved for "we don't know".
+    total = round(sum(float(r.get("monthly_cost") or 0) for r in rows), 2) if all_rows else None
+    currency = _single_currency([r.get("currency") for r in all_rows]) if all_rows else None
+
+    # This account bills natively in `currency` (one account, one provider, so
+    # unlike the multi-account dashboard this is never mixed) — but a USD
+    # account and an INR account still show different units on the same
+    # Overview page. A live FX rate makes the headline comparable everywhere.
+    rate = await fx_rate_service.get_rate_to_inr(db, currency) if currency else None
+    total_inr = round(total * rate, 4) if total is not None and rate is not None else None
 
     by_type: Dict[str, float] = {}
     breakdown: List[Dict[str, Any]] = []
     for r in sorted(rows, key=lambda x: -(x.get("monthly_cost") or 0)):
         svc = r.get("resource_name") or "Unknown"
         by_type[svc] = round(by_type.get(svc, 0) + float(r.get("monthly_cost") or 0), 4)
+        row_cost = float(r.get("monthly_cost") or 0)
         breakdown.append({
             "resource_id": None,
             "resource_name": svc,
             "resource_type": r.get("resource_type") or svc,
             "region": r.get("region"),
-            "monthly_cost": round(float(r.get("monthly_cost") or 0), 4),
+            "monthly_cost": round(row_cost, 4),
             "currency": r.get("currency"),
+            "monthly_cost_inr": round(row_cost * rate, 4) if rate is not None else None,
         })
+
+    note = "NA — the provider billing API returned no cost data for this account."
+    if all_rows:
+        if region and not rows:
+            note = f"No billed spend was reported for “{region}” in the last 30 days."
+        elif region:
+            note = f"Actual billed spend for “{region}” over the last 30 days, from the provider billing API."
+        else:
+            note = "Actual billed spend for the last 30 days from the provider billing API."
 
     return {
         "account_id": str(account_id),
         "total_monthly_cost": total,
         "currency": currency,
-        "cost_source": "billing_api" if rows else None,
+        "total_monthly_cost_inr": total_inr,
+        "fx_rate_used": rate,
+        "fx_as_of": date.today().isoformat() if rate is not None else None,
+        "cost_source": "billing_api" if all_rows else None,
+        "region": region,
         "by_type": by_type,
         "breakdown": breakdown[:20],
-        "note": (
-            "Actual billed spend for the last 30 days from the provider billing API."
-            if rows else
-            "NA — the provider billing API returned no cost data for this account."
-        ),
+        "note": note,
     }
 
 
@@ -1225,11 +1452,40 @@ class CostService:
             start = end - _timedelta(days=max(1, min(days, MAX_REPORT_DAYS)))
 
         series = await repo.daily_series(ids, start, end, region=region)
+
+        # AWS never stores a region on its ingested daily facts (see
+        # AWSCostProvider.get_cost_report's own comment: Cost Explorer caps
+        # GroupBy at two dimensions, and this product spends both on Service
+        # and Usage Type rather than Region, to approximate a resource
+        # breakdown). A region-filtered query against an AWS account's
+        # history therefore always returns zero rows -- which looks exactly
+        # like "no spend here" unless the caller is told the real reason.
+        region_capability = None
+        if region:
+            aws_in_scope = [a for a in accounts if (a.provider or "").upper() == "AWS"]
+            region_capability = (
+                {
+                    "supported": False,
+                    "reason": (
+                        "AWS Cost Explorer's GroupBy is limited to two dimensions per "
+                        "request, and this product spends both on Service and Usage "
+                        "Type (the closest thing to a resource breakdown AWS offers "
+                        "without a separate Cost & Usage Report/Athena pipeline). "
+                        "Region is not one of the two, so AWS's stored daily history "
+                        "carries no region and cannot be filtered by one. Azure and "
+                        "OCI do not have this limitation."
+                    ),
+                }
+                if aws_in_scope else
+                {"supported": True, "reason": None}
+            )
+
         payload: Dict[str, Any] = {
             "account_id": str(account_id),
             "period": {"start": start.isoformat(), "end": end.isoformat(),
                        "days": days, "timezone": "UTC", "custom": custom},
             "region": region,
+            "region_capability": region_capability,
             "series": series,
             "coverage": await repo.coverage(ids),
             "monthly": await repo.monthly_totals(ids),
@@ -1442,20 +1698,24 @@ class CostService:
             "source": "billing_api + inventory tags",
         }
 
-    async def get_governance(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
-        """Governance gaps and the FinOps health score.
-
-        The health score is returned alongside spend-free governance findings
-        and is explicitly labelled a maturity measure — it must never be read
-        as a cost.
+    async def _compute_governance(
+        self, accounts: Sequence[Any],
+    ) -> Dict[str, Any]:
+        """Governance findings + FinOps health for a resolved list of
+        accounts. Shared by the single-account/ALL path and the per-client
+        scorecard — one computation, so the two can never disagree about what
+        an account's tagging or budget coverage is worth.
         """
         from app.repository.resource_repo import ResourceRepository
         from app.repository.cost_fact_repo import CostFactRepository
         from app.models.cost_budget import CloudCostBudget
-        from sqlalchemy import func, select as _select
+        from app.models.cost_recommendation import STATE_NEW
+        from app.repository.cost_reco_repo import CostRecommendationRepository
+        from sqlalchemy import func, or_, select as _select
         from app.services import cost_allocation_service as alloc
+        from app.services import cost_recommendation_service as reco
+        from app.services.intelligence_service import IntelligenceService
 
-        accounts = await self._accounts_in_scope(account_id)
         ids = [a.id for a in accounts]
 
         res_repo = ResourceRepository(self.db)
@@ -1467,9 +1727,16 @@ class CostService:
         coverage = await fact_repo.coverage(ids)
         tags = alloc.tag_coverage(resources)
 
+        # Budgets whose scope actually covers this account set: scoped to one
+        # of these accounts, OR organisation-wide (account_id IS NULL). The
+        # previous version counted every enabled budget in the whole database
+        # regardless of scope, which inflated budget_coverage for every
+        # account by every OTHER account's budgets too.
         budget_count = (await self.db.execute(
             _select(func.count()).select_from(CloudCostBudget).where(
-                CloudCostBudget.enabled.is_(True)
+                CloudCostBudget.enabled.is_(True),
+                or_(CloudCostBudget.account_id.in_(ids), CloudCostBudget.account_id.is_(None))
+                if ids else CloudCostBudget.account_id.is_(None),
             )
         )).scalar() or 0
 
@@ -1489,18 +1756,41 @@ class CostService:
             unpriced / (priced + unpriced) if (priced + unpriced) else None
         )
 
+        # The OPTIMIZE signal: of the findings a human could currently see on
+        # the Cost tab (open, or resolved BY a human — see on_cost_tab), what
+        # share have moved past NEW, i.e. someone has actually looked at them.
+        # None of this is invented when nothing has ever been analysed: an
+        # estate with zero visible findings scores 100 only if at least one
+        # account in scope HAS been analysed; otherwise there is nothing to
+        # measure, and None (excluded) is the honest answer, not a free 100.
+        engine_view = await IntelligenceService(self.db).cost_findings(accounts, resources)
+        cost_tab_findings = [f for f in engine_view["findings"] if reco.on_cost_tab(f)]
+        analysed_any = any(s.get("mode") == "analysed" for s in engine_view.get("sources", []))
+        reviewed_count: Optional[int] = None
+        if cost_tab_findings:
+            decisions = await CostRecommendationRepository(self.db).decisions_for(ids)
+            reviewed_count = sum(
+                1 for f in cost_tab_findings
+                if reco.from_finding(f, decisions=decisions).get("state") != STATE_NEW
+            )
+            optimization_review_rate = reviewed_count / len(cost_tab_findings) * 100
+        else:
+            optimization_review_rate = 100.0 if analysed_any else None
+
+        finops_health = alloc.finops_health(
+            tag_coverage_percent=tags["overall_coverage_percent"],
+            allocation_coverage_percent=money_coverage,
+            days_of_history=coverage["days_covered"],
+            budget_count=budget_count,
+            accounts_in_scope=len(accounts),
+            anomaly_monitoring_ready=coverage["days_covered"] >= 30,
+            unpriced_resource_ratio=unpriced_ratio,
+            optimization_review_rate=optimization_review_rate,
+        )
+
         return {
-            "account_id": str(account_id),
             "governance": alloc.governance_findings(resources),
-            "finops_health": alloc.finops_health(
-                tag_coverage_percent=tags["overall_coverage_percent"],
-                allocation_coverage_percent=money_coverage,
-                days_of_history=coverage["days_covered"],
-                budget_count=budget_count,
-                accounts_in_scope=len(accounts),
-                anomaly_monitoring_ready=coverage["days_covered"] >= 30,
-                unpriced_resource_ratio=unpriced_ratio,
-            ),
+            "finops_health": finops_health,
             "data_coverage": {
                 "historical_days": coverage["days_covered"],
                 "billing_facts": coverage["records"],
@@ -1510,8 +1800,100 @@ class CostService:
                 ),
                 "tag_allocation_percent": tags["overall_coverage_percent"],
                 "forecast_ready": coverage["days_covered"] >= 14,
+                "optimization_review": {
+                    "visible_findings": len(cost_tab_findings),
+                    "reviewed": reviewed_count,
+                    "analysed": analysed_any,
+                },
             },
         }
+
+    async def _record_scorecard_snapshot(
+        self, *, scope_type: str, scope_id: uuid.UUID, accounts: Sequence[Any],
+        finops_health: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Write today's snapshot (at most once) and return the trend so far,
+        oldest first. Failure to write never breaks the read — a scorecard
+        that cannot be read because its OWN history failed to persist would be
+        a worse outcome than a missing day in the trend."""
+        from datetime import date as _date
+
+        from app.repository.finops_scorecard_repo import FinopsScorecardRepository
+
+        repo = FinopsScorecardRepository(self.db)
+        try:
+            await repo.record_if_new(
+                scope_type=scope_type, scope_id=scope_id, as_of=_date.today(),
+                score=finops_health.get("score"), accounts_in_scope=len(accounts),
+                health=finops_health,
+            )
+            history = await repo.history_for(scope_type=scope_type, scope_id=scope_id)
+            return [row.to_dict() for row in history]
+        except Exception:  # noqa: BLE001 — history is a bonus, not the answer
+            logger.exception(
+                "Could not record/read the FinOps scorecard history for %s %s",
+                scope_type, scope_id,
+            )
+            return []
+
+    async def get_governance(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
+        """Governance gaps and the FinOps health score.
+
+        The health score is returned alongside spend-free governance findings
+        and is explicitly labelled a maturity measure — it must never be read
+        as a cost.
+        """
+        from app.models.finops_scorecard import ESTATE_SCOPE_ID, SCOPE_ACCOUNT, SCOPE_ESTATE
+
+        accounts = await self._accounts_in_scope(account_id)
+        result = await self._compute_governance(accounts)
+
+        if account_id == "ALL":
+            scope_type, scope_id = SCOPE_ESTATE, ESTATE_SCOPE_ID
+        else:
+            scope_type, scope_id = SCOPE_ACCOUNT, accounts[0].id
+        result["history"] = await self._record_scorecard_snapshot(
+            scope_type=scope_type, scope_id=scope_id, accounts=accounts,
+            finops_health=result["finops_health"],
+        )
+        result["account_id"] = str(account_id)
+        return result
+
+    async def get_client_governance(self, client_id: uuid.UUID) -> Dict[str, Any]:
+        """The same FinOps scorecard, for every account under one client.
+
+        Exists because `get_governance` only ever takes a single account or
+        every account ("ALL") — there was no scope in between covering
+        exactly one customer's estate, which is the natural unit for an MSP
+        report. Reuses the identical computation `get_governance` does; the
+        only thing that differs is which accounts are in scope.
+        """
+        from sqlalchemy import select as _select
+
+        from app.models.client import CloudClient
+        from app.models.cloud_account import CloudAccount
+        from app.models.finops_scorecard import SCOPE_CLIENT
+
+        client = await self.db.get(CloudClient, client_id)
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+
+        accounts = list((await self.db.execute(
+            _select(CloudAccount).where(CloudAccount.client_id == client_id)
+        )).scalars().all())
+
+        result = await self._compute_governance(accounts)
+        result["history"] = await self._record_scorecard_snapshot(
+            scope_type=SCOPE_CLIENT, scope_id=client_id, accounts=accounts,
+            finops_health=result["finops_health"],
+        )
+        result["client_id"] = str(client_id)
+        result["client_name"] = client.name
+        result["accounts_in_scope"] = [
+            {"id": str(a.id), "name": a.account_name, "provider": a.provider}
+            for a in accounts
+        ]
+        return result
 
     async def get_report_types(self, account_id: uuid.UUID | str) -> Dict[str, Any]:
         """Report types, each marked available or blocked with the reason."""
@@ -1841,407 +2223,54 @@ class CostService:
             t["cost"] = round(t["cost"], 4)
         trend_currency = _single_currency(trend_currencies) if trends else None
 
-        # ── Optimization recommendations from real scanned configuration ─────
-        # potential_savings is None (NA) — no real pricing source is wired up,
-        # so no dollar figure is ever invented.
-        optimizations: List[Dict[str, Any]] = []
-
-        for r in resources:
-            config = r.config or {}
-            rtype = r.resource_type
-            rid = str(r.id)
-
-            if rtype == "EC2Instance":
-                if r.status == "stopped":
-                    sub_resources = []
-                    if isinstance(r.raw_data, dict):
-                        for bd in r.raw_data.get("BlockDeviceMappings", []):
-                            vid = bd.get("Ebs", {}).get("VolumeId")
-                            if vid:
-                                sub_resources.append({"name": f"EBS Volume {vid}", "cost": None})
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Terminate Stopped EC2 Instance",
-                        "description": (
-                            f"Instance '{r.resource_name}' is stopped (state from the EC2 API). "
-                            "Stopped instances keep incurring EBS storage charges."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "LOW",
-                        "recommendation": "If no longer needed, snapshot the volumes and terminate the instance.",
-                        "sub_resources": sub_resources,
-                    })
-
-                instance_type = config.get("instance_type") or ""
-                if instance_type.startswith(("t2.", "m4.", "c4.")):
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Upgrade Legacy EC2 Generation",
-                        "description": (
-                            f"Instance '{r.resource_name}' runs a previous-generation type "
-                            f"({instance_type}). Current generations (t3/t4g, m5/m6, c5/c6) offer "
-                            "better price/performance."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": f"Migrate {instance_type} to its current-generation equivalent.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "S3Bucket":
-                # Only when the S3 API explicitly reported versioning state
-                versioning = config.get("versioning")
-                if versioning in ("Disabled", "Suspended"):
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Enable S3 Bucket Versioning",
-                        "description": (
-                            f"Bucket '{r.resource_name}' has versioning '{versioning}' "
-                            "(from get_bucket_versioning). Versioning protects against "
-                            "accidental deletion and overwrites."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "LOW",
-                        "recommendation": "Enable bucket versioning in the S3 console or via the API.",
-                        "sub_resources": [],
-                    })
-
-                # Only when the S3 API explicitly confirmed there are zero rules
-                if config.get("lifecycle_rules") == []:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Missing S3 Lifecycle Policies",
-                        "description": (
-                            f"Bucket '{r.resource_name}' has no lifecycle rules "
-                            "(confirmed via get_bucket_lifecycle_configuration). Objects stay "
-                            "in their original storage class indefinitely."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Add a lifecycle rule to transition or expire old objects.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "DynamoDBTable" and config.get("billing_mode") == "PROVISIONED":
-                item_count = config.get("item_count")
-                if item_count is not None and item_count < 1000:
-                    rcu = config.get("read_capacity")
-                    wcu = config.get("write_capacity")
-                    sub_resources = []
-                    if rcu is not None:
-                        sub_resources.append({"name": f"Provisioned RCU ({rcu})", "cost": None})
-                    if wcu is not None:
-                        sub_resources.append({"name": f"Provisioned WCU ({wcu})", "cost": None})
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Convert DynamoDB to On-Demand Billing",
-                        "description": (
-                            f"Table '{r.resource_name}' uses provisioned throughput but holds only "
-                            f"{item_count} items (from DescribeTable). On-demand billing usually "
-                            "costs less for low-traffic tables."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Switch the table's billing mode to PAY_PER_REQUEST.",
-                        "sub_resources": sub_resources,
-                    })
-
-            if rtype == "LambdaFunction":
-                memory_mb = config.get("memory_mb")
-                runtime = config.get("runtime") or ""
-
-                if memory_mb is not None and memory_mb > 1024:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Review Lambda Memory Size",
-                        "description": (
-                            f"Function '{r.resource_name}' is configured with {memory_mb} MB "
-                            "(from the Lambda API). Oversized memory increases per-invocation cost."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "LOW",
-                        "effort": "MEDIUM",
-                        "recommendation": "Profile the function and right-size its memory allocation.",
-                        "sub_resources": [],
-                    })
-
-                outdated_runtimes = ["nodejs10.x", "nodejs12.x", "nodejs14.x",
-                                     "python3.6", "python3.7", "ruby2.5"]
-                if runtime in outdated_runtimes:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Upgrade Deprecated Runtime",
-                        "description": (
-                            f"Function '{r.resource_name}' uses runtime '{runtime}' (from the "
-                            "Lambda API), which no longer receives security patches."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "CRITICAL",
-                        "effort": "HIGH",
-                        "recommendation": "Upgrade to a supported runtime (e.g. nodejs20.x, python3.12).",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "RDSInstance":
-                if r.status == "stopped":
-                    storage_gb = config.get("storage_gb")
-                    sub_resources = (
-                        [{"name": f"Provisioned Storage ({storage_gb} GB)", "cost": None}]
-                        if storage_gb is not None else []
-                    )
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Review Stopped RDS Database",
-                        "description": (
-                            f"RDS instance '{r.resource_name}' is stopped (state from the RDS "
-                            "API) but its provisioned storage continues to be billed."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "MEDIUM",
-                        "recommendation": "Take a final snapshot and delete the instance if unused.",
-                        "sub_resources": sub_resources,
-                    })
-
-                is_prod = any(
-                    str(v).lower() in ("prod", "production")
-                    for v in (r.tags or {}).values()
-                )
-                if config.get("multi_az") is True and not is_prod:
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Disable Multi-AZ on Non-Prod RDS",
-                        "description": (
-                            f"Database '{r.resource_name}' has Multi-AZ enabled (from the RDS "
-                            "API) but carries no production tag. Multi-AZ roughly doubles "
-                            "instance and storage charges."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Convert to Single-AZ if high availability is not required.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "EKSCluster":
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Review EKS Control Plane Utilization",
-                    "description": (
-                        f"Cluster '{r.resource_name}' incurs AWS's flat hourly control-plane "
-                        "charge regardless of workload. Verify the cluster is still needed."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "LOW",
-                    "effort": "HIGH",
-                    "recommendation": "Delete test clusters; use kind/minikube for local development.",
-                    "sub_resources": [],
-                })
-
-            # ── OCI (Oracle Cloud) ────────────────────────────────────────────
-            if rtype == "ComputeInstance" and (r.status or "").upper() == "STOPPED":
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Stopped OCI Compute Instance",
-                    "description": (
-                        f"Instance '{r.resource_name}' is STOPPED (lifecycle state from the "
-                        "OCI Compute API). A stopped instance is not billed for OCPUs, but its "
-                        "boot volume and any attached block volumes keep incurring storage charges."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "HIGH",
-                    "effort": "LOW",
-                    "recommendation": "If the instance is no longer needed, back up and terminate it (with its volumes) to stop the ongoing storage charges.",
-                    "sub_resources": [],
-                })
-
-            if rtype == "AutonomousDatabase":
-                if (r.status or "").upper() == "STOPPED":
-                    storage_tb = config.get("data_storage_size_tbs")
-                    sub = (
-                        [{"name": f"Provisioned Storage ({storage_tb} TB)", "cost": None}]
-                        if storage_tb is not None else []
-                    )
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Stopped Autonomous Database",
-                        "description": (
-                            f"Autonomous Database '{r.resource_name}' is STOPPED (from the OCI "
-                            "Database API). A stopped ADB is not billed for CPU, but its "
-                            "provisioned storage continues to be billed."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "HIGH",
-                        "effort": "LOW",
-                        "recommendation": "If it is no longer needed, take a manual backup and terminate the database to stop storage charges.",
-                        "sub_resources": sub,
-                    })
-                elif config.get("is_auto_scaling_enabled") is False:
-                    # ECPU-model ADBs report cpu_core_count=0; the real capacity is
-                    # compute_count. Use whichever matches the billing model so the
-                    # message never shows a misleading "0".
-                    is_ecpu = config.get("compute_model") == "ECPU"
-                    cores = config.get("compute_count") if is_ecpu else config.get("cpu_core_count")
-                    unit = "ECPU" if is_ecpu else "OCPU"
-                    optimizations.append({
-                        "id": str(uuid.uuid4()),
-                        "rule": "Enable Autonomous Database Auto-Scaling",
-                        "description": (
-                            f"Autonomous Database '{r.resource_name}' has auto-scaling disabled"
-                            + (f" (base {unit} count = {cores})" if cores is not None else "")
-                            + " (from the OCI Database API). Without auto-scaling it always bills "
-                            f"for its full base {unit}s even when idle."
-                        ),
-                        "potential_savings": None,
-                        "affected_resource": r.resource_name,
-                        "resource_id": rid,
-                        "severity": "MEDIUM",
-                        "effort": "LOW",
-                        "recommendation": "Enable auto-scaling so the database matches OCPUs to demand instead of paying for peak capacity continuously.",
-                        "sub_resources": [],
-                    })
-
-            if rtype == "OKECluster" and config.get("node_pool_count") == 0:
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle OKE Cluster (No Node Pools)",
-                    "description": (
-                        f"Kubernetes cluster '{r.resource_name}' has no node pools "
-                        "(node_pool_count=0, from the OCI Container Engine API). An empty cluster "
-                        "runs no workloads yet can still incur cluster management charges."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "Confirm the cluster is still needed; if it was left over from testing, delete it.",
-                    "sub_resources": [],
-                })
-
-            # OCI classic Load Balancer — disambiguate from AWS 'LoadBalancer' via lb_type
-            if (rtype == "LoadBalancer"
-                    and config.get("lb_type") == "LoadBalancer"
-                    and config.get("backend_sets") == []):
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle OCI Load Balancer (No Backend Sets)",
-                    "description": (
-                        f"Load balancer '{r.resource_name}' has no backend sets configured "
-                        "(from the OCI Load Balancer API). A load balancer with no backends serves "
-                        "no traffic but is still billed per hour for its provisioned shape."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "If this load balancer is unused, delete it to stop the hourly shape charge.",
-                    "sub_resources": [],
-                })
-
-            # OCI API Gateway — disambiguate from AWS 'APIGateway' via endpoint_type
-            if (rtype == "APIGateway"
-                    and "endpoint_type" in config
-                    and config.get("deployment_count") == 0):
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle OCI API Gateway (No Deployments)",
-                    "description": (
-                        f"API Gateway '{r.resource_name}' has no deployments (deployment_count=0, "
-                        "from the OCI API Gateway service). A gateway with no deployments routes no "
-                        "APIs but is still billed while it exists."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "If this gateway is no longer used, delete it to stop its charges.",
-                    "sub_resources": [],
-                })
-
-            # ── Azure ─────────────────────────────────────────────────────────
-            if rtype == "AKSCluster" and config.get("node_count") == 0:
-                optimizations.append({
-                    "id": str(uuid.uuid4()),
-                    "rule": "Idle AKS Cluster (No Nodes)",
-                    "description": (
-                        f"AKS cluster '{r.resource_name}' has 0 nodes across its node pools "
-                        "(from the Azure Container Service API). An empty cluster runs no workloads "
-                        "but can still incur control-plane / management charges."
-                    ),
-                    "potential_savings": None,
-                    "affected_resource": r.resource_name,
-                    "resource_id": rid,
-                    "severity": "MEDIUM",
-                    "effort": "LOW",
-                    "recommendation": "Confirm the cluster is still needed; if it was left over from testing, delete it.",
-                    "sub_resources": [],
-                })
-
-        # ── Attach real list-price savings to OCI recommendations ────────────
-        # Fetch OCI public list prices once (cached ~24h) and price each rec from
-        # the resource's real config. Only done when an OCI account is in view.
-        has_oci = any((a.provider or "").upper() in ("ORACLE", "OCI") for a in accounts)
-        if has_oci:
-            price_currency = currency or "INR"
-            prices = await oci_pricing.get_prices(price_currency)
-            res_by_id = {str(r.id): r for r in resources}
-            for o in optimizations:
-                _attach_oci_savings(o, res_by_id.get(o.get("resource_id")), prices, price_currency)
-
-        # Sum the real savings figures we were able to price (all same currency).
-        known_savings = [
-            o["potential_savings"] for o in optimizations
-            if isinstance(o.get("potential_savings"), (int, float))
-        ]
-        potential_savings = round(sum(known_savings), 2) if known_savings else None
-
-        # ── Structure, score and lifecycle for the findings above ────────────
-        # The rules stay where they are; this adds category, confidence,
-        # actionability, a published priority score and any human decision,
-        # joined back by a fingerprint that survives re-derivation.
+        # ── Optimization recommendations ─────────────────────────────────────
+        # Read from the Resource Intelligence engine: the same findings the
+        # Intelligence tab lists, with the same evidence, savings and status,
+        # so the two tabs can never disagree about a resource. (This block
+        # used to derive its own 17 rules inline; each one is now an engine
+        # rule, a security-engine control, or was retired for firing on every
+        # resource of a type with no evidence.) Savings stay NA unless billing
+        # or a provider price list supports a figure.
+        from app.models.cost_recommendation import CLOSED_STATES
+        from app.optimization import rules as opt_rules
         from app.repository.cost_reco_repo import CostRecommendationRepository
         from app.services import cost_recommendation_service as reco
+        from app.services.intelligence_service import IntelligenceService
 
         decisions = await CostRecommendationRepository(self.db).decisions_for(
             [a.id for a in accounts]
         )
+        engine_view = await IntelligenceService(self.db).cost_findings(accounts, resources)
+        optimizations = [
+            reco.from_finding(
+                f, decisions=decisions,
+                legacy_rules=getattr(opt_rules.by_id(f.get("rule_id")), "supersedes", ()),
+            )
+            for f in engine_view["findings"] if reco.on_cost_tab(f)
+        ]
+
+        # ── Structure, score and lifecycle ───────────────────────────────────
+        # Category, confidence, actionability, a published priority score and
+        # the human decision, joined by the finding's fingerprint.
         optimizations = reco.enrich(
             optimizations, account_id=account_id, decisions=decisions,
         )
         savings_breakdown = reco.savings_summary(optimizations)
         savings_by_category = reco.by_category(optimizations)
+
+        # The headline saving is shown in the account's billing currency, so
+        # it is only a number when every open priced saving is in that
+        # currency. Closed (dismissed/implemented) ones are not counted.
+        open_priced = [
+            o for o in optimizations
+            if o.get("state") not in CLOSED_STATES
+            and isinstance(o.get("potential_savings"), (int, float))
+        ]
+        codes = {o.get("savings_currency") for o in open_priced}
+        potential_savings = (
+            round(sum(o["potential_savings"] for o in open_priced), 2)
+            if open_priced and currency and codes == {currency} else None
+        )
 
         stopped_instances = await build_stopped_instances(resources, accounts)
 
@@ -2259,11 +2288,25 @@ class CostService:
                     **reason,
                 })
 
+        # The real per-currency total, plus the same total converted to INR
+        # using a live rate — see `fx_rate_service`/`cost_money.convert_total`.
+        # Converting does not replace `by_currency`/`mixed`: a mixed-currency
+        # scope still has no single native total, but it now also has one
+        # honest INR figure instead of only NA.
+        _cost_total = cost_money.total(
+            (r.get("monthly_cost"), r.get("currency")) for r in by_service
+        ).with_reason(_diagnostic_summary(cost_diagnostics))
+        _fx_rates = await fx_rate_service.get_rates_for(self.db, _cost_total.by_currency.keys())
+
         return {
             "account_id": str(account_id),
             "trends": trends,
             "trend_currency": trend_currency,
             "optimizations": optimizations,
+            # Per account: analysed (findings from the latest Resource
+            # Intelligence run) or preview (configuration and billing only,
+            # before the first analysis).
+            "optimizations_source": engine_view["sources"],
             # Split by how well each saving is known (85) and grouped by
             # currency (86) — never one combined number.
             "savings_summary": savings_breakdown,
@@ -2309,9 +2352,11 @@ class CostService:
             # subscription being rate-limited used to render as "the provider
             # returned no billing records", which reads as "this account has no
             # spend" — while its stored history held a real 12.6 lakh.
-            "totals_by_currency": cost_money.total(
-                (r.get("monthly_cost"), r.get("currency")) for r in by_service
-            ).with_reason(_diagnostic_summary(cost_diagnostics)).to_dict(),
+            "totals_by_currency": {
+                **_cost_total.to_dict(),
+                **cost_money.convert_total(_cost_total, _fx_rates),
+                "fx_as_of": date.today().isoformat(),
+            },
             "capabilities": get_cost_capabilities(accounts),
             "quality": assess_cost_quality(accounts),
             "freshness": {
@@ -2513,6 +2558,22 @@ class CostService:
 
         rows = [r for r in rows if _matches(r)]
 
+        # Per-row INR equivalent, via a live FX rate for that row's own
+        # currency. `total_cost`/`total_cost_inr` below both derive from this
+        # instead of a raw `sum(r["cost"])`, which used to add USD and INR
+        # rows together as if they were the same unit whenever a report
+        # spanned providers that bill differently.
+        _report_fx_rates = await fx_rate_service.get_rates_for(
+            self.db, (r.get("currency") for r in rows)
+        )
+        for r in rows:
+            rate = _report_fx_rates.get((r.get("currency") or "").upper())
+            cost = r.get("cost")
+            r["cost_inr"] = (
+                round(float(cost) * rate, 4)
+                if cost is not None and rate is not None else None
+            )
+
         # "in_inventory" only exists on true per-resource rows, never on the
         # day/service fallback rows mixed into group_by="summary" for
         # providers without per-resource billing — `"in_inventory" in r`
@@ -2534,6 +2595,7 @@ class CostService:
                     "resource_count": 0,
                     "compute_cost": 0.0, "database_cost": 0.0, "storage_cost": 0.0,
                     "network_cost": 0.0, "other_cost": 0.0, "total_cost": 0.0,
+                    "total_cost_inr": 0.0, "_has_inr": False,
                 })
                 # Rows with no provider_resource_id are AWS's day/service
                 # fallback (see accounts_without_resource_rows above) — AWS
@@ -2543,6 +2605,9 @@ class CostService:
                 group_resources.setdefault(key, set()).add(r.get("provider_resource_id") or id(r))
                 cost = float(r.get("cost") or 0)
                 g["total_cost"] += cost
+                if r.get("cost_inr") is not None:
+                    g["total_cost_inr"] += r["cost_inr"]
+                    g["_has_inr"] = True
                 component_key = f"{r.get('cost_component', 'Other').lower()}_cost"
                 if component_key in g:
                     g[component_key] += cost
@@ -2550,12 +2615,23 @@ class CostService:
                     g["other_cost"] += cost
             for key, g in groups.items():
                 g["resource_count"] = len(group_resources[key])
+                g["total_cost_inr"] = round(g["total_cost_inr"], 2) if g.pop("_has_inr") else None
                 for k in ("compute_cost", "database_cost", "storage_cost", "network_cost",
                           "other_cost", "total_cost"):
                     g[k] = round(g[k], 2)
 
             summary_rows = sorted(groups.values(), key=lambda x: -x["total_cost"])
-            total_cost = round(sum(g["total_cost"] for g in summary_rows), 2) if summary_rows else None
+            # `total_cost` is honest the same way `currency` is: a report that
+            # spans currencies has no single native total (see
+            # `cost_money.total`), so it is None rather than a sum across
+            # units. `total_cost_inr` exists regardless — see the per-row
+            # conversion above — and is what the UI shows as the headline.
+            _summary_total = cost_money.total((r.get("cost"), r.get("currency")) for r in rows)
+            total_cost = _summary_total.single_amount
+            total_cost_inr = (
+                round(sum(g["total_cost_inr"] for g in summary_rows if g["total_cost_inr"] is not None), 2)
+                if any(g["total_cost_inr"] is not None for g in summary_rows) else None
+            )
             return {
                 "account_id": str(account_id),
                 "days": days,
@@ -2563,6 +2639,9 @@ class CostService:
                 "dimensions": dims,
                 "currency": _single_currency(currencies) if rows else None,
                 "total_cost": total_cost,
+                "total_cost_inr": total_cost_inr,
+                "fx_rates_used": _report_fx_rates or None,
+                "fx_as_of": date.today().isoformat(),
                 "row_count": len(summary_rows),
                 "unmatched_resources": unmatched,
                 "rows": summary_rows,
@@ -2575,7 +2654,14 @@ class CostService:
         else:
             rows.sort(key=lambda x: (x["date"] or "", -(x["cost"] or 0)))
 
-        total_cost = round(sum(float(r["cost"] or 0) for r in rows), 2) if rows else None
+        # Same honesty rule as the summary branch above: a raw sum across rows
+        # is only a real number when every row bills in the same currency.
+        _report_total = cost_money.total((r.get("cost"), r.get("currency")) for r in rows)
+        total_cost = _report_total.single_amount
+        total_cost_inr = (
+            round(sum(r["cost_inr"] for r in rows if r["cost_inr"] is not None), 2)
+            if any(r["cost_inr"] is not None for r in rows) else None
+        )
         total_row_count = len(rows)
 
         paginated = rows
@@ -2591,6 +2677,9 @@ class CostService:
             "group_by": group_by,
             "currency": _single_currency(currencies) if rows else None,
             "total_cost": total_cost,
+            "total_cost_inr": total_cost_inr,
+            "fx_rates_used": _report_fx_rates or None,
+            "fx_as_of": date.today().isoformat(),
             # Total matching rows regardless of pagination — unchanged meaning
             # from before pagination existed, so existing callers that read
             # `row_count` (not `rows.length`) keep working.

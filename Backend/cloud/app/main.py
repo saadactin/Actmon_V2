@@ -43,12 +43,14 @@ from app.models.event_admin import (                  # noqa: F401
 from app.models.cost_fact import (                     # noqa: F401
     CloudCostBackfillJob, CloudCostFact,
 )
+from app.models.fx_rate import CloudFxRate             # noqa: F401
 from app.models.cost_recommendation import (            # noqa: F401
     CloudCostRecommendationDecision,
 )
 from app.models.cost_budget import (                   # noqa: F401
     CloudCostAlertPolicy, CloudCostBudget, CloudCostBudgetNotification,
 )
+from app.models.finops_scorecard import CloudFinopsScorecard  # noqa: F401
 from app.models.resource_cost import CloudResourceCost   # noqa: F401
 from app.models.resource_view import SavedResourceView   # noqa: F401
 from app.models.resource_action import CloudResourceAction  # noqa: F401
@@ -57,6 +59,31 @@ from app.models.alert_rule import (                      # noqa: F401
 )
 from app.models.account_refresh import (                 # noqa: F401
     CloudAccountRefresh, CloudAccountRefreshSchedule,
+)
+from app.models.client import (                          # noqa: F401
+    CloudClient, CloudClientReport, CloudClientReportSchedule,
+)
+from app.models.credential_inventory import (            # noqa: F401
+    CloudCredentialObject, CloudCredentialSource,
+)
+from app.models.optimization import (                    # noqa: F401
+    CloudOptimizationFinding, CloudOptimizationRun, CloudResourceTelemetry,
+)
+# Identity & Access (CIEM). The inventory, its derived analysis and the
+# approval workflow are three modules because they have three lifetimes:
+# the inventory costs provider calls, the analysis is recomputed freely, and
+# the workflow rows are an audit trail that outlives both.
+from app.models.identity import (                        # noqa: F401
+    CloudIdentity, CloudIdentityCredential, CloudIdentityMembership,
+    CloudIdentityPolicy,
+)
+from app.models.identity_analysis import (               # noqa: F401
+    CloudEffectivePermission, CloudIdentityAnalysisState, CloudIdentityBaseline,
+    CloudIdentityBlastRadius, CloudIdentityCapability, CloudIdentityTrust,
+    CloudPermissionUsage,
+)
+from app.models.identity_workflow import (               # noqa: F401
+    CloudAccessApproval, CloudAccessRequest, CloudIdentityAuditLog, CloudJitSession,
 )
 
 
@@ -116,6 +143,32 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # never block startup on this housekeeping
         _log.warning("Could not reconcile cloud_resource_changes columns: %s", exc)
 
+    # Clients, organisation onboarding and the credential inventory added
+    # columns to cloud_accounts. Kept in one module so tests apply the same DDL.
+    try:
+        from app.core import schema_patches
+
+        async with engine.begin() as conn:
+            await schema_patches.apply(conn)
+    except Exception as exc:  # never block startup on this housekeeping
+        _log.warning("Could not reconcile client / onboarding columns: %s", exc)
+
+    # Record the provider's own id (subscription id, tenancy OCID) for accounts
+    # created before provider_account_id existed, so organisation onboarding
+    # recognises them as already connected. Local decryption only; AWS accounts
+    # learn theirs from STS on the next discovery.
+    try:
+        from app.core.database import AsyncSessionLocal as _Session
+        from app.services.cloud_account_service import backfill_provider_account_ids
+
+        async with _Session() as _db:
+            filled, skipped = await backfill_provider_account_ids(_db)
+            await _db.commit()
+            if filled:
+                _log.info("Recorded the provider id of %d existing account(s).", filled)
+    except Exception as exc:  # never block startup
+        _log.warning("Could not backfill provider account ids: %s", exc)
+
     # cloud_resources predates the Resources workspace, so the normalized
     # projections it filters, sorts and facets on are added here. They are a
     # cache of app/services/resource_model.py's output, not a second source of
@@ -140,6 +193,9 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS availability_zone VARCHAR(100)",
                 "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS is_default BOOLEAN",
                 "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS tag_count INTEGER",
+                "ALTER TABLE cloud_resources ADD COLUMN IF NOT EXISTS service VARCHAR(64)",
+                "CREATE INDEX IF NOT EXISTS ix_cloud_resources_account_service "
+                "ON cloud_resources (account_id, service)",
                 # Indexes for the query shapes the workspace actually issues.
                 # Every composite leads with account_id because no query in the
                 # product reads resources without a scope.
@@ -457,7 +513,80 @@ async def lifespan(app: FastAPI):
             "notification will be sent."
         )
 
+    # ── Monthly client reports ───────────────────────────────────────────────
+    # Schedules are created disabled; this loop only acts on ones an operator
+    # turned on. It can produce e-mail, so it has its own off switch.
+    report_task = None
+    from app.services import client_report_scheduler as _reports
+
+    if _reports.scheduler_enabled():
+        report_task = asyncio.create_task(_reports.scheduler_loop())
+        _log.info("Client report scheduler started.")
+    else:
+        _log.warning(
+            "Client report scheduler is DISABLED (CLIENT_REPORT_SCHEDULER_ENABLED=false). "
+            "Reports can still be generated and sent by hand."
+        )
+
+    # ── JIT expiry ───────────────────────────────────────────────────────────
+    # Runs by default. Its job is to REMOVE access, so the safe default is on:
+    # an elevation whose expiry nothing enforces is standing admin access with
+    # a misleading row in the database.
+    jit_task = None
+    from app.services import jit_expiry_scheduler as _jit
+
+    if _jit.scheduler_enabled():
+        jit_task = asyncio.create_task(_jit.scheduler_loop())
+        _log.info("JIT expiry scheduler started.")
+    else:
+        _log.warning(
+            "JIT expiry scheduler is DISABLED (CIEM_JIT_EXPIRY_ENABLED=false). "
+            "Time-boxed elevations will NOT be revoked automatically."
+        )
+
+    # ── Cost budget guardrails ───────────────────────────────────────────────
+    # Runs by default, same reasoning as JIT expiry: a budget already defaults
+    # to enabled the moment someone creates it, so a budget whose thresholds
+    # nothing evaluates is a configuration screen that does nothing.
+    budget_task = None
+    from app.services import budget_scheduler as _budget_sched
+
+    if _budget_sched.scheduler_enabled():
+        budget_task = asyncio.create_task(_budget_sched.scheduler_loop())
+        _log.info("Cost budget scheduler started.")
+    else:
+        _log.warning(
+            "Cost budget scheduler is DISABLED (COST_BUDGET_SCHEDULER_ENABLED=false). "
+            "Budgets and alert policies can be configured but will only be "
+            "evaluated by hand (POST .../budgets/evaluate or "
+            ".../alert-policies/evaluate)."
+        )
+
     yield
+
+    if budget_task is not None:
+        _budget_sched.stop_scheduler()
+        budget_task.cancel()
+        try:
+            await budget_task
+        except BaseException:
+            pass
+
+    if jit_task is not None:
+        _jit.stop_scheduler()
+        jit_task.cancel()
+        try:
+            await jit_task
+        except BaseException:
+            pass
+
+    if report_task is not None:
+        _reports.stop_scheduler()
+        report_task.cancel()
+        try:
+            await report_task
+        except BaseException:
+            pass
 
     if collector_task is not None:
         collector_task.cancel()
@@ -535,6 +664,13 @@ from app.api.routes.events import router as events_router
 # deliberate decision. Two endpoints on the security router are still genuinely
 # used and are NOT superseded: /{id}/exposure and /{id}/iam-review.
 from app.api.routes.security_center import router as security_center_router
+# Clients (portfolio, onboarding, reports) and certificates/secrets. Their paths
+# are all under their own prefixes, so order relative to the others is free.
+from app.api.routes.clients import router as clients_router
+from app.api.routes.certificates import router as certificates_router
+# Resource Intelligence: optimization findings beside the Security Center's.
+from app.api.routes.intelligence import router as intelligence_router
+from app.api.routes.identity import router as identity_router
 
 # Standard API routes under /api/v1/
 #
@@ -559,7 +695,7 @@ from app.api.routes.security_center import router as security_center_router
 # paths are all `/{account_id}/<literal>`, which do not collide with that
 # router's `/{account_id}` — but ordering it first means a future single-segment
 # route added there cannot start swallowing /refresh without anyone noticing.
-for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router]:
+for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router, clients_router, certificates_router, intelligence_router, identity_router]:
     app.include_router(router, prefix="/api/v1")
 
 

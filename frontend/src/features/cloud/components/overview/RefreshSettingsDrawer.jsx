@@ -127,7 +127,7 @@ export default function RefreshSettingsDrawer({ open, onClose, account, accountI
       width={480}
       footer={(
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-subtle">
+          <span className="text-meta text-subtle">
             {saved ? 'Schedule saved.' : 'Changes apply from the next run.'}
           </span>
           <div className="flex gap-2">
@@ -164,7 +164,7 @@ export default function RefreshSettingsDrawer({ open, onClose, account, accountI
                 Cancel
               </Button>
             </div>
-            <p className="mt-1 text-[11px] leading-snug text-muted">
+            <p className="mt-1 text-meta leading-snug text-muted">
               Started {relativeTime(current.started_at || current.created_at)}.
               Cancelling releases the account&apos;s lock; a provider request
               already in flight finishes on its own, because interrupting it
@@ -260,7 +260,7 @@ export default function RefreshSettingsDrawer({ open, onClose, account, accountI
 
           {errors?._ && <FieldError>{errors._}</FieldError>}
 
-          <div className="rounded-control bg-sunken px-3 py-2 text-[11px] leading-snug">
+          <div className="rounded-control bg-sunken px-3 py-2 text-meta leading-snug">
             <div className="font-semibold text-fg">
               {schedule.data?.summary || 'Automatic refresh is off.'}
             </div>
@@ -302,7 +302,7 @@ export default function RefreshSettingsDrawer({ open, onClose, account, accountI
 
         {/* ── What a refresh covers ───────────────────────────────────── */}
         <Section title="What a refresh covers" icon="layers">
-          <ul className="space-y-1 text-[11px] leading-snug text-muted">
+          <ul className="space-y-1 text-meta leading-snug text-muted">
             {(capabilities.data?.components || []).map((c) => (
               <li key={c.key} className="flex items-start gap-1.5">
                 <Icon
@@ -319,12 +319,12 @@ export default function RefreshSettingsDrawer({ open, onClose, account, accountI
             ))}
           </ul>
           {capabilities.data?.note && (
-            <p className="text-[11px] leading-snug text-subtle">
+            <p className="text-meta leading-snug text-subtle">
               {capabilities.data.note}
             </p>
           )}
           {unsupported.length > 0 && (
-            <p className="text-[11px] leading-snug text-warning-fg">
+            <p className="text-meta leading-snug text-warning-fg">
               A refresh of this account will report
               {` ${unsupported.map((c) => c.label).join(' and ')} `}
               as skipped rather than leaving stale numbers looking current.
@@ -335,9 +335,9 @@ export default function RefreshSettingsDrawer({ open, onClose, account, accountI
         {/* ── History ─────────────────────────────────────────────────── */}
         <Section title="Refresh history" icon="history">
           {history.isLoading ? (
-            <p className="text-[11px] text-subtle">Loading…</p>
+            <p className="text-meta text-subtle">Loading…</p>
           ) : !(history.data?.history || []).length ? (
-            <p className="text-[11px] leading-snug text-subtle">
+            <p className="text-meta leading-snug text-subtle">
               This account has not been refreshed yet.
             </p>
           ) : (
@@ -368,7 +368,7 @@ function HistoryRow({ run }) {
         <Badge tone={STATUS_TONE[run.status] || 'neutral'} size="xs">
           {run.status}
         </Badge>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted">
+        <span className="min-w-0 flex-1 truncate text-meta text-muted">
           {relativeTime(run.completed_at || run.started_at || run.created_at)}
           {run.trigger_type ? ` · ${TRIGGER_LABEL[run.trigger_type] || run.trigger_type}` : ''}
           {run.duration_ms != null ? ` · ${(run.duration_ms / 1000).toFixed(1)}s` : ''}
@@ -377,7 +377,7 @@ function HistoryRow({ run }) {
       </button>
 
       {open && (
-        <div className="space-y-1.5 border-t border-border px-2.5 py-2 text-[11px] leading-snug">
+        <div className="space-y-1.5 border-t border-border px-2.5 py-2 text-meta leading-snug">
           <div className="text-subtle">
             {run.started_at ? `Started ${formatDateTime(run.started_at)}` : 'Not started'}
             {run.triggered_by ? ` · by ${run.triggered_by}` : ''}
@@ -430,7 +430,7 @@ const TRIGGER_LABEL = {
 };
 
 const FieldError = ({ children }) => (
-  <p className="mt-1 text-[11px] leading-snug text-danger">{children}</p>
+  <p className="mt-1 text-meta leading-snug text-danger">{children}</p>
 );
 
 function browserZone() {
