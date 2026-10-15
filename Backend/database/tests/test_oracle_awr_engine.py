@@ -1,6 +1,5 @@
 """Tests for the ported AWR parser + rule engine (no DB/network needed)."""
 from app.services.oracle.awr.parser import ProductionAWRParser
-from app.services.oracle.awr.rule_engine import ComprehensiveDiagnosticEngine
 
 SAMPLE_AWR_HTML = """
 <html><body>
@@ -67,30 +66,6 @@ def test_parser_handles_empty_and_malformed_html():
     assert awr2.header.db_name == "UNKNOWN"
 
 
-def test_rule_engine_flags_dominant_wait_and_low_efficiency_and_slow_sql():
-    awr = ProductionAWRParser(SAMPLE_AWR_HTML).parse_all()
-    findings = ComprehensiveDiagnosticEngine(awr).run_all_checks()
-
-    severities = {f.severity for f in findings}
-    categories = {f.category for f in findings}
-    assert "HIGH" in severities
-    assert "Wait Events" in categories
-    assert "SQL" in categories
-    assert "Instance Efficiency" in categories  # Buffer Nowait % = 90.0 < 95
-
-    wait_finding = next(f for f in findings if f.category == "Wait Events" and "sequential read" in f.title)
-    assert wait_finding.severity == "HIGH"  # 32.5% >= 25% threshold
-
-
-def test_rule_engine_emits_baseline_info_when_nothing_crosses_thresholds():
-    from app.services.oracle.awr.schema import AWRReport
-
-    findings = ComprehensiveDiagnosticEngine(AWRReport()).run_all_checks()
-    assert len(findings) == 1
-    assert findings[0].severity == "INFO"
-    assert findings[0].category == "Baseline"
-
-
 # Shape of a real 12c+ AWR report: the summary tables have no heading of their
 # own (they sit under "Report Summary") and are identified only by Oracle's
 # summary="This table displays ..." attribute.
@@ -150,15 +125,6 @@ def test_wait_events_skip_background_and_deduplicate():
     assert names == ["DB CPU", "log file sync", "db file sequential read"]
 
 
-def test_rule_engine_does_not_flag_db_cpu_as_a_wait():
-    findings = ComprehensiveDiagnosticEngine(ProductionAWRParser(MODERN_AWR_HTML).parse_all()).run_all_checks()
-    titles = [f.title for f in findings]
-
-    assert not any("DB CPU" in t for t in titles)
-    assert "log file sync dominates DB time" in titles
-    assert "Library Hit %: below target" in titles  # 91.2 < 95, read from the second column pair
-
-
 def test_parse_window_reads_snapshot_range_and_db_time():
     window = ProductionAWRParser(MODERN_AWR_HTML).parse_window()
 
@@ -205,5 +171,5 @@ def test_ingest_rejects_bad_uploads_before_touching_disk_or_db(filename, size, m
 
 def test_upload_filenames_cannot_escape_the_storage_directory():
     assert svc._safe_filename("../../etc/passwd.html") == "passwd.html"
-    assert svc._safe_filename("..\..\windows\evil.html") == "evil.html"
+    assert svc._safe_filename(r"..\..\windows\evil.html") == "evil.html"
     assert svc._safe_filename("") == "report.html"

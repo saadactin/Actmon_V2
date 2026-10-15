@@ -261,6 +261,31 @@ def active_alerts(db: Session = Depends(get_db)):
             "created_at": iso_utc(n.created_at) or now,
         })
 
+    # Oracle AWR risks — only when the opt-in "Oracle AWR Risk" rule is enabled.
+    # They come from uploaded (historical) AWR reports and are labelled as such;
+    # the background evaluator has no data source for this metric, so it never notifies.
+    awr_rule = next((r for r in rules if r.metric == "oracle_awr_risk"), None)
+    if awr_rule:
+        try:
+            from app.services.oracle.oracle_awr_intel_service import awr_alerts
+            for a in awr_alerts(db, None):
+                out.append({
+                    "id": f"awr{a['finding_id']}",
+                    "rule_id": awr_rule.id,
+                    "rule_name": awr_rule.name,
+                    "severity": "critical" if a["severity"] == "HIGH" else "warning",
+                    "metric": "oracle_awr_risk",
+                    "source": f"{a['db_name']} ({a['host_name']})" if a.get("host_name") else a["db_name"],
+                    "technology": "oracle",
+                    "environment": None,
+                    "value": None,
+                    "threshold": None,
+                    "message": a["message"],
+                    "created_at": a["snapshot_end"] or now,
+                })
+        except Exception:  # noqa: BLE001 — never let the AWR feed break the alerts page
+            pass
+
     # latest first (newest alerts at the top)
     out.sort(key=lambda a: (a.get("created_at") or ""), reverse=True)
     return out

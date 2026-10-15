@@ -49,6 +49,26 @@ class ProductionAWRParser:
             raw_sections=sections,
         )
 
+    def summary_tables(self) -> dict[str, list[list[str]]]:
+        """Every table that carries Oracle's summary="This table displays …" label,
+        as raw cell rows (header row first), keyed by the lower-cased summary.
+        A repeated summary (the instance table appears twice) gets " #2", " #3"."""
+        if hasattr(self, "_summary_cache"):
+            return self._summary_cache
+        tables: dict[str, list[list[str]]] = {}
+        for table in self.soup.find_all("table"):
+            summary = self._clean(table.get("summary") or "").lower()
+            if not summary:
+                continue
+            key, n = summary, 1
+            while key in tables:
+                n += 1
+                key = f"{summary} #{n}"
+            rows = [[self._clean(c.get_text(" ", strip=True)) for c in tr.find_all(["th", "td"])] for tr in table.find_all("tr")]
+            tables[key] = [r for r in rows if any(r)]
+        self._summary_cache = tables
+        return tables
+
     def _extract_tables(self) -> dict[str, list[dict[str, str]]]:
         sections: dict[str, list[dict[str, str]]] = {}
         for table in self.soup.find_all("table"):

@@ -32,7 +32,9 @@ from app.models.agent_model import (                              # noqa: F401
     AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
 )
 from app.models.oracle_topology_model import OracleTopologyLink           # noqa: F401
-from app.models.oracle_awr_model import OracleAwrReport, OracleAwrFinding  # noqa: F401
+from app.models.oracle_awr_model import (  # noqa: F401
+    OracleAwrReport, OracleAwrFinding, OracleAwrMetric, OracleAwrForecast, OracleAwrSqlStat,
+)
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401

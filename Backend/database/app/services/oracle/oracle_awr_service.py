@@ -30,11 +30,14 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
-from app.models.oracle_awr_model import OracleAwrFinding, OracleAwrReport
+from app.models.oracle_awr_model import OracleAwrFinding, OracleAwrMetric, OracleAwrReport, OracleAwrSqlStat
+from app.services.oracle.awr.diagnosis import RULES_VERSION, diagnose
+from app.services.oracle.awr.metrics import METRICS_VERSION, extract
 from app.services.oracle.awr.parser import ProductionAWRParser
-from app.services.oracle.awr.rule_engine import ComprehensiveDiagnosticEngine
+from app.services.oracle.awr.sql_stats import sql_profile
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB — AWR HTML reports are rarely over a few MB
+# Real AWR HTML is 1-3 MB; the cap bounds BeautifulSoup's parse time and memory.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".html", ".htm"}
 
 AWR_STORAGE_ROOT = Path(__file__).resolve().parents[2] / "data" / "awr"
@@ -63,41 +66,116 @@ def _iso_or_none(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def database_key(facts, db_name: str | None) -> str | None:
+    """Reports of one database share a key; RAC instances stay separate."""
+    if facts.dbid:
+        return f"{facts.dbid}:{facts.instance_number}" if facts.rac and facts.instance_number else facts.dbid
+    return f"name:{db_name}" if db_name and db_name != "UNKNOWN" else None
+
+
 def _parse_and_record(report_row: OracleAwrReport, html_text: str, db: Session) -> None:
     try:
         parser = ProductionAWRParser(html_text)
         awr = parser.parse_all()
+        parser._awr_cache = awr
+        tables = parser.summary_tables()
         window = parser.parse_window()
-        findings = ComprehensiveDiagnosticEngine(awr).run_all_checks()
+        ex = extract(parser)
+        if not window["begin_snap"] and not ex.metrics:
+            raise ValueError("Not an Oracle AWR HTML report: no snapshot information or AWR sections were found.")
 
-        report_row.db_name = awr.header.db_name
-        report_row.instance_name = awr.header.instance_name
-        report_row.instance_number = awr.header.instance_number
-        report_row.host_name = awr.header.host_name
-        report_row.begin_snap = awr.header.begin_snap or window["begin_snap"]
-        report_row.end_snap = awr.header.end_snap or window["end_snap"]
+        facts = ex.facts
+        report_row.db_name = facts.db_name or awr.header.db_name
+        report_row.dbid = facts.dbid
+        report_row.db_release = facts.release
+        report_row.is_rac = facts.rac
+        report_row.platform = facts.platform
+        report_row.num_cpus = facts.num_cpus
+        report_row.host_mem_gb = facts.host_mem_gb
+        report_row.instance_name = facts.instance_name or awr.header.instance_name
+        report_row.instance_number = facts.instance_number or awr.header.instance_number
+        report_row.host_name = facts.host_name or awr.header.host_name
+        report_row.begin_snap = facts.snap_begin_id or awr.header.begin_snap or window["begin_snap"]
+        report_row.end_snap = facts.snap_end_id or awr.header.end_snap or window["end_snap"]
         report_row.begin_time = _iso_or_none(window["begin_time"])
         report_row.end_time = _iso_or_none(window["end_time"])
-        report_row.elapsed_minutes = awr.header.elapsed_minutes or window["elapsed_minutes"]
-        report_row.db_time_minutes = window["db_time_minutes"]
-        report_row.status = "PARSED"
-        report_row.parsed_at = datetime.utcnow()
+        report_row.elapsed_minutes = facts.elapsed_minutes or awr.header.elapsed_minutes or window["elapsed_minutes"]
+        report_row.db_time_minutes = facts.db_time_minutes or window["db_time_minutes"]
+        report_row.database_key = database_key(facts, report_row.db_name)
+        report_row.data_quality = {**ex.data_quality, "instance_startup": facts.instance_startup}
+        report_row.parser_version = f"{METRICS_VERSION}/{RULES_VERSION}"
+
+        for m in ex.metrics:
+            db.add(OracleAwrMetric(
+                org_id=report_row.org_id, report_id=report_row.id, database_key=report_row.database_key,
+                metric_key=m.key, value=m.value, unit=m.unit, category=m.category, label=m.label,
+                source_section=m.source, interval_start=report_row.begin_time, interval_end=report_row.end_time,
+            ))
+
+        sqls = sql_profile(parser)
+        for rec in sqls.values():
+            db.add(OracleAwrSqlStat(org_id=report_row.org_id, report_id=report_row.id,
+                                    database_key=report_row.database_key, **rec))
+
+        findings = diagnose(ex, awr, tables, sqls)
+        for f in findings:
+            db.add(OracleAwrFinding(
+                report_id=report_row.id, org_id=report_row.org_id, database_key=report_row.database_key,
+                rule_id=f.rule_id, finding_type=f.finding_type, source="rule",
+                severity=f.severity, risk_level=f.risk_level, category=f.category, title=f.title[:500],
+                evidence=f.evidence, recommendation=f.recommendation,
+                snapshot_start=report_row.begin_time, snapshot_end=report_row.end_time,
+                observed_metrics=f.observed,
+                evidence_refs=[{"report_id": report_row.id, **r} for r in f.refs],
+                probable_causes=f.causes, recommended_actions=f.actions,
+                confidence_method=f.rule, data_quality=ex.data_quality["level"], model_version=RULES_VERSION,
+                status="open",
+            ))
         report_row.high_findings = sum(1 for f in findings if f.severity == "HIGH")
         report_row.medium_findings = sum(1 for f in findings if f.severity == "MEDIUM")
         report_row.low_findings = sum(1 for f in findings if f.severity == "LOW")
-
-        for f in findings:
-            db.add(OracleAwrFinding(
-                report_id=report_row.id,
-                severity=f.severity,
-                category=f.category,
-                title=f.title,
-                evidence=f.evidence,
-                recommendation=f.recommendation,
-            ))
+        report_row.status = "PARSED"
+        report_row.error_message = None
+        report_row.parsed_at = datetime.utcnow()
     except Exception as exc:  # noqa: BLE001 — malformed/unsupported AWR HTML must not 500 the request
         report_row.status = "FAILED"
         report_row.error_message = str(exc)[:2000]
+
+
+def reanalyze_report(report_id: int, org_id: int | None, db: Session) -> dict:
+    """Re-run extraction and diagnosis on a stored report (e.g. after a parser
+    improvement). Idempotent. A DBA's status/outcome note on a finding survives
+    when the same rule fires again."""
+    row = _report_row(report_id, org_id, db)
+    if not row:
+        return {"status": "error", "error": "Report not found"}
+    path = Path(row.stored_path)
+    if not path.is_file():
+        return {"status": "error", "error": "The uploaded file is no longer on disk"}
+
+    kept = {
+        f.rule_id: (f.status, f.outcome_note)
+        for f in db.query(OracleAwrFinding).filter(
+            OracleAwrFinding.report_id == report_id, OracleAwrFinding.source == "rule"
+        )
+        if f.rule_id and (f.status not in (None, "open") or f.outcome_note)
+    }
+    db.query(OracleAwrFinding).filter(
+        OracleAwrFinding.report_id == report_id,
+        (OracleAwrFinding.source == "rule") | (OracleAwrFinding.source.is_(None)),
+    ).delete(synchronize_session=False)
+    db.query(OracleAwrMetric).filter(OracleAwrMetric.report_id == report_id).delete(synchronize_session=False)
+    db.query(OracleAwrSqlStat).filter(OracleAwrSqlStat.report_id == report_id).delete(synchronize_session=False)
+    db.flush()
+
+    _parse_and_record(row, path.read_bytes().decode("utf-8", errors="replace"), db)
+    db.flush()
+    for f in db.query(OracleAwrFinding).filter(OracleAwrFinding.report_id == report_id, OracleAwrFinding.rule_id.in_(list(kept))):
+        f.status, f.outcome_note = kept[f.rule_id]
+    db.commit()
+    db.refresh(row)
+    _parse_stored.cache_clear()
+    return {"status": "ok", "report": _report_summary(row)}
 
 
 def ingest_report(
@@ -183,11 +261,21 @@ async def upload_and_analyze(
 def _report_summary(r: OracleAwrReport) -> dict:
     return {
         "id": r.id,
+        "org_id": r.org_id,
         "connection_id": r.connection_id,
         "batch_id": r.batch_id,
         "original_filename": r.original_filename,
         "file_size_bytes": r.file_size_bytes,
+        "database_key": r.database_key,
         "db_name": r.db_name,
+        "dbid": r.dbid,
+        "db_release": r.db_release,
+        "is_rac": r.is_rac,
+        "platform": r.platform,
+        "num_cpus": r.num_cpus,
+        "host_mem_gb": r.host_mem_gb,
+        "data_quality": r.data_quality,
+        "parser_version": r.parser_version,
         "instance_name": r.instance_name,
         "instance_number": r.instance_number,
         "host_name": r.host_name,
@@ -238,14 +326,28 @@ def get_report(report_id: int, org_id: int | None, db: Session) -> dict:
         .order_by(OracleAwrFinding.id.asc())
         .all()
     )
+    return {"status": "ok", "report": _report_summary(row), "findings": [finding_dict(f) for f in findings]}
+
+
+_SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "INFO": 3}
+
+
+def finding_dict(f: OracleAwrFinding) -> dict:
+    iso = lambda d: d.isoformat() if d else None  # noqa: E731
     return {
-        "status": "ok",
-        "report": _report_summary(row),
-        "findings": [
-            {"id": f.id, "severity": f.severity, "category": f.category, "title": f.title,
-             "evidence": f.evidence, "recommendation": f.recommendation}
-            for f in findings
-        ],
+        "id": f.id, "finding_type": f.finding_type or "diagnosis", "source": f.source or "rule",
+        "rule_id": f.rule_id, "severity": f.severity, "risk_level": f.risk_level,
+        "category": f.category, "title": f.title, "evidence": f.evidence, "recommendation": f.recommendation,
+        "database_id": f.database_key, "report_id": f.report_id,
+        "snapshot_start": iso(f.snapshot_start), "snapshot_end": iso(f.snapshot_end),
+        "observed_metrics": f.observed_metrics, "baseline_metrics": f.baseline_metrics,
+        "evidence_refs": f.evidence_refs, "probable_causes": f.probable_causes,
+        "recommended_actions": f.recommended_actions,
+        "forecast_horizon": f.forecast_horizon, "predicted_value": f.predicted_value,
+        "prediction_interval": f.prediction_interval, "confidence_method": f.confidence_method,
+        "data_quality": f.data_quality, "model_version": f.model_version,
+        "status": f.status or "open", "outcome_note": f.outcome_note,
+        "created_at": iso(f.created_at), "updated_at": iso(f.updated_at),
     }
 
 
@@ -314,11 +416,14 @@ def delete_report(report_id: int, org_id: int | None, db: Session) -> dict:
     if not row:
         return {"status": "error", "error": "Report not found"}
     stored = Path(row.stored_path)
+    info = {"database_key": row.database_key, "org_id": row.org_id, "original_filename": row.original_filename}
+    # every finding anchored to this report (rule, statistics, llm); the
+    # database's history is rebuilt by the caller afterwards
     db.query(OracleAwrFinding).filter(OracleAwrFinding.report_id == report_id).delete()
-    db.delete(row)
+    db.delete(row)  # metrics and SQL stats cascade; forecasts keep their history (SET NULL)
     db.commit()
     # Only ever unlink inside our own storage root.
     if stored.is_file() and AWR_STORAGE_ROOT.resolve() in stored.resolve().parents:
         stored.unlink()
     _parse_stored.cache_clear()
-    return {"status": "ok"}
+    return {"status": "ok", **info}
