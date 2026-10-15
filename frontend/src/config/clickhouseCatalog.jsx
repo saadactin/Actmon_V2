@@ -74,7 +74,7 @@ function CompressionCell({ row }) {
     >
       <span className="inline-flex items-center gap-1.5">
         <span className="font-mono font-semibold tabular-nums">{ratio}×</span>
-        {pct > 0 && <span className="text-[11px] text-subtle">{pct}% saved</span>}
+        {pct > 0 && <span className="text-meta text-subtle">{pct}% saved</span>}
       </span>
     </Tooltip>
   );
@@ -168,7 +168,7 @@ export const CH_DATABASE_COLUMNS = [
     sortValue: (d) => d.data_path || '',
     render: (d) => (d.data_path
       ? (
-        <span title={d.data_path} className="truncate-safe block max-w-[240px] font-mono text-[11px] text-subtle">
+        <span title={d.data_path} className="truncate-safe block max-w-[240px] font-mono text-meta text-subtle">
           {d.data_path}
         </span>
       )

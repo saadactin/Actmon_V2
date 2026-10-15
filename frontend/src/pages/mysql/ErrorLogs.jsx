@@ -44,7 +44,7 @@ function SevBadge({ sev }) {
   const cfg = SEV[sev] || SEV.INFO;
   const Icon = cfg.icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${cfg.badge}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold ${cfg.badge}`}>
       <Icon size={9} /> {sev}
     </span>
   );
@@ -160,16 +160,16 @@ function ErrorDetailModal({ entry, onClose }) {
         <div className="p-5 space-y-3 text-sm">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase">Timestamp</p>
+              <p className="text-micro font-bold text-slate-400 uppercase">Timestamp</p>
               <p className="font-mono text-slate-700">{entry.logged || '—'}</p>
             </div>
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase">Source / Component</p>
+              <p className="text-micro font-bold text-slate-400 uppercase">Source / Component</p>
               <p className="font-mono text-slate-700">{entry.subsystem || 'MySQL'}</p>
             </div>
           </div>
           <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Message</p>
+            <p className="text-micro font-bold text-slate-400 uppercase mb-1">Message</p>
             <p className="bg-slate-50 border border-slate-200 rounded-xl p-3 font-mono text-xs text-slate-700 whitespace-pre-wrap break-words leading-relaxed">
               {entry.message}
             </p>
@@ -299,7 +299,7 @@ export default function ErrorLogs() {
                     }`}>
                     <div className="flex justify-between items-start">
                       <div>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase">{s}</p>
+                        <p className="text-micro font-bold text-slate-400 uppercase">{s}</p>
                         <p className={`text-2xl font-black mt-1 ${cfg.color}`}>{counts[s] || 0}</p>
                       </div>
                       <Icon size={18} className={cfg.color} />
@@ -375,11 +375,11 @@ export default function ErrorLogs() {
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-white border-b border-slate-200 z-10">
                         <tr>
-                          <th className="px-4 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Timestamp</th>
-                          <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Severity</th>
-                          <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Error Code</th>
-                          <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Source/Component</th>
-                          <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400">Message</th>
+                          <th className="px-4 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Timestamp</th>
+                          <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Severity</th>
+                          <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Error Code</th>
+                          <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Source/Component</th>
+                          <th className="px-3 py-3 text-left font-bold text-meta text-slate-400">Message</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -387,7 +387,7 @@ export default function ErrorLogs() {
                           <tr key={i}
                             onClick={() => setSelected(log)}
                             className={`border-t border-slate-100 cursor-pointer hover:bg-slate-100 transition-colors ${SEV[log.severity]?.row || ''}`}>
-                            <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap text-[11px]">{log.logged || '—'}</td>
+                            <td className="px-4 py-2 font-mono text-slate-500 whitespace-nowrap text-meta">{log.logged || '—'}</td>
                             <td className="px-3 py-2"><SevBadge sev={log.severity} /></td>
                             <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{log.error_code || '—'}</td>
                             <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{log.subsystem || 'MySQL'}</td>

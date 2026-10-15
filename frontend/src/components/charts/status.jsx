@@ -61,9 +61,9 @@ export function severityOf(raw) {
 /** Swatch + icon + label — the compliant way to show a status. */
 export function StatusKey({ status, count, className }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted ${className || ''}`}>
+    <span className={`inline-flex items-center gap-1.5 text-meta font-semibold text-muted ${className || ''}`}>
       <span
-        className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full text-[8px] text-white"
+        className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full text-micro text-white"
         style={{ background: status.color }}
       >
         <Icon name={status.icon} size={9} strokeWidth={3.5} />

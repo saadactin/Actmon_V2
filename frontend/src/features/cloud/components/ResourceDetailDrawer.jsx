@@ -165,23 +165,6 @@ export const ResourceDetailDrawer = ({ resource, open, onClose }) => {
       width={580}
       title={resource.resource_name || resource.provider_resource_id}
       subtitle={`${resource.type_label || resource.resource_type} · ${providerLabel(resource.provider)}${resource.account_name ? ` · ${resource.account_name}` : ''}${resource.region ? ` · ${resource.region}` : ''}`}
-      footer={(
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="primary"
-            size="sm"
-            icon="external"
-            onClick={() => { onClose(); navigate(`/cloud/resources/${resource.id}`); }}
-          >
-            Open full page
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => go('cost')}>Cost</Button>
-          <Button variant="secondary" size="sm" onClick={() => go('security')}>Security</Button>
-          <Button variant="secondary" size="sm" onClick={() => go('topology')}>Topology</Button>
-          <Button variant="secondary" size="sm" onClick={() => go('events')}>Events</Button>
-          <Button variant="secondary" size="sm" onClick={() => go('drift')}>Drift</Button>
-        </div>
-      )}
     >
       {/* The facts worth seeing before anything else loads. */}
       <div className="mb-4 flex items-start gap-3 rounded-control border border-border bg-sunken p-3">

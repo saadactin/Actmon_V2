@@ -524,10 +524,10 @@ export default function ClickHouseDashboard() {
                         rows={page.map((e, i) => ({
                           key: `err-${i}`,
                           cells: {
-                            when: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{String(e.event_time || '').slice(0, 19)}</span>,
+                            when: <span className="font-mono text-meta whitespace-nowrap text-muted">{String(e.event_time || '').slice(0, 19)}</span>,
                             type: <StateChip value={e.type} tones={LOG_TYPE_TONES} fallback="danger" />,
                             code: <span className="font-mono">{e.exception_code ?? null}</span>,
-                            user: <span className="text-[11px] text-muted">{e.user}</span>,
+                            user: <span className="text-meta text-muted">{e.user}</span>,
                             msg: <span className="block max-w-[520px] text-[12px] break-words text-fg">{e.message}</span>,
                           },
                         }))}
@@ -619,9 +619,9 @@ export default function ClickHouseDashboard() {
                         rows={page.map((l, i) => ({
                           key: `${l.query_id}-${i}`,
                           cells: {
-                            when: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{String(l.event_time || '').slice(0, 19)}</span>,
+                            when: <span className="font-mono text-meta whitespace-nowrap text-muted">{String(l.event_time || '').slice(0, 19)}</span>,
                             type: <StateChip value={l.type} tones={LOG_TYPE_TONES} />,
-                            user: <span className="text-[11px] text-muted">{l.user}</span>,
+                            user: <span className="text-meta text-muted">{l.user}</span>,
                             kind: l.query_kind ? <Badge tone="neutral" size="xs">{l.query_kind}</Badge> : null,
                             ms: <span className="font-mono font-semibold">{fmtNumber(l.elapsed_ms)} ms</span>,
                             read: <span className="font-mono">{fmtNumber(l.read_rows)}</span>,
@@ -631,7 +631,7 @@ export default function ClickHouseDashboard() {
                               <span className="block">
                                 <SqlCell sql={l.query} max={90} />
                                 {l.exception && (
-                                  <span className="mt-0.5 block max-w-[380px] text-[11px] break-words text-danger-fg">
+                                  <span className="mt-0.5 block max-w-[380px] text-meta break-words text-danger-fg">
                                     {l.exception}
                                   </span>
                                 )}
@@ -763,10 +763,10 @@ export default function ClickHouseDashboard() {
                                 table: (
                                   <span className="block">
                                     <span className="font-mono text-[12px] font-semibold text-accent-text">{p.table}</span>
-                                    <span className="mt-0.5 block font-mono text-[10px] text-subtle">{p.database}</span>
+                                    <span className="mt-0.5 block font-mono text-micro text-subtle">{p.database}</span>
                                   </span>
                                 ),
-                                partition: <span className="font-mono text-[11px]">{p.partition}</span>,
+                                partition: <span className="font-mono text-meta">{p.partition}</span>,
                                 parts: (
                                   <span className={
                                     parts > partsThreshold * 0.9 ? 'font-mono font-bold text-danger-fg'
@@ -794,7 +794,7 @@ export default function ClickHouseDashboard() {
                   </Paged>
                 </TablePanel>
 
-                <p className="flex items-start gap-1.5 text-[11px] text-subtle">
+                <p className="flex items-start gap-1.5 text-meta text-subtle">
                   <Icon name="info" size={12} className="mt-0.5 shrink-0" />
                   Inactive parts are ones a merge has already superseded; ClickHouse removes them
                   after <span className="font-mono">old_parts_lifetime</span>, so seeing a few is normal.
@@ -849,7 +849,7 @@ export default function ClickHouseDashboard() {
                               table: (
                                 <span className="block">
                                   <span className="font-mono text-[12px] font-semibold text-accent-text">{m.table}</span>
-                                  <span className="mt-0.5 block font-mono text-[10px] text-subtle">{m.database}</span>
+                                  <span className="mt-0.5 block font-mono text-micro text-subtle">{m.database}</span>
                                 </span>
                               ),
                               kind: (
@@ -860,7 +860,7 @@ export default function ClickHouseDashboard() {
                                     </Badge>
                                   )}
                                   {m.merge_algorithm && (
-                                    <span className="font-mono text-[10px] text-subtle">{m.merge_algorithm}</span>
+                                    <span className="font-mono text-micro text-subtle">{m.merge_algorithm}</span>
                                   )}
                                 </span>
                               ),
@@ -887,7 +887,7 @@ export default function ClickHouseDashboard() {
                               mem: <span className="font-mono text-[12px]">{fmtBytes(m.memory_usage)}</span>,
                               result: (
                                 <span title={m.result_part_name}
-                                  className="truncate-safe block max-w-[200px] font-mono text-[11px] text-muted">
+                                  className="truncate-safe block max-w-[200px] font-mono text-meta text-muted">
                                   {m.result_part_name}
                                 </span>
                               ),
@@ -956,7 +956,7 @@ export default function ClickHouseDashboard() {
                                 table: (
                                   <span className="block">
                                     <span className="font-mono text-[12px] font-semibold text-accent-text">{r.table}</span>
-                                    <span className="mt-0.5 block font-mono text-[10px] text-subtle">{r.database}</span>
+                                    <span className="mt-0.5 block font-mono text-micro text-subtle">{r.database}</span>
                                   </span>
                                 ),
                                 role: (
@@ -980,12 +980,12 @@ export default function ClickHouseDashboard() {
                                 inserts: <span className="font-mono">{fmtNumber(r.inserts_in_queue)}</span>,
                                 merges: <span className="font-mono">{fmtNumber(r.merges_in_queue)}</span>,
                                 log: (
-                                  <span className="font-mono text-[11px]">
+                                  <span className="font-mono text-meta">
                                     {r.log_pointer ?? '—'} / {r.log_max_index ?? '—'}
                                   </span>
                                 ),
                                 replicas: (
-                                  <span className="font-mono text-[11px]">
+                                  <span className="font-mono text-meta">
                                     {r.active_replicas ?? '—'} / {r.total_replicas ?? '—'}
                                   </span>
                                 ),
@@ -995,7 +995,7 @@ export default function ClickHouseDashboard() {
                                    coordinator entirely. */
                                 problem: (r.last_queue_update_exception || r.zookeeper_exception)
                                   ? (
-                                    <span className="block max-w-[240px] text-[11px] break-words text-danger-fg">
+                                    <span className="block max-w-[240px] text-meta break-words text-danger-fg">
                                       {r.zookeeper_exception
                                         ? `ZooKeeper: ${r.zookeeper_exception}`
                                         : r.last_queue_update_exception}
@@ -1069,13 +1069,13 @@ export default function ClickHouseDashboard() {
                               shard: <span className="font-mono">{c.shard_num}</span>,
                               replica: <span className="font-mono">{c.replica_num}</span>,
                               host: (
-                                <span className="block text-[11px] leading-tight">
+                                <span className="block text-meta leading-tight">
                                   <span className="block font-mono text-fg">{c.host_name}:{c.port}</span>
                                   {c.host_address && <span className="block text-subtle">{c.host_address}</span>}
                                 </span>
                               ),
                               local: c.is_local ? <Badge tone="accent" size="xs">This server</Badge> : null,
-                              user: <span className="text-[11px] text-muted">{c.user}</span>,
+                              user: <span className="text-meta text-muted">{c.user}</span>,
                               errors: (
                                 <span className={num(c.errors_count) ? 'font-mono font-bold text-danger-fg' : 'font-mono'}>
                                   {fmtNumber(c.errors_count)}
@@ -1176,7 +1176,7 @@ export default function ClickHouseDashboard() {
                             cells: {
                               metric: <span className="font-mono text-[12px] font-semibold">{m.metric}</span>,
                               value: <span className="font-mono">{fmtNumber(m.value)}</span>,
-                              desc: <span className="block max-w-[420px] text-[11px] leading-snug text-muted">{m.description}</span>,
+                              desc: <span className="block max-w-[420px] text-meta leading-snug text-muted">{m.description}</span>,
                             },
                           }))}
                           empty={<EmptyState icon="chart-bar" title="No metrics" />}
@@ -1244,7 +1244,7 @@ export default function ClickHouseDashboard() {
                             readonly: num(s.readonly) === 0
                               ? <Badge tone="success" size="xs">Yes</Badge>
                               : <Badge tone="neutral" size="xs">Read-only</Badge>,
-                            desc: <span className="block max-w-[380px] text-[11px] leading-snug text-muted">{s.description}</span>,
+                            desc: <span className="block max-w-[380px] text-meta leading-snug text-muted">{s.description}</span>,
                           },
                         }))}
                         empty={<EmptyState icon="settings" title="No settings returned" />}
@@ -1291,7 +1291,7 @@ function RunningQueriesPanel({ rows, openRow, setOpenRow }) {
                     id: (
                       <span className="flex items-center gap-1.5">
                         <Icon name={openRow === key ? 'chevron-down' : 'chevron-right'} size={12} className="text-subtle" />
-                        <span className="truncate-safe block max-w-[130px] font-mono text-[11px]">{qr.query_id}</span>
+                        <span className="truncate-safe block max-w-[130px] font-mono text-meta">{qr.query_id}</span>
                       </span>
                     ),
                     user: <span className="text-[12px] font-semibold text-accent-text">{qr.user}</span>,
@@ -1341,7 +1341,7 @@ function RunningQueriesPanel({ rows, openRow, setOpenRow }) {
                     <SqlBlock sql={qr.query || '(empty)'} className="max-h-52 flex-1 overflow-auto" />
                     <CopyButton text={qr.query} />
                   </div>
-                  <p className="text-[11px] text-subtle">
+                  <p className="text-meta text-subtle">
                     Truncated to 400 characters by the collector.
                     {qr.is_initial_query === false
                       ? ' This is a secondary query — part of a distributed query started elsewhere.'
@@ -1381,8 +1381,8 @@ function SlowQueriesPanel({ rows, onOpen }) {
               rows={page.map((s, i) => ({
                 key: `${s.query_id}-${i}`,
                 cells: {
-                  when: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{String(s.event_time || '').slice(0, 19)}</span>,
-                  user: <span className="text-[11px] text-muted">{s.user}</span>,
+                  when: <span className="font-mono text-meta whitespace-nowrap text-muted">{String(s.event_time || '').slice(0, 19)}</span>,
+                  user: <span className="text-meta text-muted">{s.user}</span>,
                   ms: (
                     <span className={num(s.query_duration_ms) > 10000 ? 'font-mono font-bold text-danger-fg' : 'font-mono font-semibold'}>
                       {fmtNumber(s.query_duration_ms)} ms
@@ -1395,7 +1395,7 @@ function SlowQueriesPanel({ rows, onOpen }) {
                     <span className="block">
                       <SqlCell sql={s.query} max={90} />
                       {s.exception && (
-                        <span className="mt-0.5 block max-w-[380px] text-[11px] break-words text-danger-fg">{s.exception}</span>
+                        <span className="mt-0.5 block max-w-[380px] text-meta break-words text-danger-fg">{s.exception}</span>
                       )}
                     </span>
                   ),

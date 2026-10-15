@@ -258,7 +258,7 @@ export const DATABASE_COLUMNS = [
         <span className="block leading-tight">
           <span className="block font-mono text-[12px] text-fg">{enc || '—'}</span>
           {d.collation && (
-            <span className="truncate-safe block max-w-[190px] text-[11px] text-subtle">{d.collation}</span>
+            <span className="truncate-safe block max-w-[190px] text-meta text-subtle">{d.collation}</span>
           )}
         </span>
       );
@@ -641,7 +641,7 @@ export const TABLESPACE_COLUMNS = [
     sortable: true,
     sortValue: (t) => `${t.extent_management || ''} ${t.logging || ''}`,
     render: (t) => (
-      <span className="block text-[11px] leading-tight text-muted">
+      <span className="block text-meta leading-tight text-muted">
         <span className="block">{t.extent_management || '—'}</span>
         {t.logging && <span className="block text-subtle">{t.logging}</span>}
       </span>

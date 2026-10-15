@@ -644,7 +644,7 @@ export default function MSSQLDashboard() {
                           db: <Badge tone="accent" size="xs">{f.db_name || '—'}</Badge>,
                           file: (
                             <span title={f.physical_name}
-                              className="truncate-safe block max-w-[280px] font-mono text-[11px] text-muted">
+                              className="truncate-safe block max-w-[280px] font-mono text-meta text-muted">
                               {f.physical_name}
                             </span>
                           ),
@@ -944,8 +944,8 @@ export default function MSSQLDashboard() {
                           state: u.is_disabled
                             ? <Badge tone="danger" size="xs">Disabled</Badge>
                             : <Badge tone="success" size="xs">Enabled</Badge>,
-                          created: <span className="font-mono text-[11px] text-muted">{String(u.create_date || '').slice(0, 19) || null}</span>,
-                          modified: <span className="font-mono text-[11px] text-muted">{String(u.modify_date || '').slice(0, 19) || null}</span>,
+                          created: <span className="font-mono text-meta text-muted">{String(u.create_date || '').slice(0, 19) || null}</span>,
+                          modified: <span className="font-mono text-meta text-muted">{String(u.modify_date || '').slice(0, 19) || null}</span>,
                         },
                       }))}
                       empty={<EmptyState icon="users" title="No logins returned"
@@ -1083,7 +1083,7 @@ export default function MSSQLDashboard() {
                             log: d.log_bytes == null ? null
                               : <span className="font-mono text-[12px]">{fmtBytes(d.log_bytes)}</span>,
                             tables: <span className="font-mono">{d.tables || null}</span>,
-                            owner: <span className="font-mono text-[11px] text-muted">{d.owner}</span>,
+                            owner: <span className="font-mono text-meta text-muted">{d.owner}</span>,
                           },
                         }))}
                         empty={<EmptyState icon="database" title="No databases" />}
@@ -1144,7 +1144,7 @@ function ActiveSessionsPanel({ rows, title, actions, full = false }) {
                   cells: {
                     spid: <span className="font-mono font-semibold">{q.session_id}</span>,
                     login: <span className="truncate-safe block max-w-[140px] font-semibold text-accent-text">{q.login_name}</span>,
-                    host: <span className="truncate-safe block max-w-[120px] font-mono text-[11px] text-muted">{q.host_name}</span>,
+                    host: <span className="truncate-safe block max-w-[120px] font-mono text-meta text-muted">{q.host_name}</span>,
                     db: q.database_name ? <Badge tone="accent" size="xs">{q.database_name}</Badge> : null,
                     status: <StateChip value={q.status} tones={SESSION_STATE_TONES} />,
                     ms: (

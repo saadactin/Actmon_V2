@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
 import Popover from '@/components/ui/Popover';
@@ -28,6 +28,7 @@ export default function TopNav({ user, onSignOut }) {
 
   return (
     <header
+      data-topnav
       className="z-30 flex shrink-0 items-center justify-between gap-4 bg-topnav text-topnav-fg"
       style={{
         height: 'var(--topnav-h)',
@@ -36,19 +37,176 @@ export default function TopNav({ user, onSignOut }) {
       }}
     >
       <BrandMark />
+      <ModuleStrip items={items} />
+      <AccountMenu user={user} onSignOut={onSignOut} />
+    </header>
+  );
+}
 
-      {/* Scrolls rather than crushes: eleven stacked items need ~1200px, and the
-          alternative to a scroll strip is labels truncating to nothing. */}
-      <nav
-        aria-label="Modules"
-        className="no-scrollbar flex min-w-0 flex-1 items-center justify-center overflow-x-auto"
+/* ── the module strip ────────────────────────────────────────────────────── */
+
+/** Is this module the one the route is in? Same rule NavLink applies: an exact
+ *  match for Dashboard, a path-segment prefix for everything else. */
+const isActiveFor = (pathname, to) => (
+  to === '/dashboard'
+    ? pathname === to
+    : pathname === to || pathname.startsWith(`${to}/`)
+);
+
+/**
+ * The modules, with whatever does not fit moved into a "More" menu.
+ *
+ * Eleven stacked items need ~1,000 CSS px. Browser zoom takes that away — at
+ * 175% a 1080p screen is 1,097 px wide, at 200% 960 — and this used to be a
+ * scroll strip with its scrollbar hidden and its items centred, so the overflow
+ * spilled off BOTH ends and the first modules could not be scrolled back to.
+ * Now every module is always one click away: as many as fit stay in the bar,
+ * the rest are listed under More, and the module you are in is always one of
+ * the visible ones (it swaps in for the last slot if it would have overflowed).
+ *
+ * Widths come from an inert, invisible copy of the full row, re-measured by a
+ * ResizeObserver — so a font, density or zoom change re-flows it without any
+ * hard-coded breakpoint.
+ */
+function ModuleStrip({ items }) {
+  const { pathname } = useLocation();
+  const navRef = useRef(null);
+  const measureRef = useRef(null);
+  const [fit, setFit] = useState(items.length);
+
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const meas = measureRef.current;
+    if (!nav || !meas) return undefined;
+    const compute = () => {
+      const widths = [...meas.children].map((c) => c.getBoundingClientRect().width);
+      const moreW = widths.pop() || 0; // the last child is a sample More button
+      const gap = parseFloat(getComputedStyle(nav).columnGap) || 0;
+      const avail = nav.clientWidth;
+      const all = widths.reduce((sum, w) => sum + w, 0) + gap * Math.max(0, widths.length - 1);
+      if (all <= avail) { setFit(widths.length); return; }
+      let used = moreW;
+      let n = 0;
+      for (const w of widths) {
+        if (used + gap + w > avail) break;
+        used += gap + w;
+        n += 1;
+      }
+      setFit(Math.max(1, n));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(nav);
+    ro.observe(meas);
+    return () => ro.disconnect();
+  }, [items]);
+
+  const activeIdx = items.findIndex((i) => isActiveFor(pathname, i.to));
+  let visible = items.slice(0, fit);
+  if (fit < items.length && activeIdx >= fit) {
+    visible = [...items.slice(0, Math.max(0, fit - 1)), items[activeIdx]];
+  }
+  const overflow = items.filter((i) => !visible.includes(i));
+
+  return (
+    <nav
+      ref={navRef}
+      aria-label="Modules"
+      className="relative flex min-w-0 flex-1 items-center justify-center"
+      style={{ gap: 'var(--topnav-item-gap)' }}
+    >
+      {visible.map((item) => <TopNavItem key={item.to} item={item} />)}
+      {overflow.length > 0 && <MoreModules items={overflow} pathname={pathname} />}
+
+      {/* The measuring copy: every item plus a More button, laid out exactly as
+          the real ones, never seen and never focusable. Zero-width and clipped
+          so the full row never counts as page overflow; its items are
+          shrink-0, so they still measure at their natural width. */}
+      <div
+        ref={measureRef}
+        aria-hidden="true"
+        inert
+        className="pointer-events-none invisible absolute top-0 left-0 flex w-0 overflow-hidden"
         style={{ gap: 'var(--topnav-item-gap)' }}
       >
         {items.map((item) => <TopNavItem key={item.to} item={item} />)}
-      </nav>
+        <MoreButton />
+      </div>
+    </nav>
+  );
+}
 
-      <AccountMenu user={user} onSignOut={onSignOut} />
-    </header>
+function MoreButton({ open, active, onClick, onMouseDown }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onMouseDown={onMouseDown}
+      aria-haspopup="menu"
+      aria-expanded={!!open}
+      className={cn(
+        'flex shrink-0 flex-col items-center rounded-md py-1 transition-colors',
+        active ? 'text-topnav-fg' : 'text-topnav-muted hover:text-topnav-fg',
+      )}
+      style={{ gap: 'var(--topnav-stack-gap)', paddingInline: 'var(--topnav-item-pad-x)' }}
+    >
+      <Icon
+        name="more"
+        size={26}
+        strokeWidth={1.6}
+        style={{ width: 'var(--topnav-icon)', height: 'var(--topnav-icon)' }}
+      />
+      <span className={cn('leading-none whitespace-nowrap', active ? 'font-semibold' : 'font-normal')} style={{ fontSize: 'var(--topnav-label)' }}>
+        More
+      </span>
+    </button>
+  );
+}
+
+/** The modules that did not fit, one click away. */
+function MoreModules({ items, pathname }) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  // Closes on navigation, so the menu never lingers over the page it opened.
+  useEffect(() => { setOpen(false); }, [pathname]);
+
+  return (
+    <div className="relative shrink-0">
+      <MoreButton
+        open={open}
+        active={items.some((i) => isActiveFor(pathname, i.to))}
+        onClick={() => setOpen((v) => !v)}
+        // Popover closes on any outside mousedown; the trigger is outside it,
+        // so without this a second click would close and immediately reopen.
+        onMouseDown={(e) => e.stopPropagation()}
+      />
+      <Popover open={open} onClose={close} width={240}>
+        <ul className="p-1.5" role="menu" aria-label="More modules">
+          {items.map((item) => (
+            <li key={item.to} role="none">
+              <NavLink
+                role="menuitem"
+                to={item.to}
+                end={item.to === '/dashboard'}
+                onClick={close}
+                className={({ isActive }) => cn(
+                  'flex items-center gap-2.5 rounded-control px-2.5 py-2 text-[13px] font-semibold transition-colors hover:bg-sunken',
+                  isActive ? 'text-accent-text' : 'text-fg',
+                )}
+              >
+                <Icon name={item.icon} size={16} className="shrink-0 text-subtle" />
+                <span className="min-w-0 flex-1">{item.label}</span>
+                {item.badge ? (
+                  <span className="rounded-full bg-danger px-1.5 text-micro font-bold text-white tabular-nums">
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                ) : null}
+              </NavLink>
+            </li>
+          ))}
+        </ul>
+      </Popover>
+    </div>
   );
 }
 
@@ -66,7 +224,8 @@ function BrandMark() {
       className="grid shrink-0 place-items-center rounded-md transition-opacity hover:opacity-85"
       style={{ width: 'var(--topnav-brand)', height: 'var(--topnav-brand)' }}
     >
-      <LogoMark size={48} />
+      {/* Sized from the token so the compact bar (short viewports) shrinks it. */}
+      <LogoMark size="calc(var(--topnav-brand) - 8px)" />
     </NavLink>
   );
 }
@@ -109,7 +268,7 @@ function TopNavItem({ item }) {
             {/* Live count, e.g. firing alerts. Nothing renders unless something
                 sets a badge, so the bar matches the design at rest. */}
             {item.badge ? (
-              <span className="absolute -top-1.5 -right-2 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-danger px-1 text-[10px] font-bold text-white tabular-nums">
+              <span className="absolute -top-1.5 -right-2 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-danger px-1 text-micro font-bold text-white tabular-nums">
                 {item.badge > 99 ? '99+' : item.badge}
               </span>
             ) : null}
@@ -217,8 +376,8 @@ function AccountMenu({ user, onSignOut }) {
       <Popover open={open} onClose={close} width={286}>
         <div className="border-b border-border px-3.5 py-3">
           <p className="truncate-safe text-[13px] font-bold text-fg">{name}</p>
-          <p className="truncate-safe text-[11px] text-subtle">{email}</p>
-          <p className="truncate-safe mt-1 text-[11px] font-semibold text-accent-text">{role}</p>
+          <p className="truncate-safe text-meta text-subtle">{email}</p>
+          <p className="truncate-safe mt-1 text-meta font-semibold text-accent-text">{role}</p>
         </div>
 
         <div className="p-1.5">
@@ -276,7 +435,7 @@ function AccountMenu({ user, onSignOut }) {
                 {Object.values(SHORTCUTS).map((s) => (
                   <div key={s.label} className="flex items-center justify-between gap-3">
                     <span className="text-[12px] text-muted">{s.label}</span>
-                    <span className="shrink-0 text-[10px] font-semibold text-fg">{fmtKeys(s.keys)}</span>
+                    <span className="shrink-0 text-micro font-semibold text-fg">{fmtKeys(s.keys)}</span>
                   </div>
                 ))}
               </div>
@@ -288,7 +447,7 @@ function AccountMenu({ user, onSignOut }) {
           <MenuRow icon="logout" label="Sign out" tone="danger" onClick={run(onSignOut)} />
         </div>
 
-        <div className="border-t border-border px-3.5 py-2 text-[11px] font-semibold text-subtle">
+        <div className="border-t border-border px-3.5 py-2 text-meta font-semibold text-subtle">
           {APP.name} v{APP.version} · {APP.company}
         </div>
       </Popover>
@@ -308,7 +467,7 @@ function MenuRow({ icon, label, hint, trailing, tone, onClick }) {
     >
       <Icon name={icon} size={15} className={cn('shrink-0', tone === 'danger' ? undefined : 'text-subtle')} />
       <span className="truncate-safe min-w-0 flex-1 text-[12px] font-semibold">{label}</span>
-      {hint && <span className="shrink-0 text-[10px] font-semibold text-subtle">{hint}</span>}
+      {hint && <span className="shrink-0 text-micro font-semibold text-subtle">{hint}</span>}
       {trailing}
     </button>
   );

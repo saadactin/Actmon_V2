@@ -6,6 +6,7 @@ analysis (same pattern as MySQL/PostgreSQL/MSSQL/MongoDB's existing
 `mssql_ai_analysis.analyze_slow_query_groq` for the reference shape). Oracle
 previously had no AI analysis for its slow queries at all.
 """
+from app.services.common.groq_config import groq_params
 import os
 import json
 from typing import Optional
@@ -192,10 +193,9 @@ Return this exact JSON structure:
 }}"""
 
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=3000,
+            **groq_params(3000),
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

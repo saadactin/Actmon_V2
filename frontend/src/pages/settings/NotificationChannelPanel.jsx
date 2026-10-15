@@ -179,7 +179,7 @@ export default function NotificationChannelPanel({ channelType, def }) {
           Send Test Notification
         </Button>
 
-        <div className="ml-auto flex flex-wrap items-center gap-3 text-[11px] text-subtle">
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-meta text-subtle">
           {channel?.last_success_at && <span>Last success: {new Date(channel.last_success_at).toLocaleString()}</span>}
           {channel?.last_failure_at && <span className="text-danger-fg">Last failure: {new Date(channel.last_failure_at).toLocaleString()}</span>}
         </div>

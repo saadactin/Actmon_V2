@@ -345,7 +345,7 @@ export default function InfraPage() {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-[22px] leading-none font-bold text-fg">{counts[card.key]}</span>
-                    <span className="truncate-safe mt-1 block text-[11px] font-semibold text-muted">{card.label}</span>
+                    <span className="truncate-safe mt-1 block text-meta font-semibold text-muted">{card.label}</span>
                   </span>
                 </button>
               );
@@ -740,7 +740,7 @@ function InfraOverview({ hosts, counts, onOpen, onDrill, loading }) {
           <section className="card flex flex-col">
             <header className="px-card pt-card pb-3">
               <h2 className="text-[17px] font-bold text-fg">CPU vs Memory — all hosts</h2>
-              <p className="mt-0.5 text-[11px] text-subtle">Bubble size = disk usage</p>
+              <p className="mt-0.5 text-meta text-subtle">Bubble size = disk usage</p>
             </header>
             <div className="px-card pb-card">
               <ScatterChart
@@ -750,7 +750,7 @@ function InfraOverview({ hosts, counts, onOpen, onDrill, loading }) {
               />
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 {[STATUS.good, STATUS.warning, STATUS.critical].map((s) => (
-                  <span key={s.id} className="inline-flex items-center gap-1.5 text-[10px] font-medium text-subtle">
+                  <span key={s.id} className="inline-flex items-center gap-1.5 text-micro font-medium text-subtle">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden="true" />
                     {s.label}
                   </span>

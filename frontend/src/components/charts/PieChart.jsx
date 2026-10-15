@@ -115,7 +115,7 @@ export default function PieChart({
               <span className="block text-xl leading-none font-bold text-fg">
                 {Math.round(slices.find((s) => s.key === active)?.share ?? 0)}%
               </span>
-              <span className="mt-1 block max-w-[92px] truncate text-[10px] font-semibold text-subtle">
+              <span className="mt-1 block max-w-[92px] truncate text-micro font-semibold text-subtle">
                 {slices.find((s) => s.key === active)?.label}
               </span>
             </span>
@@ -126,7 +126,7 @@ export default function PieChart({
           ) : (
             <span>
               <span className="block text-2xl leading-none font-bold text-fg">{total}</span>
-              <span className="mt-1 block text-[10px] font-semibold text-subtle">total</span>
+              <span className="mt-1 block text-micro font-semibold text-subtle">total</span>
             </span>
           )}
         </div>
@@ -176,11 +176,11 @@ export default function PieChart({
           const row = (
             <>
               <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: s.color }} />
-              <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted" title={s.sub || s.label}>
+              <span className="min-w-0 flex-1 truncate text-meta font-medium text-muted" title={s.sub || s.label}>
                 {s.label}
               </span>
-              <span className="shrink-0 text-[11px] font-bold text-fg tabular-nums">{s.value}{unit}</span>
-              <span className="w-8 shrink-0 text-right text-[10px] text-subtle tabular-nums">
+              <span className="shrink-0 text-meta font-bold text-fg tabular-nums">{s.value}{unit}</span>
+              <span className="w-8 shrink-0 text-right text-micro text-subtle tabular-nums">
                 {Math.round(s.share)}%
               </span>
             </>

@@ -63,3 +63,5 @@ media/
 
 # Python Version
 .python-version
+# Uploaded Oracle AWR reports — customer performance data, never commit
+app/data/awr/

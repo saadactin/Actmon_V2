@@ -26,37 +26,90 @@ import {
 
 const POS_KEY = 'actmon.chat.pos';
 const LAST_SESSION_KEY = 'actmon.chat.lastSession';
-export const LAUNCHER_SIZE = 80; // must match the <ActmonAiMark size={80}> button in ChatWidget
+export const LAUNCHER_SIZE = 80; // the full-size launcher (ChatWidget renders launcherSize())
+export const LAUNCHER_SIZE_COMPACT = 56;
 
-/** Keep the launcher on-screen after a resize. */
+/**
+ * The launcher's size for the current viewport.
+ *
+ * Browser zoom shrinks the viewport in CSS pixels, and an 80px floating mark
+ * that is 4% of a 1080p screen at 100% covers four times the area at 200%. On a
+ * short or narrow viewport it drops to 56px — still an easy target.
+ */
+export const launcherSize = () => (
+  window.innerHeight < 700 || window.innerWidth < 1100 ? LAUNCHER_SIZE_COMPACT : LAUNCHER_SIZE
+);
+
+const EDGE_GAP = 24;
+
+/** The launcher never sits over the module bar: it is a floating control above
+ *  page content, and parked on the bar it hid the nav items beneath it. */
+function topLimit() {
+  const bar = document.querySelector('[data-topnav]');
+  return bar ? Math.ceil(bar.getBoundingClientRect().bottom) + 8 : 0;
+}
+
+/** Keep the launcher on-screen and clear of the module bar. */
 function clampPosition(pos) {
-  const maxX = Math.max(0, window.innerWidth - LAUNCHER_SIZE);
-  const maxY = Math.max(0, window.innerHeight - LAUNCHER_SIZE);
-  return { x: Math.min(Math.max(pos.x, 0), maxX), y: Math.min(Math.max(pos.y, 0), maxY) };
+  const size = launcherSize();
+  const maxX = Math.max(0, window.innerWidth - size);
+  const maxY = Math.max(0, window.innerHeight - size);
+  const minY = Math.min(topLimit(), maxY);
+  return { x: Math.min(Math.max(pos.x, 0), maxX), y: Math.min(Math.max(pos.y, minY), maxY) };
+}
+
+/**
+ * Where it was dragged, remembered relative to the nearest corner.
+ *
+ * Stored as raw x/y it kept its absolute pixel position through a zoom or
+ * resize, so a launcher parked bottom-right at 100% ended up mid-page at 150%.
+ * Distance from the nearest horizontal and vertical edge survives both.
+ */
+function toAnchor(pos) {
+  const size = launcherSize();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const ax = pos.x + size / 2 > vw / 2 ? 'right' : 'left';
+  const ay = pos.y + size / 2 > vh / 2 ? 'bottom' : 'top';
+  return {
+    ax, ay,
+    dx: Math.max(0, ax === 'right' ? vw - pos.x - size : pos.x),
+    dy: Math.max(0, ay === 'bottom' ? vh - pos.y - size : pos.y),
+  };
+}
+
+function fromAnchor(a) {
+  const size = launcherSize();
+  return clampPosition({
+    x: a.ax === 'right' ? window.innerWidth - a.dx - size : a.dx,
+    y: a.ay === 'bottom' ? window.innerHeight - a.dy - size : a.dy,
+  });
 }
 
 /** Bottom-right, matching where the widget has always defaulted to. */
-function defaultPosition() {
-  return clampPosition({ x: window.innerWidth - LAUNCHER_SIZE - 24, y: window.innerHeight - LAUNCHER_SIZE - 24 });
-}
+const DEFAULT_ANCHOR = { ax: 'right', ay: 'bottom', dx: EDGE_GAP, dy: EDGE_GAP };
 
-function loadPosition() {
+function loadAnchor() {
   try {
     const raw = JSON.parse(localStorage.getItem(POS_KEY) || 'null');
-    if (raw && Number.isFinite(raw.x) && Number.isFinite(raw.y)) return clampPosition(raw);
+    if (raw && (raw.ax === 'left' || raw.ax === 'right') && Number.isFinite(raw.dx)) return raw;
+    // A position saved before anchoring existed: convert it once.
+    if (raw && Number.isFinite(raw.x) && Number.isFinite(raw.y)) return toAnchor(clampPosition(raw));
   } catch {
     /* fall through to the default */
   }
-  return defaultPosition();
+  return DEFAULT_ANCHOR;
 }
 
-function persistPosition(pos) {
+function persistAnchor(anchor) {
   try {
-    localStorage.setItem(POS_KEY, JSON.stringify(pos));
+    localStorage.setItem(POS_KEY, JSON.stringify(anchor));
   } catch {
     /* non-fatal — it just won't remember where it was dragged to */
   }
 }
+
+const initialAnchor = loadAnchor();
 
 /** `/mysql-dashboard/42/slow-queries` → { db_type: 'mysql', connection_id: 42 }. */
 function contextFromPath(pathname) {
@@ -69,17 +122,16 @@ let controller = null; // in-flight request, so a second send or a close can abo
 export const useChatStore = create((set, get) => ({
   open: false,
 
-  position: loadPosition(),
+  anchor: initialAnchor,
+  position: fromAnchor(initialAnchor),
   setPosition: (pos) => {
     const clamped = clampPosition(pos);
-    set({ position: clamped });
-    persistPosition(clamped);
+    const anchor = toAnchor(clamped);
+    set({ position: clamped, anchor });
+    persistAnchor(anchor);
   },
-  reclampPosition: () => set((s) => {
-    const clamped = clampPosition(s.position);
-    persistPosition(clamped);
-    return { position: clamped };
-  }),
+  // After a resize or zoom: back to the same corner, at the same distance.
+  reclampPosition: () => set((s) => ({ position: fromAnchor(s.anchor) })),
 
   toggle: () => set((s) => ({ open: !s.open })),
   close: () => set({ open: false }),

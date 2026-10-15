@@ -280,13 +280,13 @@ export default function DiagnosisPage() {
         {/* ── left: diagnostic checklist ── */}
         <div className="card overflow-hidden lg:sticky lg:top-4 lg:self-start">
           <div className="border-b border-border px-3 py-2.5">
-            <h3 className="text-[11px] font-black uppercase tracking-wide text-fg">Diagnostic Checks</h3>
+            <h3 className="text-meta font-black uppercase tracking-wide text-fg">Diagnostic Checks</h3>
           </div>
           <div className="max-h-[70vh] overflow-y-auto p-2">
             {planErr && <Unavailable reason={planErr} />}
             {groupedPlan.map(({ group, items }) => (
               <div key={group} className="mb-2">
-                <p className="px-1.5 py-1 text-[10px] font-bold uppercase tracking-wide text-subtle">{group}</p>
+                <p className="px-1.5 py-1 text-micro font-bold uppercase tracking-wide text-subtle">{group}</p>
                 {items.map((c) => {
                   const running = runningIds.has(c.id);
                   const result = results[c.id];
@@ -374,8 +374,8 @@ export default function DiagnosisPage() {
                 {latestFailure ? (
                   <div className="rounded-control border-l-4 border-danger bg-danger-soft p-3">
                     <div className="mb-1.5 flex items-center justify-between">
-                      <span className="text-[11px] font-bold uppercase text-danger-fg">{latestFailure.title}</span>
-                      <span className="text-[11px] text-subtle">{new Date(latestFailure.at).toLocaleString()}</span>
+                      <span className="text-meta font-bold uppercase text-danger-fg">{latestFailure.title}</span>
+                      <span className="text-meta text-subtle">{new Date(latestFailure.at).toLocaleString()}</span>
                     </div>
                     <p className="whitespace-pre-wrap break-all font-mono text-[13px] text-fg">{latestFailure.detail}</p>
                     <div className="mt-2 flex gap-3">
@@ -412,7 +412,7 @@ export default function DiagnosisPage() {
                     </div>
                     <div className="-mt-0.5 pb-3">
                       <p className={cn('text-[13px] font-semibold', t.available ? 'text-fg' : 'text-subtle')}>{t.label}</p>
-                      <p className="text-[11px] text-subtle">{t.available ? (t.timestamp ? new Date(t.timestamp).toLocaleString() : t.timestamp) : 'Not available'}</p>
+                      <p className="text-meta text-subtle">{t.available ? (t.timestamp ? new Date(t.timestamp).toLocaleString() : t.timestamp) : 'Not available'}</p>
                     </div>
                   </div>
                 ))}
@@ -436,7 +436,7 @@ export default function DiagnosisPage() {
                     )}
                   </div>
                 ) : <Unavailable reason={rca?.reason || 'Root cause could not be determined from the available diagnostics — run some checks first.'} />}
-                {rca?.missing_checks?.length > 0 && <p className="mt-2 text-[11px] text-subtle">Missing checks: {rca.missing_checks.join(', ')}</p>}
+                {rca?.missing_checks?.length > 0 && <p className="mt-2 text-meta text-subtle">Missing checks: {rca.missing_checks.join(', ')}</p>}
               </Section>
               <Section title="ActmonAI Analysis" icon="sparkles" tone="accent">
                 {!ai && <Button variant="primary" icon="sparkles" loading={aiLoading} disabled={aiLoading} onClick={runAi}>Run ActmonAI Analysis</Button>}
@@ -450,7 +450,7 @@ export default function DiagnosisPage() {
                       </ul>
                     )}
                     <p className="text-[13px] text-fg"><span className="font-bold">Recommended:</span> {ai.recommended_resolution}</p>
-                    <p className="text-[11px] text-subtle">Confidence: {ai.confidence}%</p>
+                    <p className="text-meta text-subtle">Confidence: {ai.confidence}%</p>
                   </div>
                 )}
                 {ai && !ai.available && <Unavailable reason={ai.reason} />}
@@ -506,7 +506,7 @@ export default function DiagnosisPage() {
                   <Button variant="secondary" size="sm" icon="report" loading={reportLoading} onClick={genReport}>Generate Diagnostic Report</Button>
                   <Button variant="secondary" size="sm" icon="copy" onClick={copyReport}>Copy Report</Button>
                 </div>
-                {report && <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-control bg-inverse p-3 font-mono text-[11px] text-on-inverse">{report}</pre>}
+                {report && <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-control bg-inverse p-3 font-mono text-meta text-on-inverse">{report}</pre>}
               </Section>
             </>
           )}
@@ -551,26 +551,26 @@ export default function DiagnosisPage() {
 
         {/* ── right: summary strip ── */}
         <div className="card h-fit p-4 lg:sticky lg:top-4">
-          <p className="mb-3 text-[11px] font-black uppercase tracking-wide text-subtle">Summary</p>
+          <p className="mb-3 text-meta font-black uppercase tracking-wide text-subtle">Summary</p>
           <div className="space-y-3">
             <div>
-              <p className="text-[10px] font-bold uppercase text-subtle">Status</p>
+              <p className="text-micro font-bold uppercase text-subtle">Status</p>
               <p className="text-[14px] font-bold text-fg">{summary?.current_status || '—'}</p>
             </div>
             <div>
-              <p className="text-[10px] font-bold uppercase text-subtle">Severity</p>
+              <p className="text-micro font-bold uppercase text-subtle">Severity</p>
               {h ? <SeverityBadge severity={h.severity} /> : <p className="text-[14px] text-fg">—</p>}
             </div>
             <div>
-              <p className="text-[10px] font-bold uppercase text-subtle">Confidence</p>
+              <p className="text-micro font-bold uppercase text-subtle">Confidence</p>
               <p className="text-[14px] font-bold text-fg">{rca ? `${rca.confidence}%` : '—'}</p>
             </div>
             <div>
-              <p className="text-[10px] font-bold uppercase text-subtle">Root Cause</p>
+              <p className="text-micro font-bold uppercase text-subtle">Root Cause</p>
               <p className="text-[12.5px] text-fg">{rca?.primary_cause || (rcaLoading ? 'Analyzing…' : 'Not yet determined.')}</p>
             </div>
             <div>
-              <p className="text-[10px] font-bold uppercase text-subtle">Latest Error</p>
+              <p className="text-micro font-bold uppercase text-subtle">Latest Error</p>
               <p className="text-[12.5px] text-fg">{latestFailure ? `${latestFailure.title}: ${latestFailure.detail}` : 'None captured yet.'}</p>
             </div>
           </div>

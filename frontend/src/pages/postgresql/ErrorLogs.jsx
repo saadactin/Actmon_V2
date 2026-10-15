@@ -227,7 +227,7 @@ export default function ErrorLogs() {
                   <div>
                     <div className="flex items-center gap-2">
                       <h2 className="text-white font-black text-lg">Actmon AI Analysis</h2>
-                      <span className="flex items-center gap-1 px-2 py-0.5 bg-violet-500/30 border border-violet-400/40 rounded-full text-[10px] font-bold text-violet-300">
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-violet-500/30 border border-violet-400/40 rounded-full text-micro font-bold text-violet-300">
                         <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
                         LIVE
                       </span>
@@ -244,14 +244,14 @@ export default function ErrorLogs() {
               {/* Error being analyzed */}
               <div className="mt-4 bg-black/30 rounded-xl p-3 border border-white/10">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  <span className={`px-2 py-0.5 rounded-full text-micro font-black ${
                     aiEntry.severity === 'FATAL' ? 'bg-red-500/30 text-red-300' :
                     aiEntry.severity === 'ERROR' ? 'bg-red-400/25 text-red-300' :
                     aiEntry.severity === 'WARNING' ? 'bg-amber-400/25 text-amber-300' :
                     'bg-blue-400/25 text-blue-300'
                   }`}>{aiEntry.severity}</span>
-                  {aiEntry.sql_state && <span className="text-[10px] text-slate-400 font-mono bg-white/10 px-1.5 py-0.5 rounded">{aiEntry.sql_state}</span>}
-                  {aiEntry.database && <span className="text-[10px] text-slate-400">{aiEntry.database}</span>}
+                  {aiEntry.sql_state && <span className="text-micro text-slate-400 font-mono bg-white/10 px-1.5 py-0.5 rounded">{aiEntry.sql_state}</span>}
+                  {aiEntry.database && <span className="text-micro text-slate-400">{aiEntry.database}</span>}
                 </div>
                 <p className="text-white/90 text-xs font-mono leading-relaxed line-clamp-3">{aiEntry.message}</p>
               </div>
@@ -330,7 +330,7 @@ export default function ErrorLogs() {
                           <span className="text-xs font-black text-slate-200 uppercase tracking-wide">SQL / Config Fix</span>
                         </div>
                         <button onClick={() => navigator.clipboard.writeText(aiResult.sql_fix)}
-                          className="flex items-center gap-1 px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-[10px] text-slate-300 font-bold transition-all">
+                          className="flex items-center gap-1 px-2.5 py-1 bg-white/10 hover:bg-white/20 rounded-lg text-micro text-slate-300 font-bold transition-all">
                           <Copy size={9} /> Copy
                         </button>
                       </div>
@@ -380,7 +380,7 @@ export default function ErrorLogs() {
 
             {/* Footer */}
             <div className="bg-white border-t border-slate-200 px-5 py-3 flex items-center justify-between flex-shrink-0">
-              <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
+              <p className="text-micro text-slate-400 flex items-center gap-1.5">
                 <Brain size={10} className="text-violet-400" />
                 Powered by Actmon AI · PostgreSQL 17 DBA Intelligence
               </p>
@@ -412,7 +412,7 @@ export default function ErrorLogs() {
                 }`}>
                 <div className="flex justify-between items-start">
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{s}</p>
+                    <p className="text-micro font-bold text-slate-400 uppercase tracking-wide">{s}</p>
                     <p className={`text-3xl font-black mt-1 ${
                       active ? '' :
                       s === 'FATAL'   ? (cnt > 0 ? 'text-red-700'   : 'text-slate-300') :
@@ -478,7 +478,7 @@ export default function ErrorLogs() {
               const colors = { blue:'bg-blue-50 border-blue-200 text-blue-700', green:'bg-green-50 border-green-200 text-green-700', orange:'bg-orange-50 border-orange-200 text-orange-700', red:'bg-red-50 border-red-200 text-red-700', slate:'bg-slate-50 border-slate-200 text-slate-600' };
               return (
                 <div key={label} className={`rounded-xl border p-3 ${colors[accent] || colors.slate}`}>
-                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{label}</p>
+                  <p className="text-micro font-bold uppercase tracking-wide opacity-70">{label}</p>
                   <p className="text-xl font-black mt-0.5">{val ?? '—'}</p>
                 </div>
               );
@@ -493,9 +493,9 @@ export default function ErrorLogs() {
             <ResponsiveContainer width="100%" height={100}>
               <BarChart data={timeline} margin={{ left: 0, right: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                <XAxis dataKey="t" tick={{ fontSize: 8 }} tickFormatter={t => t.slice(11)} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 8 }} axisLine={false} tickLine={false} width={25} />
-                <Tooltip contentStyle={{ fontSize: 10, padding: '4px 8px' }} />
+                <XAxis dataKey="t" tick={{ fontSize: 11 }} tickFormatter={t => t.slice(11)} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={25} />
+                <Tooltip contentStyle={{ fontSize: 11, padding: '4px 8px' }} />
                 <Bar dataKey="FATAL"   stackId="a" fill="#dc2626" name="Fatal" />
                 <Bar dataKey="ERROR"   stackId="a" fill="#ef4444" name="Error" />
                 <Bar dataKey="WARNING" stackId="a" fill="#f59e0b" name="Warning" />
@@ -539,7 +539,7 @@ export default function ErrorLogs() {
                   <p className="text-xs text-amber-600 font-mono break-all">{note}</p>
                   <div className="mt-3 text-xs text-slate-600 space-y-1">
                     <p className="font-bold text-slate-700">To enable CSV logging in postgresql.conf:</p>
-                    <pre className="bg-white rounded p-2 border border-slate-200 font-mono text-[11px] mt-1">{`log_destination = 'csvlog'
+                    <pre className="bg-white rounded p-2 border border-slate-200 font-mono text-meta mt-1">{`log_destination = 'csvlog'
 logging_collector = on
 log_directory = 'log'
 log_filename = 'postgresql-%Y-%m-%d_%H%M%S.csv'
@@ -564,12 +564,12 @@ log_min_error_statement = error`}</pre>
                 <thead className="sticky top-0 bg-white border-b border-slate-200 z-10 shadow-sm">
                   <tr>
                     <th className="w-8" />
-                    <th className="px-4 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Timestamp</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Severity</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">DB · User</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">PID</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400">Message</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">AI</th>
+                    <th className="px-4 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Timestamp</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Severity</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">DB · User</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">PID</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400">Message</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">AI</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -586,11 +586,11 @@ log_min_error_statement = error`}</pre>
                           <td className="w-8 pl-3 text-slate-300">
                             {hasDetail && (isExp ? <ChevronUp size={12}/> : <ChevronDown size={12}/>)}
                           </td>
-                          <td className="px-4 py-2.5 font-mono text-slate-500 whitespace-nowrap text-[11px]">
+                          <td className="px-4 py-2.5 font-mono text-slate-500 whitespace-nowrap text-meta">
                             {fmtTs(log.timestamp)}
                           </td>
                           <td className="px-3 py-2.5">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${cfg.badge}`}>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold border ${cfg.badge}`}>
                               <Icon size={9} />{log.raw_severity || log.severity}
                             </span>
                           </td>
@@ -600,17 +600,17 @@ log_min_error_statement = error`}</pre>
                             {log.user && <span className="text-slate-500">{log.user}</span>}
                             {!log.database && !log.user && <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="px-3 py-2.5 font-mono text-slate-400 text-[11px]">{log.pid || '—'}</td>
+                          <td className="px-3 py-2.5 font-mono text-slate-400 text-meta">{log.pid || '—'}</td>
                           <td className="px-3 py-2.5 text-slate-700 max-w-xl">
                             <p className="truncate max-w-[360px]">{log.message || '—'}</p>
                             {log.detail && !isExp && (
-                              <p className="text-slate-400 text-[10px] truncate max-w-[360px] mt-0.5">Detail: {log.detail}</p>
+                              <p className="text-slate-400 text-micro truncate max-w-[360px] mt-0.5">Detail: {log.detail}</p>
                             )}
                           </td>
                           <td className="px-3 py-2.5">
                             <button
                               onClick={e => { e.stopPropagation(); analyzeError(log); }}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-[10px] font-bold hover:from-violet-600 hover:to-indigo-700 transition-all shadow-sm whitespace-nowrap"
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-micro font-bold hover:from-violet-600 hover:to-indigo-700 transition-all shadow-sm whitespace-nowrap"
                               title="Analyze with Actmon AI">
                               <Sparkles size={9} /> Analyze
                             </button>
@@ -621,7 +621,7 @@ log_min_error_statement = error`}</pre>
                             <td colSpan={6} className="px-5 py-4">
                               <div className="space-y-3">
                                 {/* Meta row */}
-                                <div className="flex flex-wrap gap-2 text-[10px]">
+                                <div className="flex flex-wrap gap-2 text-micro">
                                   {log.sql_state && (
                                     <span className="bg-slate-700 px-2 py-0.5 rounded text-slate-300 font-mono">
                                       SQL State: {log.sql_state}
@@ -653,13 +653,13 @@ log_min_error_statement = error`}</pre>
                                 {log.query    && (
                                   <div>
                                     <div className="flex items-center justify-between mb-1">
-                                      <span className="text-[10px] font-bold text-slate-400 uppercase">Query</span>
+                                      <span className="text-micro font-bold text-slate-400 uppercase">Query</span>
                                       <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(log.query); }}
-                                        className="flex items-center gap-1 px-2 py-0.5 bg-slate-700 rounded text-[10px] text-slate-300 hover:bg-slate-600">
+                                        className="flex items-center gap-1 px-2 py-0.5 bg-slate-700 rounded text-micro text-slate-300 hover:bg-slate-600">
                                         <Copy size={9} /> Copy
                                       </button>
                                     </div>
-                                    <pre className="font-mono text-[11px] text-green-400 whitespace-pre-wrap break-all bg-slate-800 rounded-lg p-3 max-h-40 overflow-y-auto">
+                                    <pre className="font-mono text-meta text-green-400 whitespace-pre-wrap break-all bg-slate-800 rounded-lg p-3 max-h-40 overflow-y-auto">
                                       {log.query}
                                     </pre>
                                   </div>
@@ -712,7 +712,7 @@ log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '`}</pre>
 function DetailBlock({ label, color, content }) {
   return (
     <div>
-      <p className={`text-[10px] font-bold uppercase mb-0.5 ${color || 'text-slate-400'}`}>{label}</p>
+      <p className={`text-micro font-bold uppercase mb-0.5 ${color || 'text-slate-400'}`}>{label}</p>
       <p className="text-slate-200 text-xs font-mono whitespace-pre-wrap break-all leading-relaxed">{content}</p>
     </div>
   );
@@ -754,7 +754,7 @@ function AiSection({ icon: Icon, title, color, content, ordered }) {
               const clean = line.replace(/^\d+[\.\)]\s*/, '').trim();
               return (
                 <li key={i} className="flex items-start gap-2.5 text-sm text-slate-700 leading-relaxed">
-                  <span className={`flex-shrink-0 w-5 h-5 rounded-full ${c.header} ${c.title} text-[10px] font-black flex items-center justify-center mt-0.5`}>
+                  <span className={`flex-shrink-0 w-5 h-5 rounded-full ${c.header} ${c.title} text-micro font-black flex items-center justify-center mt-0.5`}>
                     {i + 1}
                   </span>
                   <span>{clean || line}</span>

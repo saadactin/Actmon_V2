@@ -671,6 +671,10 @@ from app.api.routes.certificates import router as certificates_router
 # Resource Intelligence: optimization findings beside the Security Center's.
 from app.api.routes.intelligence import router as intelligence_router
 from app.api.routes.identity import router as identity_router
+# Resource assessment report builder (Scope -> Sections -> Layout -> Preview ->
+# Generate). Its own prefix, /cloud/reports, so order relative to the others
+# is free -- no single-segment route under it to collide with.
+from app.api.routes.reports import router as reports_router
 
 # Standard API routes under /api/v1/
 #
@@ -695,7 +699,7 @@ from app.api.routes.identity import router as identity_router
 # paths are all `/{account_id}/<literal>`, which do not collide with that
 # router's `/{account_id}` — but ordering it first means a future single-segment
 # route added there cannot start swallowing /refresh without anyone noticing.
-for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router, clients_router, certificates_router, intelligence_router, identity_router]:
+for router in [account_refresh_router, accounts_router, discovery_router, resources_router, cost_budgets_router, cost_router, security_router, cost_estimate_router, topology_router, compliance_router, alert_rules_router, alerts_router, drift_router, events_router, security_center_router, clients_router, certificates_router, intelligence_router, identity_router, reports_router]:
     app.include_router(router, prefix="/api/v1")
 
 

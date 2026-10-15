@@ -213,7 +213,7 @@ export default function OracleIndexAnalysis() {
                     onClick={() => { setTab(t.id); setOpen(null); }}
                     aria-pressed={tab === t.id}
                     className={cn(
-                      'flex h-7 items-center gap-1.5 rounded-control px-2.5 text-[11px] font-bold transition-colors',
+                      'flex h-7 items-center gap-1.5 rounded-control px-2.5 text-meta font-bold transition-colors',
                       tab === t.id ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg',
                     )}
                   >
@@ -258,7 +258,7 @@ export default function OracleIndexAnalysis() {
                           index: (
                             <span className="block">
                               <span className="font-mono text-[12px] font-semibold text-accent-text">{f.index_name}</span>
-                              <span className="mt-0.5 block font-mono text-[10px] text-subtle">{f.owner}</span>
+                              <span className="mt-0.5 block font-mono text-micro text-subtle">{f.owner}</span>
                             </span>
                           ),
                           table: <span className="font-mono text-[12px]">{f.table_name}</span>,
@@ -314,7 +314,7 @@ export default function OracleIndexAnalysis() {
                           index: (
                             <span className="block">
                               <span className="font-mono text-[12px] font-semibold text-danger-fg">{u.index_name}</span>
-                              <span className="mt-0.5 block font-mono text-[10px] text-subtle">{u.owner}</span>
+                              <span className="mt-0.5 block font-mono text-micro text-subtle">{u.owner}</span>
                             </span>
                           ),
                           table: <span className="font-mono text-[12px]">{u.table_name}</span>,
@@ -341,12 +341,12 @@ export default function OracleIndexAnalysis() {
                           {' '}An index usually becomes unusable after a partition operation or a
                           direct-path load.
                         </Notice>
-                        <p className="text-[11px] font-bold tracking-wide text-subtle uppercase">Rebuild</p>
+                        <p className="text-meta font-bold tracking-wide text-subtle uppercase">Rebuild</p>
                         <div className="flex items-start gap-2">
                           <SqlBlock sql={rebuildStatement(u)} className="flex-1" />
                           <CopyButton text={rebuildStatement(u)} />
                         </div>
-                        <p className="text-[11px] text-muted">
+                        <p className="text-meta text-muted">
                           <span className="font-mono">ONLINE</span> keeps the table writable while it
                           rebuilds, at the cost of taking longer and using more temp space.
                         </p>
@@ -378,7 +378,7 @@ export default function OracleIndexAnalysis() {
                         index: (
                           <span className="block">
                             <span className="font-mono text-[12px] font-semibold text-accent-text">{ix.index_name}</span>
-                            <span className="mt-0.5 block font-mono text-[10px] text-subtle">{ix.owner}</span>
+                            <span className="mt-0.5 block font-mono text-micro text-subtle">{ix.owner}</span>
                           </span>
                         ),
                         table: <span className="font-mono text-[12px]">{ix.table_name}</span>,
@@ -405,7 +405,7 @@ export default function OracleIndexAnalysis() {
           )}
         </TablePanel>
 
-        <p className="flex items-start gap-1.5 text-[11px] text-subtle">
+        <p className="flex items-start gap-1.5 text-meta text-subtle">
           <Icon name="info" size={12} className="mt-0.5 shrink-0" />
           Row counts and leaf-block counts come from optimiser statistics, so an index on a table
           that has not been analysed recently will report stale numbers.
@@ -438,14 +438,14 @@ function RebuildAdvice({ ix }) {
       </div>
 
       <div>
-        <p className="mb-1 text-[11px] font-bold tracking-wide text-subtle uppercase">
+        <p className="mb-1 text-meta font-bold tracking-wide text-subtle uppercase">
           1 · Measure it first
         </p>
         <div className="flex items-start gap-2">
           <SqlBlock sql={validateStatement(ix)} className="flex-1" />
           <CopyButton text={validateStatement(ix)} />
         </div>
-        <p className="mt-1 text-[11px] text-muted">
+        <p className="mt-1 text-meta text-muted">
           <span className="font-mono">VALIDATE STRUCTURE</span> takes a shared lock on the table for
           the duration, so run it outside peak hours. It writes to
           {' '}<span className="font-mono">INDEX_STATS</span>, which only ever holds one index at a time.
@@ -453,14 +453,14 @@ function RebuildAdvice({ ix }) {
       </div>
 
       <div>
-        <p className="mb-1 text-[11px] font-bold tracking-wide text-subtle uppercase">
+        <p className="mb-1 text-meta font-bold tracking-wide text-subtle uppercase">
           2 · Rebuild, if the measurement justifies it
         </p>
         <div className="flex items-start gap-2">
           <SqlBlock sql={rebuildStatement(ix)} className="flex-1" />
           <CopyButton text={rebuildStatement(ix)} />
         </div>
-        <p className="mt-1 text-[11px] text-muted">
+        <p className="mt-1 text-meta text-muted">
           Rebuild when <span className="font-mono">del_lf_rows / lf_rows</span> is over about 20%.
           A rebuild needs roughly the size of the index again in free space, and
           {' '}<span className="font-mono">ONLINE</span> is what keeps the table writable while it runs.

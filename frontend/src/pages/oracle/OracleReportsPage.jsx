@@ -285,7 +285,7 @@ export default function OracleReportsPage() {
             emptyMsg="v$sgastat could not be read"
           />
           {sga.data?.total_mb != null && (
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-meta text-slate-400">
               Total allocated: <b className="text-slate-700">{fmtNum(sga.data.total_mb)} MB</b>
             </p>
           )}
@@ -300,7 +300,7 @@ export default function OracleReportsPage() {
               sub="sorts done in memory" />
             <KStat label="Work areas active" value={pgaSummary.work_areas_active ?? '—'} />
           </div>
-          <p className="mt-3 text-[11px] text-slate-400">
+          <p className="mt-3 text-meta text-slate-400">
             A PGA cache-hit rate below 90% means sorts and hash joins are spilling to temporary
             tablespace — raise <span className="font-mono">pga_aggregate_target</span> before tuning
             the individual statements.
@@ -336,7 +336,7 @@ export default function OracleReportsPage() {
           emptyMsg="v$rman_backup_job_details has no rows — RMAN may never have run, or msdb-equivalent views are not readable"
         />
         {!lastDbBackup && (
-          <p className="mt-2 text-[11px] text-red-600">
+          <p className="mt-2 text-meta text-red-600">
             No full database backup is recorded. Without one there is no recovery point at all.
           </p>
         )}
@@ -356,7 +356,7 @@ export default function OracleReportsPage() {
         <RTable
           headers={['Destination', 'Target', 'Status', 'Archived', 'Applied', 'Gap', 'Standby name']}
           rows={drGap.map((g) => [
-            <span className="font-mono text-[11px]">{g.dest_name}</span>,
+            <span className="font-mono text-meta">{g.dest_name}</span>,
             g.target || '—',
             statusBadge(g.status),
             <span className="font-mono">{g.log_archived}</span>,
@@ -369,7 +369,7 @@ export default function OracleReportsPage() {
           emptyMsg="No active archive destination other than the local one"
         />
         {archMode !== 'ARCHIVELOG' && (
-          <p className="mt-2 text-[11px] text-red-600">
+          <p className="mt-2 text-meta text-red-600">
             The database is in {archMode}. There is no archived redo, so no point-in-time recovery
             and no Data Guard is possible until it is switched to ARCHIVELOG.
           </p>
@@ -395,7 +395,7 @@ export default function OracleReportsPage() {
           emptyMsg="dba_tablespace_usage_metrics could not be read"
         />
         {criticalTs.length > 0 && (
-          <p className="mt-2 text-[11px] text-red-600">
+          <p className="mt-2 text-meta text-red-600">
             {criticalTs.map((t) => `${t.tablespace_name} ${t.used_pct}%`).join(', ')} — a tablespace
             that reaches 100% stops accepting writes.
           </p>
@@ -414,7 +414,7 @@ export default function OracleReportsPage() {
             <div className="mb-3 flex flex-wrap gap-2">
               {invalidByType.slice(0, 10).map((t) => (
                 <span key={t.type}
-                  className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+                  className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-meta font-bold text-amber-700">
                   {t.type} × {t.count}
                 </span>
               ))}
@@ -422,14 +422,14 @@ export default function OracleReportsPage() {
             <RTable
               headers={['Owner', 'Type', 'Object', 'Last DDL', 'Created']}
               rows={invalidObjects.slice(0, 25).map((o) => [
-                <span className="font-mono text-[11px]">{o.owner}</span>,
+                <span className="font-mono text-meta">{o.owner}</span>,
                 o.object_type,
                 <span className="font-semibold text-slate-800">{o.object_name}</span>,
                 String(o.last_ddl || '').slice(0, 16),
                 String(o.created || '').slice(0, 16),
               ])}
             />
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-meta text-slate-400">
               An INVALID object raises an error the first time something calls it. Recompile with
               {' '}<span className="font-mono">UTL_RECOMP.RECOMP_PARALLEL</span>, or individually.
             </p>
@@ -450,7 +450,7 @@ export default function OracleReportsPage() {
         </div>
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <div>
-            <p className="mb-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">
+            <p className="mb-1.5 text-meta font-bold tracking-wide text-slate-400 uppercase">
               Sessions using the most CPU
             </p>
             <RTable
@@ -458,7 +458,7 @@ export default function OracleReportsPage() {
               rows={topCpu.slice(0, 10).map((s) => [
                 <span className="font-mono">{s.sid}</span>,
                 s.username || '—',
-                <span className="block max-w-[180px] truncate text-[11px]">{s.program}</span>,
+                <span className="block max-w-[180px] truncate text-meta">{s.program}</span>,
                 fmtNum(s.cpu_used),
                 `${s.cpu_pct}%`,
               ])}
@@ -466,7 +466,7 @@ export default function OracleReportsPage() {
             />
           </div>
           <div>
-            <p className="mb-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">
+            <p className="mb-1.5 text-meta font-bold tracking-wide text-slate-400 uppercase">
               Sessions doing the most physical I/O
             </p>
             <RTable
@@ -474,7 +474,7 @@ export default function OracleReportsPage() {
               rows={topIo.slice(0, 10).map((s) => [
                 <span className="font-mono">{s.sid}</span>,
                 s.username || '—',
-                <span className="block max-w-[180px] truncate text-[11px]">{s.program}</span>,
+                <span className="block max-w-[180px] truncate text-meta">{s.program}</span>,
                 fmtNum(s.physical_reads),
                 fmtNum(s.block_gets),
               ])}
@@ -496,13 +496,13 @@ export default function OracleReportsPage() {
         </div>
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <div>
-            <p className="mb-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">
+            <p className="mb-1.5 text-meta font-bold tracking-wide text-slate-400 uppercase">
               By mount point
             </p>
             <RTable
               headers={['Mount', 'Files', 'Total (GB)']}
               rows={mounts.map((m) => [
-                <span className="font-mono text-[11px]">{m.mount}</span>,
+                <span className="font-mono text-meta">{m.mount}</span>,
                 m.files,
                 Number(m.total_gb).toFixed(2),
               ])}
@@ -510,7 +510,7 @@ export default function OracleReportsPage() {
             />
           </div>
           <div>
-            <p className="mb-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">
+            <p className="mb-1.5 text-meta font-bold tracking-wide text-slate-400 uppercase">
               Largest data files
             </p>
             <RTable
@@ -518,7 +518,7 @@ export default function OracleReportsPage() {
               rows={[...dataFileRows].sort((a, b) => num(b.size_gb) - num(a.size_gb)).slice(0, 12)
                 .map((f) => [
                   f.tablespace,
-                  <span className="block max-w-[220px] truncate font-mono text-[10px]">{f.file_name}</span>,
+                  <span className="block max-w-[220px] truncate font-mono text-micro">{f.file_name}</span>,
                   Number(f.size_gb).toFixed(2),
                   f.autoextend === 'YES' ? 'Yes' : 'No',
                   f.autoextend === 'YES' ? Number(f.max_gb).toFixed(1) : '—',
@@ -534,8 +534,8 @@ export default function OracleReportsPage() {
         <RTable
           headers={['SQL ID', 'Statement', 'Schema', 'Executions', 'Avg elapsed (ms)', 'Total (ms)', 'Buffer gets', 'Disk reads']}
           rows={sqlRows.slice(0, 20).map((s) => [
-            <span className="font-mono text-[10px]">{s.sql_id}</span>,
-            <span className="block max-w-[300px] truncate font-mono text-[11px]">
+            <span className="font-mono text-micro">{s.sql_id}</span>,
+            <span className="block max-w-[300px] truncate font-mono text-meta">
               {String(s.sql_text || '').replace(/\s+/g, ' ').slice(0, 110)}
             </span>,
             s.parsing_schema_name || '—',
@@ -555,19 +555,19 @@ export default function OracleReportsPage() {
           <RTable
             headers={['Event', 'Class', 'Waits', 'Time (s)', 'Avg (ms)', 'What it means']}
             rows={busyWaits.slice(0, 12).map((w) => [
-              <span className="font-mono text-[11px]">{w.event}</span>,
+              <span className="font-mono text-meta">{w.event}</span>,
               w.wait_class || '—',
               fmtNum(w.total_waits),
               fmtNum(Math.round(num(w.time_waited_seconds))),
               w.avg_wait_ms,
-              <span className="block max-w-[220px] text-[10px] leading-snug text-slate-500">
+              <span className="block max-w-[220px] text-micro leading-snug text-slate-500">
                 {explainWait(w.event, w.wait_class).label}
               </span>,
             ])}
             emptyMsg="v$system_event has no non-idle wait"
           />
           {waitClasses.length > 0 && (
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-meta text-slate-400">
               By class: {waitClasses.slice(0, 5).map((c) => `${c.wait_class} ${fmtNum(Math.round(num(c.time_seconds)))}s`).join(' · ')}
             </p>
           )}
@@ -603,10 +603,10 @@ export default function OracleReportsPage() {
             <span className="font-mono">{r.sid}</span>,
             r.username || '—',
             statusBadge(r.status),
-            <span className="block max-w-[140px] truncate text-[11px]">{r.machine}</span>,
-            <span className="font-mono text-[10px]">{r.wait_event || 'on CPU'}</span>,
+            <span className="block max-w-[140px] truncate text-meta">{r.machine}</span>,
+            <span className="font-mono text-micro">{r.wait_event || 'on CPU'}</span>,
             fmtNum(r.seconds_in_wait),
-            <span className="block max-w-[240px] truncate font-mono text-[10px]">
+            <span className="block max-w-[240px] truncate font-mono text-micro">
               {String(r.sql_text || '').replace(/\s+/g, ' ').slice(0, 90)}
             </span>,
           ])}
@@ -631,13 +631,13 @@ export default function OracleReportsPage() {
               l.holder_user || '—',
               fmtNum(l.seconds_in_wait),
               l.lock_type,
-              <span className="block max-w-[220px] truncate font-mono text-[10px]">{l.waiter_sql}</span>,
+              <span className="block max-w-[220px] truncate font-mono text-micro">{l.waiter_sql}</span>,
             ])}
           />
         )}
         {enqueueRows.length > 0 && (
           <>
-            <p className="mt-4 mb-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">
+            <p className="mt-4 mb-1.5 text-meta font-bold tracking-wide text-slate-400 uppercase">
               Cumulative enqueue waits since startup
             </p>
             <RTable
@@ -673,7 +673,7 @@ export default function OracleReportsPage() {
             emptyMsg="v$log could not be read"
           />
           {singleMemberGroups.length > 0 && (
-            <p className="mt-2 text-[11px] text-amber-600">
+            <p className="mt-2 text-meta text-amber-600">
               {singleMemberGroups.length} group{singleMemberGroups.length === 1 ? ' has' : 's have'} a
               single member — losing that one file loses the group.
             </p>
@@ -687,17 +687,17 @@ export default function OracleReportsPage() {
               <RTable
                 headers={['Destination', 'Target', 'Status', 'Synchronisation', 'Applied SCN']}
                 rows={archiveDests.map((a) => [
-                  <span className="font-mono text-[11px]">{a.dest_name}</span>,
+                  <span className="font-mono text-meta">{a.dest_name}</span>,
                   a.target || '—',
                   statusBadge(a.status),
                   a.synchronization_status || '—',
-                  <span className="font-mono text-[11px]">{a.applied_scn || '—'}</span>,
+                  <span className="font-mono text-meta">{a.applied_scn || '—'}</span>,
                 ])}
                 emptyMsg="No archive destination reported"
               />
               {standbyLogs.length > 0 && (
                 <>
-                  <p className="mt-3 mb-1.5 text-[11px] font-bold tracking-wide text-slate-400 uppercase">
+                  <p className="mt-3 mb-1.5 text-meta font-bold tracking-wide text-slate-400 uppercase">
                     Standby redo logs
                   </p>
                   <RTable
@@ -713,7 +713,7 @@ export default function OracleReportsPage() {
                 </>
               )}
               {dgMessages.filter((m) => /error|fatal/i.test(m.severity || '')).length > 0 && (
-                <p className="mt-2 text-[11px] text-red-600">
+                <p className="mt-2 text-meta text-red-600">
                   {dgMessages.filter((m) => /error|fatal/i.test(m.severity || '')).length} error
                   message{dgMessages.filter((m) => /error|fatal/i.test(m.severity || '')).length === 1 ? '' : 's'}
                   {' '}in v$dataguard_status — the most recent:
@@ -743,8 +743,8 @@ export default function OracleReportsPage() {
           headers={['Process', 'Role', 'OS PID', 'PGA used (MB)', 'PGA allocated (MB)', 'PGA peak (MB)']}
           rows={procRows.slice(0, 20).map((p) => [
             <span className="font-mono font-bold">{p.pname}</span>,
-            <span className="block max-w-[260px] truncate text-[11px]">{p.description}</span>,
-            <span className="font-mono text-[11px]">{p.spid}</span>,
+            <span className="block max-w-[260px] truncate text-meta">{p.description}</span>,
+            <span className="font-mono text-meta">{p.spid}</span>,
             fmtNum(p.pga_used_mb),
             fmtNum(p.pga_alloc_mb),
             fmtNum(p.pga_max_mb),
@@ -772,7 +772,7 @@ export default function OracleReportsPage() {
                 <span className="text-slate-700">{k}</span>, fmtNum(v),
               ])}
             />
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-meta text-slate-400">
               Counters since instance startup, not rates — compare two reports to get a rate.
             </p>
           </>
@@ -787,8 +787,8 @@ export default function OracleReportsPage() {
             <RTable
               headers={['Item type', 'Item key', 'Status', 'Stuck since', 'Days']}
               rows={(ebsWf.data?.stuck || []).slice(0, 15).map((w) => [
-                <span className="font-mono text-[11px]">{w.item_type}</span>,
-                <span className="block max-w-[140px] truncate font-mono text-[10px]">{w.item_key}</span>,
+                <span className="font-mono text-meta">{w.item_type}</span>,
+                <span className="block max-w-[140px] truncate font-mono text-micro">{w.item_key}</span>,
                 statusBadge(w.status),
                 String(w.begin_date || '').slice(0, 16),
                 <b style={{ color: num(w.days_stuck) > 7 ? C.red : C.amber }}>{w.days_stuck}</b>,
@@ -805,12 +805,12 @@ export default function OracleReportsPage() {
                 m.enabled === 'Y' ? 'Yes' : 'No',
                 <b style={{ color: num(m.running) < num(m.min) ? C.red : undefined }}>{m.running}</b>,
                 `${m.min}–${m.max}`,
-                <span className="block max-w-[200px] truncate text-[11px]">{m.description}</span>,
+                <span className="block max-w-[200px] truncate text-meta">{m.description}</span>,
               ])}
               emptyMsg="No concurrent manager found"
             />
             {(ebsConc.data?.running_requests || []).length > 0 && (
-              <p className="mt-2 text-[11px] text-slate-400">
+              <p className="mt-2 text-meta text-slate-400">
                 {ebsConc.data.running_requests.length} request
                 {ebsConc.data.running_requests.length === 1 ? '' : 's'} running; longest{' '}
                 {Math.max(...ebsConc.data.running_requests.map((r) => num(r.running_mins)))} minutes.

@@ -54,6 +54,10 @@ oci>=2.126.0
 # with the standard fonts only, so it needs no font files installed.
 reportlab>=4.0
 
+# Excel (.xlsx) rendering for the resource assessment report
+# (app/services/report_renderers/xlsx_renderer.py).
+openpyxl>=3.1
+
 # Timezone database. Windows ships no system tz data, so zoneinfo cannot
 # resolve "Asia/Kolkata" without this — alert emails would silently render
 # every timestamp in UTC while claiming to honour the configured zone.

@@ -1,4 +1,4 @@
-"""The compliance catalog: nine frameworks, their scope, and their arithmetic.
+"""The compliance catalog: ten frameworks, their scope, and their arithmetic.
 
 No database. What this suite pins, and why each matters:
 
@@ -67,7 +67,7 @@ def state(out, framework, control_id):
 # ═════════════════════════════════════════════════════════════════════════════
 print("\n=== A. Catalog integrity ===")
 # ═════════════════════════════════════════════════════════════════════════════
-eq("nine frameworks", len(ctl.FRAMEWORKS), 9)
+eq("ten frameworks", len(ctl.FRAMEWORKS), 10)
 keys = [c.key for c in ctl.CONTROLS]
 eq("no control is declared twice", len(keys), len(set(keys)))
 for fw in ctl.FRAMEWORKS:
@@ -79,7 +79,7 @@ for fw in (ctl.CIS_AWS, ctl.CIS_AZURE, ctl.CIS_OCI):
     check(f"{fw}: applies to exactly one cloud",
           len(ctl.FRAMEWORK_META[fw]["providers"] or ()) == 1)
     check(f"{fw}: every control is strict", all(c.strict for c in ctl.BY_FRAMEWORK[fw]))
-for fw in (ctl.SOC2, ctl.HIPAA, ctl.PCI, ctl.ISO27001, ctl.RBI, ctl.SEBI):
+for fw in (ctl.SOC2, ctl.HIPAA, ctl.PCI, ctl.ISO27001, ctl.GDPR, ctl.RBI, ctl.SEBI):
     check(f"{fw}: no control is strict", not any(c.strict for c in ctl.BY_FRAMEWORK[fw]))
     eq(f"{fw}: applies to every cloud", ctl.FRAMEWORK_META[fw]["providers"], None)
 text = " ".join(str(v) for m in ctl.FRAMEWORK_META.values() for v in m.values())

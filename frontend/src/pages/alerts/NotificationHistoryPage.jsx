@@ -168,14 +168,14 @@ export default function NotificationHistoryPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold text-subtle">Date range</span>
+        <span className="text-meta font-semibold text-subtle">Date range</span>
         <input
           type="date"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
         />
-        <span className="text-[11px] text-subtle">to</span>
+        <span className="text-meta text-subtle">to</span>
         <input
           type="date"
           value={dateTo}

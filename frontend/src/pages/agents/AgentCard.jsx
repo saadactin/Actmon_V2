@@ -55,7 +55,7 @@ export default function AgentCard({ agent, onOpen }) {
           <div className="truncate-safe text-[13px] font-bold text-fg group-hover:text-accent-text">
             {agent.name}
           </div>
-          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-subtle">
+          <div className="mt-0.5 flex items-center gap-1 text-meta text-subtle">
             <Icon name="globe" size={11} className="shrink-0" />
             <span className="truncate-safe">{agent.hostname || agent.ip_address || '—'}</span>
           </div>
@@ -70,7 +70,7 @@ export default function AgentCard({ agent, onOpen }) {
       {/* ── engine · env · role ── */}
       <div className="flex flex-wrap items-center gap-1.5">
         <span
-          className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+          className="rounded-full px-2 py-0.5 text-micro font-bold"
           style={{
             background: `color-mix(in srgb, ${engineColor(agent.db_type)} 14%, transparent)`,
             color: engineColor(agent.db_type),
@@ -81,7 +81,7 @@ export default function AgentCard({ agent, onOpen }) {
         <Badge tone="neutral" size="xs">{agent.environment || '—'}</Badge>
         <Badge tone={cluster.tone} size="xs">{cluster.label}</Badge>
         {agent.agent_version && (
-          <span className="text-[10px] text-subtle">v{agent.agent_version}</span>
+          <span className="text-micro text-subtle">v{agent.agent_version}</span>
         )}
       </div>
 
@@ -92,7 +92,7 @@ export default function AgentCard({ agent, onOpen }) {
       </div>
 
       {/* ── footer ── */}
-      <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5 text-[11px]">
+      <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5 text-meta">
         <span className="flex items-center gap-1 text-subtle">
           <Icon name="users" size={11} />
           {num(agent.active_sessions)} sessions

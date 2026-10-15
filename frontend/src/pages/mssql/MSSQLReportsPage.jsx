@@ -199,7 +199,7 @@ export default function MSSQLReportsPage() {
           <UsageBar label="SQL Server" pct={sqlCpu} color={C.blue} />
           <UsageBar label="Other processes" pct={otherCpu} color={C.orange} />
           <UsageBar label="Idle" pct={idleCpu} color={C.slate} />
-          <p className="mt-2 text-[11px] text-slate-400">
+          <p className="mt-2 text-meta text-slate-400">
             Host CPU in use: <b className="text-slate-700">{hostCpu}%</b> — SQL Server {sqlCpu}%,
             other processes {otherCpu}%, idle {idleCpu}%. Measured across all cores.
           </p>
@@ -247,7 +247,7 @@ export default function MSSQLReportsPage() {
             <span className="font-bold text-slate-800">{d.name}</span>,
             statusBadge(d.state_desc),
             d.recovery_model_desc || '—',
-            <span className="font-mono text-[11px]">{d.owner || '—'}</span>,
+            <span className="font-mono text-meta">{d.owner || '—'}</span>,
             fmtNum(d.size_mb),
             d.log_size_mb != null ? fmtNum(d.log_size_mb) : '—',
             d.compatibility_level || '—',
@@ -262,7 +262,7 @@ export default function MSSQLReportsPage() {
           <RTable
             headers={['Wait Type', 'Waiting Tasks', 'Wait (ms)', 'Share']}
             rows={waits.slice(0, 12).map((w) => [
-              <span className="font-mono text-[11px]">{w.wait_type}</span>,
+              <span className="font-mono text-meta">{w.wait_type}</span>,
               fmtNum(w.waiting_tasks_count),
               fmtNum(w.wait_time_ms),
               w.pct != null ? `${w.pct}%` : '—',
@@ -299,7 +299,7 @@ export default function MSSQLReportsPage() {
           rows={sessions.slice(0, 20).map((s) => [
             <span className="font-mono">{s.session_id}</span>,
             <span className="font-semibold">{s.login_name || '—'}</span>,
-            <span className="font-mono text-[11px]">{s.host_name || '—'}</span>,
+            <span className="font-mono text-meta">{s.host_name || '—'}</span>,
             s.database_name || '—',
             statusBadge(s.status),
             fmtNum(s.duration_ms),
@@ -314,7 +314,7 @@ export default function MSSQLReportsPage() {
         <RTable
           headers={['Statement', 'Avg elapsed (ms)', 'Executions', 'Total CPU (ms)', 'Avg logical reads', 'Database']}
           rows={slowQ.slice(0, 15).map((q) => [
-            <span className="block max-w-[380px] truncate font-mono text-[11px]">
+            <span className="block max-w-[380px] truncate font-mono text-meta">
               {String(q.sql_text || '').replace(/\s+/g, ' ').slice(0, 120)}
             </span>,
             fmtNum(q.avg_elapsed_ms),
@@ -333,7 +333,7 @@ export default function MSSQLReportsPage() {
           <RTable
             headers={['Table', 'Rows', 'Data (MB)', 'Index (MB)', 'Total (MB)']}
             rows={tables.slice(0, 15).map((t) => [
-              <span className="font-mono text-[11px]">{t.db_name}.{t.schema_name}.{t.table_name}</span>,
+              <span className="font-mono text-meta">{t.db_name}.{t.schema_name}.{t.table_name}</span>,
               fmtNum(t.row_count),
               fmtNum(t.data_mb),
               fmtNum(t.index_mb),
@@ -348,7 +348,7 @@ export default function MSSQLReportsPage() {
             headers={['Database', 'File', 'Reads', 'Writes', 'Avg I/O (ms)']}
             rows={ioFiles.slice(0, 12).map((f) => [
               f.db_name || '—',
-              <span className="block max-w-[220px] truncate font-mono text-[10px]">{f.physical_name}</span>,
+              <span className="block max-w-[220px] truncate font-mono text-micro">{f.physical_name}</span>,
               fmtNum(f.num_of_reads),
               fmtNum(f.num_of_writes),
               <b style={{ color: num(f.avg_io_ms) > 20 ? C.red : undefined }}>
@@ -378,15 +378,15 @@ export default function MSSQLReportsPage() {
             <RTable
               headers={['Table', 'Suggested columns', 'Improvement measure', 'Seeks', 'Scans']}
               rows={(idxD.missing_indexes || []).slice(0, 10).map((m) => [
-                <span className="font-mono text-[11px] font-bold">{m.table_name}</span>,
-                <span className="block max-w-[300px] truncate font-mono text-[11px]">{m.suggested_columns}</span>,
+                <span className="font-mono text-meta font-bold">{m.table_name}</span>,
+                <span className="block max-w-[300px] truncate font-mono text-meta">{m.suggested_columns}</span>,
                 m.improvement_measure != null ? fmtNum(Math.round(m.improvement_measure)) : '—',
                 fmtNum(m.user_seeks),
                 fmtNum(m.user_scans),
               ])}
               emptyMsg="No missing-index candidates for the connected database"
             />
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-meta text-slate-400">
               Index usage DMVs are per-database and reset on restart — this covers the
               connected database only.
             </p>
@@ -413,7 +413,7 @@ export default function MSSQLReportsPage() {
           emptyMsg="No backup recorded in msdb for the last 7 days"
         />
         {simpleRecovery.length > 0 && (
-          <p className="mt-2 text-[11px] text-amber-600">
+          <p className="mt-2 text-meta text-amber-600">
             {simpleRecovery.length} database{simpleRecovery.length === 1 ? ' is' : 's are'} in SIMPLE
             recovery ({simpleRecovery.map((d) => d.name).join(', ')}) — log backups are not possible,
             so point-in-time restore is not available for {simpleRecovery.length === 1 ? 'it' : 'them'}.

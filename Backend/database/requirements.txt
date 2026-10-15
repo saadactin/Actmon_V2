@@ -16,6 +16,8 @@ passlib[bcrypt]
 pyodbc
 python-multipart
 groq
+# Oracle AWR Analyzer — HTML report parsing
+beautifulsoup4
 # Redis — hot tier for the 15s metrics pipeline (optional; degrades to no-op)
 redis
 # ClickHouse — native driver (enables clickhouse+native:// SQLAlchemy dialect)

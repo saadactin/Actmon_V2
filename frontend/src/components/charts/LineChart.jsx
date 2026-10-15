@@ -114,7 +114,7 @@ export default function LineChart({
       <div className="grid place-items-center gap-1.5 text-center" style={{ height }}>
         <Icon name="trend" size={20} className="text-subtle" />
         <p className="text-[12px] font-medium text-muted">{emptyLabel}</p>
-        {emptyHint && <p className="max-w-xs text-[11px] text-subtle">{emptyHint}</p>}
+        {emptyHint && <p className="max-w-xs text-meta text-subtle">{emptyHint}</p>}
       </div>
     );
   }
@@ -164,7 +164,7 @@ export default function LineChart({
               />
               <text
                 x={PAD.left - 6} y={t.y + 3} textAnchor="end"
-                fill="var(--chart-axis)" style={{ fontSize: 9 }}
+                fill="var(--chart-axis)" style={{ fontSize: 11 }}
               >
                 {Math.round(t.v)}{unit}
               </text>
@@ -233,7 +233,7 @@ export default function LineChart({
               y={H - 6}
               textAnchor={ti === 0 ? 'start' : ti === xTicks.length - 1 ? 'end' : 'middle'}
               fill="var(--chart-axis)"
-              style={{ fontSize: 9 }}
+              style={{ fontSize: 11 }}
             >
               {points[i].label}
             </text>
@@ -246,7 +246,7 @@ export default function LineChart({
             <span className="block text-[17px] leading-none font-bold text-fg">
               {fmt(active ? active.value : last.value)}
             </span>
-            <span className="mt-0.5 block text-[10px] text-subtle">
+            <span className="mt-0.5 block text-micro text-subtle">
               {active ? active.label : 'latest'}
             </span>
           </div>
@@ -263,14 +263,14 @@ export default function LineChart({
             }}
           >
             <div className="text-[12px] font-bold text-fg">{fmt(active.value)}</div>
-            <div className="text-[10px] text-subtle">{active.label}</div>
+            <div className="text-micro text-subtle">{active.label}</div>
           </div>
         )}
       </div>
       {thresholds && !compact && (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           {UTILISATION_BANDS.map((b) => (
-            <span key={b.id} className="inline-flex items-center gap-1.5 text-[10px] font-medium text-subtle">
+            <span key={b.id} className="inline-flex items-center gap-1.5 text-micro font-medium text-subtle">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: b.color }} aria-hidden="true" />
               {b.label}
             </span>

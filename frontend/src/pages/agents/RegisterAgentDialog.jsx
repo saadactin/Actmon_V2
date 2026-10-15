@@ -168,7 +168,7 @@ export function RegisterAgentFields({ form, set }) {
           placeholder="e.g. prod-mysql-01"
           className={FIELD}
         />
-        <p className="mt-1 text-[11px] text-subtle">Unique identifier for this agent</p>
+        <p className="mt-1 text-meta text-subtle">Unique identifier for this agent</p>
       </div>
 
       {/* Engine + environment */}
@@ -264,7 +264,7 @@ export function RegisterAgentFields({ form, set }) {
       </div>
 
       {/* Info note — wording unchanged */}
-      <div className="flex items-start gap-2 rounded-xl border border-accent-border bg-accent-softer px-3 py-2.5 text-[11px] text-accent-text">
+      <div className="flex items-start gap-2 rounded-xl border border-accent-border bg-accent-softer px-3 py-2.5 text-meta text-accent-text">
         <Icon name="info" size={12} className="mt-0.5 shrink-0" />
         <span>
           The agent will be registered as <strong>offline</strong> until it starts sending

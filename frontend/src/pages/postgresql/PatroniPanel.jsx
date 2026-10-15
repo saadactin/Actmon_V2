@@ -104,15 +104,15 @@ export default function PatroniPanel({ connId }) {
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-[15px] font-black text-slate-900">PostgreSQL Replication — Patroni</h3>
-              <span className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black ${hs.bg} ${hs.text}`}>
+              <span className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-meta font-black ${hs.bg} ${hs.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${hs.dot} ${s.cluster_health === 'HEALTHY' ? 'animate-pulse' : ''}`} />
                 {s.cluster_health}
               </span>
               {s.paused && (
-                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black">HA PAUSED</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-micro font-black">HA PAUSED</span>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-meta text-slate-400 mt-0.5">
               Cluster: <span className="font-mono text-slate-500">{s.scope}</span> · Leader: <span className="font-bold text-slate-600">{s.leader || '—'}</span>
               {' '}· {s.healthy_members}/{s.member_count} healthy · {s.streaming_replicas}/{s.replica_count ?? '—'} streaming
               {s.reason && <span className="text-amber-600 font-semibold"> · {s.reason}</span>}
@@ -205,7 +205,7 @@ function MenuItem({ icon: Icon, label, onClick, danger, disabled, reason }) {
 }
 
 function SectionLabel({ children }) {
-  return <p className="px-2.5 pt-2.5 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400">{children}</p>;
+  return <p className="px-2.5 pt-2.5 pb-1 text-micro font-black uppercase tracking-wider text-slate-400">{children}</p>;
 }
 
 function ActionsMenu({ s, onNavigate, onAction, onRefresh }) {
@@ -290,9 +290,9 @@ function Tile({ label, value, sub, tone = 'slate' }) {
   };
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+      <p className="text-micro font-black uppercase tracking-wide text-slate-400">{label}</p>
       <p className={`text-[20px] font-black mt-0.5 ${tones[tone] || tones.slate}`}>{value}</p>
-      {sub && <p className="text-[11px] text-slate-400 mt-0.5">{sub}</p>}
+      {sub && <p className="text-meta text-slate-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -317,12 +317,12 @@ function OverviewTab({ s, onNavigate, onAction }) {
       </div>
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-3">Topology</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-3">Topology</p>
         <TopologyView s={s} compact />
       </div>
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Quick Actions</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Quick Actions</p>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" icon="branch" onClick={() => onNavigate('topology')}>View Topology</Button>
           <Button variant="secondary" size="sm" icon="history" onClick={() => onNavigate('history')}>View History</Button>
@@ -353,14 +353,14 @@ function MemberTable({ members, unregistered }) {
           <option value="all">All nodes</option>
           {members.map((m) => <option key={m.member_name} value={m.member_name}>{m.member_name}</option>)}
         </select>
-        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 cursor-pointer">
+        <label className="flex items-center gap-1.5 text-meta font-bold text-slate-500 cursor-pointer">
           <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} /> Auto Refresh
         </label>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px]">
           <thead>
-            <tr className="border-b border-slate-200 text-left text-slate-400 text-[10px] font-black uppercase tracking-wide">
+            <tr className="border-b border-slate-200 text-left text-slate-400 text-micro font-black uppercase tracking-wide">
               <th className="py-2 pr-3">Member</th>
               <th className="py-2 pr-3">Host</th>
               <th className="py-2 pr-3">Role</th>
@@ -384,11 +384,11 @@ function MemberTable({ members, unregistered }) {
                   <td className="py-2.5 pr-3 font-bold text-slate-800">{m.member_name}</td>
                   <td className="py-2.5 pr-3 font-mono text-slate-500">{m.ip_address}</td>
                   <td className="py-2.5 pr-3">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${isLeader ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-micro font-black ${isLeader ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
                       {isLeader ? 'LEADER' : m.is_cascading ? 'CASCADING REPLICA' : 'REPLICA'}
                     </span>
                     {!isLeader && m.upstream_member && (
-                      <p className="text-[9px] text-slate-400 font-bold mt-0.5">from {m.upstream_member}</p>
+                      <p className="text-micro text-slate-400 font-bold mt-0.5">from {m.upstream_member}</p>
                     )}
                   </td>
                   <td className="py-2.5 pr-3 text-slate-600">{m.patroni_state}</td>
@@ -398,10 +398,10 @@ function MemberTable({ members, unregistered }) {
                   <td className="py-2.5 pr-3 font-mono text-slate-500">{isLeader ? '—' : (m.replay_lsn ?? '—')}</td>
                   <td className="py-2.5 pr-3 text-slate-500">{isLeader ? '—' : (m.replay_lag ?? '—')}</td>
                   <td className="py-2.5 pr-3">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${hs.bg} ${hs.text}`}>{m.node_health}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-micro font-black ${hs.bg} ${hs.text}`}>{m.node_health}</span>
                   </td>
                   <td className="py-2.5 pr-3">
-                    <span className={`flex items-center gap-1 text-[11px] font-bold ${m.patroni_running ? 'text-emerald-600' : 'text-red-500'}`}>
+                    <span className={`flex items-center gap-1 text-meta font-bold ${m.patroni_running ? 'text-emerald-600' : 'text-red-500'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${m.patroni_running ? 'bg-emerald-500' : 'bg-red-500'}`} />
                       {m.patroni_running ? 'Healthy' : 'Unreachable'}
                     </span>
@@ -414,7 +414,7 @@ function MemberTable({ members, unregistered }) {
         </table>
       </div>
       {unregistered?.length > 0 && (
-        <p className="text-[11px] text-amber-600 flex items-center gap-1.5">
+        <p className="text-meta text-amber-600 flex items-center gap-1.5">
           <AlertTriangle size={12} /> Patroni reports member(s) not registered as an OS server in ActMon: {unregistered.join(', ')}
         </p>
       )}
@@ -458,21 +458,21 @@ function TopologyView({ s, compact = false }) {
       <div className={`rounded-xl border-2 px-4 py-3 text-center shadow-sm ${isLeader ? 'border-emerald-300 bg-emerald-50' : m.patroni_state === 'missing' ? 'border-red-300 bg-red-50' : 'border-blue-200 bg-blue-50'}`}>
         <div className="flex items-center justify-center gap-1">
           {isLeader && <Crown size={11} className="text-emerald-600" />}
-          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{label}</p>
+          <p className="text-micro font-black uppercase tracking-wide text-slate-400">{label}</p>
         </div>
         <p className="text-[14px] font-black text-slate-900 mt-0.5">{m.member_name}</p>
-        <p className="text-[11px] font-mono text-slate-500">{m.ip_address}</p>
-        <p className="text-[10px] text-slate-400 uppercase font-bold mt-0.5">{m.patroni_state}</p>
+        <p className="text-meta font-mono text-slate-500">{m.ip_address}</p>
+        <p className="text-micro text-slate-400 uppercase font-bold mt-0.5">{m.patroni_state}</p>
         {!isLeader && m.patroni_state !== 'missing' && (
           <>
-            <p className={`text-[11px] font-bold mt-1 ${m.wal_receiver_streaming ? 'text-emerald-600' : 'text-amber-600'}`}>
+            <p className={`text-meta font-bold mt-1 ${m.wal_receiver_streaming ? 'text-emerald-600' : 'text-amber-600'}`}>
               {m.wal_receiver_streaming ? 'Streaming' : 'Not Streaming'} · Lag {m.lag_bytes ?? m.replay_lag ?? '—'}
             </p>
-            {m.upstream_member && <p className="text-[10px] text-slate-400 mt-0.5">from {m.upstream_member}</p>}
+            {m.upstream_member && <p className="text-micro text-slate-400 mt-0.5">from {m.upstream_member}</p>}
           </>
         )}
-        {!compact && <p className="text-[10px] text-slate-400 mt-0.5">Timeline {m.timeline ?? '—'}</p>}
-        <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-[9px] font-black ${hs.bg} ${hs.text}`}>
+        {!compact && <p className="text-micro text-slate-400 mt-0.5">Timeline {m.timeline ?? '—'}</p>}
+        <span className={`inline-block mt-1.5 px-2 py-0.5 rounded-full text-micro font-black ${hs.bg} ${hs.text}`}>
           {m.node_health}
         </span>
       </div>
@@ -487,7 +487,7 @@ function TopologyView({ s, compact = false }) {
         {kids.map((r) => (
           <div key={r.member_name} className="flex flex-col items-center gap-1.5">
             <ArrowDown size={13} className="text-slate-300" />
-            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">
+            <div className="text-micro font-bold text-slate-400 uppercase tracking-wide">
               {r.is_cascading ? `WAL Streaming · via ${r.upstream_member}` : 'WAL Streaming'}
             </div>
             <NodeBox m={r} />
@@ -507,7 +507,7 @@ function TopologyView({ s, compact = false }) {
       {renderChain(leader.member_name)}
       {unresolved.length > 0 && (
         <div className="mt-2 flex flex-col items-center gap-2">
-          <p className="text-[10px] font-bold text-amber-500 uppercase tracking-wide">Upstream unresolved</p>
+          <p className="text-micro font-bold text-amber-500 uppercase tracking-wide">Upstream unresolved</p>
           <div className="flex flex-wrap justify-center gap-6">
             {unresolved.map((r) => <NodeBox key={r.member_name} m={r} />)}
           </div>
@@ -529,7 +529,7 @@ function ReplicationTab({ s }) {
       {leader && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
           <p className="text-[13px] font-black text-emerald-700">Leader: {leader.member_name}</p>
-          <p className="text-[11px] text-slate-500 mt-1">
+          <p className="text-meta text-slate-500 mt-1">
             Connected replicas: {replicas.filter((r) => r.wal_receiver_streaming).length} streaming
             {replicas.length > 0 && ' — ' + replicas.map((r) => `${r.member_name} (${r.wal_receiver_streaming ? 'Streaming' : 'Not Streaming'}${r.is_cascading ? `, via ${r.upstream_member}` : ''}, ${r.lag_bytes ?? r.replay_lag ?? '—'} lag)`).join(', ')}
           </p>
@@ -541,11 +541,11 @@ function ReplicationTab({ s }) {
           <div key={r.member_name} className={`rounded-xl border px-4 py-3.5 ${r.wal_receiver_streaming ? 'border-emerald-200 bg-emerald-50/50' : r.patroni_state === 'missing' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
             <div className="flex items-center justify-between mb-2">
               <p className="font-black text-slate-800 text-[13px]">{r.member_name}</p>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${r.wal_receiver_streaming ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              <span className={`px-2 py-0.5 rounded-full text-micro font-black ${r.wal_receiver_streaming ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                 {r.wal_receiver_streaming ? 'Streaming' : r.patroni_state === 'missing' ? 'Unreachable' : 'Not Streaming'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-meta">
               {/* Actual upstream this node streams from (its own pg_stat_wal_receiver
                   sender), NOT always the cluster Leader — a cascading replica's
                   upstream is another replica. */}
@@ -595,7 +595,7 @@ function SlotsPanel({ connId }) {
             <p className={`text-[13px] font-black ${data.upstream_replication.streaming ? 'text-emerald-700' : 'text-red-700'}`}>
               Upstream Replication: {data.upstream_replication.label}
             </p>
-            <p className="text-[11px] text-slate-500">
+            <p className="text-meta text-slate-500">
               This node's OWN stream from {data.upstream_replication.sender_host || 'its upstream'} — see the Replication tab for full detail.
               {data.upstream_replication.seconds_behind != null && ` ${data.upstream_replication.seconds_behind}s behind.`}
             </p>
@@ -604,12 +604,12 @@ function SlotsPanel({ connId }) {
       )}
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-1">Local Replication Slots — {data.summary}</p>
-        <p className="text-[10px] text-slate-400 mb-2">Never used as evidence of a health problem — a slot with no consumer is reserved capacity, not broken replication.</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-1">Local Replication Slots — {data.summary}</p>
+        <p className="text-micro text-slate-400 mb-2">Never used as evidence of a health problem — a slot with no consumer is reserved capacity, not broken replication.</p>
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="text-left text-slate-400 text-[10px] font-black uppercase border-b border-slate-200">
+              <tr className="text-left text-slate-400 text-micro font-black uppercase border-b border-slate-200">
                 <th className="py-2 pr-3">Slot Name</th><th className="py-2 pr-3">Type</th><th className="py-2 pr-3">Plugin</th>
                 <th className="py-2 pr-3">Active</th><th className="py-2 pr-3">Restart LSN</th><th className="py-2 pr-3">Retained WAL</th>
                 <th className="py-2 pr-3">Database</th><th className="py-2 pr-3">Purpose</th>
@@ -622,7 +622,7 @@ function SlotsPanel({ connId }) {
                   <td className="py-2.5 pr-3 text-slate-500">{slot.slot_type}</td>
                   <td className="py-2.5 pr-3 text-slate-500">{slot.plugin || '—'}</td>
                   <td className="py-2.5 pr-3">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${slot.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-micro font-black ${slot.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>
                       {slot.active ? 'Active' : 'Unused Cascading Slot'}
                     </span>
                   </td>
@@ -630,7 +630,7 @@ function SlotsPanel({ connId }) {
                   <td className="py-2.5 pr-3 text-slate-500">{slot.retained_bytes ?? 0} B</td>
                   <td className="py-2.5 pr-3 text-slate-500">{slot.database || '—'}</td>
                   <td className="py-2.5 pr-3">
-                    <span className={`text-[11px] font-bold ${slot.active ? 'text-emerald-600' : 'text-slate-400'}`}>
+                    <span className={`text-meta font-bold ${slot.active ? 'text-emerald-600' : 'text-slate-400'}`}>
                       {slot.active ? 'Upstream Replication Slot' : 'Cascading / Reserved Slot'}
                     </span>
                   </td>
@@ -729,11 +729,11 @@ function DynamicConfigPanel({ connId, onApplied }) {
   return (
     <div className="space-y-5">
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Patroni Dynamic Configuration</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Patroni Dynamic Configuration</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {KNOWN_KEYS.map(({ key, label, type }) => (
             <div key={key}>
-              <label className="text-[11px] font-bold text-slate-500">{label}</label>
+              <label className="text-meta font-bold text-slate-500">{label}</label>
               <input
                 type={type} value={working?.[key] ?? ''} onChange={(e) => setField(key, e.target.value)} disabled={!canEdit}
                 className="mt-1 w-full h-9 px-2.5 rounded-lg border border-slate-200 text-[12px] font-mono focus:outline-none focus:border-indigo-400 disabled:bg-slate-50 disabled:text-slate-400"
@@ -744,9 +744,9 @@ function DynamicConfigPanel({ connId, onApplied }) {
       </div>
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Full Configuration (JSON)</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Full Configuration (JSON)</p>
         <CodeEditor language="json" value={rawText ?? JSON.stringify(working, null, 2)} onChange={canEdit ? setRawText : undefined} readOnly={!canEdit} minHeight="180px" />
-        <p className="text-[10px] text-slate-400 mt-1">postgresql.conf-style server settings are NOT edited here — see the PostgreSQL Config sub-tab for those.</p>
+        <p className="text-micro text-slate-400 mt-1">postgresql.conf-style server settings are NOT edited here — see the PostgreSQL Config sub-tab for those.</p>
       </div>
 
       {error && <p className="text-[12px] text-red-600 font-semibold">{error}</p>}
@@ -776,13 +776,13 @@ function DynamicConfigPanel({ connId, onApplied }) {
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-slate-400 mt-2">Configuration valid ✓ — applied through Patroni's own DCS-stored config API.</p>
+          <p className="text-meta text-slate-400 mt-2">Configuration valid ✓ — applied through Patroni's own DCS-stored config API.</p>
         </Dialog>
       )}
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Configuration History</p>
-        <p className="text-[10px] text-slate-400 mb-2">Only covers changes made through ActMon — not a universal record of every external edit.</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Configuration History</p>
+        <p className="text-micro text-slate-400 mb-2">Only covers changes made through ActMon — not a universal record of every external edit.</p>
         <div className="space-y-2 max-h-64 overflow-y-auto">
           {(historyData || []).length === 0 && <p className="text-slate-400 text-[12px]">No changes applied through ActMon yet.</p>}
           {(historyData || []).map((h) => (
@@ -790,13 +790,13 @@ function DynamicConfigPanel({ connId, onApplied }) {
               <div>
                 <span className="font-bold text-slate-700">{h.target === 'dynamic' ? 'Dynamic Config' : 'patroni.yml'}</span>
                 <span className="text-slate-400 ml-2">{new Date(h.applied_at).toLocaleString()}</span>
-                <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                <span className={`ml-2 px-1.5 py-0.5 rounded text-micro font-bold ${
                   h.result === 'applied' ? 'bg-emerald-100 text-emerald-700' : h.result === 'rolled_back' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
                   {h.result}
                 </span>
               </div>
               {canEdit && h.target === 'dynamic' && h.result === 'applied' && (
-                <button className="text-indigo-600 hover:underline text-[11px] font-bold"
+                <button className="text-indigo-600 hover:underline text-meta font-bold"
                   onClick={() => { setDraft(h.before_content); setRawText(JSON.stringify(h.before_content, null, 2)); }}>
                   Restore this version
                 </button>
@@ -831,7 +831,7 @@ function PostgresConfigPanel({ connId }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">PostgreSQL Configuration (postgresql.conf / pg_settings)</p>
+      <p className="text-meta font-black uppercase tracking-wide text-slate-400">PostgreSQL Configuration (postgresql.conf / pg_settings)</p>
       <input
         placeholder="Search all params…" value={search} onChange={(e) => setSearch(e.target.value)}
         className="h-9 px-2.5 rounded-lg border border-slate-200 text-[12px] w-full max-w-xs"
@@ -839,7 +839,7 @@ function PostgresConfigPanel({ connId }) {
       <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
         <table className="w-full text-[12px]">
           <thead className="sticky top-0 bg-white">
-            <tr className="text-left text-slate-400 text-[10px] font-black uppercase border-b border-slate-200">
+            <tr className="text-left text-slate-400 text-micro font-black uppercase border-b border-slate-200">
               <th className="py-2 pr-3">Parameter</th><th className="py-2 pr-3">Current Value</th>
               <th className="py-2 pr-3">Unit</th><th className="py-2 pr-3">Context</th><th className="py-2 pr-3">Source</th>
             </tr>
@@ -916,9 +916,9 @@ function YamlPanel({ connId, members }) {
           >
             {members.map((m) => <option key={m.os_server_id} value={m.os_server_id}>{m.member_name} ({m.ip_address})</option>)}
           </select>
-          <span className="font-mono text-[11px] text-slate-400">{data?.path || '/etc/patroni/patroni.yml'}</span>
+          <span className="font-mono text-meta text-slate-400">{data?.path || '/etc/patroni/patroni.yml'}</span>
           {data?.access && (
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${data.access === 'direct' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+            <span className={`px-2 py-0.5 rounded-full text-micro font-black ${data.access === 'direct' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
               {data.access === 'direct' ? 'Direct read' : 'via sudo'}
             </span>
           )}
@@ -1034,7 +1034,7 @@ function RecoveryTab({ connId, s, onAction }) {
     <div className="space-y-6">
       {unhealthy.length > 0 && (
         <div>
-          <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Recovery Assistant</p>
+          <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Recovery Assistant</p>
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
             <div className="flex items-center gap-2 mb-3">
               <Stethoscope size={15} className="text-amber-600" />
@@ -1048,7 +1048,7 @@ function RecoveryTab({ connId, s, onAction }) {
       )}
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Cluster: {s.scope} · Current Leader: {s.leader}</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Cluster: {s.scope} · Current Leader: {s.leader}</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {RECOVERY_OPS.map((op) => {
             const Icon = op.icon;
@@ -1060,11 +1060,11 @@ function RecoveryTab({ connId, s, onAction }) {
                     <Icon size={15} className={op.danger ? 'text-red-600' : 'text-slate-500'} />
                     <p className={`font-black text-[13px] ${op.danger ? 'text-red-700' : 'text-slate-800'}`}>{op.label}</p>
                   </div>
-                  {op.danger && <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-600 text-[9px] font-black uppercase">Dangerous</span>}
+                  {op.danger && <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-600 text-micro font-black uppercase">Dangerous</span>}
                 </div>
-                <p className="text-[11px] text-slate-500 mb-1"><span className="font-bold text-slate-600">What: </span>{op.what}</p>
-                <p className="text-[11px] text-slate-500 mb-1"><span className="font-bold text-slate-600">When: </span>{op.when}</p>
-                <p className="text-[11px] text-slate-500 mb-3"><span className="font-bold text-slate-600">Risk: </span>{op.risk}</p>
+                <p className="text-meta text-slate-500 mb-1"><span className="font-bold text-slate-600">What: </span>{op.what}</p>
+                <p className="text-meta text-slate-500 mb-1"><span className="font-bold text-slate-600">When: </span>{op.when}</p>
+                <p className="text-meta text-slate-500 mb-3"><span className="font-bold text-slate-600">Risk: </span>{op.risk}</p>
                 <Button
                   variant={op.danger ? 'danger' : 'primary'} size="sm"
                   disabled={!ok}
@@ -1094,7 +1094,7 @@ function DiagnosisPanel({ connId, member, onAction, canExecute }) {
     <div className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
         {data.checks.map((c) => (
-          <div key={c.check} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] ${c.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+          <div key={c.check} className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-meta ${c.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
             {c.ok ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
             <span className="font-bold">{c.check}</span><span className="text-slate-400">— {c.detail}</span>
           </div>
@@ -1103,7 +1103,7 @@ function DiagnosisPanel({ connId, member, onAction, canExecute }) {
       {!data.healthy && (
         <div className="rounded-lg bg-white border border-amber-200 p-3">
           <p className="text-[12px] font-black text-red-700">{data.diagnosis}</p>
-          <p className="text-[11px] text-slate-500 mt-1">{data.recommendation}</p>
+          <p className="text-meta text-slate-500 mt-1">{data.recommendation}</p>
           {data.recommended_action && (
             <Button
               variant="danger" size="sm" className="mt-2" disabled={!canExecute}
@@ -1192,9 +1192,9 @@ function LogsPanel({ connId, members }) {
       {!isLoading && !error && (
         <div className="border border-slate-200 rounded-xl overflow-hidden">
           <div className="overflow-x-auto max-h-96 overflow-y-auto">
-            <table className="w-full text-[11.5px]">
+            <table className="w-full text-meta">
               <thead className="sticky top-0 bg-slate-50">
-                <tr className="text-left text-slate-400 text-[10px] font-black uppercase tracking-wide border-b border-slate-200">
+                <tr className="text-left text-slate-400 text-micro font-black uppercase tracking-wide border-b border-slate-200">
                   <th className="py-2 pl-3 pr-3 whitespace-nowrap">Time</th>
                   <th className="py-2 pr-3 whitespace-nowrap">Level</th>
                   <th className="py-2 pr-3 whitespace-nowrap">Process</th>
@@ -1206,7 +1206,7 @@ function LogsPanel({ connId, members }) {
                   <tr key={i} className={`border-b border-slate-100 last:border-0 ${isBad(r.raw) ? 'bg-red-50/60' : ''}`}>
                     <td className="py-1.5 pl-3 pr-3 font-mono text-slate-400 whitespace-nowrap">{r.timestamp || '—'}</td>
                     <td className="py-1.5 pr-3 whitespace-nowrap">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-black ${LOG_LEVEL_STYLE[r.level] || LOG_LEVEL_STYLE['—']}`}>{r.level}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-micro font-black ${LOG_LEVEL_STYLE[r.level] || LOG_LEVEL_STYLE['—']}`}>{r.level}</span>
                     </td>
                     <td className="py-1.5 pr-3 font-mono text-slate-500 whitespace-nowrap">{r.process ? `${r.process}${r.pid ? `[${r.pid}]` : ''}` : '—'}</td>
                     <td className={`py-1.5 pr-3 font-mono ${isBad(r.raw) ? 'text-red-700 font-semibold' : 'text-slate-700'}`}>{r.message}</td>
@@ -1235,11 +1235,11 @@ function HistoryPanel({ connId }) {
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">ActMon Action History</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">ActMon Action History</p>
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="text-left text-slate-400 text-[10px] font-black uppercase border-b border-slate-200">
+              <tr className="text-left text-slate-400 text-micro font-black uppercase border-b border-slate-200">
                 <th className="py-2 pr-3">Action</th><th className="py-2 pr-3">Target</th><th className="py-2 pr-3">Result</th><th className="py-2 pr-3">Timestamp</th>
               </tr>
             </thead>
@@ -1249,7 +1249,7 @@ function HistoryPanel({ connId }) {
                   <td className="py-2 pr-3 font-bold text-slate-700">{a.action}</td>
                   <td className="py-2 pr-3 text-slate-500">{a.target || '—'}</td>
                   <td className="py-2 pr-3">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${a.error ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                    <span className={`px-1.5 py-0.5 rounded text-micro font-bold ${a.error ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
                       {a.error ? 'Failed' : 'Success'}
                     </span>
                   </td>
@@ -1263,12 +1263,12 @@ function HistoryPanel({ connId }) {
       </div>
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Timeline History (patronictl history)</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Timeline History (patronictl history)</p>
         {isLoading && <p className="text-slate-400 text-[12px]">Loading…</p>}
         <div className="overflow-x-auto">
           <table className="w-full text-[12px]">
             <thead>
-              <tr className="text-left text-slate-400 text-[10px] font-black uppercase border-b border-slate-200">
+              <tr className="text-left text-slate-400 text-micro font-black uppercase border-b border-slate-200">
                 <th className="py-2 pr-3">Timeline</th><th className="py-2 pr-3">LSN</th>
                 <th className="py-2 pr-3">Reason</th><th className="py-2 pr-3">Timestamp</th><th className="py-2 pr-3">New Leader</th>
               </tr>
@@ -1289,7 +1289,7 @@ function HistoryPanel({ connId }) {
       </div>
 
       <div>
-        <p className="text-[11px] font-black uppercase tracking-wide text-slate-400 mb-2">Leader Changes — Last 24h (ActMon-collected)</p>
+        <p className="text-meta font-black uppercase tracking-wide text-slate-400 mb-2">Leader Changes — Last 24h (ActMon-collected)</p>
         {(chData?.transitions || []).length === 0
           ? <p className="text-slate-400 text-[12px]">No leader changes recorded in the last 24 hours.</p>
           : (
@@ -1410,7 +1410,7 @@ function ActionDialog({ connId, spec, members, leader, currentMember, onClose, o
       )}
 
       {!isCurrentNodeAction && targetMember && (
-        <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[11px] text-slate-500 mb-3">
+        <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-meta text-slate-500 mb-3">
           Current role: {targetMember.role} · State: {targetMember.patroni_state} · Lag: {targetMember.replay_lag ?? '—'}
         </div>
       )}
@@ -1421,14 +1421,14 @@ function ActionDialog({ connId, spec, members, leader, currentMember, onClose, o
         <div className="mb-3">
           {!aiCheck && (
             <button onClick={runAiPrecheck} type="button"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[11px] font-black">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-meta font-black">
               ✨ AI Pre-check
             </button>
           )}
-          {aiCheck?.loading && <p className="text-[11px] text-slate-400 mt-1.5">Running AI pre-check…</p>}
+          {aiCheck?.loading && <p className="text-meta text-slate-400 mt-1.5">Running AI pre-check…</p>}
           {aiCheck && !aiCheck.loading && (
             aiCheck.err
-              ? <p className="text-[11px] text-amber-600 mt-1.5">{aiCheck.err}</p>
+              ? <p className="text-meta text-amber-600 mt-1.5">{aiCheck.err}</p>
               : <AiPrecheckResult data={aiCheck.data} />
           )}
         </div>
@@ -1455,11 +1455,11 @@ function AiPrecheckResult({ data }) {
   return (
     <div className={`mt-1.5 rounded-xl border p-3 ${r.bg} ${r.border}`}>
       <p className={`text-[12px] font-black ${r.text}`}>{r.label}</p>
-      {data.reason && <p className="text-[11px] text-slate-600 mt-1">{data.reason}</p>}
+      {data.reason && <p className="text-meta text-slate-600 mt-1">{data.reason}</p>}
       {Array.isArray(data.what_to_check_first) && data.what_to_check_first.length > 0 && (
         <ul className="mt-1.5 space-y-0.5">
           {data.what_to_check_first.map((item, i) => (
-            <li key={i} className="text-[11px] text-slate-500 flex gap-1.5">
+            <li key={i} className="text-meta text-slate-500 flex gap-1.5">
               <span>·</span><span>{item}</span>
             </li>
           ))}

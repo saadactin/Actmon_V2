@@ -137,7 +137,7 @@ function KpiCard({ icon: Icon, title, value, accent }) {
     <div className={`bg-white rounded-xl border border-slate-200 border-l-4 ${accMap[accent] || accMap.slate} p-4 hover:shadow-md transition-all`}>
       <div className="flex justify-between items-start">
         <div>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
+          <p className="text-micro text-slate-400 font-bold uppercase tracking-wide">{title}</p>
           <p className="text-lg font-black text-slate-800 mt-1 truncate max-w-[120px]">{value ?? 'N/A'}</p>
         </div>
         <Icon size={20} className="text-slate-300 mt-0.5 flex-shrink-0" />
@@ -153,7 +153,7 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex justify-between items-center mb-2">
-        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{title}</p>
+        <p className="text-micro font-bold text-slate-500 uppercase tracking-wider">{title}</p>
         <span className="text-base font-black" style={{ color }}>{fmt(latest ?? 0)}</span>
       </div>
       {/* Shared TrendChart so Settings → Dashboard Appearance "Chart style"
@@ -161,7 +161,7 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
       <TrendChart data={data} xKey="t" height={68} showLegend={false}
         yDomain={['auto', 'auto']}
         series={[{ key: 'v', label: title, color }]} />
-      <div className="flex justify-between text-[9px] text-slate-300 mt-1">
+      <div className="flex justify-between text-micro text-slate-300 mt-1">
         <span>{fmt(data[0]?.v ?? 0)}</span>
         <span className="text-slate-400">{data.length} samples · 15s interval</span>
       </div>
@@ -215,7 +215,7 @@ function MetricKpi({ title, value, accent }) {
   };
   return (
     <div className={`rounded-xl border p-4 ${accMap[accent] || accMap.slate}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
+      <p className="text-micro font-bold uppercase tracking-wide opacity-70">{title}</p>
       <p className="text-2xl font-black mt-1">{value ?? '—'}</p>
     </div>
   );
@@ -243,7 +243,7 @@ function ReplicaStateBadge({ state }) {
   };
   const cls = map[state] || map.UNKNOWN;
   return (
-    <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${cls}`}>{state || '—'}</span>
+    <span className={`px-2 py-0.5 rounded-full border text-micro font-bold ${cls}`}>{state || '—'}</span>
   );
 }
 
@@ -297,16 +297,16 @@ function OperationDetailPanel({ op, connId, onAnalyze }) {
           ['Plan',         op.planSummary || '—',    'font-mono text-xs'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
-            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className="text-micro font-bold text-slate-400 uppercase">{label}</p>
             <p className={`text-xs mt-1 text-slate-700 truncate ${cls}`}>{val}</p>
           </div>
         ))}
       </div>
       {(op.query || op.filter) && (
         <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Filter / Query</p>
+          <p className="text-micro font-bold text-slate-400 uppercase mb-1">Filter / Query</p>
           <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-start gap-2">
-            <pre className="font-mono text-[11px] text-green-300 flex-1 overflow-x-auto whitespace-pre-wrap">
+            <pre className="font-mono text-meta text-green-300 flex-1 overflow-x-auto whitespace-pre-wrap">
               {typeof (op.query || op.filter) === 'string'
                 ? (op.query || op.filter)
                 : JSON.stringify(op.query || op.filter, null, 2)}
@@ -317,8 +317,8 @@ function OperationDetailPanel({ op, connId, onAnalyze }) {
       )}
       {op.locks && Object.keys(op.locks).length > 0 && (
         <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Lock Info</p>
-          <div className="font-mono text-[11px] bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 text-yellow-800">
+          <p className="text-micro font-bold text-slate-400 uppercase mb-1">Lock Info</p>
+          <div className="font-mono text-meta bg-yellow-50 border border-yellow-200 rounded-xl px-3 py-2 text-yellow-800">
             {JSON.stringify(op.locks)}
           </div>
         </div>
@@ -351,15 +351,15 @@ function IndexDetailPanel({ idx }) {
           ['Accesses',fmtNum(idx.accesses ?? 0)],
         ].map(([label, val]) => (
           <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
-            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className="text-micro font-bold text-slate-400 uppercase">{label}</p>
             <p className="text-xs mt-1 text-slate-700 font-semibold">{val}</p>
           </div>
         ))}
       </div>
       <div>
-        <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Key Definition</p>
+        <p className="text-micro font-bold text-slate-400 uppercase mb-1">Key Definition</p>
         <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-center gap-2">
-          <code className="font-mono text-[11px] text-green-300 flex-1">{JSON.stringify(idx.key || {})}</code>
+          <code className="font-mono text-meta text-green-300 flex-1">{JSON.stringify(idx.key || {})}</code>
           <CopyBtn text={JSON.stringify(idx.key || {})} />
         </div>
       </div>
@@ -367,7 +367,7 @@ function IndexDetailPanel({ idx }) {
         <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
           <p className="text-xs font-bold text-orange-700 mb-2">⚠ Unused index — consider dropping to save space:</p>
           <div className="bg-slate-900 rounded-lg px-3 py-2 flex items-center gap-2">
-            <code className="font-mono text-[10px] text-red-300 flex-1">{dropCmd}</code>
+            <code className="font-mono text-micro text-red-300 flex-1">{dropCmd}</code>
             <CopyBtn text={dropCmd} />
           </div>
         </div>
@@ -393,12 +393,12 @@ function ClickableKpi({ title, value, accent, onClick, hint }) {
     <button
       onClick={onClick}
       className={`rounded-xl border p-4 text-left transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer w-full group ${accMap[accent] || accMap.slate}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
+      <p className="text-micro font-bold uppercase tracking-wide opacity-70">{title}</p>
       <div className="flex items-center justify-between mt-1">
         <p className="text-2xl font-black">{value ?? '—'}</p>
         <ChevronRight size={14} className="opacity-0 group-hover:opacity-60 transition-opacity" />
       </div>
-      {hint && <p className="text-[9px] opacity-50 mt-0.5">{hint}</p>}
+      {hint && <p className="text-micro opacity-50 mt-0.5">{hint}</p>}
     </button>
   );
 }
@@ -750,8 +750,8 @@ export default function MongoDBDashboard() {
                   <ResponsiveContainer width="100%" height={210}>
                     <BarChart data={opcData} barCategoryGap="25%">
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 10, fontWeight: 600 }} axisLine={false} tickLine={false} />
-                      <YAxis tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 600 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
                       <Tooltip formatter={v => fmtNum(v)} cursor={{ fill: '#f8fafc' }} />
                       <Bar dataKey="v" radius={[5, 5, 0, 0]}>
                         {[C.green, C.emerald, C.teal, C.red, C.orange, C.purple].map((fill, i) => (
@@ -776,7 +776,7 @@ export default function MongoDBDashboard() {
                     <table className="w-full text-xs">
                       <thead className="bg-slate-50">
                         <tr>{['Name', 'Collections', 'Objects', 'Size MB', 'Index MB'].map(h => (
-                          <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                          <th key={h} className="px-3 py-2 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                         ))}</tr>
                       </thead>
                       <tbody>
@@ -877,7 +877,7 @@ export default function MongoDBDashboard() {
                     </div>
                     <div className="min-w-0">
                       <p className="font-bold text-slate-800 text-sm truncate">{p.label}</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5 truncate">{p.desc}</p>
+                      <p className="text-micro text-slate-400 mt-0.5 truncate">{p.desc}</p>
                     </div>
                     <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-500 flex-shrink-0 ml-auto transition-colors" />
                   </button>
@@ -893,8 +893,8 @@ export default function MongoDBDashboard() {
                       <BarChart layout="vertical"
                         data={topCollsBySize.map(c => ({ name: `${c.db || ''}.${c.name || c.collection || ''}`, size_mb: c.size_mb || 0, _c: c }))}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
-                        <YAxis width={160} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
+                        <YAxis width={160} type="category" dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                         <Tooltip formatter={v => `${v} MB`} cursor={{ fill: '#f8fafc' }} />
                         <Bar dataKey="size_mb" radius={[0, 5, 5, 0]}>
                           {topCollsBySize.map((_, i) => (
@@ -955,7 +955,7 @@ export default function MongoDBDashboard() {
                       <span className="font-bold" style={{ color: C.darkGreen }}>{op.ns || '?'}</span>
                       <span className="ml-2 font-black text-orange-600">{op.secs_running}s</span>
                       <span className="ml-2 text-slate-400">{op.op || op.type}</span>
-                      {op.waitingForLock && <span className="ml-2 px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-[9px] font-bold">WAITING LOCK</span>}
+                      {op.waitingForLock && <span className="ml-2 px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-micro font-bold">WAITING LOCK</span>}
                       <div className="mt-1 font-mono text-slate-500 truncate">{op.query?.slice(0, 120)}</div>
                     </div>
                   ))}
@@ -974,7 +974,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50">
                       <tr>{['Op ID', 'Op Type', 'Namespace', 'Secs Running', 'Waiting Lock', 'Client', 'Plan', 'App'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -985,14 +985,14 @@ export default function MongoDBDashboard() {
                             <tr
                               className={`border-t border-slate-100 cursor-pointer transition-colors ${isExpanded ? 'bg-green-50' : (op.secs_running || 0) > 5 ? 'bg-red-50/40 hover:bg-red-50' : (op.secs_running || 0) > 1 ? 'bg-yellow-50/40 hover:bg-yellow-50' : 'hover:bg-slate-50'}`}
                               onClick={() => setExpandedOpId(isExpanded ? null : op.opid)}>
-                              <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500">
+                              <td className="px-3 py-2.5 font-mono text-micro text-slate-500">
                                 <div className="flex items-center gap-1">
                                   {isExpanded ? <ChevronUp size={10} className="text-green-600" /> : <ChevronDown size={10} className="text-slate-300" />}
                                   {op.opid}
                                 </div>
                               </td>
                               <td className="px-3 py-2.5">
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+                                <span className="px-2 py-0.5 rounded-full text-micro font-bold"
                                   style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
                                   {op.op || op.type || '—'}
                                 </span>
@@ -1003,13 +1003,13 @@ export default function MongoDBDashboard() {
                               </td>
                               <td className="px-3 py-2.5">
                                 {op.waitingForLock
-                                  ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold rounded-full">Yes</span>
-                                  : <span className="text-[10px] text-slate-300">No</span>
+                                  ? <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-micro font-bold rounded-full">Yes</span>
+                                  : <span className="text-micro text-slate-300">No</span>
                                 }
                               </td>
                               <td className="px-3 py-2.5 text-xs text-slate-400 max-w-[120px] truncate">{op.client || '—'}</td>
-                              <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
-                              <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{op.appName || '—'}</td>
+                              <td className="px-3 py-2.5 text-micro text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
+                              <td className="px-3 py-2.5 text-micro text-slate-400 max-w-[100px] truncate">{op.appName || '—'}</td>
                             </tr>
                             {isExpanded && (
                               <tr className="bg-slate-50">
@@ -1047,7 +1047,7 @@ export default function MongoDBDashboard() {
                   ]}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
                     <Tooltip formatter={v => fmtNum(v)} cursor={{ fill: '#f8fafc' }} />
                     <Bar dataKey="v" radius={[6, 6, 0, 0]}>
                       {[C.green, C.emerald, C.teal, C.red, C.orange, C.purple].map((fill, i) => (
@@ -1075,7 +1075,7 @@ export default function MongoDBDashboard() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                   {Object.entries(levels).map(([dbName, level]) => (
                     <div key={dbName} className={`rounded-xl border p-3 ${level >= 1 ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'}`}>
-                      <p className="text-[10px] font-bold text-slate-500 uppercase">{dbName}</p>
+                      <p className="text-micro font-bold text-slate-500 uppercase">{dbName}</p>
                       <p className={`font-black text-lg mt-1 ${level >= 1 ? 'text-green-700' : 'text-slate-400'}`}>
                         Level {level} {level === 0 ? '(Off)' : level === 1 ? '(Slow)' : '(All)'}
                       </p>
@@ -1094,7 +1094,7 @@ export default function MongoDBDashboard() {
                 {errors.length > 0 && (
                   <div className="mt-3 text-xs text-slate-500">
                     <p className="font-bold mb-1">Warnings:</p>
-                    {errors.map((e, i) => <p key={i} className="font-mono text-[10px]">{e}</p>)}
+                    {errors.map((e, i) => <p key={i} className="font-mono text-micro">{e}</p>)}
                   </div>
                 )}
               </Panel>
@@ -1105,7 +1105,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50">
                       <tr>{['DB', 'Op', 'Namespace', 'Millis', 'Docs Exam.', 'Keys Exam.', 'Returned', 'Plan', 'Client', 'Timestamp'].map(h => (
-                        <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -1113,7 +1113,7 @@ export default function MongoDBDashboard() {
                         <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${op.millis > 1000 ? 'bg-red-50/30' : op.millis > 200 ? 'bg-yellow-50/30' : ''}`}>
                           <td className="px-3 py-2 font-bold" style={{ color: C.darkGreen }}>{op.db}</td>
                           <td className="px-3 py-2">
-                            <span className="px-2 py-0.5 rounded-full text-[9px] font-bold"
+                            <span className="px-2 py-0.5 rounded-full text-micro font-bold"
                               style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
                               {op.op || '—'}
                             </span>
@@ -1125,9 +1125,9 @@ export default function MongoDBDashboard() {
                           <td className="px-3 py-2 font-mono">{fmtNum(op.docsExamined || 0)}</td>
                           <td className="px-3 py-2 font-mono">{fmtNum(op.keysExamined || 0)}</td>
                           <td className="px-3 py-2 font-mono">{fmtNum(op.nreturned || 0)}</td>
-                          <td className="px-3 py-2 text-[10px] text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
-                          <td className="px-3 py-2 text-[10px] text-slate-400 max-w-[100px] truncate">{op.client || '—'}</td>
-                          <td className="px-3 py-2 font-mono text-[9px] text-slate-400 whitespace-nowrap">{op.ts || '—'}</td>
+                          <td className="px-3 py-2 text-micro text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
+                          <td className="px-3 py-2 text-micro text-slate-400 max-w-[100px] truncate">{op.client || '—'}</td>
+                          <td className="px-3 py-2 font-mono text-micro text-slate-400 whitespace-nowrap">{op.ts || '—'}</td>
                         </tr>
                       ))}
                       {profilerOps.length === 0 && (
@@ -1195,7 +1195,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50">
                       <tr>{['Database', 'Collection', 'Documents', 'Size MB', 'Avg Obj (B)', 'Indexes', 'Total Idx MB', 'Capped'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -1203,7 +1203,7 @@ export default function MongoDBDashboard() {
                         <tr key={i}
                           className="border-t border-slate-100 hover:bg-green-50 cursor-pointer transition-colors group"
                           onClick={() => setSelectedColl({ dbName: c.dbName, name: c.name })}>
-                          <td className="px-3 py-2.5 text-slate-500 font-mono text-[10px]">{c.dbName}</td>
+                          <td className="px-3 py-2.5 text-slate-500 font-mono text-micro">{c.dbName}</td>
                           <td className="px-3 py-2.5 font-bold flex items-center gap-1.5" style={{ color: C.darkGreen }}>
                             {c.name}
                             <Eye size={11} className="opacity-0 group-hover:opacity-60 text-green-600 transition-opacity flex-shrink-0" />
@@ -1225,8 +1225,8 @@ export default function MongoDBDashboard() {
                           <td className="px-3 py-2.5 font-mono">{(c.total_index_size_mb || 0).toFixed(4)}</td>
                           <td className="px-3 py-2.5">
                             {c.capped
-                              ? <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-[10px] font-bold rounded-full">Yes</span>
-                              : <span className="text-[10px] text-slate-300">No</span>
+                              ? <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 text-micro font-bold rounded-full">Yes</span>
+                              : <span className="text-micro text-slate-300">No</span>
                             }
                           </td>
                         </tr>
@@ -1247,8 +1247,8 @@ export default function MongoDBDashboard() {
                     <BarChart layout="vertical"
                       data={topBySize.map(c => ({ name: `${c.dbName}.${c.name}`, size_mb: c.size_mb || 0 }))}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
-                      <YAxis width={150} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
+                      <YAxis width={150} type="category" dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                       <Tooltip formatter={v => `${v} MB`} cursor={{ fill: '#f8fafc' }} />
                       <Bar dataKey="size_mb" radius={[0, 5, 5, 0]}>
                         {topBySize.map((_, i) => (
@@ -1314,7 +1314,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50">
                       <tr>{['Namespace', 'Index Name', 'Keys', 'Unique', 'Sparse', 'TTL (s)', 'Size', 'Accesses', 'Last Used'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -1333,29 +1333,29 @@ export default function MongoDBDashboard() {
                                 </div>
                               </td>
                               <td className="px-3 py-2.5 font-mono text-xs">{idx.name}</td>
-                              <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[150px] truncate">
+                              <td className="px-3 py-2.5 font-mono text-micro text-slate-500 max-w-[150px] truncate">
                                 {JSON.stringify(idx.key || {})}
                               </td>
                               <td className="px-3 py-2.5">
                                 {idx.unique
-                                  ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,237,100,0.12)', color: C.darkGreen }}>Yes</span>
-                                  : <span className="text-[10px] text-slate-300">No</span>
+                                  ? <span className="px-2 py-0.5 rounded-full text-micro font-bold" style={{ background: 'rgba(0,237,100,0.12)', color: C.darkGreen }}>Yes</span>
+                                  : <span className="text-micro text-slate-300">No</span>
                                 }
                               </td>
                               <td className="px-3 py-2.5">
                                 {idx.sparse
-                                  ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">Yes</span>
-                                  : <span className="text-[10px] text-slate-300">No</span>
+                                  ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-micro font-bold rounded-full">Yes</span>
+                                  : <span className="text-micro text-slate-300">No</span>
                                 }
                               </td>
-                              <td className="px-3 py-2.5 font-mono text-[10px]">
+                              <td className="px-3 py-2.5 font-mono text-micro">
                                 {idx.expireAfterSeconds != null ? idx.expireAfterSeconds : '—'}
                               </td>
                               <td className="px-3 py-2.5 font-mono">{idx.size ? fmtBytes(idx.size) : '—'}</td>
                               <td className={`px-3 py-2.5 font-bold font-mono ${idx.unused ? 'text-orange-500' : 'text-slate-700'}`}>
                                 {fmtNum(idx.accesses ?? 0)}
                               </td>
-                              <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">
+                              <td className="px-3 py-2.5 text-micro text-slate-400 whitespace-nowrap">
                                 {idx.last_access ? new Date(idx.last_access).toLocaleDateString() : '—'}
                               </td>
                             </tr>
@@ -1414,7 +1414,7 @@ export default function MongoDBDashboard() {
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>{['Host', 'State', 'Health', 'Uptime', 'Optime Date', 'Lag (s)', 'Priority', 'Votes', 'Syncing To'].map(h => (
-                          <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                          <th key={h} className="px-4 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                         ))}</tr>
                       </thead>
                       <tbody>
@@ -1433,7 +1433,7 @@ export default function MongoDBDashboard() {
                               }
                             </td>
                             <td className="px-4 py-3 text-xs text-slate-500">{m.uptime ? fmtUptime(m.uptime) : '—'}</td>
-                            <td className="px-4 py-3 font-mono text-[10px] text-slate-400 max-w-[160px] truncate">
+                            <td className="px-4 py-3 font-mono text-micro text-slate-400 max-w-[160px] truncate">
                               {m.optimeDate || m.optime || '—'}
                             </td>
                             <td className={`px-4 py-3 font-bold text-sm ${(m.lag || 0) > 30 ? 'text-red-600' : (m.lag || 0) > 10 ? 'text-orange-500' : 'text-slate-600'}`}>
@@ -1455,21 +1455,21 @@ export default function MongoDBDashboard() {
               {isRS && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="rounded-xl border bg-green-50 border-green-200 p-4">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Set Name</p>
+                    <p className="text-micro font-bold text-slate-400 uppercase mb-1">Set Name</p>
                     <p className="font-black text-lg text-green-700">{rep.set_name || '—'}</p>
                   </div>
                   <div className="rounded-xl border bg-slate-50 border-slate-200 p-4">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Members</p>
+                    <p className="text-micro font-bold text-slate-400 uppercase mb-1">Members</p>
                     <p className="font-black text-lg text-slate-700">{members.length}</p>
                   </div>
                   <div className={`rounded-xl border p-4 ${members.every(m => m.health === 1) ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Healthy</p>
+                    <p className="text-micro font-bold text-slate-400 uppercase mb-1">Healthy</p>
                     <p className={`font-black text-lg ${members.every(m => m.health === 1) ? 'text-green-700' : 'text-red-700'}`}>
                       {members.filter(m => m.health === 1).length}/{members.length}
                     </p>
                   </div>
                   <div className={`rounded-xl border p-4 ${!oplogInfo.error ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'}`}>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Oplog Window</p>
+                    <p className="text-micro font-bold text-slate-400 uppercase mb-1">Oplog Window</p>
                     <p className={`font-black text-lg ${!oplogInfo.error ? 'text-green-700' : 'text-slate-400'}`}>
                       {oplogInfo.oplog_window_hours ? `${oplogInfo.oplog_window_hours}h` : '—'}
                     </p>
@@ -1493,8 +1493,8 @@ export default function MongoDBDashboard() {
                       <ResponsiveContainer width="100%" height={180}>
                         <BarChart data={lagData.map(l => ({ name: l.member, lag: l.lag_seconds }))}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                          <XAxis dataKey="name" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                          <YAxis tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                          <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                           <Tooltip formatter={v => `${v}s`} cursor={{ fill: '#f8fafc' }} />
                           <Bar dataKey="lag" radius={[5, 5, 0, 0]}>
                             {lagData.map((l, i) => (
@@ -1592,7 +1592,7 @@ export default function MongoDBDashboard() {
                     <table className="w-full text-xs">
                       <thead className="bg-slate-50">
                         <tr>{['Timestamp', 'Op', 'Namespace', 'Wall', 'Object (truncated)'].map(h => (
-                          <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
+                          <th key={h} className="px-3 py-2 text-left text-micro font-bold text-slate-400 uppercase">{h}</th>
                         ))}</tr>
                       </thead>
                       <tbody>
@@ -1602,14 +1602,14 @@ export default function MongoDBDashboard() {
                               {e.ts ? new Date(e.ts * 1000).toLocaleString() : '—'}
                             </td>
                             <td className="px-3 py-2">
-                              <span className="px-2 py-0.5 rounded text-[9px] font-bold"
+                              <span className="px-2 py-0.5 rounded text-micro font-bold"
                                 style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
                                 {({ i: 'insert', u: 'update', d: 'delete', c: 'command', n: 'noop' })[e.op] || e.op || '—'}
                               </span>
                             </td>
                             <td className="px-3 py-2 font-mono text-slate-500">{e.ns || '—'}</td>
-                            <td className="px-3 py-2 text-slate-400 whitespace-nowrap text-[10px]">{e.wall || '—'}</td>
-                            <td className="px-3 py-2 font-mono text-[10px] text-slate-400 max-w-[260px] truncate">{e.o}</td>
+                            <td className="px-3 py-2 text-slate-400 whitespace-nowrap text-micro">{e.wall || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-micro text-slate-400 max-w-[260px] truncate">{e.o}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1662,16 +1662,16 @@ export default function MongoDBDashboard() {
                     <table className="w-full text-xs">
                       <thead className="bg-slate-50">
                         <tr>{['Shard ID', 'Host', 'State', 'Tags', 'Chunks'].map(h => (
-                          <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
+                          <th key={h} className="px-3 py-2 text-left text-micro font-bold text-slate-400 uppercase">{h}</th>
                         ))}</tr>
                       </thead>
                       <tbody>
                         {pageRows.map((s, i) => (
                           <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
                             <td className="px-3 py-2.5 font-bold" style={{ color: C.darkGreen }}>{s.id}</td>
-                            <td className="px-3 py-2.5 font-mono text-[10px]">{s.host}</td>
+                            <td className="px-3 py-2.5 font-mono text-micro">{s.host}</td>
                             <td className="px-3 py-2.5">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${s.state === 1 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                              <span className={`px-2 py-0.5 rounded-full text-micro font-bold ${s.state === 1 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                                 {s.state === 1 ? 'Active' : 'Inactive'}
                               </span>
                             </td>
@@ -1691,8 +1691,8 @@ export default function MongoDBDashboard() {
                     <ResponsiveContainer width="100%" height={200}>
                       <BarChart data={chunkData}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                        <XAxis dataKey="shard" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                        <XAxis dataKey="shard" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                         <Tooltip cursor={{ fill: '#f8fafc' }} />
                         <Bar dataKey="count" radius={[5, 5, 0, 0]} fill={C.green} />
                       </BarChart>
@@ -1783,7 +1783,7 @@ export default function MongoDBDashboard() {
                   ]}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip cursor={{ fill: '#f8fafc' }} />
                     <Bar dataKey="count" radius={[6, 6, 0, 0]}>
                       <Cell fill={C.blue} />
@@ -1883,14 +1883,14 @@ export default function MongoDBDashboard() {
                 </Panel>
 
                 <Panel title="Log & Session">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Log</p>
+                  <p className="text-micro font-bold text-slate-400 uppercase mb-2">Log</p>
                   <Row label="Records Processed" value={fmtNum(log.log_records_processed || 0)} />
                   <Row label="Payload Bytes"     value={fmtBytes(log.log_bytes_of_payload_data || 0)} />
                   <Row label="Bytes Written"     value={fmtBytes(log.log_bytes_written || 0)} />
                   <Row label="Log Flushes"       value={fmtNum(log.log_flushes || 0)} />
                   <Row label="Log Writes"        value={fmtNum(log.log_writes  || 0)} />
                   <Row label="Scan Operations"   value={fmtNum(log.log_scan_operations || 0)} />
-                  <p className="text-[10px] font-bold text-slate-400 uppercase mt-4 mb-2">Session</p>
+                  <p className="text-micro font-bold text-slate-400 uppercase mt-4 mb-2">Session</p>
                   <Row label="Open Cursors"      value={fmtNum(sess.open_cursor_count  || 0)} />
                   <Row label="Open Sessions"     value={fmtNum(sess.open_session_count || 0)} />
                 </Panel>
@@ -1902,7 +1902,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-sm">
                     <thead className="bg-slate-50">
                       <tr>{['Type', 'Available', 'In Use', 'Total Tickets', 'Used %'].map(h => (
-                        <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
+                        <th key={h} className="px-4 py-2.5 text-left text-micro font-bold text-slate-400 uppercase">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -1981,7 +1981,7 @@ export default function MongoDBDashboard() {
               {Object.entries(dbGroups).sort(([a],[b]) => a.localeCompare(b)).map(([dbName, dbUsers]) => (
                 <Panel key={dbName} title={`${dbName} (${dbUsers.length} user${dbUsers.length !== 1 ? 's' : ''})`}
                   action={
-                    <span className="text-[10px] font-bold bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">{dbName}</span>
+                    <span className="text-micro font-bold bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full">{dbName}</span>
                   }>
                   <div className="overflow-x-auto">
                     <Paged rows={dbUsers} unit="users">{(pageRows, pager) => (<>
@@ -1989,7 +1989,7 @@ export default function MongoDBDashboard() {
                       <thead className="bg-slate-50">
                         <tr>
                           {['Username', 'Roles', 'User ID'].map(h => (
-                            <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                            <th key={h} className="px-3 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -2000,16 +2000,16 @@ export default function MongoDBDashboard() {
                             <td className="px-3 py-2.5">
                               <div className="flex flex-wrap gap-1">
                                 {(u.roles || []).length === 0 ? (
-                                  <span className="text-slate-400 text-[10px]">No roles</span>
+                                  <span className="text-slate-400 text-micro">No roles</span>
                                 ) : (u.roles || []).map((r, ri) => (
                                   <span key={ri}
-                                    className={`px-2 py-0.5 rounded border text-[9px] font-bold ${roleColor(r.role)}`}>
+                                    className={`px-2 py-0.5 rounded border text-micro font-bold ${roleColor(r.role)}`}>
                                     {r.role}{r.db && r.db !== u.db ? `@${r.db}` : ''}
                                   </span>
                                 ))}
                               </div>
                             </td>
-                            <td className="px-3 py-2.5 font-mono text-[10px] text-slate-400 truncate max-w-[180px]">{u.userId || '—'}</td>
+                            <td className="px-3 py-2.5 font-mono text-micro text-slate-400 truncate max-w-[180px]">{u.userId || '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -2077,7 +2077,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50">
                       <tr>{['Source', 'Op', 'Namespace', 'Duration', 'Docs Exam.', 'Keys Exam.', 'Plan', 'Client', 'Timestamp'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -2086,12 +2086,12 @@ export default function MongoDBDashboard() {
                         return (
                           <tr key={i} className={`border-t border-slate-100 hover:bg-slate-50 ${ms > 5000 ? 'bg-red-50/40' : ms > 1000 ? 'bg-yellow-50/40' : ''}`}>
                             <td className="px-3 py-2.5">
-                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${op.source === 'currentOp' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                              <span className={`px-2 py-0.5 rounded text-micro font-bold ${op.source === 'currentOp' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
                                 {op.source || '—'}
                               </span>
                             </td>
                             <td className="px-3 py-2.5">
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-bold"
+                              <span className="px-2 py-0.5 rounded-full text-micro font-bold"
                                 style={{ background: 'rgba(0,237,100,0.1)', color: C.darkGreen }}>
                                 {op.op || op.type || '—'}
                               </span>
@@ -2102,9 +2102,9 @@ export default function MongoDBDashboard() {
                             </td>
                             <td className="px-3 py-2.5 font-mono">{fmtNum(op.docsExamined || 0)}</td>
                             <td className="px-3 py-2.5 font-mono">{fmtNum(op.keysExamined || 0)}</td>
-                            <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
-                            <td className="px-3 py-2.5 text-[10px] text-slate-400 max-w-[100px] truncate">{op.client || '—'}</td>
-                            <td className="px-3 py-2.5 font-mono text-[9px] text-slate-400 whitespace-nowrap">{op.ts || '—'}</td>
+                            <td className="px-3 py-2.5 text-micro text-slate-400 max-w-[120px] truncate">{op.planSummary || '—'}</td>
+                            <td className="px-3 py-2.5 text-micro text-slate-400 max-w-[100px] truncate">{op.client || '—'}</td>
+                            <td className="px-3 py-2.5 font-mono text-micro text-slate-400 whitespace-nowrap">{op.ts || '—'}</td>
                           </tr>
                         );
                       })}
@@ -2166,7 +2166,7 @@ export default function MongoDBDashboard() {
                   return (
                     <button key={s.key} onClick={() => setElSev(isActive ? 'ALL' : s.key)}
                       className={`text-left p-4 rounded-2xl border transition-all ${isActive ? `${cfg.bg} ${cfg.border} ring-2 ring-offset-1` : 'bg-white border-slate-200 hover:shadow-sm'}`}>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">{s.label}</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase">{s.label}</p>
                       <p className={`text-2xl font-black mt-1 ${s.val > 0 && (s.key === 'E' || s.key === 'F') ? 'text-red-600' : s.val > 0 && s.key === 'W' ? 'text-amber-600' : 'text-slate-700'}`}>{s.val}</p>
                     </button>
                   );
@@ -2217,7 +2217,7 @@ export default function MongoDBDashboard() {
                   <table className="w-full text-xs">
                     <thead className="bg-slate-50 border-b border-slate-200">
                       <tr>{['', 'Sev', 'Timestamp', 'Component', 'Context', 'Message', 'Attributes'].map(h => (
-                        <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-2.5 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody>
@@ -2229,24 +2229,24 @@ export default function MongoDBDashboard() {
                               <div className={`w-1 h-6 rounded-full ${cfg.strip}`} />
                             </td>
                             <td className="px-3 py-2">
-                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${cfg.bg} ${cfg.color} ${cfg.border}`}>{log.severity}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-micro font-bold border ${cfg.bg} ${cfg.color} ${cfg.border}`}>{log.severity}</span>
                             </td>
-                            <td className="px-3 py-2 font-mono text-[9px] text-slate-400 whitespace-nowrap">
+                            <td className="px-3 py-2 font-mono text-micro text-slate-400 whitespace-nowrap">
                               {log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}
                             </td>
-                            <td className="px-3 py-2 font-mono text-[10px] text-slate-600 font-semibold">{log.component || '—'}</td>
-                            <td className="px-3 py-2 font-mono text-[10px] text-slate-400 max-w-[100px] truncate">{log.context || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-micro text-slate-600 font-semibold">{log.component || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-micro text-slate-400 max-w-[100px] truncate">{log.context || '—'}</td>
                             <td className="px-3 py-2 text-xs text-slate-700 max-w-[340px]">
                               <p className="truncate">{log.message || '—'}</p>
                               {log.tags && log.tags.length > 0 && (
                                 <div className="flex gap-1 mt-0.5">
                                   {log.tags.slice(0, 3).map((t, ti) => (
-                                    <span key={ti} className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[9px] font-semibold">{t}</span>
+                                    <span key={ti} className="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-micro font-semibold">{t}</span>
                                   ))}
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-2 font-mono text-[9px] text-slate-400 max-w-[200px] truncate">{log.attr || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-micro text-slate-400 max-w-[200px] truncate">{log.attr || '—'}</td>
                           </tr>
                         );
                       })}
@@ -2398,12 +2398,12 @@ export default function MongoDBDashboard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${s.badge}`}>{s.label}</span>
+                      <span className={`text-micro font-black px-2 py-0.5 rounded-full ${s.badge}`}>{s.label}</span>
                       <p className="font-bold text-slate-800 text-sm">{rec.title}</p>
                     </div>
                     <p className="text-xs text-slate-600 mt-1 leading-relaxed">{rec.msg}</p>
                     <div className={`mt-3 bg-white/70 rounded-xl px-4 py-3 border ${s.border}`}>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Recommended Action</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase mb-1">Recommended Action</p>
                       <p className="text-xs text-slate-700">{rec.fix}</p>
                     </div>
                   </div>
@@ -2464,7 +2464,7 @@ export default function MongoDBDashboard() {
                     <div key={m.label} className={`rounded-2xl border p-4 ${bg}`}>
                       <div className="flex justify-between items-start">
                         <div>
-                          <p className="text-[10px] font-bold uppercase text-slate-400 tracking-wide">{m.label}</p>
+                          <p className="text-micro font-bold uppercase text-slate-400 tracking-wide">{m.label}</p>
                           <p className={`text-2xl font-black mt-1 ${tc}`}>{m.value}</p>
                         </div>
                         <Icon size={18} className={tc} />

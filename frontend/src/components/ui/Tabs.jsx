@@ -10,6 +10,12 @@ import Icon from './Icon';
  * that already hold a component (an engine dashboard's TABS array, e.g.)
  * don't need to thread it through the registry first.
  * `count` renders as a pill; `tone` colours it (e.g. 'danger' for firing alerts).
+ *
+ * Tabs WRAP onto a second row when they do not fit. This strip used to scroll
+ * sideways with its scrollbar hidden, so at 175–200% zoom the last tabs (Event
+ * Log, Alerts; Coverage and Trends in the Security Center) slid out of view
+ * with nothing to say they were there. Wrapping keeps every tab visible and
+ * clickable at any width, with no JavaScript and nothing to discover.
  */
 const COUNT_TONES = {
   neutral: 'bg-neutral-soft text-muted',
@@ -20,7 +26,7 @@ const COUNT_TONES = {
 
 export default function Tabs({ tabs, value, onChange, className }) {
   return (
-    <div className={cn('no-scrollbar flex gap-1 overflow-x-auto border-b border-border', className)} role="tablist">
+    <div className={cn('flex flex-wrap gap-x-1 border-b border-border', className)} role="tablist">
       {tabs.map((tab) => {
         const active = tab.id === value;
         const TabIcon = typeof tab.icon === 'function' || (tab.icon && typeof tab.icon === 'object') ? tab.icon : null;
@@ -42,7 +48,7 @@ export default function Tabs({ tabs, value, onChange, className }) {
             {tab.count !== undefined && tab.count !== null && (
               <span
                 className={cn(
-                  'rounded-full px-1.5 text-[10px] font-bold tabular-nums',
+                  'rounded-full px-1.5 text-micro font-bold tabular-nums',
                   COUNT_TONES[tab.tone] || COUNT_TONES.neutral,
                 )}
               >

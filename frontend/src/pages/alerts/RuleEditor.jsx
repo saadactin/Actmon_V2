@@ -101,7 +101,7 @@ function EmailListInput({ value, onChange, placeholder }) {
         <span
           key={email}
           className={cn(
-            'flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-[11px] font-medium',
+            'flex items-center gap-1 rounded-full py-0.5 pl-2 pr-1 text-meta font-medium',
             EMAIL_RE.test(email) ? 'bg-accent-soft text-accent-text' : 'bg-danger-soft text-danger-fg',
           )}
           title={EMAIL_RE.test(email) ? undefined : 'Doesn’t look like a valid email address'}
@@ -308,9 +308,9 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
 
       {step < STEPS.length && (
         <div className="mb-5 rounded-control border border-accent-border bg-accent-softer px-3 py-2.5">
-          <p className="text-[10px] font-bold tracking-wide text-subtle uppercase">This rule fires when</p>
+          <p className="text-micro font-bold tracking-wide text-subtle uppercase">This rule fires when</p>
           <p className="mt-1 text-[13px] font-semibold text-fg">{describeCondition(form)}</p>
-          <p className="mt-0.5 text-[11px] text-muted">
+          <p className="mt-0.5 text-meta text-muted">
             on {describeScope(form)}
             {Number(form.duration_seconds) > 0
               ? ` · sustained for ${duration(form.duration_seconds)}`
@@ -342,14 +342,14 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
                     <Icon name={s.icon} size={16} style={{ color: s.color }} className="shrink-0" />
                     <span className="min-w-0">
                       <span className="truncate-safe block text-[12px] font-semibold text-fg">{s.label}</span>
-                      <span className="truncate-safe block text-[11px] text-subtle">{s.desc}</span>
+                      <span className="truncate-safe block text-meta text-subtle">{s.desc}</span>
                     </span>
                   </button>
                 );
               })}
             </div>
             {rule?.id && (
-              <p className="text-[11px] text-subtle">
+              <p className="text-meta text-subtle">
                 Editing an existing rule keeps its section — change the metric on the next step to move it.
               </p>
             )}
@@ -407,7 +407,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
                   that never fires looks like a broken rule. */}
               {metric.evaluation !== 'live' && (
                 <div className={cn(
-                  'flex items-start gap-2 rounded-control px-3 py-2 text-[11px] leading-relaxed',
+                  'flex items-start gap-2 rounded-control px-3 py-2 text-meta leading-relaxed',
                   metric.evaluation === 'reserved'
                     ? 'bg-warning-soft text-warning-fg'
                     : 'bg-info-soft text-info-fg',
@@ -469,7 +469,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
                       placeholder="Select…"
                     />
                   ) : (
-                    <p className="rounded-control bg-warning-soft px-3 py-2 text-[11px] text-warning-fg">
+                    <p className="rounded-control bg-warning-soft px-3 py-2 text-meta text-warning-fg">
                       {targets.isLoading
                         ? 'Loading…'
                         : `No ${(SCOPE_LABELS[form.scope_type] || 'target').toLowerCase()}s are registered yet.
@@ -482,7 +482,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
               {/* Honest about a real backend limitation rather than letting the user
                   build a rule that quietly does nothing. */}
               {(form.scope_type === 'agent' || form.scope_type === 'account') && (
-                <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-[11px] leading-relaxed text-warning-fg">
+                <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-meta leading-relaxed text-warning-fg">
                   <Icon name="alert" size={13} className="mt-px shrink-0" />
                   <span>
                     Host checks don't evaluate {form.scope_type} scopes — a rule scoped this way
@@ -523,7 +523,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
 
         {step === 5 && (
           <Section title="Notify" icon="bell">
-            <p className="text-[11px] text-muted">
+            <p className="text-meta text-muted">
               Pick every channel this rule should notify when it fires. Leave all of them off to
               fall back to the org's severity-based routing (Settings → Notifications → Severity
               Routing) instead.
@@ -570,7 +570,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
                     </span>
                     {configured ? (
                       destination ? (
-                        <span className="truncate-safe text-[10.5px] text-muted" title={destination}>→ {destination}</span>
+                        <span className="truncate-safe text-meta text-muted" title={destination}>→ {destination}</span>
                       ) : (
                         <Badge tone="success" size="xs" className="w-fit">Configured</Badge>
                       )
@@ -583,7 +583,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
             </div>
 
             {(form.notification_channel_types || []).some((ct) => channelByType[ct] && !channelByType[ct].enabled) && (
-              <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-[11px] leading-relaxed text-warning-fg">
+              <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-meta leading-relaxed text-warning-fg">
                 <Icon name="alert" size={13} className="mt-px shrink-0" />
                 A selected channel isn't enabled yet in Settings → Notifications — it'll be
                 skipped when this rule fires until it's configured there.
@@ -592,7 +592,7 @@ export default function RuleEditor({ open, rule, defaultSection, onClose, onSave
 
             {(form.notification_channel_types || []).includes('email') && (
               <div className="grid gap-3 rounded-control border border-border bg-sunken p-3 sm:grid-cols-2">
-                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle sm:col-span-2">
+                <span className="flex items-center gap-1.5 text-meta font-bold uppercase tracking-wide text-subtle sm:col-span-2">
                   <Icon name="mail" size={12} />
                   Email recipients
                 </span>
@@ -686,9 +686,9 @@ function ReviewStep({ form, section, isEvent, metric }) {
   return (
     <Section title="Review & save" icon="check">
       <div className="rounded-control border border-accent-border bg-accent-softer px-3 py-2.5">
-        <p className="text-[10px] font-bold tracking-wide text-subtle uppercase">This rule fires when</p>
+        <p className="text-micro font-bold tracking-wide text-subtle uppercase">This rule fires when</p>
         <p className="mt-1 text-[13px] font-semibold text-fg">{describeCondition(form)}</p>
-        <p className="mt-0.5 text-[11px] text-muted">
+        <p className="mt-0.5 text-meta text-muted">
           on {describeScope(form)}
           {Number(form.duration_seconds) > 0 ? ` · sustained for ${duration(form.duration_seconds)}` : ' · immediately'}
         </p>

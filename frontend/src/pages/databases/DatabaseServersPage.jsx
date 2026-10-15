@@ -398,12 +398,12 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
                       <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${tech.lightBg} ${tech.border} border`}>
                         <Server size={11} className={tech.text}/>
                         <span className={`text-[12px] font-black ${tech.text}`}>{counts.servers}</span>
-                        <span className={`text-[10px] ${tech.text} opacity-70`}>servers</span>
+                        <span className={`text-micro ${tech.text} opacity-70`}>servers</span>
                       </div>
                       <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${tech.lightBg} ${tech.border} border`}>
                         <Database size={11} className={tech.text}/>
                         <span className={`text-[12px] font-black ${tech.text}`}>{counts.connections}</span>
-                        <span className={`text-[10px] ${tech.text} opacity-70`}>connections</span>
+                        <span className={`text-micro ${tech.text} opacity-70`}>connections</span>
                       </div>
                     </div>
                   </div>
@@ -411,7 +411,7 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
 
                 <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
                   {counts.servers === 0 && counts.connections === 0 ? (
-                    <span className="text-[11px] text-muted font-medium">No servers yet · click to add</span>
+                    <span className="text-meta text-muted font-medium">No servers yet · click to add</span>
                   ) : (
                     <span className={`text-[12px] font-bold ${tech.text}`}>
                       Explore {counts.servers > 0 ? `${counts.servers} server${counts.servers !== 1 ? 's' : ''}` : 'connections'}
@@ -484,7 +484,7 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
                       <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${tech.lightBg} ${tech.border} border`}>
                         <Database size={11} className={tech.text}/>
                         <span className={`text-[12px] font-black ${tech.text}`}>{cosmosCount}</span>
-                        <span className={`text-[10px] ${tech.text} opacity-70`}>connections</span>
+                        <span className={`text-micro ${tech.text} opacity-70`}>connections</span>
                       </div>
                     </div>
                   )}
@@ -497,7 +497,7 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
                     {cosmosCount > 0 ? `Explore ${cosmosCount} connection${cosmosCount !== 1 ? 's' : ''}` : 'No connections yet · click to add'}
                   </span>
                 ) : (
-                  <span className="text-[11px] font-black text-muted uppercase tracking-wide bg-sunken px-2.5 py-1 rounded-lg">Coming Soon</span>
+                  <span className="text-meta font-black text-muted uppercase tracking-wide bg-sunken px-2.5 py-1 rounded-lg">Coming Soon</span>
                 )}
                 {tech.available && <ChevronRight size={15} className={`${tech.text} group-hover:translate-x-1 transition-transform`}/>}
               </div>
@@ -766,9 +766,9 @@ export default function DatabaseServersPage({ tech = null }) {
                   {icon}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+                  <p className="text-micro font-bold text-slate-400 uppercase tracking-wide">{label}</p>
                   <p className={`text-2xl font-black leading-none ${valueColor}`}>{value ?? 0}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5 truncate">{sub}</p>
+                  <p className="text-micro text-slate-400 mt-0.5 truncate">{sub}</p>
                 </div>
               </button>
             );
@@ -788,7 +788,7 @@ export default function DatabaseServersPage({ tech = null }) {
           <div className="flex items-center gap-1 flex-wrap">
             {ENV_FILTERS.map((env) => (
               <button key={env} onClick={() => setEnvFilter(env)}
-                className={`h-7 px-3.5 rounded-lg font-bold text-[11px] transition-all ${envFilter===env
+                className={`h-7 px-3.5 rounded-lg font-bold text-meta transition-all ${envFilter===env
                   ? 'bg-slate-900 text-white shadow'
                   : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}>
                 {env}
@@ -802,7 +802,7 @@ export default function DatabaseServersPage({ tech = null }) {
               <button
                 key={t.id}
                 onClick={() => { setSearch(''); goToTech(t.id); }}
-                className={`h-7 px-3 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1.5 ${
+                className={`h-7 px-3 rounded-lg text-meta font-bold transition-all flex items-center gap-1.5 ${
                   t.id === selectedTech
                     ? `${t.accent} text-white shadow`
                     : `${t.lightBg} ${t.text} border ${t.border} hover:opacity-80`
@@ -866,7 +866,7 @@ export default function DatabaseServersPage({ tech = null }) {
                 <div className="w-1 h-5 rounded-full bg-indigo-500"/>
                 <h2 className="text-[15px] font-black text-slate-900 uppercase tracking-wide">Cluster Topology</h2>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-black">
+              <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-meta font-black">
                 {Object.keys(clusterMap).length} cluster{Object.keys(clusterMap).length>1?'s':''}
               </span>
             </div>
@@ -896,7 +896,7 @@ export default function DatabaseServersPage({ tech = null }) {
                 <div className="w-1 h-5 rounded-full bg-slate-400"/>
                 <h2 className="text-[15px] font-black text-slate-900 uppercase tracking-wide">Standalone Servers</h2>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-black">
+              <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-meta font-black">
                 {standaloneList.length} server{standaloneList.length>1?'s':''}
               </span>
             </div>
@@ -931,8 +931,8 @@ export default function DatabaseServersPage({ tech = null }) {
         )}
 
         {/* legend */}
-        <div className="bg-white rounded-xl border border-slate-100 px-5 py-3 flex flex-wrap gap-5 text-[11px] text-slate-500">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest self-center">Legend</span>
+        <div className="bg-white rounded-xl border border-slate-100 px-5 py-3 flex flex-wrap gap-5 text-meta text-slate-500">
+          <span className="text-micro font-bold text-slate-400 uppercase tracking-widest self-center">Legend</span>
           {[
             ['bg-emerald-500 animate-pulse','Connected'],
             ['bg-amber-500','Warning'],
@@ -1097,45 +1097,47 @@ function ClusterTopologyCard({ clusterName, rawNodes, navigate, setTerminalServe
             <div>
               <h3 className="text-base font-black text-slate-900 leading-none">{clusterName}</h3>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${galera?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}`}>
+                <span className={`text-micro font-bold px-2 py-0.5 rounded-full ${galera?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}`}>
                   {galera ? 'Galera Multi-Primary' : 'Streaming Replication'}
                 </span>
-                <span className="text-slate-400 text-[10px]">{nodes[0]?.environment}</span>
+                <span className="text-slate-400 text-micro">{nodes[0]?.environment}</span>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-slate-400 text-[11px] flex items-center gap-1">
+            <span className="text-slate-400 text-meta flex items-center gap-1">
               <Layers size={10}/> {nodes.length} nodes
             </span>
             {dbTypes.map((d) => (
-              <span key={d} className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${dbColor(d)}`}>{d}</span>
+              <span key={d} className={`px-2 py-0.5 rounded-full text-micro font-bold border ${dbColor(d)}`}>{d}</span>
             ))}
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden lg:flex items-center gap-4 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2">
+        {/* Wraps instead of hiding: the CPU/RAM/Disk averages used to vanish
+            below 1024px — i.e. at 175–200% zoom on a 1080p screen. */}
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex items-center gap-4 bg-slate-50 border border-slate-100 rounded-xl px-4 py-2">
             {[
               { label:'CPU', val:avgs.cpu,  color:'text-orange-600' },
               { label:'RAM', val:avgs.ram,  color:'text-purple-600' },
               { label:'Disk',val:avgs.disk, color:'text-blue-600'   },
             ].map(({ label, val, color }) => (
               <div key={label} className="text-center">
-                <p className="text-[9px] text-slate-400 font-bold uppercase">{label}</p>
+                <p className="text-micro text-slate-400 font-bold uppercase">{label}</p>
                 <p className={`text-[13px] font-black ${color}`}>{val!==null ? `${val}%` : '—'}</p>
               </div>
             ))}
           </div>
           <div className="flex flex-col items-end gap-1">
-            <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black ${
+            <span className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-meta font-black ${
               status==='HEALTHY' ?'bg-emerald-100 text-emerald-700':
               status==='WARNING' ?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${status==='HEALTHY'?'bg-emerald-500 animate-pulse':status==='WARNING'?'bg-amber-500':'bg-red-500'}`}/>
               {status}
             </span>
             {reason && (
-              <span className={`text-[10px] font-bold max-w-[220px] text-right ${status==='WARNING'?'text-amber-600':'text-red-600'}`}>
+              <span className={`text-micro font-bold max-w-[220px] text-right ${status==='WARNING'?'text-amber-600':'text-red-600'}`}>
                 {reason}
               </span>
             )}
@@ -1177,7 +1179,7 @@ function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, a
                 <div className="w-px h-4 bg-slate-200"/>
                 <div className="relative w-8 h-8 rounded-full border-2 border-dashed border-blue-300 bg-blue-50 flex items-center justify-center">
                   <ArrowRight size={13} className="text-blue-400"/>
-                  <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 whitespace-nowrap">stream</span>
+                  <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-micro font-bold text-slate-400 whitespace-nowrap">stream</span>
                 </div>
                 <div className="w-px h-7 bg-slate-200"/>
               </div>
@@ -1198,7 +1200,7 @@ function GaleraTopology({ nodes, navigate, openTerminal, refreshMutation, allCon
       <div className="flex justify-center mb-5">
         <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-purple-50 border border-purple-200">
           <Network size={12} className="text-purple-500"/>
-          <span className="text-[11px] font-bold text-purple-700">Multi-Primary · All nodes accept writes · wsrep sync replication</span>
+          <span className="text-meta font-bold text-purple-700">Multi-Primary · All nodes accept writes · wsrep sync replication</span>
         </div>
       </div>
       <div className="flex items-stretch justify-center gap-0 flex-wrap md:flex-nowrap">
@@ -1308,30 +1310,30 @@ function ServerTableRow({ node, idx, navigate, openTerminal, refreshMutation, al
     >
       <td className="px-4 py-3 align-middle">
         <span className="inline-flex items-center gap-2.5 min-w-0">
-          <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${accent} flex items-center justify-center text-white font-black text-[11px] shadow ring-2 ring-white flex-shrink-0`}>
+          <span className={`w-8 h-8 rounded-lg bg-gradient-to-br ${accent} flex items-center justify-center text-white font-black text-meta shadow ring-2 ring-white flex-shrink-0`}>
             {rowInitials(conn?.connection_name || node.server_name)}
           </span>
           <span className="min-w-0">
             <span className="block font-bold text-slate-800 truncate max-w-[180px]">{conn?.connection_name || node.server_name}</span>
             {conn?.connection_name && conn.connection_name !== node.server_name && (
-              <span className="block text-[11px] text-slate-400 truncate max-w-[180px]">{node.server_name}</span>
+              <span className="block text-meta text-slate-400 truncate max-w-[180px]">{node.server_name}</span>
             )}
           </span>
         </span>
       </td>
       <td className="px-4 py-3 align-middle whitespace-nowrap">
         <span className="font-mono text-[12px] text-slate-600 font-semibold">{node.ip_address}</span>
-        {node.os_type && <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-md">{node.os_type}</span>}
+        {node.os_type && <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-500 text-micro font-bold rounded-md">{node.os_type}</span>}
       </td>
       <td className="px-4 py-3 align-middle whitespace-nowrap">
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-meta font-bold ${
           osUp ? 'bg-emerald-50 text-emerald-700' : osWarn ? 'bg-amber-50 text-amber-700' : osDown ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${osUp ? 'bg-emerald-500' : osWarn ? 'bg-amber-500' : osDown ? 'bg-red-500' : 'bg-slate-400'}`} />
           {osUp ? 'Online' : osDown ? 'Offline' : node.status || 'Unknown'}
         </span>
       </td>
       <td className="px-4 py-3 align-middle whitespace-nowrap">
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-meta font-bold ${
           dbUp ? 'bg-emerald-50 text-emerald-700' : dbDegraded ? 'bg-amber-50 text-amber-700' : dbDown ? 'bg-red-50 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${dbUp ? 'bg-emerald-500 animate-pulse' : dbDegraded ? 'bg-amber-500' : dbDown ? 'bg-red-500' : 'bg-slate-400'}`} />
           {dbUp ? 'Running' : dbDown ? 'Stopped' : dbDegraded ? 'Degraded' : 'Unknown'}
@@ -1345,8 +1347,8 @@ function ServerTableRow({ node, idx, navigate, openTerminal, refreshMutation, al
             return (
               <div key={label} className="flex-1" title={`${label}: ${val || '—'}`}>
                 <div className="flex justify-between mb-0.5">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase">{label}</span>
-                  <span className="text-[9px] font-black text-slate-600">{val || '—'}</span>
+                  <span className="text-micro font-bold text-slate-400 uppercase">{label}</span>
+                  <span className="text-micro font-black text-slate-600">{val || '—'}</span>
                 </div>
                 <div className="h-1 rounded-full bg-slate-200 overflow-hidden">
                   {val && <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />}
@@ -1361,7 +1363,7 @@ function ServerTableRow({ node, idx, navigate, openTerminal, refreshMutation, al
       <td className="px-4 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1.5">
           <button onClick={() => openTerminal(node)} title="Open SSH Terminal"
-            className="h-9 px-3 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-[11px] font-bold flex items-center gap-1.5 transition-all">
+            className="h-9 px-3 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-meta font-bold flex items-center gap-1.5 transition-all">
             <Terminal size={12} />SSH
           </button>
           <button onClick={onOpenDashboard} title={openLabel}
@@ -1464,24 +1466,24 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
       <div className="p-5 flex flex-col flex-1">
         {/* top row: role badge + live dots */}
         <div className="flex items-center justify-between mb-4">
-          <span className={`px-2.5 py-1 rounded-lg text-[11px] font-black tracking-wider uppercase ${m.text} ${m.bg} shadow-sm`}>
+          <span className={`px-2.5 py-1 rounded-lg text-meta font-black tracking-wider uppercase ${m.text} ${m.bg} shadow-sm`}>
             {m.label}
           </span>
           <div className="flex items-center gap-3">
             {!connectionOnly && (
               <div className="flex flex-col items-center gap-0.5" title={`OS: ${node.status||'Unknown'}`}>
                 <PulsingDot status={node.status}/>
-                <span className={`text-[9px] font-black ${osUp?'text-emerald-600':osDown?'text-red-500':'text-slate-400'}`}>OS</span>
+                <span className={`text-micro font-black ${osUp?'text-emerald-600':osDown?'text-red-500':'text-slate-400'}`}>OS</span>
               </div>
             )}
             <div className="flex flex-col items-center gap-0.5" title={`DB: ${dbStatus}`}>
               <DbDot status={dbStatus}/>
-              <span className={`text-[9px] font-black ${dbUp?'text-emerald-600':dbDown?'text-red-500':dbDegraded?'text-amber-500':'text-slate-400'}`}>DB</span>
+              <span className={`text-micro font-black ${dbUp?'text-emerald-600':dbDown?'text-red-500':dbDegraded?'text-amber-500':'text-slate-400'}`}>DB</span>
             </div>
             {!connectionOnly && (
               <button
                 onClick={(e) => { e.stopPropagation(); openTerminal(node); }}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-[10px] font-bold transition-all shadow-sm hover:shadow-md"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-indigo-700 text-white text-micro font-bold transition-all shadow-sm hover:shadow-md"
                 title="Open SSH Terminal"
               >
                 <Terminal size={12}/>SSH
@@ -1496,11 +1498,11 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
           <div className="flex items-center gap-2 mt-1">
             <span className="font-mono text-[12px] text-slate-500 font-semibold">{node.ip_address}</span>
             {node.os_type && (
-              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-md">{node.os_type}</span>
+              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-500 text-micro font-bold rounded-md">{node.os_type}</span>
             )}
           </div>
           {conn?.connection_name && conn.connection_name !== node.server_name && (
-            <p className="text-[11px] text-slate-400 mt-1 truncate flex items-center gap-1">
+            <p className="text-meta text-slate-400 mt-1 truncate flex items-center gap-1">
               <Server size={10} /> {node.server_name}
             </p>
           )}
@@ -1519,7 +1521,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
                 const st    = inst?.status || 'Unknown';
                 const stDot = st==='Running'?'bg-emerald-500':st==='Stopped'?'bg-red-500':st==='Degraded'?'bg-amber-500':'bg-slate-300';
                 return (
-                  <span key={svc} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${dbColor(svc)}`}>
+                  <span key={svc} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-meta font-bold border ${dbColor(svc)}`}>
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stDot} ${st==='Running'?'animate-pulse':''}`}/>
                     {svc}
                     {st==='Stopped' && <span className="font-black text-red-600">↓</span>}
@@ -1528,7 +1530,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
               })}
               {others.length > 0 && (
                 <span title={`This host also runs: ${others.join(', ')}`}
-                  className="px-2.5 py-1 rounded-full text-[11px] font-bold text-slate-400 bg-slate-50 border border-slate-200">
+                  className="px-2.5 py-1 rounded-full text-meta font-bold text-slate-400 bg-slate-50 border border-slate-200">
                   +{others.length} other{others.length !== 1 ? 's' : ''} on this host
                 </span>
               )}
@@ -1541,7 +1543,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
             replica has gone quiet: OS Online / DB Running never imply Replication is healthy. */}
         <div className={`grid gap-2 mb-4 ${connectionOnly ? 'grid-cols-1' : 'grid-cols-2'}`}>
           {!connectionOnly && (
-          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-meta font-bold ${
             osUp   ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
             osWarn ? 'bg-amber-50 border-amber-200 text-amber-700' :
             osDown ? 'bg-red-50 border-red-200 text-red-600' :
@@ -1550,7 +1552,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
             <span>{osUp?'OS Online':osDown?'OS Offline':node.status||'OS Unknown'}</span>
           </div>
           )}
-          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-meta font-bold ${
             dbUp       ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
             dbDegraded ? 'bg-amber-50 border-amber-200 text-amber-700' :
             dbDown     ? 'bg-red-50 border-red-200 text-red-600' :
@@ -1560,7 +1562,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
           </div>
           {repl && !connectionOnly && (
             <>
-              <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+              <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-meta font-bold ${
                 repl.status==='streaming' || repl.status==='primary' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
                 repl.status==='lag_critical' ? 'bg-red-50 border-red-200 text-red-600' :
                 repl.status==='unknown' ? 'bg-slate-100 border-slate-200 text-slate-500' :
@@ -1573,7 +1575,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
                 <GitBranch size={11}/>
                 <span>{repl.status==='inactive' ? '⚠ Replication Inactive' : `Replication ${repl.label}`}</span>
               </div>
-              <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-bold ${
+              <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-meta font-bold ${
                 nodeHealth==='HEALTHY' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
                 nodeHealth==='WARNING' ? 'bg-amber-50 border-amber-200 text-amber-700' :
                 nodeHealth==='CRITICAL' ? 'bg-red-100 border-red-300 text-red-700' :
@@ -1590,7 +1592,7 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
         {node.uptime && (
           <div className="flex items-center gap-1.5 mb-4 text-slate-400">
             <Clock size={11}/>
-            <span className="text-[11px]">{node.uptime}</span>
+            <span className="text-meta">{node.uptime}</span>
           </div>
         )}
 
@@ -1607,8 +1609,8 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
               return (
                 <div key={label}>
                   <div className="flex justify-between mb-0.5">
-                    <span className="text-[9px] font-bold text-slate-500 uppercase">{label}</span>
-                    <span className={`text-[10px] font-black ${color}`}>{val || (isRefreshing?'…':'—')}</span>
+                    <span className="text-micro font-bold text-slate-500 uppercase">{label}</span>
+                    <span className={`text-micro font-black ${color}`}>{val || (isRefreshing?'…':'—')}</span>
                   </div>
                   <div className="h-1 rounded-full bg-slate-200 overflow-hidden">
                     {val && <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width:`${Math.min(pct,100)}%` }}/>}
@@ -1789,14 +1791,14 @@ function TerminalWindow({ server, onClose }) {
             <span className="text-[12px] font-mono text-emerald-400 font-bold leading-none">{server.ssh_username||'root'}</span>
             <span className="text-[#555] text-[12px] font-mono">@</span>
             <span className="text-[#d0d0d0] text-[12px] font-mono font-semibold truncate max-w-[150px]">{server.server_name}</span>
-            <span className="text-[#555] text-[11px] font-mono hidden sm:block">{server.ip_address}</span>
+            <span className="text-[#555] text-meta font-mono hidden sm:block">{server.ip_address}</span>
           </div>
           <div className="hidden md:flex items-center gap-1 ml-1">
             <span className="relative flex h-1.5 w-1.5 flex-shrink-0">
               <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-60"/>
               <span className="relative rounded-full h-full w-full bg-emerald-500"/>
             </span>
-            <span className="text-[10px] text-emerald-500 font-semibold">connected</span>
+            <span className="text-micro text-emerald-500 font-semibold">connected</span>
           </div>
         </div>
 
@@ -1838,7 +1840,7 @@ function TerminalWindow({ server, onClose }) {
                 <span className="animate-ping absolute h-full w-full rounded-full bg-emerald-400 opacity-50"/>
                 <span className="relative rounded-full h-full w-full bg-emerald-500"/>
               </span>
-              <span className="text-[11px] font-mono text-[#ccc] max-w-[140px] truncate">{server.server_name}</span>
+              <span className="text-meta font-mono text-[#ccc] max-w-[140px] truncate">{server.server_name}</span>
             </div>
           </div>
           <div className="flex-1 min-h-0">
@@ -1854,19 +1856,19 @@ function TerminalWindow({ server, onClose }) {
             </Suspense>
           </div>
           <div className="flex-shrink-0 h-5 bg-[#0d1117] border-t border-[#1c1c1e] flex items-center px-4 gap-4">
-            <span className="text-[9px] font-mono text-[#444] flex items-center gap-1.5">
+            <span className="text-micro font-mono text-[#444] flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block"/>
               {server.ip_address}:{server.ssh_port||22}
             </span>
-            <span className="ml-auto text-[9px] font-mono text-[#444]">Real PTY · bash</span>
+            <span className="ml-auto text-micro font-mono text-[#444]">Real PTY · bash</span>
           </div>
         </div>
       )}
 
       {minimized && (
         <div className="bg-[#141416] border-t border-[#2d2d2d] px-4 py-2 flex items-center gap-2">
-          <span className="text-[10px] text-[#555] font-mono">Session minimized</span>
-          <button onClick={toggleMin} className="ml-auto text-[10px] font-bold text-emerald-500 hover:text-emerald-400 font-mono">
+          <span className="text-micro text-[#555] font-mono">Session minimized</span>
+          <button onClick={toggleMin} className="ml-auto text-micro font-bold text-emerald-500 hover:text-emerald-400 font-mono">
             restore
           </button>
         </div>

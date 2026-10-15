@@ -1,3 +1,4 @@
+from app.services.common.groq_config import groq_params
 import asyncio
 import json
 import os
@@ -717,10 +718,9 @@ Return ONLY valid JSON. No markdown. No code blocks.
 
     try:
         resp = _groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=2000,
+            **groq_params(2000),
         )
         raw = resp.choices[0].message.content.strip()
         if raw.startswith("```"):

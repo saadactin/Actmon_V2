@@ -42,7 +42,7 @@ export default function MetricPicker({ section, value, onChange }) {
       <Popover open={open} onClose={() => setOpen(false)} align="left" width="100%" className="max-h-72 overflow-y-auto">
         {groupsForSection(section).map((g) => (
           <div key={g.group}>
-            <div className="sticky top-0 z-10 border-b border-border bg-raised px-3 py-1.5 text-[10px] font-bold tracking-wide text-subtle uppercase">
+            <div className="sticky top-0 z-10 border-b border-border bg-raised px-3 py-1.5 text-micro font-bold tracking-wide text-subtle uppercase">
               {g.group}
             </div>
             {g.metrics.map((m) => {
@@ -67,7 +67,7 @@ export default function MetricPicker({ section, value, onChange }) {
                       {m.unit ? <span className="font-normal text-subtle"> ({m.unit})</span> : null}
                     </span>
                     {m.kind === 'event' && (
-                      <span className="truncate-safe block text-[10px] text-subtle">
+                      <span className="truncate-safe block text-micro text-subtle">
                         Fires when {m.desc}
                       </span>
                     )}

@@ -130,6 +130,25 @@
   --font-display: var(--font-display);
   --font-mono: var(--font-mono);
 
+  /* ── the small end of the type scale ─────────────────────────────────────
+     The floor. Nothing in the product renders below `text-micro`.
+
+     These replaced ~2,500 hard-coded `text-[8px]`…`text-[11.5px]` classes. At
+     100% zoom 40–65% of the text on the cloud pages rendered under 12px, so
+     people zoomed in to read it — and zooming is what then broke the layout.
+     Two steps, in rem, so they also follow the interface-scale setting
+     (--font-size-root), which px sizes silently ignored:
+
+       text-micro  11px  badges, counters, uppercase eyebrow labels — places
+                         where the size is carried by weight/case/colour too
+       text-meta   12px  captions, timestamps, secondary and metadata lines
+
+     No line-height token on purpose: like the arbitrary sizes they replace,
+     they inherit line-height, so swapping them in changes size and nothing
+     else. */
+  --text-micro: 0.6875rem;
+  --text-meta: 0.75rem;
+
   /* ── density-aware sizes (h-control, p-card, gap-gutter, w-sidebar …) ── */
   --spacing-control: var(--control-h);
   --spacing-control-sm: var(--control-h-sm);
@@ -176,6 +195,24 @@
 
   code, kbd, pre, samp {
     font-family: var(--font-mono);
+  }
+
+  /* Grid items may shrink below their content.
+
+     A grid item defaults to `min-width: auto`, which for a `1fr` track means
+     "never narrower than my widest unbreakable content". Put a table in that
+     cell and the track grows to the table's full width instead of letting the
+     table scroll inside its card: the column pushes past the viewport, the
+     side panel beside it is shoved off-screen, and <main> (overflow-x hidden)
+     clips the lot. That is what made the Event Log lose its last columns and
+     its Risk panel at 125–200% zoom, and Config Drift its chart. A plain
+     `grid` with no template has the same problem in its implicit column.
+
+     With min-width 0 the track honours the space it was given and the
+     content's own overflow rule takes over — the table scrolls, text wraps.
+     In the base layer so an explicit `min-w-*` utility on an item still wins. */
+  .grid > * {
+    min-width: 0;
   }
 
   /* One focus treatment for the whole app, themed by --ring */
@@ -270,7 +307,30 @@
     );
   }
 
-  /* Hide a scrollbar while keeping the element scrollable (tab strips) */
+  /* Scroll shadows: a horizontally scrolling table says so.
+     Wide tables scroll inside their card rather than widening the page — the
+     right call at high zoom, but a scrollbar at the bottom of a 50-row table is
+     off-screen, so nothing said more columns existed. These four layers draw a
+     soft shade on whichever edge has hidden content: the `local` covers move
+     with the content and mask the `scroll` shades once an edge is reached
+     (Lea Verou's technique — pure CSS, no listeners). Applied automatically to
+     any `overflow-x-auto` box whose direct child is a <table>, which covers the
+     shared Table and the hand-built ones. A box with its own bg-* utility keeps
+     its background (utilities win) and simply goes without. */
+  .scroll-shadow-x,
+  .overflow-x-auto:has(> table) {
+    --scroll-shadow-bg: var(--surface);
+    --scroll-shadow-ink: color-mix(in srgb, var(--fg) 14%, transparent);
+    background:
+      linear-gradient(to right, var(--scroll-shadow-bg) 30%, transparent) left center / 40px 100% no-repeat local,
+      linear-gradient(to left, var(--scroll-shadow-bg) 30%, transparent) right center / 40px 100% no-repeat local,
+      linear-gradient(to right, var(--scroll-shadow-ink), transparent) left center / 16px 100% no-repeat scroll,
+      linear-gradient(to left, var(--scroll-shadow-ink), transparent) right center / 16px 100% no-repeat scroll;
+  }
+
+  /* Hide a scrollbar while keeping the element scrollable. Avoid it for content
+     that can overflow: a strip with no visible scrollbar hides whatever spills
+     (it is why the module bar and tab strips used to lose items at high zoom). */
   .no-scrollbar {
     scrollbar-width: none;
     -ms-overflow-style: none;

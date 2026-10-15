@@ -7,7 +7,9 @@ import Icon from './Icon';
  */
 export default function Steps({ steps, current, className }) {
   return (
-    <ol className={cn('no-scrollbar flex items-center overflow-x-auto', className)}>
+    // Wraps instead of scrolling behind a hidden scrollbar, so the later steps
+    // of a long wizard stay visible at high zoom.
+    <ol className={cn('flex flex-wrap items-center gap-y-2', className)}>
       {steps.map((label, i) => {
         const done = i < current;
         const active = i === current;
@@ -16,7 +18,7 @@ export default function Steps({ steps, current, className }) {
             <span className="flex items-center gap-2">
               <span
                 className={cn(
-                  'grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold transition-colors',
+                  'grid h-7 w-7 shrink-0 place-items-center rounded-full text-meta font-bold transition-colors',
                   done ? 'bg-success text-white'
                     : active ? 'bg-accent text-accent-fg'
                       : 'border border-strong bg-surface text-subtle',

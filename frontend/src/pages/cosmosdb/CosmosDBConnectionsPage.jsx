@@ -109,7 +109,7 @@ export default function CosmosDBConnectionsPage() {
                     <h3 className="truncate-safe text-[14px] font-bold text-fg">{c.connection_name}</h3>
                     <p
                       title={c.endpoint}
-                      className="truncate-safe mt-0.5 font-mono text-[11px] text-subtle"
+                      className="truncate-safe mt-0.5 font-mono text-meta text-subtle"
                     >
                       {c.endpoint}
                     </p>

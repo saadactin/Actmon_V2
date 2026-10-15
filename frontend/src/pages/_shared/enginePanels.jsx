@@ -31,7 +31,7 @@ export function Panel({ title, icon, subtitle, actions, footer, className, bodyC
                 {icon && <Icon name={icon} size={14} className="shrink-0 text-subtle" />}
                 <span className="truncate-safe">{title}</span>
               </h3>
-              {subtitle && <p className="truncate-safe mt-0.5 text-[11px] text-subtle">{subtitle}</p>}
+              {subtitle && <p className="truncate-safe mt-0.5 text-meta text-subtle">{subtitle}</p>}
             </div>
           )}
           {actions && <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">{actions}</div>}
@@ -123,7 +123,7 @@ export function MetricTile({ label, value, sub, tone = 'neutral', icon, hint, on
     >
       <span className="flex items-center gap-1.5">
         {icon && <Icon name={icon} size={12} className="shrink-0 text-subtle" />}
-        <span className="truncate text-[10px] font-bold tracking-wide text-subtle uppercase">{label}</span>
+        <span className="truncate text-micro font-bold tracking-wide text-subtle uppercase">{label}</span>
         {onClick && (
           <Icon
             name="chevron-right"
@@ -135,7 +135,7 @@ export function MetricTile({ label, value, sub, tone = 'neutral', icon, hint, on
       <span className={cn('truncate-safe mt-1 block text-[19px] leading-tight font-bold', TILE_TONES[tone])}>
         {value ?? '—'}
       </span>
-      {sub && <span className="truncate-safe mt-0.5 block text-[10px] text-subtle">{sub}</span>}
+      {sub && <span className="truncate-safe mt-0.5 block text-micro text-subtle">{sub}</span>}
     </Wrapper>
   );
 }
@@ -144,9 +144,9 @@ export function MetricTile({ label, value, sub, tone = 'neutral', icon, hint, on
 export function StatCell({ label, value, hint, tone = 'neutral' }) {
   return (
     <div className="rounded-card bg-sunken px-3 py-2.5">
-      <p className="truncate text-[10px] font-bold tracking-wide text-subtle uppercase">{label}</p>
+      <p className="truncate text-micro font-bold tracking-wide text-subtle uppercase">{label}</p>
       <p className={cn('truncate-safe mt-0.5 text-[16px] font-bold', TILE_TONES[tone])}>{value ?? '—'}</p>
-      {hint && <p className="mt-0.5 text-[10px] leading-snug text-subtle">{hint}</p>}
+      {hint && <p className="mt-0.5 text-micro leading-snug text-subtle">{hint}</p>}
     </div>
   );
 }
@@ -162,7 +162,7 @@ export function StatusPill({ ok, label, hint, onClick }) {
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold',
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-meta font-semibold',
         ok ? 'bg-success-soft text-success-fg' : 'bg-danger-soft text-danger-fg',
         onClick && 'transition-opacity hover:opacity-85',
       )}
@@ -184,7 +184,7 @@ export function UsageBar({ label, pct, sub, className }) {
   const band = bandFor(v);
   return (
     <div className={className}>
-      <div className="mb-1 flex items-baseline justify-between gap-2 text-[11px]">
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-meta">
         <span className="truncate text-muted">{label}</span>
         <span className="shrink-0 font-mono font-semibold text-fg tabular-nums">{v}%</span>
       </div>
@@ -194,7 +194,7 @@ export function UsageBar({ label, pct, sub, className }) {
           style={{ width: `${v}%`, background: band.color }}
         />
       </div>
-      {sub && <p className="mt-1 text-[10px] text-subtle">{sub}</p>}
+      {sub && <p className="mt-1 text-micro text-subtle">{sub}</p>}
     </div>
   );
 }
@@ -218,7 +218,7 @@ export function SqlCell({ sql, max = 120, className }) {
   return (
     <span
       title={text.length > max ? text : undefined}
-      className={cn('truncate-safe block max-w-[380px] font-mono text-[11px] text-muted', className)}
+      className={cn('truncate-safe block max-w-[380px] font-mono text-meta text-muted', className)}
     >
       {text.slice(0, max)}
     </span>
@@ -231,7 +231,7 @@ export function SqlBlock({ sql, className }) {
     <pre
       className={cn(
         'overflow-x-auto rounded-card border border-border bg-sunken px-3 py-2',
-        'font-mono text-[11px] whitespace-pre-wrap break-words text-fg',
+        'font-mono text-meta whitespace-pre-wrap break-words text-fg',
         className,
       )}
     >

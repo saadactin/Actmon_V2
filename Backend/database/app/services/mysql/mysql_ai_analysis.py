@@ -1,3 +1,4 @@
+from app.services.common.groq_config import groq_params
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -74,8 +75,6 @@ MySQL Error:
 
     response = client.chat.completions.create(
 
-        model="llama-3.3-70b-versatile",
-
         messages=[
             {
                 "role": "user",
@@ -85,7 +84,7 @@ MySQL Error:
 
         temperature=0.1,
 
-        max_tokens=1500
+        **groq_params(1500)
 
     )
 

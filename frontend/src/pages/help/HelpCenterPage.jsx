@@ -110,7 +110,7 @@ export default function HelpCenterPage() {
                       onClick={() => go(r.id)}
                       className="block w-full rounded-md px-2.5 py-2 text-left transition-colors hover:bg-sunken"
                     >
-                      <div className="truncate-safe text-[10.5px] font-semibold tracking-wide text-subtle uppercase">{r.group}</div>
+                      <div className="truncate-safe text-meta font-semibold tracking-wide text-subtle uppercase">{r.group}</div>
                       <div className="truncate-safe text-[13px] font-semibold text-fg">{r.title}</div>
                     </button>
                   ))}
@@ -140,14 +140,14 @@ export default function HelpCenterPage() {
               {prevDoc ? (
                 <button type="button" onClick={() => go(FLOW[flowIdx - 1])}
                   className="flex max-w-[44%] flex-col items-start gap-0.5 rounded-md border border-border bg-surface px-3.5 py-3 text-left transition-colors hover:border-accent hover:bg-accent-soft">
-                  <span className="font-mono text-[9.5px] tracking-wide text-subtle uppercase">← Previous</span>
+                  <span className="font-mono text-micro tracking-wide text-subtle uppercase">← Previous</span>
                   <span className="font-mono text-[13.5px] font-semibold text-fg">{prevDoc.title}</span>
                 </button>
               ) : <span />}
               {nextDoc ? (
                 <button type="button" onClick={() => go(FLOW[flowIdx + 1])}
                   className="ml-auto flex max-w-[44%] flex-col items-end gap-0.5 rounded-md border border-border bg-surface px-3.5 py-3 text-right transition-colors hover:border-accent hover:bg-accent-soft">
-                  <span className="font-mono text-[9.5px] tracking-wide text-subtle uppercase">Next →</span>
+                  <span className="font-mono text-micro tracking-wide text-subtle uppercase">Next →</span>
                   <span className="font-mono text-[13.5px] font-semibold text-fg">{nextDoc.title}</span>
                 </button>
               ) : <span />}
@@ -162,7 +162,7 @@ export default function HelpCenterPage() {
 function HelpBreadcrumbs({ doc, go }) {
   const parts = doc.crumbs || [doc.title];
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
+    <div className="mb-3 flex flex-wrap items-center gap-1.5 text-meta text-muted">
       {parts.map((p, i) => {
         const last = i === parts.length - 1;
         return (
@@ -189,10 +189,10 @@ function HelpMeta({ doc }) {
     ['Applicable ActMon version', 'Not identified in the current implementation'],
   ];
   return (
-    <div className="mb-2 flex flex-wrap gap-x-5 gap-y-2 rounded-md border border-border bg-sunken px-3.5 py-3 text-[11px] text-muted">
+    <div className="mb-2 flex flex-wrap gap-x-5 gap-y-2 rounded-md border border-border bg-sunken px-3.5 py-3 text-meta text-muted">
       {fields.map(([label, value]) => (
         <div key={label} className="flex flex-col gap-0.5">
-          <span className="text-[9.5px] tracking-wide uppercase">{label}</span>
+          <span className="text-micro tracking-wide uppercase">{label}</span>
           <b className="font-semibold text-fg">{value}</b>
         </div>
       ))}
@@ -209,12 +209,12 @@ function HelpSidebar({ activeId, openGroups, setOpenGroups, go }) {
 
   return (
     <nav className="w-64 shrink-0 overflow-y-auto border-r border-border bg-surface px-3 py-4">
-      <div className="px-2.5 pt-1 pb-1.5 font-mono text-[10.5px] tracking-wide text-subtle uppercase">Getting Started</div>
+      <div className="px-2.5 pt-1 pb-1.5 font-mono text-meta tracking-wide text-subtle uppercase">Getting Started</div>
       {GS_TOPICS.map(([id, label]) => (
         <NavLink key={id} id={id} label={label} active={activeId === id} onClick={() => go(id)} />
       ))}
 
-      <div className="px-2.5 pt-3.5 pb-1.5 font-mono text-[10.5px] tracking-wide text-subtle uppercase">Product Modules</div>
+      <div className="px-2.5 pt-3.5 pb-1.5 font-mono text-meta tracking-wide text-subtle uppercase">Product Modules</div>
       {MODULES.map((m) => (
         m.topics ? (
           <div key={m.id} className="mb-0.5">
@@ -247,7 +247,7 @@ function HelpSidebar({ activeId, openGroups, setOpenGroups, go }) {
           >
             <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', activeId === m.id ? 'bg-accent' : 'bg-subtle')} />
             <span className="flex-1">{m.label}</span>
-            <span className="rounded-full border border-border px-1.5 py-px text-[9px] tracking-wide text-subtle">soon</span>
+            <span className="rounded-full border border-border px-1.5 py-px text-micro tracking-wide text-subtle">soon</span>
           </button>
         )
       ))}

@@ -56,7 +56,7 @@ export default function NotificationTemplatesPanel() {
                 </div>
 
                 <div className="min-w-0 rounded-control bg-sunken px-2.5 py-2">
-                  <p className="text-[10px] font-bold tracking-wide text-subtle uppercase">Subject</p>
+                  <p className="text-micro font-bold tracking-wide text-subtle uppercase">Subject</p>
                   <p className="truncate-safe mt-0.5 text-[12px] font-medium text-fg">{tpl?.subject_template || '—'}</p>
                 </div>
 

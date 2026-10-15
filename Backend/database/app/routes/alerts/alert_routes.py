@@ -8,6 +8,7 @@ Rule evaluation is data-driven: the monitoring engine reads enabled rules and
 raises a notification when a metric crosses its threshold for the configured
 duration. This module owns rule CRUD + the active-alert feed/acknowledge.
 """
+from app.services.common.groq_config import groq_params
 import json
 import re
 from typing import Optional, List
@@ -416,8 +417,8 @@ def _groq_json(messages, max_tokens=900):
     from groq import Groq
     client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile", messages=messages,
-        temperature=0.2, max_tokens=max_tokens, response_format={"type": "json_object"},
+        messages=messages,
+        temperature=0.2, **groq_params(max_tokens), response_format={"type": "json_object"},
     )
     return json.loads(resp.choices[0].message.content or "{}")
 
@@ -546,10 +547,9 @@ def analyze_alert(payload: AnalyzeIn):
         from groq import Groq
         client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=[sys_msg, usr_msg],
             temperature=0.3,
-            max_tokens=1500,
+            **groq_params(1500),
             response_format={"type": "json_object"},
         )
         raw = resp.choices[0].message.content or "{}"

@@ -50,7 +50,7 @@ export function Section({ title, icon, tone = 'accent', children, className, act
         <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md', SECTION_ICON_TONE[tone] || SECTION_ICON_TONE.accent)}>
           <Icon name={icon} size={14} />
         </span>
-        <h3 className="flex-1 text-[11px] font-black uppercase tracking-wide text-fg">{title}</h3>
+        <h3 className="flex-1 text-meta font-black uppercase tracking-wide text-fg">{title}</h3>
         {actions}
       </div>
       <div className="p-4">{children}</div>
@@ -61,7 +61,7 @@ export function Section({ title, icon, tone = 'accent', children, className, act
 export function Stat({ label, value, tone }) {
   return (
     <div className="rounded-control border border-border bg-sunken p-3">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">{label}</p>
+      <p className="text-micro font-bold uppercase tracking-wide text-subtle">{label}</p>
       <p className={cn('mt-0.5 text-[15px] font-black', tone ? (STAT_TEXT_TONE[tone] || 'text-fg') : 'text-fg')}>{value ?? '—'}</p>
     </div>
   );
@@ -77,7 +77,7 @@ export function MiniTable({ headers, rows, emptyMsg = 'No data' }) {
       <table className="w-full border-collapse text-[12px]">
         <thead>
           <tr className="border-b border-border bg-sunken">
-            {headers.map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 text-left text-[10px] font-bold uppercase text-subtle">{h}</th>)}
+            {headers.map((h) => <th key={h} className="whitespace-nowrap px-3 py-2 text-left text-micro font-bold uppercase text-subtle">{h}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -132,28 +132,28 @@ export function TerminalEntry({ entry, onCopyCommand, onRunAgain, className }) {
       <div className="flex items-center gap-2 border-b border-border bg-sunken px-3 py-2">
         <StatusBadge status={entry.status} />
         <span className="flex-1 truncate-safe text-[12.5px] font-bold text-fg">{entry.title}</span>
-        {entry.durationMs != null && <span className="text-[11px] text-subtle">{entry.durationMs}ms</span>}
-        {entry.exitCode != null && <span className="text-[11px] text-subtle">exit {entry.exitCode}</span>}
+        {entry.durationMs != null && <span className="text-meta text-subtle">{entry.durationMs}ms</span>}
+        {entry.exitCode != null && <span className="text-meta text-subtle">exit {entry.exitCode}</span>}
       </div>
       <div className="p-3">
-        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-subtle">Command</p>
+        <p className="mb-1 text-micro font-bold uppercase tracking-wide text-subtle">Command</p>
         <div className="mb-2 flex items-start gap-2">
-          <pre className="max-h-24 flex-1 overflow-y-auto whitespace-pre-wrap break-all rounded-control bg-inverse p-2 font-mono text-[11px] text-on-inverse">{entry.command || '—'}</pre>
+          <pre className="max-h-24 flex-1 overflow-y-auto whitespace-pre-wrap break-all rounded-control bg-inverse p-2 font-mono text-meta text-on-inverse">{entry.command || '—'}</pre>
         </div>
         <div className="mb-2 flex flex-wrap gap-2">
           {onCopyCommand && (
-            <button type="button" onClick={() => onCopyCommand(entry.command)} className="flex items-center gap-1 text-[11.5px] font-semibold text-accent-text hover:underline">
+            <button type="button" onClick={() => onCopyCommand(entry.command)} className="flex items-center gap-1 text-meta font-semibold text-accent-text hover:underline">
               <Icon name="copy" size={11} /> Copy Command
             </button>
           )}
           {onRunAgain && (
-            <button type="button" onClick={() => onRunAgain(entry)} className="flex items-center gap-1 text-[11.5px] font-semibold text-accent-text hover:underline">
+            <button type="button" onClick={() => onRunAgain(entry)} className="flex items-center gap-1 text-meta font-semibold text-accent-text hover:underline">
               <Icon name="refresh" size={11} /> Run Again
             </button>
           )}
         </div>
-        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-subtle">Output</p>
-        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-all rounded-control bg-inverse p-2 font-mono text-[11px] text-on-inverse">{entry.output || entry.detail || '(no output)'}</pre>
+        <p className="mb-1 text-micro font-bold uppercase tracking-wide text-subtle">Output</p>
+        <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-all rounded-control bg-inverse p-2 font-mono text-meta text-on-inverse">{entry.output || entry.detail || '(no output)'}</pre>
         {entry.detail && entry.output && entry.detail !== entry.output && (
           <p className="mt-1.5 text-[12px] text-muted">{entry.detail}</p>
         )}

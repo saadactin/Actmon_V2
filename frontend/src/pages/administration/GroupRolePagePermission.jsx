@@ -180,7 +180,7 @@ function PermissionPicker({ options, selected, onToggle }) {
                   </span>
                   <span className={`truncate ${isSelected ? 'font-semibold text-accent-text' : 'text-fg'}`}>{p.permission_name}</span>
                 </span>
-                <span className="shrink-0 text-[11px] text-subtle">{p.permission_value}</span>
+                <span className="shrink-0 text-meta text-subtle">{p.permission_value}</span>
               </button>
             );
           })}
@@ -591,7 +591,7 @@ export default function GroupRolePagePermission() {
                 <PermissionPicker options={selectablePerms} selected={form.selectedPerms} onToggle={togglePerm} />
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {form.selectedPerms.map((p) => (
-                    <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text">
+                    <span key={p.permission_id} className="flex items-center gap-1 rounded-full bg-accent-soft px-2.5 py-1 text-meta font-semibold text-accent-text">
                       {p.permission_name}
                       <button type="button" onClick={() => removePerm(p.permission_id)} aria-label={`Remove ${p.permission_name}`}>
                         <Icon name="close" size={11} />
@@ -599,7 +599,7 @@ export default function GroupRolePagePermission() {
                     </span>
                   ))}
                 </div>
-                <p className="mt-2 text-[11px] text-subtle">Computed bitmask value: <b className="text-fg">{bitmaskValue}</b></p>
+                <p className="mt-2 text-meta text-subtle">Computed bitmask value: <b className="text-fg">{bitmaskValue}</b></p>
               </div>
             )}
           </div>
@@ -724,7 +724,7 @@ export default function GroupRolePagePermission() {
                     clone.mode === opt.id ? 'border-accent bg-accent-soft' : 'border-border hover:bg-sunken'}`}
                 >
                   <p className="text-[13px] font-bold text-fg">{opt.label}</p>
-                  <p className="mt-0.5 text-[11px] text-muted">{opt.desc}</p>
+                  <p className="mt-0.5 text-meta text-muted">{opt.desc}</p>
                 </button>
               ))}
             </div>

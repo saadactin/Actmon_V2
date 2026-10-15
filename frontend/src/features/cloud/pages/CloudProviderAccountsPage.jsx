@@ -13,6 +13,7 @@ import CloudFilterBar from '../components/CloudFilterBar';
 import CloudSection from '../components/CloudSection';
 import { keyFromSlug, providerKeyOf } from '../utils/providerScope';
 import Icon from '@/components/ui/Icon';
+import Button from '@/components/ui/Button';
 
 // Real taxonomy this app's Cloud accounts are tagged with — see
 // AddCloudAccountForm's <select name="environment"> options. Not the same
@@ -133,14 +134,22 @@ export default function CloudProviderAccountsPage({ provider: slug }) {
           </div>
         )}
         actions={(
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="flex h-control shrink-0 items-center gap-1.5 rounded-control bg-accent px-3.5 text-[13px] font-semibold text-accent-fg transition-colors hover:bg-accent-hover"
-          >
-            <Plus size={15} /> Add Account
-          </button>
+          <>
+            {slug === 'oci' && (
+              <Button variant="secondary" icon="sparkles" onClick={() => navigate('/cloud/oracle-awr')}>
+                Upload AWR
+              </Button>
+            )}
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="flex h-control shrink-0 items-center gap-1.5 rounded-control bg-accent px-3.5 text-[13px] font-semibold text-accent-fg transition-colors hover:bg-accent-hover"
+            >
+              <Plus size={15} /> Add Account
+            </button>
+          </>
         )}
       />
+
 
       {/* KPI cards — same click-to-filter card row mysql-servers uses (Total/Online/Warning/Offline), extended with a Resources card since Cloud has no cluster/HA-group concept */}
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">

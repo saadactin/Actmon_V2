@@ -173,7 +173,7 @@ export default function MSSQLIndexAnalysis() {
                     onClick={() => { setTab(t.id); setOpen(null); }}
                     aria-pressed={tab === t.id}
                     className={cn(
-                      'flex h-7 items-center gap-1.5 rounded-control px-2.5 text-[11px] font-bold transition-colors',
+                      'flex h-7 items-center gap-1.5 rounded-control px-2.5 text-meta font-bold transition-colors',
                       tab === t.id ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg',
                     )}
                   >
@@ -198,7 +198,7 @@ export default function MSSQLIndexAnalysis() {
           {tab === 'unused' && (
             <>
               <div className="border-b border-border px-card py-2">
-                <p className="flex items-start gap-1.5 text-[11px] text-warning-fg">
+                <p className="flex items-start gap-1.5 text-meta text-warning-fg">
                   <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
                   These have had no reads since SQL Server last started. Confirm over a full
                   business cycle — a month-end report can be the only thing that uses an index.
@@ -247,14 +247,14 @@ export default function MSSQLIndexAnalysis() {
                           const sql = dropStatement(u);
                           return (
                             <div key={key} className="space-y-2">
-                              <p className="text-[11px] font-bold tracking-wide text-subtle uppercase">
+                              <p className="text-meta font-bold tracking-wide text-subtle uppercase">
                                 Drop statement
                               </p>
                               <div className="flex items-start gap-2">
                                 <SqlBlock sql={sql} className="flex-1" />
                                 <CopyButton text={sql} />
                               </div>
-                              <p className="text-[11px] text-muted">
+                              <p className="text-meta text-muted">
                                 {num(u.total_writes) > 0
                                   ? `This index has absorbed ${fmtNumber(u.total_writes)} writes without serving a single read — dropping it makes every INSERT, UPDATE and DELETE on ${u.table_name} cheaper.`
                                   : 'Neither read nor written since the last restart. It may simply be unused, or the server may have restarted recently.'}
@@ -274,7 +274,7 @@ export default function MSSQLIndexAnalysis() {
           {tab === 'missing' && (
             <>
               <div className="border-b border-border px-card py-2">
-                <p className="flex items-start gap-1.5 text-[11px] text-muted">
+                <p className="flex items-start gap-1.5 text-meta text-muted">
                   <Icon name="info" size={12} className="mt-0.5 shrink-0" />
                   The optimiser records these when it would have used an index that does not
                   exist. Treat them as a starting point: check the column order, and prefer
@@ -302,13 +302,13 @@ export default function MSSQLIndexAnalysis() {
                             table: <span className="font-mono text-[12px] font-semibold text-accent-text">{m.table_name}</span>,
                             cols: (
                               <span title={m.suggested_columns}
-                                className="truncate-safe block max-w-[240px] font-mono text-[11px]">
+                                className="truncate-safe block max-w-[240px] font-mono text-meta">
                                 {m.suggested_columns}
                               </span>
                             ),
                             include: (
                               <span title={m.included_columns}
-                                className="truncate-safe block max-w-[160px] font-mono text-[11px] text-subtle">
+                                className="truncate-safe block max-w-[160px] font-mono text-meta text-subtle">
                                 {m.included_columns}
                               </span>
                             ),
@@ -334,14 +334,14 @@ export default function MSSQLIndexAnalysis() {
                           const sql = createStatement(m);
                           return (
                             <div key={key} className="space-y-2">
-                              <p className="text-[11px] font-bold tracking-wide text-subtle uppercase">
+                              <p className="text-meta font-bold tracking-wide text-subtle uppercase">
                                 Create statement
                               </p>
                               <div className="flex items-start gap-2">
                                 <SqlBlock sql={sql} className="flex-1" />
                                 <CopyButton text={sql} />
                               </div>
-                              <p className="text-[11px] text-muted">
+                              <p className="text-meta text-muted">
                                 Improvement measure is <span className="font-mono">avg cost × avg impact ×
                                 (seeks + scans)</span> — a relative ranking, not a percentage. Rename
                                 the index to your convention before running it.
@@ -361,7 +361,7 @@ export default function MSSQLIndexAnalysis() {
           {tab === 'duplicate' && (
             <>
               <div className="border-b border-border px-card py-2">
-                <p className="flex items-start gap-1.5 text-[11px] text-warning-fg">
+                <p className="flex items-start gap-1.5 text-meta text-warning-fg">
                   <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
                   Matched on key-column <em>count</em>, not on the columns themselves — these are
                   candidates for review, not confirmed duplicates. Compare the definitions before
@@ -388,13 +388,13 @@ export default function MSSQLIndexAnalysis() {
                             first: (
                               <span className="flex flex-col">
                                 <span className="font-mono text-[12px] font-semibold">{d.index1}</span>
-                                <span className="text-[10px] text-subtle">{String(d.index1_type || '').replace('_INDEX', '')}</span>
+                                <span className="text-micro text-subtle">{String(d.index1_type || '').replace('_INDEX', '')}</span>
                               </span>
                             ),
                             second: (
                               <span className="flex flex-col">
                                 <span className="font-mono text-[12px] font-semibold text-warning-fg">{d.index2}</span>
-                                <span className="text-[10px] text-subtle">{String(d.index2_type || '').replace('_INDEX', '')}</span>
+                                <span className="text-micro text-subtle">{String(d.index2_type || '').replace('_INDEX', '')}</span>
                               </span>
                             ),
                             keys: <span className="font-mono">{d.key_column_count}</span>,
@@ -414,14 +414,14 @@ export default function MSSQLIndexAnalysis() {
                             || `-- Verify the columns match before dropping:\nDROP INDEX ${bracket(d.index2)} ON [dbo].${bracket(d.table_name)};`;
                           return (
                             <div key={key} className="space-y-2">
-                              <p className="text-[11px] font-bold tracking-wide text-subtle uppercase">
+                              <p className="text-meta font-bold tracking-wide text-subtle uppercase">
                                 Suggested drop
                               </p>
                               <div className="flex items-start gap-2">
                                 <SqlBlock sql={sql} className="flex-1" />
                                 <CopyButton text={sql} />
                               </div>
-                              <p className="text-[11px] text-muted">
+                              <p className="text-meta text-muted">
                                 Run <span className="font-mono">sp_helpindex &apos;{d.table_name}&apos;</span> and compare
                                 the two key lists first. Identical counts often mean different columns.
                               </p>
@@ -438,7 +438,7 @@ export default function MSSQLIndexAnalysis() {
           )}
         </TablePanel>
 
-        <p className="flex items-start gap-1.5 text-[11px] text-subtle">
+        <p className="flex items-start gap-1.5 text-meta text-subtle">
           <Icon name="info" size={12} className="mt-0.5 shrink-0" />
           All three lists cover the connected database only — SQL Server's index usage and
           missing-index DMVs are per-database. Point the connection at another database to

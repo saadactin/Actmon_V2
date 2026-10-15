@@ -23,7 +23,7 @@ export default function Legend({ items, showValues = true, className }) {
       ) : (
         <span
           key={item.key ?? item.label}
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted"
+          className="inline-flex items-center gap-1.5 text-meta font-semibold text-muted"
         >
           <span className="h-2.5 w-2.5 shrink-0 rounded-xs" style={{ background: colorOf(item) }} />
           {item.label}

@@ -131,7 +131,7 @@ function SearchTrigger({ open, onToggle }) {
 
 export function Kbd({ children }) {
   return (
-    <kbd className="rounded-xs border border-current/20 bg-current/5 px-1 py-px font-sans text-[10px] leading-none font-semibold text-current/70">
+    <kbd className="rounded-xs border border-current/20 bg-current/5 px-1 py-px font-sans text-micro leading-none font-semibold text-current/70">
       {children}
     </kbd>
   );
@@ -159,7 +159,7 @@ function NotificationsButton() {
         onClick={toggle}
       >
         {unread > 0 && (
-          <span className="absolute top-1 right-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
+          <span className="absolute top-1 right-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-danger px-1 text-micro font-bold text-white">
             {unread > 99 ? '99+' : unread}
           </span>
         )}
@@ -200,7 +200,7 @@ function HelpButton() {
             </div>
           ))}
         </div>
-        <div className="border-t border-border px-3.5 py-2 text-[11px] font-semibold text-subtle">
+        <div className="border-t border-border px-3.5 py-2 text-meta font-semibold text-subtle">
           {APP.name} v{APP.version} · {APP.company}
         </div>
       </Popover>

@@ -93,6 +93,7 @@ const OracleLiveQueries = lazy(() => import('@/pages/oracle/LiveQueries'));
 const OracleErrorLogs = lazy(() => import('@/pages/oracle/ErrorLogs'));
 const OracleIndexAnalysis = lazy(() => import('@/pages/oracle/IndexAnalysis'));
 const OracleReportsPage = lazy(() => import('@/pages/oracle/OracleReportsPage'));
+const OracleAwrPage = lazy(() => import('@/pages/oracle/OracleAwrPage'));
 
 // SQL Server. Nine tabs, same shape as MySQL. Bound to what
 // /monitoring-dashboard actually returns rather than to the fields the old
@@ -221,6 +222,8 @@ export default function App() {
           <Route path="clients" element={<CloudClientsPage />} />
           <Route path="clients/:clientId" element={<CloudClientDetailPage />} />
           <Route path="certificates" element={<CloudCertificatesPage />} />
+          {/* Every uploaded Oracle AWR report; the OCI accounts page links here. */}
+          <Route path="oracle-awr" element={<OracleAwrPage />} />
 
           <Route path="aws-accounts" element={<CloudProviderAccountsPage provider="aws" />} />
           <Route path="aws-accounts/:accountId" element={<CloudDashboard provider="aws" />} />
@@ -302,6 +305,7 @@ export default function App() {
         <Route path="/oracle-dashboard/:id/error-logs" element={<OracleErrorLogs />} />
         <Route path="/oracle-dashboard/:id/index-analysis" element={<OracleIndexAnalysis />} />
         <Route path="/oracle-dashboard/:id/reports" element={<OracleReportsPage />} />
+        <Route path="/oracle-dashboard/:id/awr" element={<OracleAwrPage />} />
         <Route path="/oracle-dashboard/:id/:tab" element={<OracleDashboard />} />
 
         {/* SQL Server. Named sub-pages before :tab, and the slow-query detail page

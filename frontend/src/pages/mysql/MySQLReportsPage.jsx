@@ -256,7 +256,7 @@ export default function MySQLReportsPage() {
         genTime={genTime} setGenTime={setGenTime} onRefresh={refetchAll}
         connName={connName} subtitle={subtitle} alertBadges={alertBadges}
       >
-        <p className="no-print text-[11px] text-slate-400 mb-3">Last updated {lastUpdatedLabel} · sections refresh in place every 30s</p>
+        <p className="no-print text-meta text-slate-400 mb-3">Last updated {lastUpdatedLabel} · sections refresh in place every 30s</p>
 
         {/* ══ 1. EXECUTIVE SUMMARY ══ */}
         <RSection title="Executive Summary" icon={Heart}
@@ -302,8 +302,8 @@ export default function MySQLReportsPage() {
                 ['Table Count',      totalTables],
               ].map(([l, v]) => (
                 <div key={l} className="flex items-start justify-between py-1.5 border-b border-slate-100 last:border-0 col-span-1">
-                  <span className="text-[11px] text-slate-400 font-semibold flex-shrink-0">{l}</span>
-                  <span className="text-[11px] font-bold text-slate-800 font-mono ml-2 text-right break-all">{v ?? '—'}</span>
+                  <span className="text-meta text-slate-400 font-semibold flex-shrink-0">{l}</span>
+                  <span className="text-meta font-bold text-slate-800 font-mono ml-2 text-right break-all">{v ?? '—'}</span>
                 </div>
               ))}
             </div>
@@ -324,8 +324,8 @@ export default function MySQLReportsPage() {
                   data={Object.entries(perfStats).slice(0, 6).map(([k, v]) => ({ name: k.replace(/_/g,' ').slice(0,18), value: Number(v) || 0 }))}
                   margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 8 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
                   <Tooltip formatter={v => fmtNum(v)} />
                   <Bar dataKey="value" radius={[4,4,0,0]}>
                     {Object.keys(perfStats).slice(0,6).map((_, i) => <Cell key={i} fill={POOL_COLORS[i % POOL_COLORS.length]} />)}
@@ -340,12 +340,12 @@ export default function MySQLReportsPage() {
         <RSection title="Live Workload Charts" icon={Activity} color={C.purple}>
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
             <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
-              <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">SQL Command Mix</p>
+              <p className="text-micro text-slate-400 font-bold uppercase mb-2">SQL Command Mix</p>
               <ResponsiveContainer width="100%" height={170}>
                 <BarChart data={commandChart}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
                   <Tooltip formatter={v => fmtNum(v)} />
                   <Bar dataKey="value" radius={[4,4,0,0]}>
                     {commandChart.map((_, i) => <Cell key={i} fill={POOL_COLORS[i % POOL_COLORS.length]} />)}
@@ -355,7 +355,7 @@ export default function MySQLReportsPage() {
             </div>
 
             <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
-              <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Connection Usage</p>
+              <p className="text-micro text-slate-400 font-bold uppercase mb-2">Connection Usage</p>
               <ResponsiveContainer width="100%" height={170}>
                 <PieChart>
                   <Pie data={connectionPieData} dataKey="value" nameKey="name" innerRadius={42} outerRadius={66} paddingAngle={3}>
@@ -363,18 +363,18 @@ export default function MySQLReportsPage() {
                     <Cell fill="#e2e8f0" />
                   </Pie>
                   <Tooltip formatter={v => fmtNum(v)} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
 
             <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
-              <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Database Sizes</p>
+              <p className="text-micro text-slate-400 font-bold uppercase mb-2">Database Sizes</p>
               <ResponsiveContainer width="100%" height={170}>
                 <BarChart data={dbSizes.slice(0, 8)} layout="vertical" margin={{ left: 20, right: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 9 }} width={70} axisLine={false} tickLine={false} />
+                  <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={70} axisLine={false} tickLine={false} />
                   <Tooltip formatter={v => `${fmtNum(v)} MB`} />
                   <Bar dataKey="size_mb" fill={C.teal} radius={[0,4,4,0]} />
                 </BarChart>
@@ -403,9 +403,9 @@ export default function MySQLReportsPage() {
               rows={slowRows.slice(0, 15).map(q => [
                 <span className={`font-bold ${Number(q.execution_time) > 5 ? 'text-red-600' : 'text-orange-600'}`}>{Number(q.execution_time || 0).toFixed(3)}</span>,
                 fmtNum(q.rows_examined), fmtNum(q.rows_sent),
-                <span className="text-[10px] text-blue-700 font-bold">{q.db_name || '—'}</span>,
-                <span className="font-mono text-[10px] text-slate-500 max-w-[280px] truncate block">{(q.query_text || '').slice(0, 100)}</span>,
-                <button onClick={() => openSlowQueryDetail(q)} className="text-[10px] font-bold text-blue-600 hover:underline whitespace-nowrap">View Full Query</button>,
+                <span className="text-micro text-blue-700 font-bold">{q.db_name || '—'}</span>,
+                <span className="font-mono text-micro text-slate-500 max-w-[280px] truncate block">{(q.query_text || '').slice(0, 100)}</span>,
+                <button onClick={() => openSlowQueryDetail(q)} className="text-micro font-bold text-blue-600 hover:underline whitespace-nowrap">View Full Query</button>,
               ])}
             />
           )}
@@ -423,12 +423,12 @@ export default function MySQLReportsPage() {
 
           {processCommandData.length > 0 && (
             <div className="mb-4 bg-slate-50 rounded-lg border border-slate-100 p-3">
-              <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Process Commands</p>
+              <p className="text-micro text-slate-400 font-bold uppercase mb-2">Process Commands</p>
               <ResponsiveContainer width="100%" height={130}>
                 <BarChart data={processCommandData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 9 }} allowDecimals={false} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} axisLine={false} tickLine={false} />
                   <Tooltip />
                   <Bar dataKey="value" fill={C.cyan} radius={[4,4,0,0]} />
                 </BarChart>
@@ -442,14 +442,14 @@ export default function MySQLReportsPage() {
               <RTable
                 headers={['ID','User','Host','DB','Command','Time','State','SQL Preview']}
                 rows={longRunning.slice(0, 10).map(p => [
-                  <span className="font-mono text-[10px]">{procField(p, ['Id', 'id'])}</span>,
+                  <span className="font-mono text-micro">{procField(p, ['Id', 'id'])}</span>,
                   procField(p, ['User', 'user']),
-                  <span className="font-mono text-[10px]">{procField(p, ['Host', 'host'])}</span>,
+                  <span className="font-mono text-micro">{procField(p, ['Host', 'host'])}</span>,
                   procField(p, ['db', 'database']),
                   statusBadge(procField(p, ['Command', 'command'])),
                   <span className="font-bold text-red-600">{procField(p, ['Time', 'time'], 0)}s</span>,
-                  <span className="text-[10px]">{procField(p, ['State', 'state'])}</span>,
-                  <span className="font-mono text-[10px] text-slate-500 max-w-[320px] truncate block">{String(procField(p, ['Info', 'info'], '') || '').slice(0, 140)}</span>,
+                  <span className="text-micro">{procField(p, ['State', 'state'])}</span>,
+                  <span className="font-mono text-micro text-slate-500 max-w-[320px] truncate block">{String(procField(p, ['Info', 'info'], '') || '').slice(0, 140)}</span>,
                 ])}
               />
             </div>
@@ -458,14 +458,14 @@ export default function MySQLReportsPage() {
           <RTable
             headers={['ID','User','Host','DB','Command','Time','State','SQL Preview']}
             rows={processList.slice(0, 25).map(p => [
-              <span className="font-mono text-[10px]">{procField(p, ['Id', 'id'])}</span>,
+              <span className="font-mono text-micro">{procField(p, ['Id', 'id'])}</span>,
               procField(p, ['User', 'user']),
-              <span className="font-mono text-[10px]">{procField(p, ['Host', 'host'])}</span>,
+              <span className="font-mono text-micro">{procField(p, ['Host', 'host'])}</span>,
               procField(p, ['db', 'database']),
               statusBadge(procField(p, ['Command', 'command'])),
               `${procField(p, ['Time', 'time'], 0)}s`,
-              <span className="text-[10px]">{procField(p, ['State', 'state'])}</span>,
-              <span className="font-mono text-[10px] text-slate-500 max-w-[320px] truncate block">{String(procField(p, ['Info', 'info'], '') || '').slice(0, 140)}</span>,
+              <span className="text-micro">{procField(p, ['State', 'state'])}</span>,
+              <span className="font-mono text-micro text-slate-500 max-w-[320px] truncate block">{String(procField(p, ['Info', 'info'], '') || '').slice(0, 140)}</span>,
             ])}
             emptyMsg="No active processes"
           />
@@ -485,12 +485,12 @@ export default function MySQLReportsPage() {
             <RTable
               headers={['Table','Engine','Rows','Data (MB)','Index (MB)','Last Updated']}
               rows={tables.slice(0, 15).map(t => [
-                <span className="font-bold text-teal-700 text-[11px]">{t.fullTableName}</span>,
-                <span className="text-[10px] font-mono text-slate-500">{t.engine || 'InnoDB'}</span>,
+                <span className="font-bold text-teal-700 text-meta">{t.fullTableName}</span>,
+                <span className="text-micro font-mono text-slate-500">{t.engine || 'InnoDB'}</span>,
                 fmtNum(t.table_rows || t.rows || 0),
                 <span className="font-bold">{(Number(t.data_mb || (t.data_length/1048576)) || 0).toFixed(1)}</span>,
                 <span className="font-bold">{(Number(t.index_mb || (t.index_length/1048576)) || 0).toFixed(1)}</span>,
-                <span className="font-mono text-[10px] text-slate-400">{(t.update_time || '—')?.toString().slice(0,10)}</span>,
+                <span className="font-mono text-micro text-slate-400">{(t.update_time || '—')?.toString().slice(0,10)}</span>,
               ])}
               emptyMsg="No table statistics available"
             />
@@ -513,7 +513,7 @@ export default function MySQLReportsPage() {
                 rows={(backupD.schedules || []).slice(0, 10).map(s => [
                   <span className="font-bold text-slate-700">{s.schedule_name || s.name}</span>,
                   s.frequency || '—',
-                  <span className="font-mono text-[10px]">{s.next_run_at?.slice(0,16) || '—'}</span>,
+                  <span className="font-mono text-micro">{s.next_run_at?.slice(0,16) || '—'}</span>,
                   statusBadge(s.last_status || s.status), statusBadge(s.enabled ? 'YES' : 'NO'),
                 ])}
               />
@@ -543,8 +543,8 @@ export default function MySQLReportsPage() {
                   ['Last IO Error', replSlave.last_io_error || 'None'],
                 ].map(([l, v]) => (
                   <div key={l} className="flex items-start justify-between py-1.5 border-b border-slate-100 last:border-0 col-span-1">
-                    <span className="text-[11px] text-slate-400 font-semibold flex-shrink-0">{l}</span>
-                    <span className="text-[11px] font-bold text-slate-800 font-mono ml-2 text-right break-all max-w-[200px] truncate">{v ?? '—'}</span>
+                    <span className="text-meta text-slate-400 font-semibold flex-shrink-0">{l}</span>
+                    <span className="text-meta font-bold text-slate-800 font-mono ml-2 text-right break-all max-w-[200px] truncate">{v ?? '—'}</span>
                   </div>
                 ))}
               </div>
@@ -566,7 +566,7 @@ export default function MySQLReportsPage() {
               <RTable
                 headers={['Metric', 'Value']}
                 rows={Object.entries(innoMetrics).slice(0, 20).map(([k, v]) => [
-                  <span className="font-semibold text-slate-600 text-[11px]">{k.replace(/_/g,' ')}</span>,
+                  <span className="font-semibold text-slate-600 text-meta">{k.replace(/_/g,' ')}</span>,
                   <span className="font-black text-slate-800">{typeof v === 'number' ? fmtNum(v) : String(v)}</span>,
                 ])}
               />
@@ -593,8 +593,8 @@ export default function MySQLReportsPage() {
                   <span className={Number(s.max_ms) > 1000 ? 'font-bold text-red-600' : 'font-bold'}>{s.max_ms}</span>,
                   fmtNum(s.rows_examined),
                   <span className={Number(s.no_index || s.no_good_index) > 0 ? 'text-red-600 font-bold' : 'text-green-600 font-bold'}>{fmtNum((s.no_index || 0) + (s.no_good_index || 0))}</span>,
-                  <span className="font-mono text-[10px]">{s.last_seen || '—'}</span>,
-                  <span className="font-mono text-[10px] text-slate-500 max-w-[420px] truncate block">{String(s.digest_text || '').slice(0, 150)}</span>,
+                  <span className="font-mono text-micro">{s.last_seen || '—'}</span>,
+                  <span className="font-mono text-micro text-slate-500 max-w-[420px] truncate block">{String(s.digest_text || '').slice(0, 150)}</span>,
                 ])}
               />
             </div>
@@ -606,7 +606,7 @@ export default function MySQLReportsPage() {
               <RTable
                 headers={['Event','Class','Count','Total ms','Avg ms']}
                 rows={waitEvents.slice(0, 10).map(w => [
-                  <span className="font-mono text-[10px] text-slate-600">{w.event_name}</span>,
+                  <span className="font-mono text-micro text-slate-600">{w.event_name}</span>,
                   w.wait_class || '—', fmtNum(w.count), <span className="font-bold">{w.total_ms}</span>, w.avg_ms,
                 ])}
                 emptyMsg="No wait events available"
@@ -617,7 +617,7 @@ export default function MySQLReportsPage() {
               <RTable
                 headers={['Table','Fetch','Insert','Update','Delete','Total ms']}
                 rows={perfTables.slice(0, 10).map(t => [
-                  <span className="font-bold text-teal-700 text-[11px]">{t.schema}.{t.table}</span>,
+                  <span className="font-bold text-teal-700 text-meta">{t.schema}.{t.table}</span>,
                   fmtNum(t.fetch), fmtNum(t.insert), fmtNum(t.update), fmtNum(t.delete), <span className="font-bold">{t.total_ms}</span>,
                 ])}
                 emptyMsg="No table IO stats available"
@@ -631,7 +631,7 @@ export default function MySQLReportsPage() {
               <RTable
                 headers={['Event','Current MB','High MB','Count Used']}
                 rows={memoryConsumers.slice(0, 10).map(m => [
-                  <span className="font-mono text-[10px] text-slate-600">{m.event_name}</span>,
+                  <span className="font-mono text-micro text-slate-600">{m.event_name}</span>,
                   <span className="font-bold">{m.current_mb}</span>, m.high_mb, fmtNum(m.count_used),
                 ])}
               />
@@ -646,7 +646,7 @@ export default function MySQLReportsPage() {
               headers={['User','Host','Active Connections','Total Connections','Queries Sent']}
               rows={users.slice(0, 15).map(u => [
                 <span className="font-bold text-indigo-700">{u.user || u.username || '—'}</span>,
-                <span className="font-mono text-[10px] text-slate-500">{u.host || '%'}</span>,
+                <span className="font-mono text-micro text-slate-500">{u.host || '%'}</span>,
                 <span className="font-bold">{u.current_connections || u.active_connections || 0}</span>,
                 fmtNum(u.total_connections || u.connections || 0), fmtNum(u.total_queries || u.queries_sent || 0),
               ])}
@@ -664,13 +664,13 @@ export default function MySQLReportsPage() {
             <RTable
               headers={['Timestamp','Severity','Message']}
               rows={errRows.slice(0, 20).map(e => [
-                <span className="font-mono text-[10px] text-slate-400">{fmtTs(e.ts)}</span>,
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                <span className="font-mono text-micro text-slate-400">{fmtTs(e.ts)}</span>,
+                <span className={`text-micro font-bold px-2 py-0.5 rounded ${
                   (e.severity || '').includes('CRITICAL') || (e.severity || '').includes('ERROR') ? 'bg-red-100 text-red-700'
                   : (e.severity || '').includes('WARN') ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
                   {e.severity || '—'}
                 </span>,
-                <span className="text-[11px] text-slate-700">{(e.message || '—').toString().slice(0,120)}</span>,
+                <span className="text-meta text-slate-700">{(e.message || '—').toString().slice(0,120)}</span>,
               ])}
             />
           )}
@@ -699,7 +699,7 @@ export default function MySQLReportsPage() {
                     rows={missingIdx.slice(0, 10).map(idx => [
                       <span className="font-bold text-red-700">{idx.db_name}.{idx.table_name}</span>,
                       fmtNum(idx.no_index_count), fmtNum(idx.rows_examined), idx.worst_avg_sec ?? '—', idx.data_mb ?? '—',
-                      <span className="text-[10px] text-slate-600">{idx.recommendation || 'Review query predicates and joins'}</span>,
+                      <span className="text-micro text-slate-600">{idx.recommendation || 'Review query predicates and joins'}</span>,
                     ])}
                   />
                 </div>
@@ -711,10 +711,10 @@ export default function MySQLReportsPage() {
                     headers={['Table','Index','Columns','Data MB','Rows','Issue']}
                     rows={unusedIdx.slice(0, 10).map(idx => [
                       <span className="font-bold text-orange-700">{idx.db_name}.{idx.table_name}</span>,
-                      <span className="font-mono text-[10px]">{idx.index_name}</span>,
-                      <span className="font-mono text-[10px]">{Array.isArray(idx.columns) ? idx.columns.join(', ') : idx.columns || '—'}</span>,
+                      <span className="font-mono text-micro">{idx.index_name}</span>,
+                      <span className="font-mono text-micro">{Array.isArray(idx.columns) ? idx.columns.join(', ') : idx.columns || '—'}</span>,
                       idx.data_mb ?? '—', fmtNum(idx.row_estimate || idx.table_rows),
-                      <span className="text-[10px] text-slate-600">{idx.reason || idx.issue || 'No observed reads'}</span>,
+                      <span className="text-micro text-slate-600">{idx.reason || idx.issue || 'No observed reads'}</span>,
                     ])}
                   />
                 </div>
@@ -726,10 +726,10 @@ export default function MySQLReportsPage() {
                     headers={['Table','Index','Duplicate Of','Columns','Issue']}
                     rows={duplicateIdx.slice(0, 10).map(idx => [
                       <span className="font-bold text-amber-700">{idx.db_name}.{idx.table_name}</span>,
-                      <span className="font-mono text-[10px]">{idx.index_name || idx.index}</span>,
-                      <span className="font-mono text-[10px]">{idx.duplicate_of || idx.same_as || '—'}</span>,
-                      <span className="font-mono text-[10px]">{Array.isArray(idx.columns) ? idx.columns.join(', ') : idx.columns || '—'}</span>,
-                      <span className="text-[10px] text-slate-600">{idx.issue || idx.recommendation || 'Duplicate index definition'}</span>,
+                      <span className="font-mono text-micro">{idx.index_name || idx.index}</span>,
+                      <span className="font-mono text-micro">{idx.duplicate_of || idx.same_as || '—'}</span>,
+                      <span className="font-mono text-micro">{Array.isArray(idx.columns) ? idx.columns.join(', ') : idx.columns || '—'}</span>,
+                      <span className="text-micro text-slate-600">{idx.issue || idx.recommendation || 'Duplicate index definition'}</span>,
                     ])}
                   />
                 </div>
@@ -739,10 +739,10 @@ export default function MySQLReportsPage() {
                   headers={['Table','Index','Type','Cardinality','Usage','Issue']}
                   rows={idxIssues.slice(0, 15).map(idx => [
                     <span className="font-bold text-amber-700">{idx.table_name || idx.table || '—'}</span>,
-                    <span className="font-mono text-[10px] text-slate-600">{idx.index_name || idx.name || '—'}</span>,
+                    <span className="font-mono text-micro text-slate-600">{idx.index_name || idx.name || '—'}</span>,
                     idx.index_type || idx.type || '—', fmtNum(idx.cardinality || idx.distinct_values || 0),
                     statusBadge(idx.usage || (idx.used ? 'YES' : 'NO')),
-                    <span className={`text-[10px] font-bold ${idx.issue ? 'text-red-600' : 'text-slate-400'}`}>{idx.issue || idx.recommendation || 'OK'}</span>,
+                    <span className={`text-micro font-bold ${idx.issue ? 'text-red-600' : 'text-slate-400'}`}>{idx.issue || idx.recommendation || 'OK'}</span>,
                   ])}
                 />
               )}
@@ -775,20 +775,20 @@ export default function MySQLReportsPage() {
       {isCustom && (
         <div className="no-print flex flex-wrap items-end gap-3 bg-white rounded-xl border border-slate-200 p-4 mb-4">
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">From</label>
+            <label className="block text-micro font-bold text-slate-400 uppercase mb-1">From</label>
             <input type="datetime-local" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
               className="h-8 rounded-md border border-slate-200 px-2 text-xs" />
           </div>
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">To</label>
+            <label className="block text-micro font-bold text-slate-400 uppercase mb-1">To</label>
             <input type="datetime-local" value={customTo} onChange={e => setCustomTo(e.target.value)}
               className="h-8 rounded-md border border-slate-200 px-2 text-xs" />
           </div>
-          {!customReady && <span className="text-[11px] text-amber-600 font-semibold pb-1.5">Select both a from and to date/time</span>}
+          {!customReady && <span className="text-meta text-amber-600 font-semibold pb-1.5">Select both a from and to date/time</span>}
         </div>
       )}
 
-      <p className="no-print text-[11px] text-slate-400 mb-3">
+      <p className="no-print text-meta text-slate-400 mb-3">
         Sourced from ClickHouse historical storage · Generated: {fmtTs(report?.generated_at)}
       </p>
 
@@ -811,31 +811,31 @@ export default function MySQLReportsPage() {
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
-              <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">CPU / Memory / Disk %</p>
+              <p className="text-micro text-slate-400 font-bold uppercase mb-2">CPU / Memory / Disk %</p>
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={points}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="ts" tick={{ fontSize: 8 }} tickFormatter={fmtTs} axisLine={false} tickLine={false} minTickGap={40} />
-                  <YAxis tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="ts" tick={{ fontSize: 11 }} tickFormatter={fmtTs} axisLine={false} tickLine={false} minTickGap={40} />
+                  <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip labelFormatter={fmtTs} formatter={v => `${Number(v).toFixed(1)}%`} />
                   <Line type="monotone" dataKey="host_cpu" name="CPU" stroke={C.blue} dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="host_memory" name="Memory" stroke={C.purple} dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="host_disk" name="Disk" stroke={C.orange} dot={false} strokeWidth={2} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
             <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
-              <p className="text-[10px] text-slate-400 font-bold uppercase mb-2">Query Activity (QPS / TPS)</p>
+              <p className="text-micro text-slate-400 font-bold uppercase mb-2">Query Activity (QPS / TPS)</p>
               <ResponsiveContainer width="100%" height={200}>
                 <LineChart data={points}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="ts" tick={{ fontSize: 8 }} tickFormatter={fmtTs} axisLine={false} tickLine={false} minTickGap={40} />
-                  <YAxis tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="ts" tick={{ fontSize: 11 }} tickFormatter={fmtTs} axisLine={false} tickLine={false} minTickGap={40} />
+                  <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip labelFormatter={fmtTs} formatter={v => fmtNum(v)} />
                   <Line type="monotone" dataKey="qps" name="Queries/s" stroke={C.teal} dot={false} strokeWidth={2} />
                   <Line type="monotone" dataKey="tps" name="Transactions/s" stroke={C.indigo} dot={false} strokeWidth={2} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -859,13 +859,13 @@ export default function MySQLReportsPage() {
           <RTable
             headers={['Severity','Database','Query','Time (ms)','Rows Sent','Rows Examined','Last Seen','User@Host','']}
             rows={slowRows.slice(0, 25).map(q => [
-              statusBadge(q.severity), <span className="text-[10px] text-blue-700 font-bold">{q.db_name || '—'}</span>,
-              <span className="font-mono text-[10px] text-slate-500 max-w-[260px] truncate block">{(q.query_text || '').slice(0, 100)}</span>,
+              statusBadge(q.severity), <span className="text-micro text-blue-700 font-bold">{q.db_name || '—'}</span>,
+              <span className="font-mono text-micro text-slate-500 max-w-[260px] truncate block">{(q.query_text || '').slice(0, 100)}</span>,
               <span className="font-bold">{(Number(q.execution_time || 0) * 1000).toFixed(1)}</span>,
               fmtNum(q.rows_sent), fmtNum(q.rows_examined),
-              <span className="font-mono text-[10px] text-slate-400">{fmtTs(q.ts)}</span>,
-              <span className="font-mono text-[10px]">{q.user || '—'}@{q.host || '—'}</span>,
-              <button onClick={() => openSlowQueryDetail(q)} className="text-[10px] font-bold text-blue-600 hover:underline whitespace-nowrap">Open Query Detail</button>,
+              <span className="font-mono text-micro text-slate-400">{fmtTs(q.ts)}</span>,
+              <span className="font-mono text-micro">{q.user || '—'}@{q.host || '—'}</span>,
+              <button onClick={() => openSlowQueryDetail(q)} className="text-micro font-bold text-blue-600 hover:underline whitespace-nowrap">Open Query Detail</button>,
             ])}
           />
         )}
@@ -885,10 +885,10 @@ export default function MySQLReportsPage() {
           <RTable
             headers={['Timestamp','Severity','Error Code','Message']}
             rows={errRows.slice(0, 25).map(e => [
-              <span className="font-mono text-[10px] text-slate-400">{fmtTs(e.ts)}</span>,
+              <span className="font-mono text-micro text-slate-400">{fmtTs(e.ts)}</span>,
               statusBadge(e.severity),
-              <span className="font-mono text-[10px]">{e.error_code || '—'}</span>,
-              <span className="text-[11px] text-slate-700">{(e.message || '—').toString().slice(0,140)}</span>,
+              <span className="font-mono text-micro">{e.error_code || '—'}</span>,
+              <span className="text-meta text-slate-700">{(e.message || '—').toString().slice(0,140)}</span>,
             ])}
           />
         )}
@@ -922,7 +922,7 @@ export default function MySQLReportsPage() {
         )}
       </RSection>
 
-      <div className="no-print bg-slate-50 rounded-xl border border-slate-200 p-4 text-[11px] text-slate-500 flex items-start gap-2">
+      <div className="no-print bg-slate-50 rounded-xl border border-slate-200 p-4 text-meta text-slate-500 flex items-start gap-2">
         <Info size={14} className="mt-0.5 flex-shrink-0" />
         <span>Table Statistics, Backup Status, InnoDB Engine Status, Performance Schema Detail, User Statistics and Index Analysis reflect current MySQL state only — ActMon does not store historical data for these sections. Switch to <strong>Live</strong> to view them.</span>
       </div>

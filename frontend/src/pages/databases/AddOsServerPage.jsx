@@ -520,7 +520,7 @@ export default function AddOsServerPage() {
                 <span className="flex items-center gap-2">
                   <span className="text-lg leading-none" style={{ color: TONE_COLORS[opt.tone] }}>{opt.icon}</span>
                   <span className={cn(
-                    'truncate-safe text-[11px] font-bold tracking-wide uppercase',
+                    'truncate-safe text-meta font-bold tracking-wide uppercase',
                     on ? 'text-accent-text' : 'text-fg',
                   )}>
                     {opt.label}
@@ -580,14 +580,14 @@ export default function AddOsServerPage() {
               <span className="mb-1 flex items-center gap-2">
                 <span className="text-lg leading-none" style={{ color: TONE_COLORS[nt.tone] }}>{nt.icon}</span>
                 <span className={cn(
-                  'truncate-safe text-[11px] font-bold tracking-wide uppercase',
+                  'truncate-safe text-meta font-bold tracking-wide uppercase',
                   on ? 'text-accent-text' : 'text-fg',
                 )}>
                   {nt.label}
                 </span>
                 {on && <Icon name="check" size={12} className="ml-auto shrink-0 text-accent-text" strokeWidth={3} />}
               </span>
-              <span className="block text-[11px] leading-snug text-subtle">{nt.desc}</span>
+              <span className="block text-meta leading-snug text-subtle">{nt.desc}</span>
             </button>
           );
         })}
@@ -598,7 +598,7 @@ export default function AddOsServerPage() {
           <Field label="Cluster Name" required error={errors.cluster_name?.message}>
             {existingClusters.length > 0 && (
               <div className="mb-2.5">
-                <p className="mb-1.5 flex items-center gap-1 text-[10px] font-bold tracking-wide text-subtle uppercase">
+                <p className="mb-1.5 flex items-center gap-1 text-micro font-bold tracking-wide text-subtle uppercase">
                   <Icon name="history" size={11} /> Join existing cluster
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -923,12 +923,12 @@ function ChoiceCard({ selected, onClick, icon, tone, title, body }) {
 function Field({ label, required, error, className, children }) {
   return (
     <label className={cn('block', className)}>
-      <span className="mb-1 block text-[11px] font-bold tracking-wide text-muted uppercase">
+      <span className="mb-1 block text-meta font-bold tracking-wide text-muted uppercase">
         {label}
         {required && <span className="ml-0.5 text-danger">*</span>}
       </span>
       {children}
-      {error && <span className="mt-1 block text-[11px] font-medium text-danger">{error}</span>}
+      {error && <span className="mt-1 block text-meta font-medium text-danger">{error}</span>}
     </label>
   );
 }
@@ -938,7 +938,7 @@ function ToggleField({ label, description, checked, onChange }) {
     <div className="flex items-start justify-between gap-3 rounded-lg border border-border p-card">
       <span className="min-w-0">
         <span className="block text-[13px] font-semibold text-fg">{label}</span>
-        <span className="mt-0.5 block text-[11px] text-subtle">{description}</span>
+        <span className="mt-0.5 block text-meta text-subtle">{description}</span>
       </span>
       <Switch checked={!!checked} onChange={onChange} label={label} />
     </div>

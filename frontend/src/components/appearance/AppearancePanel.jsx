@@ -55,7 +55,7 @@ function ScaleField() {
               )}
             >
               {p}%
-              {p === 100 && <span className="block text-[9px] font-normal opacity-70">Recommended</span>}
+              {p === 100 && <span className="block text-micro font-normal opacity-70">Recommended</span>}
             </button>
           );
         })}
@@ -161,7 +161,7 @@ export function ThemeSection() {
                   <span className="h-1.5 w-2/3 rounded-full" style={{ background: fg, opacity: 0.25 }} />
                 </div>
               </div>
-              <div className="truncate border-t border-border px-2.5 py-1.5 text-[11.5px] font-semibold text-fg">
+              <div className="truncate border-t border-border px-2.5 py-1.5 text-meta font-semibold text-fg">
                 {t.label}
               </div>
             </button>
@@ -209,7 +209,7 @@ export function ColourSection() {
                     )}
                     <span className="pr-6">
                       <span className="block text-[12.5px] font-bold text-fg">{p.label}</span>
-                      <span className="mt-0.5 block text-[11px] text-subtle">{p.hint}</span>
+                      <span className="mt-0.5 block text-meta text-subtle">{p.hint}</span>
                     </span>
                     <span className="flex gap-1">
                       {(p.light || []).map((c, i) => (
@@ -261,7 +261,7 @@ export function ChartsSection() {
                     )}
                   >
                     <Icon name={CHART_STYLE_ICONS[c.id] || 'chart-bar'} size={17} />
-                    <span className="text-[11px] font-semibold">{c.label}</span>
+                    <span className="text-meta font-semibold">{c.label}</span>
                   </button>
                 );
               })}
@@ -316,7 +316,7 @@ export function TypographySection() {
                   >
                     Aa
                   </span>
-                  <span className="block truncate text-[10px] text-subtle">{f.label}</span>
+                  <span className="block truncate text-micro text-subtle">{f.label}</span>
                 </button>
               ))}
             </div>
@@ -485,7 +485,7 @@ export function PageHeaderSection() {
                         )}
                       >
                         <span className="block h-6" style={{ background: preview }} />
-                        <span className="block truncate px-2 py-1 text-[11px] font-semibold text-fg">{g.label}</span>
+                        <span className="block truncate px-2 py-1 text-meta font-semibold text-fg">{g.label}</span>
                       </button>
                     );
                   })}
@@ -556,7 +556,7 @@ export function PageHeaderSection() {
                   }}
                 />
                 <span className="relative block text-[13px] font-bold">Page title</span>
-                <span className="relative block text-[11px]" style={{ color: 'var(--header-fg-muted)' }}>
+                <span className="relative block text-meta" style={{ color: 'var(--header-fg-muted)' }}>
                   Preview of the header surface
                 </span>
               </div>
@@ -788,7 +788,7 @@ export function ConfigSection() {
           <p className="text-[12px] leading-relaxed text-muted">
             Appearance is stored per browser under
             {' '}
-            <code className="rounded-xs bg-surface px-1 py-px font-mono text-[11px]">actmon.appearance</code>.
+            <code className="rounded-xs bg-surface px-1 py-px font-mono text-meta">actmon.appearance</code>.
             Copy it to share a look, or paste one in to adopt it.
           </p>
           <div className="mt-3 flex gap-2">
@@ -813,7 +813,7 @@ export function ConfigSection() {
               Paste config
             </button>
           </div>
-          <p className="mt-3 text-[11px] text-subtle">
+          <p className="mt-3 text-meta text-subtle">
             Defaults: {DEFAULT_APPEARANCE.theme} theme, {DEFAULT_APPEARANCE.density} density,
             {' '}{DEFAULT_APPEARANCE.sidebarVariant} sidebar.
           </p>

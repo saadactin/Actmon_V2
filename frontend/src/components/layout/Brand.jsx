@@ -35,7 +35,7 @@ export default function Brand({ collapsed = false, className, tone = 'sidebar' }
           </span>
           <span
             className={cn(
-              'truncate-safe block text-[9px] font-semibold tracking-[0.09em] uppercase',
+              'truncate-safe block text-micro font-semibold tracking-[0.09em] uppercase',
               tone === 'sidebar' ? 'text-sidebar-section' : 'text-subtle',
             )}
           >

@@ -63,7 +63,7 @@ export function AiSection({ title, icon, children }) {
   if (!children) return null;
   return (
     <section>
-      <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-subtle uppercase">
+      <h4 className="mb-1.5 flex items-center gap-1.5 text-meta font-bold tracking-wide text-subtle uppercase">
         {icon && <Icon name={icon} size={12} />}
         {title}
       </h4>
@@ -101,7 +101,7 @@ export function AiReportBody({ report, compact = false, only }) {
           and it is the part a reader can verify. */}
       {show('checks_performed') && checks.length > 0 && (
         <section>
-          <h4 className="mb-1.5 text-[11px] font-bold tracking-wide text-subtle uppercase">
+          <h4 className="mb-1.5 text-meta font-bold tracking-wide text-subtle uppercase">
             What was checked
           </h4>
           <AiBullets items={checks} icon="check" />
@@ -123,7 +123,7 @@ export function AiReportBody({ report, compact = false, only }) {
 
       {show('problems_detected') && problems.length > 0 && (
         <section>
-          <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-warning-fg uppercase">
+          <h4 className="mb-1.5 flex items-center gap-1.5 text-meta font-bold tracking-wide text-warning-fg uppercase">
             <Icon name="alert" size={12} />
             Problems found
             <Badge tone="warning" size="xs">{problems.length}</Badge>
@@ -138,7 +138,7 @@ export function AiReportBody({ report, compact = false, only }) {
 
       {show('cost_optimization_suggestions') && savings.length > 0 && (
         <section>
-          <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-success-fg uppercase">
+          <h4 className="mb-1.5 flex items-center gap-1.5 text-meta font-bold tracking-wide text-success-fg uppercase">
             <Icon name="zap" size={12} />
             Cost savings
           </h4>
@@ -148,7 +148,7 @@ export function AiReportBody({ report, compact = false, only }) {
 
       {show('recommended_actions') && actions.length > 0 && (
         <section>
-          <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-accent-text uppercase">
+          <h4 className="mb-1.5 flex items-center gap-1.5 text-meta font-bold tracking-wide text-accent-text uppercase">
             <Icon name="wrench" size={12} />
             Recommended actions
           </h4>

@@ -619,7 +619,7 @@ function DiagTool({ id, kind, icon, color, title, desc, needsPort }) {
           <div className="mt-3">
             <div className="flex items-center gap-2 mb-1.5">
               <Badge tone={res.reachable ? 'success' : 'danger'} size="xs">{res.reachable ? 'Reachable' : 'Unreachable'}</Badge>
-              {res.source && <span className="text-[11px] text-subtle font-bold">via {res.source}</span>}
+              {res.source && <span className="text-meta text-subtle font-bold">via {res.source}</span>}
             </div>
             <pre className="bg-sunken text-fg border border-border rounded-control p-3.5 text-[12.5px] font-mono whitespace-pre-wrap break-all max-h-72 overflow-y-auto">{res.output}</pre>
           </div>
@@ -752,14 +752,14 @@ function NetworkView(p) {
         <SimpleTable headers={['Interface', 'Status', 'Type', 'Speed', 'MTU', 'MAC', 'IPv4', 'IPv6', 'Driver']}
           rows={ifaces.map((i, k) => [
             <span className="font-mono font-bold text-fg" key={`n${k}`}>{i.name}
-              {i.desc && i.desc !== i.name && <span className="block text-[11px] font-normal text-subtle truncate max-w-[240px]">{i.desc}</span>}</span>,
+              {i.desc && i.desc !== i.name && <span className="block text-meta font-normal text-subtle truncate max-w-[240px]">{i.desc}</span>}</span>,
             <Badge tone={netUp(i.status) ? 'success' : 'neutral'} size="xs">{i.status || '—'}</Badge>,
             <span className="text-[12px] text-muted whitespace-nowrap">{i.type || '—'}</span>,
             i.speed_mbps ? `${i.speed_mbps} Mbps` : '—',
             i.mtu || '—',
             <span className="font-mono text-[12px] text-muted whitespace-nowrap">{i.mac || '—'}</span>,
             <span className="font-mono text-[12px] text-fg">{(i.ipv4 || []).join(', ') || '—'}</span>,
-            <span className="font-mono text-[11px] text-subtle">{(i.ipv6 || []).join(', ') || '—'}</span>,
+            <span className="font-mono text-meta text-subtle">{(i.ipv6 || []).join(', ') || '—'}</span>,
             <span className="text-[12px] text-muted whitespace-nowrap">{i.driver || '—'}</span>,
           ])} empty="No interfaces" />
       </Section>
@@ -771,8 +771,8 @@ function NetworkView(p) {
     return (
       <Section title={view === 'realtime' ? 'Real-Time Traffic' : 'Bandwidth Utilization'} icon="activity" color={C.cyan} onBack={onBack} backLabel={backLabel}>
         <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="rounded-control bg-info-soft p-4 text-center"><p className="text-[11px] font-bold text-info-fg uppercase">Total Download</p><p className="text-[26px] font-black text-info-fg mt-1">{net.total_download_mbps} <span className="text-[14px]">Mbps</span></p></div>
-          <div className="rounded-control bg-accent-soft p-4 text-center"><p className="text-[11px] font-bold text-accent-text uppercase">Total Upload</p><p className="text-[26px] font-black text-accent-text mt-1">{net.total_upload_mbps} <span className="text-[14px]">Mbps</span></p></div>
+          <div className="rounded-control bg-info-soft p-4 text-center"><p className="text-meta font-bold text-info-fg uppercase">Total Download</p><p className="text-[26px] font-black text-info-fg mt-1">{net.total_download_mbps} <span className="text-[14px]">Mbps</span></p></div>
+          <div className="rounded-control bg-accent-soft p-4 text-center"><p className="text-meta font-bold text-accent-text uppercase">Total Upload</p><p className="text-[26px] font-black text-accent-text mt-1">{net.total_upload_mbps} <span className="text-[14px]">Mbps</span></p></div>
         </div>
         {ifaces.filter((i) => netUp(i.status)).map((i) => {
           const dl = i.download_mbps || 0, ul = i.upload_mbps || 0;
@@ -798,11 +798,11 @@ function NetworkView(p) {
           {CONN_STATE_ORDER.map((s) => (
             <div key={s} className="bg-sunken rounded-control p-2.5 text-center">
               <p className="text-[18px] font-black text-fg leading-none">{states[s] ?? 0}</p>
-              <p className="text-[10px] font-bold text-subtle mt-1">{s.replace(/_/g, ' ')}</p>
+              <p className="text-micro font-bold text-subtle mt-1">{s.replace(/_/g, ' ')}</p>
             </div>
           ))}
-          <div className="bg-sunken rounded-control p-2.5 text-center"><p className="text-[18px] font-black text-fg leading-none">{udp}</p><p className="text-[10px] font-bold text-subtle mt-1">UDP ENDPOINTS</p></div>
-          <div className="bg-sunken rounded-control p-2.5 text-center"><p className="text-[18px] font-black text-fg leading-none">{tcpTotal}</p><p className="text-[10px] font-bold text-subtle mt-1">TCP TOTAL</p></div>
+          <div className="bg-sunken rounded-control p-2.5 text-center"><p className="text-[18px] font-black text-fg leading-none">{udp}</p><p className="text-micro font-bold text-subtle mt-1">UDP ENDPOINTS</p></div>
+          <div className="bg-sunken rounded-control p-2.5 text-center"><p className="text-[18px] font-black text-fg leading-none">{tcpTotal}</p><p className="text-micro font-bold text-subtle mt-1">TCP TOTAL</p></div>
         </div>
         {(data.connections?.peers || []).length > 0 && (
           <>
@@ -876,7 +876,7 @@ function NetworkView(p) {
       <Section title="Wi-Fi Information" icon="wifi" color={C.amber} onBack={onBack} backLabel={backLabel}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-[14px]">
           {[['SSID', wifi.ssid], ['BSSID', wifi.bssid], ['Signal', wifi.signal], ['Channel', wifi.channel], ['Band', wifi.band], ['Radio', wifi.radio], ['Rx rate', wifi.rx_rate], ['Tx rate', wifi.tx_rate], ['Authentication', wifi.auth], ['Cipher', wifi.cipher]].filter(([, v]) => v).map(([k, v]) => (
-            <div key={k}><span className="text-[11px] font-bold text-subtle uppercase block">{k}</span><span className="font-semibold text-fg">{v}</span></div>
+            <div key={k}><span className="text-meta font-bold text-subtle uppercase block">{k}</span><span className="font-semibold text-fg">{v}</span></div>
           ))}
         </div>
       </Section>
@@ -954,7 +954,7 @@ function FieldGrid({ items }) {
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3">
       {items.map(([k, v]) => (
         <div key={k} className="flex flex-col border-b border-border pb-2">
-          <span className="text-[11px] font-bold text-subtle uppercase tracking-wide">{k}</span>
+          <span className="text-meta font-bold text-subtle uppercase tracking-wide">{k}</span>
           <span className="text-[14px] font-semibold text-fg break-all mt-0.5">
             {v == null || v === '' ? <span className="text-subtle font-normal">—</span> : v}
           </span>
@@ -1152,7 +1152,7 @@ function IpConfigMenu({ data, id, navigate, isWin, initialView, onBack, backLabe
                 <span className="text-[12px] font-mono text-subtle flex-1 truncate">{target || ''}</span>
                 {r?.loading ? <Icon name="spinner" size={15} className="animate-spin text-accent-text" />
                   : r ? <Badge tone={r.ok ? 'success' : 'danger'} size="xs">{r.ok ? 'PASS' : 'FAIL'}</Badge>
-                    : <span className="text-[11px] text-subtle font-bold">not run</span>}
+                    : <span className="text-meta text-subtle font-bold">not run</span>}
                 <Button size="sm" variant="secondary" onClick={fn}>Test</Button>
               </div>
             );
@@ -1571,8 +1571,8 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
             <div className="flex items-center justify-between mb-1">
               <p className="text-[12px] font-bold text-subtle uppercase">Files</p>
               {probe && (
-                probing ? <span className="text-[11px] text-subtle flex items-center gap-1"><Icon name="spinner" size={11} className="animate-spin" /> checking…</span>
-                  : existCount > 0 ? <button onClick={() => setShowAllLoc((v) => !v)} className="text-[11px] font-bold text-accent-text hover:underline">{showAllLoc ? `Present only (${existCount})` : `All locations (${FILES.length})`}</button>
+                probing ? <span className="text-meta text-subtle flex items-center gap-1"><Icon name="spinner" size={11} className="animate-spin" /> checking…</span>
+                  : existCount > 0 ? <button onClick={() => setShowAllLoc((v) => !v)} className="text-meta font-bold text-accent-text hover:underline">{showAllLoc ? `Present only (${existCount})` : `All locations (${FILES.length})`}</button>
                     : null
               )}
             </div>
@@ -1643,7 +1643,7 @@ function OsFilesEditor({ id, isWin, files, note, probe, title = 'Operating Syste
                             className="w-full flex items-center gap-2.5 px-3.5 py-2 hover:bg-sunken text-left transition-colors">
                             <Icon name={isDir ? 'folder' : 'report'} size={15} className={isDir ? 'text-warning-fg flex-shrink-0' : 'text-accent-text flex-shrink-0'} />
                             <span className="text-[13px] font-semibold text-fg truncate flex-1">{e.name}</span>
-                            {!isDir && e.size != null && <span className="text-[11px] text-subtle flex-shrink-0">{fmtBytes(e.size)}</span>}
+                            {!isDir && e.size != null && <span className="text-meta text-subtle flex-shrink-0">{fmtBytes(e.size)}</span>}
                             <Icon name="chevron-right" size={14} className="text-subtle flex-shrink-0" />
                           </button>
                         );
@@ -1726,7 +1726,7 @@ function OsRegistryPanel({ id, keys, title = 'Operating System — Registry', ba
                 className={cn('w-full text-left px-3 py-2.5 rounded-control border transition-all',
                   sel?.key === k.key ? 'border-accent-border bg-accent-soft' : 'border-border hover:border-strong hover:bg-sunken')}>
                 <span className="block text-[14px] font-bold text-fg">{k.label}</span>
-                <span className="block text-[11px] font-mono text-subtle truncate">{k.key}</span>
+                <span className="block text-meta font-mono text-subtle truncate">{k.key}</span>
               </button>
             ))}
             <div className="flex items-center gap-1.5 pt-2 mt-1 border-t border-border">
@@ -1890,7 +1890,7 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${c.color} 16%, transparent)`, color: c.color }}><Icon name={c.icon} size={18} /></span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-bold text-fg leading-tight">{c.title.replace(' Configuration', '')}</p>
-                  <p className="text-[11px] text-subtle mt-0.5">{c.goto ? `Open ${c.goto}` : 'Configuration'}</p>
+                  <p className="text-meta text-subtle mt-0.5">{c.goto ? `Open ${c.goto}` : 'Configuration'}</p>
                 </div>
                 <Icon name="chevron-right" size={15} className="text-subtle flex-shrink-0 mt-1" />
               </button>
@@ -1902,7 +1902,7 @@ function ConfigFilesMenu({ data, id, navigate, setTab }) {
               <button key={c.key} onClick={() => open(c)} className="w-full flex items-center gap-4 px-5 py-3 hover:bg-sunken text-left transition-colors">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${c.color} 16%, transparent)`, color: c.color }}><Icon name={c.icon} size={18} /></span>
                 <div className="flex-1 min-w-0"><p className="text-[14px] font-bold text-fg">{c.title}</p></div>
-                {c.goto && <span className="text-[11px] text-subtle font-bold flex-shrink-0">→ {c.goto}</span>}
+                {c.goto && <span className="text-meta text-subtle font-bold flex-shrink-0">→ {c.goto}</span>}
                 <Icon name="chevron-right" size={16} className="text-subtle flex-shrink-0" />
               </button>
             ))}
@@ -2179,7 +2179,7 @@ function TrendTile({ cardId, title, data, hasData, subtitle, loading, color, emp
 // from the same collector data the full Network tab already shows.
 function NetDetailRow({ label, value }) {
   return (
-    <div className="flex items-center justify-between gap-2 py-1.5 text-[11px]">
+    <div className="flex items-center justify-between gap-2 py-1.5 text-meta">
       <span className="font-bold text-subtle uppercase tracking-wide">{label}</span>
       <span className="truncate font-mono text-fg" title={value || undefined}>{value || '—'}</span>
     </div>
@@ -2193,7 +2193,7 @@ function DashTile({ title, sub, children, className = '', onClick }) {
       className={cn('card flex flex-col', onClick && 'cursor-pointer hover:border-strong hover:bg-raised transition-colors', className)}>
       <div className="px-4 pt-3.5 pb-2">
         <p className="text-[12px] font-bold text-muted leading-tight uppercase tracking-wide">{title}</p>
-        {sub && <p className="text-[11px] text-subtle mt-0.5">{sub}</p>}
+        {sub && <p className="text-meta text-subtle mt-0.5">{sub}</p>}
       </div>
       <div className="px-4 pb-4 flex-1 min-h-0">{children}</div>
     </div>
@@ -2245,10 +2245,10 @@ function ProcScatter({ points }) {
     <ResponsiveContainer width="100%" height={230}>
       <ScatterChart margin={{ top: 10, right: 12, bottom: 22, left: -8 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
-        <XAxis type="number" dataKey="x" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--chart-axis)' }}
+        <XAxis type="number" dataKey="x" domain={[0, 100]} tick={{ fontSize: 11, fill: 'var(--chart-axis)' }}
           tickLine={false} axisLine={{ stroke: 'var(--border)' }}
           label={{ value: 'CPU %', position: 'insideBottom', offset: -10, fontSize: 11, fill: 'var(--chart-axis)' }} />
-        <YAxis type="number" dataKey="y" domain={[0, 100]} width={34} tick={{ fontSize: 10, fill: 'var(--chart-axis)' }}
+        <YAxis type="number" dataKey="y" domain={[0, 100]} width={34} tick={{ fontSize: 11, fill: 'var(--chart-axis)' }}
           tickLine={false} axisLine={{ stroke: 'var(--border)' }}
           label={{ value: 'Mem %', angle: -90, position: 'insideLeft', offset: 18, fontSize: 11, fill: 'var(--chart-axis)' }} />
         <ZAxis type="number" dataKey="z" range={[60, 180]} />
@@ -2477,7 +2477,7 @@ export default function InfraHostDetail() {
                       )}
                       <Select value={perfGranularity} onChange={setPerfGranularity} options={PERF_GRANULARITY_OPTIONS} size="sm" width="auto" aria-label="Granularity" />
                       {!isAgentHost && (
-                        <span className="text-[11px] text-subtle">SSH-polled every 3 min — finer granularities will look sparse</span>
+                        <span className="text-meta text-subtle">SSH-polled every 3 min — finer granularities will look sparse</span>
                       )}
                     </div>
                   }
@@ -2532,7 +2532,7 @@ export default function InfraHostDetail() {
                       <div className="grid grid-cols-3 gap-2">
                         {[['Total', mem.total_mb], ['Used', mem.used_mb], ['Free', mem.available_mb ?? mem.free_mb]].map(([k, v]) => (
                           <div key={k} className="bg-sunken rounded-control p-2.5 text-center">
-                            <p className="text-[10px] font-bold text-subtle uppercase">{k}</p>
+                            <p className="text-micro font-bold text-subtle uppercase">{k}</p>
                             <p className="text-[14px] font-black text-fg mt-0.5">{v != null ? fmtMB(v) : '—'}</p>
                           </div>
                         ))}
@@ -2547,8 +2547,8 @@ export default function InfraHostDetail() {
                           ['Devices', data.neighbors?.length ?? 0, 'seen']].map(([k, v, s]) => (
                           <button key={k} onClick={() => setTab('Network')} className="hover:opacity-70">
                             <p className="text-[20px] font-black text-fg leading-none">{v}</p>
-                            <p className="text-[10px] font-bold text-muted mt-1">{k}</p>
-                            <p className="text-[9px] text-subtle">{s}</p>
+                            <p className="text-micro font-bold text-muted mt-1">{k}</p>
+                            <p className="text-micro text-subtle">{s}</p>
                           </button>
                         ))}
                       </div>
@@ -2577,7 +2577,7 @@ export default function InfraHostDetail() {
                       <span className="block truncate-safe text-[13px] font-bold text-fg">
                         {data.system?.os || host.os_type || 'Host details'}
                       </span>
-                      <span className="mt-0.5 block truncate-safe text-[11px] text-subtle">
+                      <span className="mt-0.5 block truncate-safe text-meta text-subtle">
                         {[data.system?.hostname, host.ip_address, data.system?.hardware_vendor && data.system?.hardware_model
                           ? `${data.system.hardware_vendor} ${data.system.hardware_model}` : null]
                           .filter(Boolean).join(' · ')}

@@ -134,7 +134,7 @@ export default function Table({
                        keeps its existing small-uppercase look untouched. */
                     darkHeader
                       ? cn('py-2', DARK_HEADER_TEXT)
-                      : cn('py-3 text-[0.625rem] font-bold tracking-wide uppercase text-subtle',
+                      : cn('py-3 text-micro font-bold tracking-wide uppercase text-subtle',
                         c.align === 'center' ? 'text-center' : c.align === 'right' ? 'text-right' : 'text-left'),
                     i === 0 && !selectable ? 'pl-card' : (darkHeader ? 'px-4' : 'px-2'),
                     i === columns.length - 1 && 'pr-card',

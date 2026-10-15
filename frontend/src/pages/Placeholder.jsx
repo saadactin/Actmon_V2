@@ -47,7 +47,7 @@ export default function Placeholder({ title, icon, description }) {
             The shell, navigation and theming are ready — pages get built on top of them.
           </p>
         </div>
-        <code className="rounded-sm bg-sunken px-2 py-1 font-mono text-[11px] text-subtle">{pathname}</code>
+        <code className="rounded-sm bg-sunken px-2 py-1 font-mono text-meta text-subtle">{pathname}</code>
       </div>
     </>
   );

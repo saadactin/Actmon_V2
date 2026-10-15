@@ -135,7 +135,7 @@ export default function AiAssistantPage() {
                 />
               )}
             </div>
-            <p className="mx-auto mt-1.5 w-full max-w-2xl px-1 text-[10px] text-subtle">
+            <p className="mx-auto mt-1.5 w-full max-w-2xl px-1 text-micro text-subtle">
               ActMon AI can be wrong about specifics — verify before acting on critical numbers.
             </p>
           </div>

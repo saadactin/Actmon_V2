@@ -16,7 +16,7 @@ export default function Badge({ tone = 'neutral', size = 'sm', className, style,
     <span
       className={cn(
         'inline-flex items-center gap-1 rounded-full font-semibold whitespace-nowrap',
-        size === 'xs' ? 'px-1.5 py-0.5 text-[0.625rem]' : 'px-2 py-0.5 text-[0.6875rem]',
+        size === 'xs' ? 'px-1.5 py-0.5 text-micro' : 'px-2 py-0.5 text-meta',
         TONES[tone] || TONES.neutral,
         className,
       )}

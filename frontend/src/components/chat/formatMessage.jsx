@@ -18,7 +18,7 @@ const escapeHtml = (s) =>
 
 function inline(line) {
   return escapeHtml(line)
-    .replace(/`([^`]+)`/g, '<code class="rounded-xs bg-sunken px-1 py-0.5 font-mono text-[11px]">$1</code>')
+    .replace(/`([^`]+)`/g, '<code class="rounded-xs bg-sunken px-1 py-0.5 font-mono text-meta">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>');
 }
@@ -94,7 +94,7 @@ function Prose({ text }) {
       flushList();
       const heading = line.replace(/^#{1,4}\s+/, '');
       nodes.push(
-        <p key={nodes.length} className="mt-1 text-[11px] font-bold tracking-wide text-subtle uppercase"
+        <p key={nodes.length} className="mt-1 text-meta font-bold tracking-wide text-subtle uppercase"
           dangerouslySetInnerHTML={{ __html: inline(heading) }} />,
       );
       i += 1; continue;
@@ -172,11 +172,11 @@ function CodeBlock({ lang, code }) {
   return (
     <div className="overflow-hidden rounded-control border border-border">
       <div className="flex items-center justify-between border-b border-border bg-sunken px-2.5 py-1">
-        <span className="font-mono text-[10px] font-bold tracking-wide text-subtle uppercase">{lang || 'text'}</span>
+        <span className="font-mono text-micro font-bold tracking-wide text-subtle uppercase">{lang || 'text'}</span>
         <button
           type="button"
           onClick={copy}
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold text-subtle hover:bg-surface hover:text-fg"
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-micro font-semibold text-subtle hover:bg-surface hover:text-fg"
         >
           <Icon name={copied ? 'check' : 'copy'} size={11} />
           {copied ? 'Copied' : 'Copy'}

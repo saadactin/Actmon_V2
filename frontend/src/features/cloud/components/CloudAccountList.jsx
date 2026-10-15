@@ -72,8 +72,6 @@ const COLUMNS = [
   { key: 'srNo', label: 'Sr. No.', align: 'center', width: 64 },
   { key: 'account', label: 'Account', width: 280 },
   { key: 'environment', label: 'Environment', align: 'center' },
-  // Not always a region: Azure accounts may carry a tenant GUID here instead.
-  { key: 'region', label: 'Region / Tenant', align: 'center' },
   // "Scan Status", not bare "Status" — this column reports whether OUR last
   // discovery scan could reach the account, not the live state of its
   // resources (see STATUS_META above), and the column header is the first
@@ -238,14 +236,6 @@ export const CloudAccountList = ({
           </div>
         ),
         environment: <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{acc.environment || '—'}</span>,
-        region: (() => {
-          const loc = accountLocation(acc);
-          return (
-            <span className={CELL_TEXT} style={CELL_TEXT_STYLE} title={loc.title || undefined}>
-              {loc.text}
-            </span>
-          );
-        })(),
         // Fixed 178×48 pill, same dimensions/typography as AgentsPage.jsx's
         // own Status column (Figma spec), just wearing this account's tone.
         status: (

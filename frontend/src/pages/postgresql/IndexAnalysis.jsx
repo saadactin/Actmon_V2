@@ -133,7 +133,7 @@ export default function IndexAnalysis() {
           <div className="bg-white rounded-2xl border border-slate-200 p-4 col-span-2 md:col-span-1 flex items-center gap-4">
             <ScoreRing score={summary.health_score ?? 100} />
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase">Index Health</p>
+              <p className="text-micro font-bold text-slate-400 uppercase">Index Health</p>
               <p className="text-sm font-semibold text-slate-600 mt-0.5">
                 {(summary.health_score ?? 100) >= 80 ? 'Good' : (summary.health_score ?? 100) >= 60 ? 'Needs Attention' : 'Critical'}
               </p>
@@ -146,7 +146,7 @@ export default function IndexAnalysis() {
             { label: 'Schemas',         val: summary.schema_count,      color: 'text-indigo-600' },
           ].map(({ label, val, color }) => (
             <div key={label} className="bg-white rounded-2xl border border-slate-200 p-4">
-              <p className="text-[10px] font-bold text-slate-400 uppercase">{label}</p>
+              <p className="text-micro font-bold text-slate-400 uppercase">{label}</p>
               <p className={`text-2xl font-black mt-1 ${color}`}>{val ?? '—'}</p>
             </div>
           ))}
@@ -161,7 +161,7 @@ export default function IndexAnalysis() {
                   tab === t.id ? 'bg-slate-900 text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}>
                 {t.label}
-                <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black ${tab === t.id ? 'bg-white/20 text-white' : t.color}`}>
+                <span className={`px-1.5 py-0.5 rounded-full text-micro font-black ${tab === t.id ? 'bg-white/20 text-white' : t.color}`}>
                   {t.count}
                 </span>
               </button>
@@ -225,12 +225,12 @@ function UnusedTab({ unused, q, err }) {
         <thead className="bg-white border-b border-slate-100">
           <tr>
             <th className="w-8 px-3 py-2" />
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Schema</th>
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Table</th>
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Index</th>
-            <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Scans (idx_scan)</th>
-            <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Size</th>
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Action</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Schema</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Table</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Index</th>
+            <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Scans (idx_scan)</th>
+            <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Size</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -262,7 +262,7 @@ function UnusedTab({ unused, q, err }) {
                 <td className="px-3 py-2 text-right font-mono text-slate-500">{(+u.idx_scan || 0).toLocaleString()}</td>
                 <td className="px-3 py-2 text-right font-mono text-slate-500">{u.index_size || u.size || '—'}</td>
                 <td className="px-3 py-2">
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-50 text-red-600 border border-red-100">
+                  <span className="px-2 py-0.5 rounded-full text-micro font-bold bg-red-50 text-red-600 border border-red-100">
                     <Trash2 size={9} className="inline mr-1" />Drop
                   </span>
                 </td>
@@ -299,7 +299,7 @@ function AllIndexesTab({ indexes, q, err }) {
       <div className="px-4 py-2 flex gap-2 flex-wrap border-b border-slate-100">
         {schemas.map(s => (
           <button key={s} onClick={() => setSchemaFilter(s)}
-            className={`px-2 h-6 rounded-md text-[10px] font-bold transition-all ${
+            className={`px-2 h-6 rounded-md text-micro font-bold transition-all ${
               schemaFilter === s ? 'bg-slate-900 text-white' : 'border border-slate-200 text-slate-500 hover:bg-slate-50'
             }`}>{s}</button>
         ))}
@@ -310,12 +310,12 @@ function AllIndexesTab({ indexes, q, err }) {
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-white border-b border-slate-100 z-10">
             <tr>
-              <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Schema</th>
-              <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Table</th>
-              <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Index</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">idx_scan</th>
-              <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Definition</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Size</th>
+              <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Schema</th>
+              <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Table</th>
+              <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Index</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">idx_scan</th>
+              <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Definition</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Size</th>
             </tr>
           </thead>
           <tbody>
@@ -331,7 +331,7 @@ function AllIndexesTab({ indexes, q, err }) {
                 <td className="px-3 py-1.5 text-right font-mono text-slate-500">
                   {(+idx.idx_scan || 0).toLocaleString()}
                 </td>
-                <td className="px-3 py-1.5 text-slate-400 font-mono text-[10px] max-w-xs truncate" title={idx.index_def || idx.indexdef}>
+                <td className="px-3 py-1.5 text-slate-400 font-mono text-micro max-w-xs truncate" title={idx.index_def || idx.indexdef}>
                   {idx.index_def || idx.indexdef || '—'}
                 </td>
                 <td className="px-3 py-1.5 text-right font-mono text-slate-500">
@@ -368,12 +368,12 @@ function BloatedTab({ bloated, q, err }) {
         <thead className="bg-white border-b border-slate-100">
           <tr>
             <th className="w-8 px-3 py-2" />
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Schema</th>
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Table</th>
-            <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Live Tuples</th>
-            <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Dead Tuples</th>
-            <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Dead %</th>
-            <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Last Vacuum</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Schema</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Table</th>
+            <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Live Tuples</th>
+            <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Dead Tuples</th>
+            <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Dead %</th>
+            <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Last Vacuum</th>
           </tr>
         </thead>
         <tbody>
@@ -412,7 +412,7 @@ function BloatedTab({ bloated, q, err }) {
                     {deadPct.toFixed(1)}%
                   </span>
                 </td>
-                <td className="px-3 py-2 text-slate-400 whitespace-nowrap font-mono text-[10px]">
+                <td className="px-3 py-2 text-slate-400 whitespace-nowrap font-mono text-micro">
                   {t.last_vacuum || t.last_autovacuum || '—'}
                 </td>
               </ExpandRow>
@@ -449,13 +449,13 @@ function PgssTab({ queries, q, err }) {
           <thead className="sticky top-0 bg-white border-b border-slate-100 z-10">
             <tr>
               <th className="w-8 px-3 py-2" />
-              <th className="px-3 py-2 text-left text-[11px] font-bold text-slate-400">Query</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Calls</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Mean (ms)</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Max (ms)</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Total (ms)</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Rows</th>
-              <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-400">Blks Read</th>
+              <th className="px-3 py-2 text-left text-meta font-bold text-slate-400">Query</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Calls</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Mean (ms)</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Max (ms)</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Total (ms)</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Rows</th>
+              <th className="px-3 py-2 text-right text-meta font-bold text-slate-400">Blks Read</th>
             </tr>
           </thead>
           <tbody>
@@ -484,7 +484,7 @@ function PgssTab({ queries, q, err }) {
                           { label: 'Blks Written',val: (+qr.shared_blks_written || 0).toLocaleString() },
                         ].map(({ label, val, warn }) => (
                           <div key={label} className={`rounded-lg border p-2 ${warn ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
-                            <p className={`text-[10px] uppercase font-bold mb-0.5 ${warn ? 'text-amber-600' : 'text-slate-400'}`}>{label}</p>
+                            <p className={`text-micro uppercase font-bold mb-0.5 ${warn ? 'text-amber-600' : 'text-slate-400'}`}>{label}</p>
                             <p className={`font-bold ${warn ? 'text-amber-700' : 'text-slate-700'}`}>{val}</p>
                           </div>
                         ))}

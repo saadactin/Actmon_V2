@@ -87,7 +87,7 @@ export default memo(function ChartCard({
               <span className="shrink-0 text-[13px] font-normal text-subtle">{titleNote}</span>
             )}
           </h2>
-          {subtitle && <p className="truncate-safe mt-0.5 text-[11px] text-subtle">{subtitle}</p>}
+          {subtitle && <p className="truncate-safe mt-0.5 text-meta text-subtle">{subtitle}</p>}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
@@ -105,7 +105,7 @@ export default memo(function ChartCard({
               <Popover open={pickerOpen} onClose={() => setPickerOpen(false)} width={232}>
                 {options.length > 1 && (
                   <>
-                    <div className="border-b border-border px-3 py-2 text-[11px] font-bold tracking-wide text-subtle uppercase">
+                    <div className="border-b border-border px-3 py-2 text-meta font-bold tracking-wide text-subtle uppercase">
                       Chart type
                     </div>
                     <div className="p-1.5">
@@ -130,12 +130,12 @@ export default memo(function ChartCard({
                               {/* the recommended form stays labelled, so choosing
                                   another one is an informed trade-off */}
                               {opt.recommended && (
-                                <span className="shrink-0 rounded-full bg-success-soft px-1.5 text-[9px] font-bold text-success-fg">
+                                <span className="shrink-0 rounded-full bg-success-soft px-1.5 text-micro font-bold text-success-fg">
                                   BEST
                                 </span>
                               )}
                             </span>
-                            {opt.hint && <span className="mt-0.5 block text-[10px] leading-snug text-subtle">{opt.hint}</span>}
+                            {opt.hint && <span className="mt-0.5 block text-micro leading-snug text-subtle">{opt.hint}</span>}
                           </span>
                           {!asTable && opt.id === kind && <Icon name="check" size={13} className="mt-0.5 shrink-0 text-accent-text" />}
                         </button>
@@ -159,7 +159,7 @@ export default memo(function ChartCard({
                       <Icon name="table" size={15} className={cn('mt-0.5 shrink-0', asTable ? 'text-accent-text' : 'text-subtle')} />
                       <span className="min-w-0 flex-1">
                         <span className="truncate text-[12px] font-semibold text-fg">Data table</span>
-                        <span className="mt-0.5 block text-[10px] leading-snug text-subtle">Read the same numbers as text</span>
+                        <span className="mt-0.5 block text-micro leading-snug text-subtle">Read the same numbers as text</span>
                       </span>
                       {asTable && <Icon name="check" size={13} className="mt-0.5 shrink-0 text-accent-text" />}
                     </button>
@@ -220,7 +220,7 @@ function DataTable({ columns, rows }) {
                 key={c.key}
                 scope="col"
                 className={cn(
-                  'px-1.5 py-1.5 text-[10px] font-bold tracking-wide text-subtle uppercase',
+                  'px-1.5 py-1.5 text-micro font-bold tracking-wide text-subtle uppercase',
                   c.align === 'right' ? 'text-right' : 'text-left',
                 )}
               >

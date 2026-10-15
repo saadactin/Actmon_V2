@@ -58,7 +58,7 @@ export default function BarList({
               )}
             >
               <span
-                className="truncate-safe shrink-0 text-[11px] font-medium text-muted"
+                className="truncate-safe shrink-0 text-meta font-medium text-muted"
                 style={{ width: labelWidth }}
                 title={item.label}
               >
@@ -88,7 +88,7 @@ export default function BarList({
               </span>
 
               {!showAxis && (
-                <span className="w-14 shrink-0 text-right text-[11px] font-bold text-fg tabular-nums">
+                <span className="w-14 shrink-0 text-right text-meta font-bold text-fg tabular-nums">
                   {format(item.value)}{unit}
                 </span>
               )}
@@ -128,7 +128,7 @@ export default function BarList({
             {ticks.map((t) => (
               <span
                 key={t}
-                className="absolute -translate-x-1/2 text-[11px] text-subtle tabular-nums"
+                className="absolute -translate-x-1/2 text-meta text-subtle tabular-nums"
                 style={{ left: `${(t / ceiling) * 100}%` }}
               >
                 {format(t)}{unit}

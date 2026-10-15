@@ -3,6 +3,7 @@ PostgreSQL Monitoring Service — all business logic for monitoring endpoints.
 Route file: app/routes/postgres/postgres_monitoring_routes.py
 """
 
+from app.services.common.groq_config import groq_params
 import csv, io, json, logging, os, re
 from typing import Optional, List, Any
 
@@ -3112,10 +3113,9 @@ Return this exact JSON structure:
 }}"""
 
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=3000,
+            **groq_params(3000),
         )
 
         raw = response.choices[0].message.content.strip()
@@ -3622,12 +3622,11 @@ Rules:
     try:
         client = Groq(api_key=api_key)
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user",   "content": error_context},
             ],
-            max_tokens=1800,
+            **groq_params(1800),
             temperature=0.25,
             response_format={"type": "json_object"},
         )

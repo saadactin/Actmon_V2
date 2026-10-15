@@ -177,7 +177,7 @@ export default function MSSQLErrorLogs() {
                     onClick={() => setBand(k)}
                     aria-pressed={band === k}
                     className={cn(
-                      'h-7 rounded-control px-2 text-[11px] font-bold transition-colors',
+                      'h-7 rounded-control px-2 text-meta font-bold transition-colors',
                       band === k ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg',
                     )}
                   >
@@ -212,7 +212,7 @@ export default function MSSQLErrorLogs() {
                     onClick: () => setSelected(l),
                     cells: {
                       ts: (
-                        <span className="font-mono text-[11px] whitespace-nowrap text-muted">
+                        <span className="font-mono text-meta whitespace-nowrap text-muted">
                           {l.logged ? String(l.logged).slice(0, 19) : null}
                         </span>
                       ),
@@ -223,14 +223,14 @@ export default function MSSQLErrorLogs() {
                         </Badge>
                       ),
                       source: (
-                        <span className="truncate-safe block max-w-[120px] text-[11px] text-muted">
+                        <span className="truncate-safe block max-w-[120px] text-meta text-muted">
                           {l.process_info}
                         </span>
                       ),
                       msg: (
                         <span className="flex items-start gap-2">
                           <span className="min-w-0 flex-1 text-[12px] break-words text-fg">{l.message}</span>
-                          <span className="flex shrink-0 items-center gap-1 text-[10px] font-bold whitespace-nowrap text-accent-text opacity-0 transition-opacity group-hover:opacity-100">
+                          <span className="flex shrink-0 items-center gap-1 text-micro font-bold whitespace-nowrap text-accent-text opacity-0 transition-opacity group-hover:opacity-100">
                             Analyse <Icon name="chevron-right" size={11} />
                           </span>
                         </span>
@@ -381,7 +381,7 @@ function ErrorAnalysisDrawer({ connId, row, onClose }) {
                       key: `hit-${i}`,
                       cells: {
                         ts: (
-                          <span className="font-mono text-[11px] whitespace-nowrap text-muted">
+                          <span className="font-mono text-meta whitespace-nowrap text-muted">
                             {String(h.logged || '').slice(0, 19)}
                           </span>
                         ),
@@ -456,7 +456,7 @@ function RelevanceRow({ ok, icon, label, note }) {
         <Icon name={icon} size={12} />
         {label}
       </p>
-      <p className="mt-0.5 text-[11px] text-muted">{note}</p>
+      <p className="mt-0.5 text-meta text-muted">{note}</p>
     </div>
   );
 }
@@ -483,7 +483,7 @@ function CommandStep({ step, onRun, busy, canHeal }) {
         </Badge>
         <p className="min-w-0 flex-1 text-[12px] font-bold text-fg">{step.title}</p>
       </div>
-      <p className="mt-1 text-[11px] text-muted">{step.why}</p>
+      <p className="mt-1 text-meta text-muted">{step.why}</p>
       <SqlBlock sql={step.sql} className="mt-2" />
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button
@@ -497,12 +497,12 @@ function CommandStep({ step, onRun, busy, canHeal }) {
         </Button>
         <CopyButton text={step.sql} variant="ghost" />
         {blocked && (
-          <span className="text-[11px] font-semibold text-warning-fg">
+          <span className="text-meta font-semibold text-warning-fg">
             needs a higher server role
           </span>
         )}
         {hasPlaceholder && !blocked && (
-          <span className="text-[11px] text-subtle">fill in the &lt;placeholder&gt; first</span>
+          <span className="text-meta text-subtle">fill in the &lt;placeholder&gt; first</span>
         )}
       </div>
     </div>
@@ -532,7 +532,7 @@ function CommandOutput({ entries, onClear }) {
           {entries.map((e, i) => (
             <div key={i}>
               {e.kind === 'cmd' ? (
-                <p className="flex items-baseline gap-2 font-mono text-[11px]">
+                <p className="flex items-baseline gap-2 font-mono text-meta">
                   <span className="shrink-0 text-subtle">{e.at}</span>
                   <span className="text-accent-text">&gt;</span>
                   <span className="min-w-0 break-all text-fg">{e.sql}</span>
@@ -564,7 +564,7 @@ function CommandResult({ res }) {
 
   return (
     <div className="rounded-card border border-border bg-sunken p-2.5">
-      <p className="flex flex-wrap items-center gap-2 text-[11px]">
+      <p className="flex flex-wrap items-center gap-2 text-meta">
         <Badge tone="success" size="xs"><Icon name="check" size={9} />OK</Badge>
         <span className="text-muted">{res.message}</span>
         {res.duration_ms != null && (
@@ -573,7 +573,7 @@ function CommandResult({ res }) {
       </p>
       {rows.length > 0 && (
         <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-[11px]">
+          <table className="w-full text-meta">
             <thead>
               <tr className="border-b border-border">
                 {columns.map((c) => (
@@ -594,7 +594,7 @@ function CommandResult({ res }) {
             </tbody>
           </table>
           {rows.length > 50 && (
-            <p className="mt-1 text-[10px] text-subtle">
+            <p className="mt-1 text-micro text-subtle">
               Showing the first 50 of {rows.length} returned rows.
             </p>
           )}

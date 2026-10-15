@@ -719,11 +719,11 @@ export default function CosmosDBDashboard() {
                 value={fmtEpochSeconds(docStatsQ.data?.data?.oldest_document?._ts) || '—'}
               />
               <div className="rounded-card bg-sunken px-3 py-2.5">
-                <p className="text-[10px] font-bold tracking-wide text-subtle uppercase">Exact count</p>
+                <p className="text-micro font-bold tracking-wide text-subtle uppercase">Exact count</p>
                 {exactCount?.value != null ? (
                   <p className="mt-0.5 text-[16px] font-bold text-fg">{fmtNumber(exactCount.value)}</p>
                 ) : exactCount?.error ? (
-                  <p className="mt-0.5 text-[11px] leading-snug text-danger-fg">{exactCount.error}</p>
+                  <p className="mt-0.5 text-meta leading-snug text-danger-fg">{exactCount.error}</p>
                 ) : (
                   <Button
                     variant="secondary"
@@ -737,7 +737,7 @@ export default function CosmosDBDashboard() {
                     Count now
                   </Button>
                 )}
-                <p className="mt-1 text-[10px] leading-snug text-subtle">
+                <p className="mt-1 text-micro leading-snug text-subtle">
                   A cross-partition COUNT with a real RU cost, so it only runs when you ask.
                 </p>
               </div>
@@ -816,14 +816,14 @@ export default function CosmosDBDashboard() {
               >
                 Apply
               </Button>
-              <span className="flex items-center gap-1 text-[11px] text-subtle">
+              <span className="flex items-center gap-1 text-meta text-subtle">
                 <Icon name="info" size={11} />
                 A Cosmos SQL WHERE clause. It runs against the account, so it costs RU.
               </span>
             </div>
 
             {filterApplied && (
-              <p className="border-b border-border bg-sunken px-card py-2 font-mono text-[11px] text-muted">
+              <p className="border-b border-border bg-sunken px-card py-2 font-mono text-meta text-muted">
                 SELECT * FROM c WHERE {filterApplied}
               </p>
             )}
@@ -849,12 +849,12 @@ export default function CosmosDBDashboard() {
                     onClick: () => setViewingDoc(it),
                     cells: {
                       id: (
-                        <span className="font-mono text-[11px] whitespace-nowrap text-accent-text">
+                        <span className="font-mono text-meta whitespace-nowrap text-accent-text">
                           {it.id || null}
                         </span>
                       ),
                       preview: (
-                        <span className="truncate-safe block max-w-[420px] font-mono text-[11px] text-muted">
+                        <span className="truncate-safe block max-w-[420px] font-mono text-meta text-muted">
                           {previewOf(it)}
                         </span>
                       ),
@@ -864,7 +864,7 @@ export default function CosmosDBDashboard() {
                         </span>
                       ),
                       modified: (
-                        <span className="whitespace-nowrap text-[11px] text-muted">
+                        <span className="whitespace-nowrap text-meta text-muted">
                           {fmtEpochSeconds(it._ts)}
                         </span>
                       ),
@@ -899,7 +899,7 @@ export default function CosmosDBDashboard() {
                   >
                     Previous
                   </Button>
-                  <span className="text-[11px] text-subtle">
+                  <span className="text-meta text-subtle">
                     {items.length} shown
                     {tokenStack.length > 0 ? ` · page ${tokenStack.length + 1}` : ''}
                     {nextToken ? '' : ' · end of container'}
@@ -1037,10 +1037,10 @@ export default function CosmosDBDashboard() {
                 <CopyButton text={JSON.stringify(viewingDoc, null, 2)} label="Copy JSON" />
               </span>
             </div>
-            <pre className="overflow-x-auto rounded-card border border-border bg-sunken px-3 py-2.5 font-mono text-[11px] whitespace-pre-wrap break-words text-fg">
+            <pre className="overflow-x-auto rounded-card border border-border bg-sunken px-3 py-2.5 font-mono text-meta whitespace-pre-wrap break-words text-fg">
               {JSON.stringify(viewingDoc, null, 2)}
             </pre>
-            <p className="text-[11px] leading-relaxed text-subtle">
+            <p className="text-meta leading-relaxed text-subtle">
               Fields beginning with an underscore are Cosmos's own:
               {' '}<span className="font-mono">_ts</span> is the last-write time in Unix seconds,
               {' '}<span className="font-mono">_etag</span> the concurrency token,
@@ -1200,7 +1200,7 @@ function ContainerFacts({ details, consistency, docStats, docStatsError }) {
         />
         {details.is_autoscale && <Badge tone="info" size="xs">Autoscale</Badge>}
         {details.last_refreshed && (
-          <span className="ml-auto text-[11px] text-subtle">
+          <span className="ml-auto text-meta text-subtle">
             Read {fmtDateTime(details.last_refreshed)}
           </span>
         )}
@@ -1300,7 +1300,7 @@ function IndexingTab({ details, ai, target, onExpand, canRun }) {
                   {paths.map((p) => (
                     <span
                       key={p}
-                      className="rounded-control border border-border bg-sunken px-2 py-1 font-mono text-[11px] text-fg"
+                      className="rounded-control border border-border bg-sunken px-2 py-1 font-mono text-meta text-fg"
                     >
                       {p}
                     </span>
@@ -1324,7 +1324,7 @@ function IndexingTab({ details, ai, target, onExpand, canRun }) {
           {uniqueKeys.length ? (
             <div className="flex flex-wrap gap-1.5">
               {uniqueKeys.map((k) => (
-                <span key={k} className="rounded-control border border-border bg-sunken px-2 py-1 font-mono text-[11px] text-fg">
+                <span key={k} className="rounded-control border border-border bg-sunken px-2 py-1 font-mono text-meta text-fg">
                   {k}
                 </span>
               ))}
@@ -1463,7 +1463,7 @@ function SlowCallsTab({
                     key: String(r.id),
                     cells: {
                       when: (
-                        <span className="whitespace-nowrap text-[11px] text-muted">{fmtDateTime(r.created_at)}</span>
+                        <span className="whitespace-nowrap text-meta text-muted">{fmtDateTime(r.created_at)}</span>
                       ),
                       op: meta.hint
                         ? (
@@ -1473,7 +1473,7 @@ function SlowCallsTab({
                         )
                         : <span className="text-[12px] font-semibold text-fg">{meta.label}</span>,
                       target: (
-                        <span className="truncate-safe block max-w-[300px] font-mono text-[11px] text-muted">
+                        <span className="truncate-safe block max-w-[300px] font-mono text-meta text-muted">
                           {r.detail || null}
                         </span>
                       ),
@@ -1498,7 +1498,7 @@ function SlowCallsTab({
                         <button
                           type="button"
                           onClick={() => onExplain(r)}
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-accent-text transition-opacity hover:opacity-80"
+                          className="inline-flex items-center gap-1 text-meta font-bold text-accent-text transition-opacity hover:opacity-80"
                         >
                           <Icon name="sparkles" size={11} />
                           {explanations[r.id] ? 'View' : 'Explain'}
@@ -1573,7 +1573,7 @@ function ErrorsTab({ rows, statuses, statusFilter, onStatusFilter, onExplain, ex
                 <span className="text-[13px] font-bold text-fg">{meta.label}</span>
                 <span className="ml-auto font-mono text-[13px] font-bold text-fg tabular-nums">{count}</span>
               </span>
-              <span className="mt-1 block text-[11px] leading-relaxed text-muted">{meta.why}</span>
+              <span className="mt-1 block text-meta leading-relaxed text-muted">{meta.why}</span>
             </button>
           ))}
         </div>
@@ -1609,7 +1609,7 @@ function ErrorsTab({ rows, statuses, statusFilter, onStatusFilter, onExplain, ex
                     key: String(r.id),
                     cells: {
                       when: (
-                        <span className="whitespace-nowrap text-[11px] text-muted">{fmtDateTime(r.created_at)}</span>
+                        <span className="whitespace-nowrap text-meta text-muted">{fmtDateTime(r.created_at)}</span>
                       ),
                       status: meta ? (
                         <Tooltip label={meta.why} side="top">
@@ -1617,7 +1617,7 @@ function ErrorsTab({ rows, statuses, statusFilter, onStatusFilter, onExplain, ex
                         </Tooltip>
                       ) : null,
                       type: r.error_type
-                        ? <span className="font-mono text-[11px] text-danger-fg">{r.error_type}</span>
+                        ? <span className="font-mono text-meta text-danger-fg">{r.error_type}</span>
                         : null,
                       op: (
                         <span className="text-[12px] font-semibold text-fg">
@@ -1626,8 +1626,8 @@ function ErrorsTab({ rows, statuses, statusFilter, onStatusFilter, onExplain, ex
                       ),
                       target: (database || container) ? (
                         <span className="flex flex-col gap-0.5">
-                          {container && <span className="font-mono text-[11px] text-fg">{container}</span>}
-                          {database && <span className="font-mono text-[10px] text-subtle">{database}</span>}
+                          {container && <span className="font-mono text-meta text-fg">{container}</span>}
+                          {database && <span className="font-mono text-micro text-subtle">{database}</span>}
                         </span>
                       ) : null,
                       ms: r.duration_ms != null
@@ -1645,7 +1645,7 @@ function ErrorsTab({ rows, statuses, statusFilter, onStatusFilter, onExplain, ex
                         <button
                           type="button"
                           onClick={() => onExplain(r)}
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-accent-text transition-opacity hover:opacity-80"
+                          className="inline-flex items-center gap-1 text-meta font-bold text-accent-text transition-opacity hover:opacity-80"
                         >
                           <Icon name="sparkles" size={11} />
                           {explanations[r.id] ? 'View' : 'Explain'}

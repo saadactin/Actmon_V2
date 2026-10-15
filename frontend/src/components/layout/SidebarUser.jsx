@@ -51,7 +51,7 @@ export default function SidebarUser({ collapsed, user, onSignOut }) {
     >
       <span
         className={cn(
-          'grid shrink-0 place-items-center rounded-full text-[10px] font-bold text-accent-fg',
+          'grid shrink-0 place-items-center rounded-full text-micro font-bold text-accent-fg',
           ICON_BOX,
         )}
         style={{ background: 'var(--gradient-accent)' }}
@@ -62,7 +62,7 @@ export default function SidebarUser({ collapsed, user, onSignOut }) {
         <>
           <span className="min-w-0 flex-1">
             <span className="truncate-safe block text-[13px] font-semibold text-sidebar-fg">{name}</span>
-            <span className="truncate-safe block text-[11px] text-sidebar-muted">{role}</span>
+            <span className="truncate-safe block text-meta text-sidebar-muted">{role}</span>
           </span>
           <Icon name="more" size={15} className="shrink-0 text-sidebar-muted" />
         </>
@@ -106,7 +106,7 @@ export default function SidebarUser({ collapsed, user, onSignOut }) {
           />
         </div>
 
-        <div className="border-t border-border px-3.5 py-2 text-[10px] font-semibold text-subtle">
+        <div className="border-t border-border px-3.5 py-2 text-micro font-semibold text-subtle">
           {APP.name} v{APP.version}
         </div>
       </Popover>
@@ -117,10 +117,10 @@ export default function SidebarUser({ collapsed, user, onSignOut }) {
 function Row({ label, value, accent }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[10px] font-bold tracking-wide text-subtle uppercase">{label}</span>
+      <span className="text-micro font-bold tracking-wide text-subtle uppercase">{label}</span>
       <span
         className={cn(
-          'max-w-[140px] truncate text-right text-[11px] font-semibold',
+          'max-w-[140px] truncate text-right text-meta font-semibold',
           accent ? 'rounded-full bg-accent-soft px-2 py-0.5 text-accent-text' : 'text-fg',
         )}
       >

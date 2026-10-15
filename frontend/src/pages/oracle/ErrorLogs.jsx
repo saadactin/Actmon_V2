@@ -143,7 +143,7 @@ export default function OracleErrorLogs() {
           <code className="font-mono">v$diag_alert_ext</code> was not accessible, so the collector
           fell back to <code className="font-mono">v$log</code> — that is redo log metadata, not
           alert messages, so it is not shown here as if it were.
-          {data?.note ? <span className="mt-1 block text-[11px]">{data.note}</span> : null}
+          {data?.note ? <span className="mt-1 block text-meta">{data.note}</span> : null}
           <span className="mt-1 block">
             Grant the login <b>SELECT</b> on <code className="font-mono">v$diag_alert_ext</code>
             {' '}(or read the alert log from the ADR trace directory) to see real alerts.
@@ -185,7 +185,7 @@ export default function OracleErrorLogs() {
 
             {codes.length > 0 && (
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[11px] font-bold tracking-wide text-subtle uppercase">
+                <span className="text-meta font-bold tracking-wide text-subtle uppercase">
                   Codes in this window
                 </span>
                 {codes.slice(0, 12).map(([code, n]) => (
@@ -217,7 +217,7 @@ export default function OracleErrorLogs() {
                       onClick={() => setLevel(k)}
                       aria-pressed={level === k}
                       className={cn(
-                        'h-7 rounded-control px-2 text-[11px] font-bold transition-colors',
+                        'h-7 rounded-control px-2 text-meta font-bold transition-colors',
                         level === k ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg',
                       )}
                     >
@@ -252,7 +252,7 @@ export default function OracleErrorLogs() {
                       key: `alert-${e._i}`,
                       cells: {
                         when: (
-                          <span className="font-mono text-[11px] whitespace-nowrap text-muted">
+                          <span className="font-mono text-meta whitespace-nowrap text-muted">
                             {String(e.originating_timestamp || '').slice(0, 19) || null}
                           </span>
                         ),
@@ -267,7 +267,7 @@ export default function OracleErrorLogs() {
                           ? <Badge tone="danger" size="xs" className="font-mono">{e._code}</Badge>
                           : null,
                         component: (
-                          <span className="truncate-safe block max-w-[110px] font-mono text-[11px] text-muted">
+                          <span className="truncate-safe block max-w-[110px] font-mono text-meta text-muted">
                             {e.component_id}
                           </span>
                         ),
@@ -325,7 +325,7 @@ export default function OracleErrorLogs() {
                         ),
                         user: <span className="truncate-safe block max-w-[110px] font-semibold text-accent-text">{s.username}</span>,
                         status: <StateChip value={s.status} tones={{ ACTIVE: 'success', INACTIVE: 'neutral' }} />,
-                        machine: <span className="truncate-safe block max-w-[130px] font-mono text-[11px] text-muted">{s.machine}</span>,
+                        machine: <span className="truncate-safe block max-w-[130px] font-mono text-meta text-muted">{s.machine}</span>,
                         event: <SqlCell sql={s.event} max={60} />,
                         class: s.wait_class
                           ? <Badge tone={WAIT_CLASS_TONES[s.wait_class] || 'neutral'} size="xs">{s.wait_class}</Badge>
@@ -336,7 +336,7 @@ export default function OracleErrorLogs() {
                           </span>
                         ),
                         action: (
-                          <span className="block max-w-[280px] text-[11px] leading-snug text-muted">
+                          <span className="block max-w-[280px] text-meta leading-snug text-muted">
                             {k.why || k.action}
                           </span>
                         ),

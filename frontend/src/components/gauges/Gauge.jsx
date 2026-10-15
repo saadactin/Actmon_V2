@@ -56,11 +56,11 @@ function RingGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
     <button onClick={onClick}
       className="group relative w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 text-left shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all flex flex-col items-center gap-1.5">
       <div className="flex items-center justify-between w-full">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider">
+        <span className="inline-flex items-center gap-1.5 text-meta font-black text-slate-400 uppercase tracking-wider">
           {Icon && <Icon size={14} />} {label}
         </span>
         {statusKey && (
-          <span className="text-[9.5px] font-black px-2 py-0.5 rounded uppercase tracking-wide"
+          <span className="text-micro font-black px-2 py-0.5 rounded uppercase tracking-wide"
             style={{ background: `${c}1a`, color: c }}>{statusKey}</span>
         )}
       </div>
@@ -79,9 +79,9 @@ function RingGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
         </div>
       </div>
 
-      {sub && <p className="text-[11px] text-slate-400 text-center -mt-1 px-2">{sub}</p>}
+      {sub && <p className="text-meta text-slate-400 text-center -mt-1 px-2">{sub}</p>}
       {onClick && (
-        <span className="text-[10.5px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-3 right-3 flex items-center gap-1">
+        <span className="text-meta font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-3 right-3 flex items-center gap-1">
           drill in <ChevronRight size={11} />
         </span>
       )}
@@ -106,11 +106,11 @@ function DialGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
     <button onClick={onClick}
       className="group relative w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 text-left shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all flex flex-col items-center gap-1.5">
       <div className="flex items-center justify-between w-full">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider">
+        <span className="inline-flex items-center gap-1.5 text-meta font-black text-slate-400 uppercase tracking-wider">
           {Icon && <Icon size={14} />} {label}
         </span>
         {statusKey && (
-          <span className="text-[9.5px] font-black px-2 py-0.5 rounded uppercase tracking-wide"
+          <span className="text-micro font-black px-2 py-0.5 rounded uppercase tracking-wide"
             style={{ background: `${c}1a`, color: c }}>{statusKey}</span>
         )}
       </div>
@@ -142,9 +142,9 @@ function DialGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
         </div>
       </div>
 
-      {sub && <p className="text-[11px] text-slate-400 text-center -mt-1 px-2">{sub}</p>}
+      {sub && <p className="text-meta text-slate-400 text-center -mt-1 px-2">{sub}</p>}
       {onClick && (
-        <span className="text-[10.5px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-3 right-3 flex items-center gap-1">
+        <span className="text-meta font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-3 right-3 flex items-center gap-1">
           drill in <ChevronRight size={11} />
         </span>
       )}
@@ -160,7 +160,7 @@ function StatTileGauge({ icon: Icon, label, pct, sub, onClick, colorFn, spark })
     <Tag onClick={onClick}
       className="group relative w-full text-left bg-slate-50 dark:bg-slate-800/60 rounded-xl border-l-[3px] p-3.5 hover:shadow-md transition-shadow"
       style={{ borderLeftColor: c }}>
-      <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1.5">
+      <div className="flex items-center gap-1.5 text-micro font-black text-slate-400 uppercase tracking-wider mb-1.5">
         {Icon && <Icon size={12} />} {label}
       </div>
       <div className="font-mono tabular-nums text-2xl font-black leading-none" style={{ color: c }}>{fmtPct(pct)}</div>
@@ -169,9 +169,9 @@ function StatTileGauge({ icon: Icon, label, pct, sub, onClick, colorFn, spark })
           <path d={path} fill="none" stroke={c} strokeWidth="1.6" />
         </svg>
       )}
-      {sub && <p className="text-[10.5px] text-slate-400 mt-1.5">{sub}</p>}
+      {sub && <p className="text-meta text-slate-400 mt-1.5">{sub}</p>}
       {onClick && (
-        <span className="text-[10px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute top-3 right-3">
+        <span className="text-micro font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute top-3 right-3">
           <ChevronRight size={12} />
         </span>
       )}
@@ -187,7 +187,7 @@ function DonutGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
   return (
     <button onClick={onClick}
       className="group relative w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 text-left shadow-sm hover:shadow-xl hover:-translate-y-0.5 transition-all flex flex-col items-center gap-1.5">
-      <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider self-start">
+      <span className="inline-flex items-center gap-1.5 text-meta font-black text-slate-400 uppercase tracking-wider self-start">
         {Icon && <Icon size={14} />} {label}
       </span>
       <div className="relative" style={{ width: size, height: size }}>
@@ -200,9 +200,9 @@ function DonutGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
           <span className="font-mono tabular-nums text-[24px] font-black leading-none" style={{ color: c }}>{fmtPct(pct)}</span>
         </div>
       </div>
-      {sub && <p className="text-[11px] text-slate-400 text-center -mt-1 px-2">{sub}</p>}
+      {sub && <p className="text-meta text-slate-400 text-center -mt-1 px-2">{sub}</p>}
       {onClick && (
-        <span className="text-[10.5px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-3 right-3 flex items-center gap-1">
+        <span className="text-meta font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-3 right-3 flex items-center gap-1">
           drill in <ChevronRight size={11} />
         </span>
       )}
@@ -217,16 +217,16 @@ function MinimalGauge({ icon: Icon, label, pct, sub, onClick, colorFn }) {
     <Tag onClick={onClick} className="group relative w-full text-left p-3">
       <div className="flex items-center gap-1.5 mb-1.5">
         <span className="w-[7px] h-[7px] rounded-full flex-shrink-0" style={{ background: c }} />
-        <span className="text-[10.5px] font-bold text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
+        <span className="text-meta font-bold text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
           {Icon && <Icon size={12} />} {label}
         </span>
       </div>
       <div className="font-mono tabular-nums text-[26px] font-black leading-none" style={{ color: c }}>
         {pct == null ? '—' : pct}<span className="text-[13px] text-slate-400 dark:text-slate-500">%</span>
       </div>
-      {sub && <p className="text-[10.5px] text-slate-400 mt-1">{sub}</p>}
+      {sub && <p className="text-meta text-slate-400 mt-1">{sub}</p>}
       {onClick && (
-        <span className="text-[10px] font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute top-3 right-3">
+        <span className="text-micro font-bold text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity absolute top-3 right-3">
           <ChevronRight size={12} />
         </span>
       )}
@@ -245,7 +245,7 @@ function GraphGauge({ icon: Icon, label, pct, sub, colorFn, history, chartStyleO
   return (
     <div className="w-full bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
       <div className="flex items-center justify-between mb-2">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-slate-400 uppercase tracking-wider">
+        <span className="inline-flex items-center gap-1.5 text-meta font-black text-slate-400 uppercase tracking-wider">
           {Icon && <Icon size={14} />} {label}
         </span>
         <span className="font-mono tabular-nums text-lg font-black" style={{ color: c }}>{fmtPct(pct)}</span>
@@ -253,8 +253,8 @@ function GraphGauge({ icon: Icon, label, pct, sub, colorFn, history, chartStyleO
       <TrendChart data={data} xKey="t" height={72} showLegend={false} yDomain={[0, 100]}
         styleOverride={chartStyleOverride}
         series={[{ key: 'v', label, color: c }]} />
-      {sub && <p className="text-[10.5px] text-slate-400 mt-1.5">{sub}</p>}
-      {history.length < 3 && <p className="text-[10px] text-slate-300 mt-1">Building history…</p>}
+      {sub && <p className="text-meta text-slate-400 mt-1.5">{sub}</p>}
+      {history.length < 3 && <p className="text-micro text-slate-300 mt-1">Building history…</p>}
     </div>
   );
 }

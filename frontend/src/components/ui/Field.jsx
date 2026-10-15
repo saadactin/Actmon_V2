@@ -19,7 +19,7 @@ export function Field({ label, hint, children, className, inline = false }) {
     <div className={cn(inline ? 'flex items-center justify-between gap-3' : 'space-y-1.5', className)}>
       <div className={inline ? 'min-w-0' : undefined}>
         <div className="text-[12px] font-semibold text-fg">{label}</div>
-        {hint && <div className="mt-0.5 text-[11px] leading-snug text-subtle">{hint}</div>}
+        {hint && <div className="mt-0.5 text-meta leading-snug text-subtle">{hint}</div>}
       </div>
       <div className={inline ? 'shrink-0' : undefined}>{children}</div>
     </div>
@@ -32,7 +32,7 @@ export function Section({ title, icon, children, className }) {
     <section className={cn('space-y-3', className)}>
       <div className="flex items-center gap-2">
         {icon && <Icon name={icon} size={14} className="text-subtle" />}
-        <h3 className="text-[11px] font-bold tracking-[0.07em] text-subtle uppercase">{title}</h3>
+        <h3 className="text-meta font-bold tracking-[0.07em] text-subtle uppercase">{title}</h3>
         <span className="h-px flex-1 bg-border" />
       </div>
       {children}
@@ -62,7 +62,7 @@ export function Segmented({ options, value, onChange, columns, size = 'md' }) {
             onClick={() => onChange(o.id)}
             className={cn(
               'truncate rounded-control font-semibold transition-colors duration-[var(--dur-fast)]',
-              size === 'sm' ? 'h-7 px-2 text-[11px]' : 'h-8 px-2.5 text-[12px]',
+              size === 'sm' ? 'h-7 px-2 text-meta' : 'h-8 px-2.5 text-[12px]',
               columns && 'border',
               active
                 ? columns
@@ -95,7 +95,7 @@ export function Slider({ value, onChange, min, max, step = 1, suffix = '' }) {
         className="h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-sunken accent-[var(--accent)]"
         style={{ accentColor: 'var(--accent)' }}
       />
-      <span className="w-14 shrink-0 text-right font-mono text-[11px] font-semibold text-muted">
+      <span className="w-14 shrink-0 text-right font-mono text-meta font-semibold text-muted">
         {value}{suffix}
       </span>
     </div>

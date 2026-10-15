@@ -122,7 +122,7 @@ export default function AlertRules({ rules: api }) {
           <div className={cn('min-w-0', dim)}>
             <span className={cn(CELL_TEXT, 'truncate-safe block font-semibold text-fg')}>{r.name}</span>
             {r.description && (
-              <span className="truncate-safe block text-[11px] text-subtle">{r.description}</span>
+              <span className="truncate-safe block text-meta text-subtle">{r.description}</span>
             )}
           </div>
         ),
@@ -153,9 +153,9 @@ export default function AlertRules({ rules: api }) {
           </span>
         ),
         timing: (
-          <span className={cn('block text-center text-[11px] text-muted', dim)}>
+          <span className={cn('block text-center text-meta text-muted', dim)}>
             {duration(r.duration_seconds)}
-            <span className="block text-[10px] text-subtle">
+            <span className="block text-micro text-subtle">
               {r.cooldown_seconds ? `then ${duration(r.cooldown_seconds)}` : 'every time'}
             </span>
           </span>
@@ -227,9 +227,9 @@ export default function AlertRules({ rules: api }) {
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-1.5">
                   <span className="truncate-safe text-[12px] font-bold text-fg">{s.label}</span>
-                  <span className="text-[11px] font-semibold text-subtle tabular-nums">{count}</span>
+                  <span className="text-meta font-semibold text-subtle tabular-nums">{count}</span>
                 </span>
-                <span className="truncate-safe block text-[10px] text-subtle">{s.desc}</span>
+                <span className="truncate-safe block text-micro text-subtle">{s.desc}</span>
               </span>
             </button>
           );
@@ -266,10 +266,12 @@ export default function AlertRules({ rules: api }) {
           <Button variant="ghost" size="sm" icon="close" onClick={clearFilters}>Clear</Button>
         )}
 
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        {/* Wraps instead of hiding the warning: "N with no data source" used
+            to disappear below 1280px, i.e. from 150% zoom up. */}
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {stats.disabled > 0 && <Badge tone="warning">{stats.disabled} off</Badge>}
           {stats.reserved > 0 && (
-            <Badge tone="warning" className="hidden xl:inline-flex">
+            <Badge tone="warning">
               {stats.reserved} with no data source
             </Badge>
           )}
@@ -379,7 +381,7 @@ function ConfirmDelete({ rule, onCancel, onConfirm }) {
         {' '}<b className="text-fg">{describeCondition(rule)}</b> on {describeScope(rule)}
         {' '}will no longer raise alerts.
       </p>
-      <p className="mt-2 text-[11px] text-subtle">
+      <p className="mt-2 text-meta text-subtle">
         To stop the alerts without losing the rule, switch it off instead.
       </p>
     </Dialog>

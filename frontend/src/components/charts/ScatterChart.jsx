@@ -15,7 +15,8 @@ import Icon from '@/components/ui/Icon';
  *
  *   points  [{ x, y, z, label, color }]  z optional (uniform radius if absent)
  */
-const PAD = { top: 12, right: 16, bottom: 26, left: 34 };
+// left: 40 fits a four-digit y label at the 11px axis floor.
+const PAD = { top: 12, right: 16, bottom: 26, left: 40 };
 const W = 600;
 
 export default function ScatterChart({
@@ -69,7 +70,7 @@ export default function ScatterChart({
         {yTicks.map((v) => (
           <g key={`y${v}`}>
             <line x1={PAD.left} x2={W - PAD.right} y1={y(v)} y2={y(v)} stroke="var(--chart-grid)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
-            <text x={PAD.left - 6} y={y(v) + 3} textAnchor="end" fill="var(--chart-axis)" style={{ fontSize: 9 }}>{Math.round(v)}</text>
+            <text x={PAD.left - 6} y={y(v) + 3} textAnchor="end" fill="var(--chart-axis)" style={{ fontSize: 11 }}>{Math.round(v)}</text>
           </g>
         ))}
         {xTicks.map((v) => (
@@ -91,17 +92,17 @@ export default function ScatterChart({
         ))}
 
         {/* axis labels */}
-        <text x={PAD.left + (W - PAD.left - PAD.right) / 2} y={H - 4} textAnchor="middle" fill="var(--chart-axis)" style={{ fontSize: 9, fontWeight: 700 }}>
+        <text x={PAD.left + (W - PAD.left - PAD.right) / 2} y={H - 4} textAnchor="middle" fill="var(--chart-axis)" style={{ fontSize: 11, fontWeight: 700 }}>
           {xLabel} ({xUnit})
         </text>
-        <text x={10} y={PAD.top + 4} fill="var(--chart-axis)" style={{ fontSize: 9, fontWeight: 700 }}>
+        <text x={10} y={PAD.top + 4} fill="var(--chart-axis)" style={{ fontSize: 11, fontWeight: 700 }}>
           {yLabel}
         </text>
       </svg>
 
       {active && (
         <div
-          className="pointer-events-none absolute rounded-control border border-border bg-surface px-2.5 py-1.5 text-[11px] shadow-md"
+          className="pointer-events-none absolute rounded-control border border-border bg-surface px-2.5 py-1.5 text-meta shadow-md"
           style={{
             left: `${(x(Number(active.x)) / W) * 100}%`, top: `${(y(Number(active.y)) / H) * 100}%`,
             transform: 'translate(-50%, -120%)',

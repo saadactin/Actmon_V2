@@ -43,7 +43,7 @@ function TabBtn({ active, onClick, icon: Icon, label, badge }) {
       <Icon size={14} />
       {label}
       {badge > 0 && (
-        <span className="absolute -top-1 -right-1 h-4 min-w-4 px-0.5 flex items-center justify-center rounded-full bg-orange-500 text-white text-[9px] font-black">{badge}</span>
+        <span className="absolute -top-1 -right-1 h-4 min-w-4 px-0.5 flex items-center justify-center rounded-full bg-orange-500 text-white text-micro font-black">{badge}</span>
       )}
     </button>
   );
@@ -60,9 +60,9 @@ function MetricCard({ label, value, sub, accent }) {
   };
   return (
     <div className={`rounded-2xl border p-4 ${cls[accent] || cls.slate}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{label}</p>
+      <p className="text-micro font-bold uppercase tracking-wide opacity-70">{label}</p>
       <p className="text-2xl font-black mt-1">{value ?? '—'}</p>
-      {sub && <p className="text-[10px] opacity-60 mt-0.5">{sub}</p>}
+      {sub && <p className="text-micro opacity-60 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -218,8 +218,8 @@ export default function CollectionAnalysis() {
                   <BarChart layout="vertical"
                     data={topBySize.map(c => ({ name: `${c.dbName}.${c.name}`, size: c.size_mb || 0 }))}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
-                    <YAxis width={140} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
+                    <YAxis width={140} type="category" dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip formatter={v => `${v} MB`} cursor={{ fill: '#f8fafc' }} />
                     <Bar dataKey="size" radius={[0, 5, 5, 0]}>
                       {topBySize.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
@@ -233,8 +233,8 @@ export default function CollectionAnalysis() {
                   <BarChart layout="vertical"
                     data={topByDocs.map(c => ({ name: `${c.dbName}.${c.name}`, docs: c.count || 0 }))}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
-                    <YAxis width={140} type="category" dataKey="name" tick={{ fontSize: 9 }} axisLine={false} tickLine={false} />
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                    <YAxis width={140} type="category" dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip formatter={v => fmtNum(v)} cursor={{ fill: '#f8fafc' }} />
                     <Bar dataKey="docs" radius={[0, 5, 5, 0]}>
                       {topByDocs.map((_, i) => <Cell key={i} fill={PALETTE[(i + 4) % PALETTE.length]} />)}
@@ -252,7 +252,7 @@ export default function CollectionAnalysis() {
                   <thead className="bg-slate-50 border-b border-slate-200">
                     <tr>
                       {['Database', 'Collection', 'Documents', 'Size MB', 'Avg Obj (B)', 'Indexes', 'Index MB', 'Capped'].map(h => (
-                        <th key={h} className="px-3 py-3 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-3 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -261,7 +261,7 @@ export default function CollectionAnalysis() {
                       const maxSize = Math.max(...filteredColls.map(x => x.size_mb || 0), 0.001);
                       return (
                         <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-                          <td className="px-3 py-2.5 text-slate-500 font-mono text-[10px]">{c.dbName}</td>
+                          <td className="px-3 py-2.5 text-slate-500 font-mono text-micro">{c.dbName}</td>
                           <td className="px-3 py-2.5 font-bold" style={{ color: C.dark }}>{c.name}</td>
                           <td className="px-3 py-2.5 font-mono">{fmtNum(c.count || 0)}</td>
                           <td className="px-3 py-2.5">
@@ -278,8 +278,8 @@ export default function CollectionAnalysis() {
                           <td className="px-3 py-2.5 font-mono">{(c.total_index_size_mb || 0).toFixed(4)}</td>
                           <td className="px-3 py-2.5">
                             {c.capped
-                              ? <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded-full">Yes</span>
-                              : <span className="text-[10px] text-slate-300">—</span>}
+                              ? <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-micro font-bold rounded-full">Yes</span>
+                              : <span className="text-micro text-slate-300">—</span>}
                           </td>
                         </tr>
                       );
@@ -330,7 +330,7 @@ export default function CollectionAnalysis() {
                         <span className="font-bold" style={{ color: C.dark }}>{idx.ns}</span>
                         <span className="text-slate-600">{idx.name}</span>
                         <span className="text-slate-400 max-w-[200px] truncate">{JSON.stringify(idx.key || {})}</span>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">0 accesses</span>
+                        <span className="ml-auto text-micro px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">0 accesses</span>
                       </div>
                     ))}
                   </div>
@@ -360,7 +360,7 @@ export default function CollectionAnalysis() {
                     <thead className="bg-slate-50 border-b border-slate-200">
                       <tr>
                         {['Namespace', 'Index Name', 'Keys', 'Unique', 'Sparse', 'TTL (s)', 'Size', 'Accesses', 'Last Used'].map(h => (
-                          <th key={h} className="px-3 py-3 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
+                          <th key={h} className="px-3 py-3 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -371,23 +371,23 @@ export default function CollectionAnalysis() {
                             {idx.ns || `${idx.db}.${idx.collection}` || '—'}
                           </td>
                           <td className="px-3 py-2.5 font-mono text-xs">{idx.name}</td>
-                          <td className="px-3 py-2.5 font-mono text-[10px] text-slate-500 max-w-[150px] truncate">
+                          <td className="px-3 py-2.5 font-mono text-micro text-slate-500 max-w-[150px] truncate">
                             {JSON.stringify(idx.key || {})}
                           </td>
                           <td className="px-3 py-2.5">
                             {idx.unique
-                              ? <span className="px-2 py-0.5 rounded-full text-[10px] font-bold" style={{ background: 'rgba(0,237,100,0.12)', color: C.dark }}>Yes</span>
-                              : <span className="text-[10px] text-slate-300">—</span>}
+                              ? <span className="px-2 py-0.5 rounded-full text-micro font-bold" style={{ background: 'rgba(0,237,100,0.12)', color: C.dark }}>Yes</span>
+                              : <span className="text-micro text-slate-300">—</span>}
                           </td>
                           <td className="px-3 py-2.5">
                             {idx.sparse
-                              ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">Yes</span>
-                              : <span className="text-[10px] text-slate-300">—</span>}
+                              ? <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-micro font-bold rounded-full">Yes</span>
+                              : <span className="text-micro text-slate-300">—</span>}
                           </td>
-                          <td className="px-3 py-2.5 font-mono text-[10px]">{idx.expireAfterSeconds != null ? idx.expireAfterSeconds : '—'}</td>
+                          <td className="px-3 py-2.5 font-mono text-micro">{idx.expireAfterSeconds != null ? idx.expireAfterSeconds : '—'}</td>
                           <td className="px-3 py-2.5 font-mono">{idx.size ? fmtBytes(idx.size) : '—'}</td>
                           <td className={`px-3 py-2.5 font-bold font-mono ${idx.unused ? 'text-orange-500' : 'text-slate-700'}`}>{fmtNum(idx.accesses ?? 0)}</td>
-                          <td className="px-3 py-2.5 text-[10px] text-slate-400 whitespace-nowrap">
+                          <td className="px-3 py-2.5 text-micro text-slate-400 whitespace-nowrap">
                             {idx.last_access ? new Date(idx.last_access).toLocaleDateString() : '—'}
                           </td>
                         </tr>
@@ -440,13 +440,13 @@ export default function CollectionAnalysis() {
                       <Database size={14} className={c.scan_ratio > 10 ? 'text-red-500' : c.scan_ratio > 3 ? 'text-orange-500' : 'text-slate-400'} />
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-slate-700 truncate">{c.namespace || c.ns}</p>
-                        <p className="text-[10px] text-slate-400">Docs: {fmtNum(c.count || 0)}</p>
+                        <p className="text-micro text-slate-400">Docs: {fmtNum(c.count || 0)}</p>
                       </div>
                       <div className="text-right">
                         <p className={`text-sm font-black ${c.scan_ratio > 10 ? 'text-red-600' : c.scan_ratio > 3 ? 'text-orange-600' : 'text-slate-600'}`}>
                           {(c.scan_ratio || 0).toFixed(1)}×
                         </p>
-                        <p className="text-[10px] text-slate-400">scan ratio</p>
+                        <p className="text-micro text-slate-400">scan ratio</p>
                       </div>
                     </div>
                   ))}

@@ -32,6 +32,7 @@ from app.models.agent_model import (                              # noqa: F401
     AgentWaitEvent, AgentNotification, AgentOracleSnapshot, AgentSnapshot,
 )
 from app.models.oracle_topology_model import OracleTopologyLink           # noqa: F401
+from app.models.oracle_awr_model import OracleAwrReport, OracleAwrFinding  # noqa: F401
 from app.models.mysql_report_schedule_model import MysqlReportSchedule        # noqa: F401
 from app.models.postgres_report_schedule_model import PostgresReportSchedule  # noqa: F401
 from app.models.mssql_report_schedule_model import MssqlReportSchedule          # noqa: F401
@@ -83,6 +84,7 @@ from app.routes.mysql.mysql_binlog_routes import router as mysql_binlog_router
 from app.routes.mysql.mysql_report_routes import router as mysql_report_router
 
 from app.routes.oracle.oracle_monitoring_routes import router as oracle_monitoring_router
+from app.routes.oracle.oracle_awr_routes import router as oracle_awr_router
 from app.routes.mysql.mysql_report_email_routes import router as mysql_report_email_router
 from app.routes.postgres.postgres_report_email_routes import router as postgres_report_email_router
 from app.routes.mssql.mssql_report_email_routes import router as mssql_report_email_router
@@ -248,6 +250,7 @@ app.include_router(db_diagnose_router)
 
 # DB Monitoring routes
 app.include_router(oracle_monitoring_router)
+app.include_router(oracle_awr_router)
 app.include_router(mysql_report_email_router)
 app.include_router(postgres_report_email_router)
 app.include_router(mssql_report_email_router)

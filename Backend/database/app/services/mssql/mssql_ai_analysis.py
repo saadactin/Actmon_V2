@@ -3,6 +3,7 @@ MSSQL AI Analysis Service.
  - analyze_mssql_error / get_mssql_recommendations : rule-based error guidance (used by mssql_error_service)
  - analyze_slow_query_groq : Groq-powered slow-query analysis (T-SQL specific)
 """
+from app.services.common.groq_config import groq_params
 import os
 import json
 from typing import Optional
@@ -193,10 +194,9 @@ Return this exact JSON structure:
 }}"""
 
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=3000,
+            **groq_params(3000),
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

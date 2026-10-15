@@ -144,7 +144,7 @@ function BreakdownBody({ kind, rows, unit = '', emptyLabel, labelWidth, legend =
         <div className="mt-3 space-y-1">
           <Legend items={legendItems} />
           {isTotalsOnly && (
-            <p className="text-[10px] text-subtle">
+            <p className="text-micro text-subtle">
               This form shows totals only — counts above are across all rows.
             </p>
           )}

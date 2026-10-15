@@ -294,7 +294,7 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                     onClick={() => setStatusFilter(k)}
                     aria-pressed={statusFilter === k}
                     className={cn(
-                      'h-7 rounded-control px-2.5 text-[11px] font-bold transition-colors',
+                      'h-7 rounded-control px-2.5 text-meta font-bold transition-colors',
                       statusFilter === k ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg',
                     )}
                   >
@@ -344,7 +344,7 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                           </span>
                         ),
                         user: (
-                          <span className="block text-[11px] leading-tight">
+                          <span className="block text-meta leading-tight">
                             <span className="truncate-safe block max-w-[110px] text-[12px] font-semibold text-accent-text">
                               {r.username}
                             </span>
@@ -353,7 +353,7 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                         ),
                         status: <StateChip value={r.status} tones={SESSION_TONES} />,
                         client: (
-                          <span className="block text-[11px] leading-tight">
+                          <span className="block text-meta leading-tight">
                             <span className="truncate-safe block max-w-[130px] font-mono text-muted">{r.machine || '—'}</span>
                             <span className="truncate-safe block max-w-[130px] text-subtle">{r.module || r.program || ''}</span>
                           </span>
@@ -362,8 +362,8 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                           <span className="block">
                             <span className="flex items-center gap-1.5">
                               {r.wait_event
-                                ? <span className="truncate-safe max-w-[180px] font-mono text-[11px] text-fg">{r.wait_event}</span>
-                                : <span className="text-[11px] text-success-fg">On CPU</span>}
+                                ? <span className="truncate-safe max-w-[180px] font-mono text-meta text-fg">{r.wait_event}</span>
+                                : <span className="text-meta text-success-fg">On CPU</span>}
                               {r.wait_class && (
                                 <Badge tone={WAIT_CLASS_TONES[r.wait_class] || 'neutral'} size="xs">{r.wait_class}</Badge>
                               )}
@@ -382,11 +382,11 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                               style={{ background: band.status.color }} title={`Waiting ${band.label}`} />
                           </span>
                         ),
-                        idle: <span className="font-mono text-[11px] text-muted">{fmtIdle(r.last_call_et)}</span>,
+                        idle: <span className="font-mono text-meta text-muted">{fmtIdle(r.last_call_et)}</span>,
                         sql: (
                           <span className="block">
                             <SqlCell sql={r.sql_text} max={90} />
-                            {r.sql_id && <span className="mt-0.5 block font-mono text-[10px] text-subtle">{r.sql_id}</span>}
+                            {r.sql_id && <span className="mt-0.5 block font-mono text-micro text-subtle">{r.sql_id}</span>}
                           </span>
                         ),
                       },
@@ -492,22 +492,22 @@ function SessionDetail({ session: s, plan, planBusy }) {
                     op: (
                       /* Indentation carries the plan tree — an operation's depth is
                          what tells you which step feeds which. */
-                      <span className="font-mono text-[11px] whitespace-pre text-fg"
+                      <span className="font-mono text-meta whitespace-pre text-fg"
                         style={{ paddingLeft: `${num(p.depth) * 12}px` }}>
                         {p.operation}{p.options ? ` ${p.options}` : ''}
                       </span>
                     ),
                     object: p.object_name ? (
-                      <span className="block text-[11px] leading-tight">
+                      <span className="block text-meta leading-tight">
                         <span className="block font-mono text-fg">{p.object_name}</span>
                         <span className="block text-subtle">{p.object_owner} · {p.object_type}</span>
                       </span>
                     ) : null,
                     cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
                     rows: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
-                    bytes: <span className="font-mono text-[11px] text-muted">{fmtNumber(p.bytes)}</span>,
+                    bytes: <span className="font-mono text-meta text-muted">{fmtNumber(p.bytes)}</span>,
                     pred: (
-                      <span className="block max-w-[260px] font-mono text-[10px] leading-snug break-words text-subtle">
+                      <span className="block max-w-[260px] font-mono text-micro leading-snug break-words text-subtle">
                         {p.access_predicates || p.filter_predicates || ''}
                       </span>
                     ),
@@ -519,7 +519,7 @@ function SessionDetail({ session: s, plan, planBusy }) {
 
               {(plan?.indexes_used || []).length > 0 && (
                 <div className="border-t border-border px-card py-2.5">
-                  <p className="mb-1.5 text-[11px] font-bold tracking-wide text-subtle uppercase">
+                  <p className="mb-1.5 text-meta font-bold tracking-wide text-subtle uppercase">
                     Indexes this plan uses
                   </p>
                   <div className="flex flex-wrap gap-1.5">

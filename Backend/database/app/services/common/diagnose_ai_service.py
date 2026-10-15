@@ -13,12 +13,12 @@ service status, latest error) — never from guessed defaults. The model is
 instructed to say so plainly when the evidence doesn't support a confident
 call, rather than fill the gap with something plausible-sounding.
 """
+from app.services.common.groq_config import groq_params
 import json
 import os
 
 from groq import Groq
 
-_MODEL = "llama-3.3-70b-versatile"
 
 
 def _client():
@@ -93,10 +93,9 @@ Return ONLY valid JSON, no markdown, no commentary, in exactly this shape:
 
     try:
         response = client.chat.completions.create(
-            model=_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1,
-            max_tokens=1200,
+            **groq_params(1200),
         )
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):

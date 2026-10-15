@@ -118,7 +118,7 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
               {a.message}
             </p>
             {isOpen && (
-              <dl className="mt-2 grid gap-x-4 gap-y-1 text-[11px] sm:grid-cols-2">
+              <dl className="mt-2 grid gap-x-4 gap-y-1 text-meta sm:grid-cols-2">
                 <Detail label="Metric" value={m.label} />
                 <Detail label="Section" value={sec.label} />
                 <Detail label="Technology" value={a.technology} />
@@ -137,7 +137,7 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
           <div className="min-w-0">
             <span className={cn(CELL_TEXT, 'truncate-safe block text-fg')}>{a.source || '—'}</span>
             {(a.technology || a.environment) && (
-              <span className="truncate-safe block text-[11px] text-subtle">
+              <span className="truncate-safe block text-meta text-subtle">
                 {[a.technology, a.environment].filter(Boolean).join(' · ')}
               </span>
             )}
@@ -149,7 +149,7 @@ export default function ActiveAlerts({ feed, onOpenRules }) {
           <span>
             <span className={cn(CELL_TEXT, 'font-bold text-fg')}>{num(a.value, m.unit)}</span>
             {a.threshold !== null && a.threshold !== undefined && (
-              <span className="block text-[10px] text-subtle">of {num(a.threshold, m.unit)}</span>
+              <span className="block text-micro text-subtle">of {num(a.threshold, m.unit)}</span>
             )}
           </span>
         ),

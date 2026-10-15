@@ -75,14 +75,14 @@ function PlanResult({ data }) {
             key: i,
             cells: {
               node: (
-                <span className="font-mono text-[11px]">
+                <span className="font-mono text-meta">
                   {'  '.repeat(n.depth || 0)}{n.node_type}
                   {String(n.node_type || '').includes('Seq Scan') && (
                     <Badge tone="danger" size="xs" className="ml-1.5">seq scan</Badge>
                   )}
                 </span>
               ),
-              rel: <span className="font-mono text-[11px] text-muted">{n.relation || n.alias || '—'}</span>,
+              rel: <span className="font-mono text-meta text-muted">{n.relation || n.alias || '—'}</span>,
               r: <span className="font-mono">{fmtNumber(data.analyzed ? n.actual_rows : n.plan_rows)}</span>,
               t: <span className="font-mono">
                 {data.analyzed
@@ -115,8 +115,8 @@ function PlanResult({ data }) {
         rows={data.plan.map((p, i) => ({
           key: p.id ?? i,
           cells: {
-            op: <span className="font-mono text-[11px]">{'  '.repeat(p.depth || 0)}{p.operation} {p.options || ''}</span>,
-            obj: p.object_name ? <span className="font-mono text-[11px] text-muted">{p.object_owner}.{p.object_name}</span> : null,
+            op: <span className="font-mono text-meta">{'  '.repeat(p.depth || 0)}{p.operation} {p.options || ''}</span>,
+            obj: p.object_name ? <span className="font-mono text-meta text-muted">{p.object_owner}.{p.object_name}</span> : null,
             cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
             card: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
           },
@@ -164,7 +164,7 @@ function PlanResult({ data }) {
 
 function StatCellInline({ label, value }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-card bg-sunken px-2.5 py-1 text-[11px]">
+    <span className="inline-flex items-center gap-1.5 rounded-card bg-sunken px-2.5 py-1 text-meta">
       <span className="text-subtle">{label}:</span>
       <span className="font-mono font-bold text-fg">{value}</span>
     </span>
@@ -294,17 +294,17 @@ function ExecutionPlanSection({ data, mode, onRunAnalyze, analyzing }) {
           rows={(explain.tables || []).map((t, i) => ({
             key: i,
             cells: {
-              table: <span className="font-mono text-[11px] font-semibold">{t.table_name}</span>,
+              table: <span className="font-mono text-meta font-semibold">{t.table_name}</span>,
               type: (
-                <span className="font-mono text-[11px]">
+                <span className="font-mono text-meta">
                   {t.access_type}
                   {t.access_type === 'ALL' && <Badge tone="danger" size="xs" className="ml-1.5">scan</Badge>}
                 </span>
               ),
-              possible: <span className="font-mono text-[10px] text-muted">{(t.possible_keys || []).join(', ') || '—'}</span>,
+              possible: <span className="font-mono text-micro text-muted">{(t.possible_keys || []).join(', ') || '—'}</span>,
               key: t.key
-                ? <span className="font-mono text-[11px] text-success-fg">{t.key}</span>
-                : <span className="font-mono text-[11px] text-danger-fg">none</span>,
+                ? <span className="font-mono text-meta text-success-fg">{t.key}</span>
+                : <span className="font-mono text-meta text-danger-fg">none</span>,
               len: <span className="font-mono text-muted">{t.key_length ?? '—'}</span>,
               rows: <span className="font-mono">{fmtNumber(t.rows_examined_per_scan)}</span>,
               filtered: <span className="font-mono">{t.filtered != null ? `${t.filtered}%` : '—'}</span>,
@@ -348,7 +348,7 @@ function TablesIndexesSection({ data }) {
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-[13px] font-bold text-fg">{t.table_name}</p>
-                  <p className="text-[11px] text-muted">
+                  <p className="text-meta text-muted">
                     {t.engine || '—'} · {fmtNumber(t.row_estimate)} rows (approx.) · {t.total_mb != null ? `${t.total_mb} MB` : '—'}
                     {t.primary_key?.length ? ` · PK: ${t.primary_key.join(', ')}` : ''}
                   </p>
@@ -357,7 +357,7 @@ function TablesIndexesSection({ data }) {
 
               {t.columns?.length > 0 && (
                 <>
-                  <p className="mb-1.5 text-[10px] font-bold tracking-wide text-subtle uppercase">Table structure</p>
+                  <p className="mb-1.5 text-micro font-bold tracking-wide text-subtle uppercase">Table structure</p>
                   <Table
                     className="mb-3"
                     columns={[
@@ -369,12 +369,12 @@ function TablesIndexesSection({ data }) {
                       key: c.name,
                       cells: {
                         name: (
-                          <span className="font-mono text-[11px]">
+                          <span className="font-mono text-meta">
                             {c.name}
                             {t.primary_key?.includes(c.name) && <Badge tone="accent" size="xs" className="ml-1.5">PK</Badge>}
                           </span>
                         ),
-                        type: <span className="font-mono text-[11px] text-muted">{c.type}</span>,
+                        type: <span className="font-mono text-meta text-muted">{c.type}</span>,
                         nullable: c.nullable ? <span className="text-subtle">yes</span> : <Badge tone="neutral" size="xs">not null</Badge>,
                       },
                     }))}
@@ -383,7 +383,7 @@ function TablesIndexesSection({ data }) {
                 </>
               )}
 
-              <p className="mb-1.5 text-[10px] font-bold tracking-wide text-subtle uppercase">Existing indexes</p>
+              <p className="mb-1.5 text-micro font-bold tracking-wide text-subtle uppercase">Existing indexes</p>
               <Table
                 columns={[
                   { key: 'name', label: 'Index' },
@@ -395,12 +395,12 @@ function TablesIndexesSection({ data }) {
                   key: idx.index_name,
                   cells: {
                     name: (
-                      <span className="font-mono text-[11px]">
+                      <span className="font-mono text-meta">
                         {idx.index_name}
                         {idx.primary && <Badge tone="accent" size="xs" className="ml-1.5">PK</Badge>}
                       </span>
                     ),
-                    cols: <span className="font-mono text-[11px] text-muted">{idx.columns.join(', ')}</span>,
+                    cols: <span className="font-mono text-meta text-muted">{idx.columns.join(', ')}</span>,
                     unique: idx.unique ? <Badge tone="success" size="xs">unique</Badge> : <span className="text-subtle">—</span>,
                     card: <span className="font-mono">{fmtNumber(idx.cardinality)}</span>,
                   },
@@ -449,11 +449,11 @@ function DiagnosisSection({ data }) {
             <li key={i} className="rounded-card border border-border p-2.5">
               <div className="flex flex-wrap items-center gap-2">
                 <IssueSeverityBadge severity={is.severity} />
-                <span className="font-mono text-[11px] font-bold text-fg">{is.type}</span>
+                <span className="font-mono text-meta font-bold text-fg">{is.type}</span>
                 {is.table && <Badge tone="neutral" size="xs">{is.table}</Badge>}
               </div>
               <p className="mt-1 text-[12px] text-fg">{is.description}</p>
-              <p className="mt-0.5 text-[11px] text-subtle">Evidence: {is.evidence}</p>
+              <p className="mt-0.5 text-meta text-subtle">Evidence: {is.evidence}</p>
             </li>
           ))}
         </ul>
@@ -495,12 +495,12 @@ function RecommendationsSection({ ai, onRunAi }) {
                     </div>
                     <p className="text-[12px] text-muted"><b>Evidence:</b> {r.evidence}</p>
                     <p className="mt-1 text-[12px] text-fg"><b>Recommendation:</b> {r.recommendation}</p>
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-subtle">
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-meta text-subtle">
                       {r.expected_benefit && <span><b className="text-success-fg">Expected benefit:</b> {r.expected_benefit}</span>}
                       {r.risk && <span><b className="text-warning-fg">Risk:</b> {r.risk}</span>}
                     </div>
                     {r.existing_index_considered && r.existing_index_considered !== 'none applicable' && (
-                      <p className="mt-1 text-[11px] text-subtle"><b>Existing index considered:</b> {r.existing_index_considered}</p>
+                      <p className="mt-1 text-meta text-subtle"><b>Existing index considered:</b> {r.existing_index_considered}</p>
                     )}
                     {r.example && (
                       <div className="mt-1.5 flex items-start gap-2">
@@ -518,7 +518,7 @@ function RecommendationsSection({ ai, onRunAi }) {
             <Panel title="Query rewrite" icon="terminal" subtitle="Optional — nothing is changed automatically">
               <div className="space-y-2">
                 <div>
-                  <p className="mb-1 text-[11px] font-bold tracking-wide text-subtle uppercase">Suggested query</p>
+                  <p className="mb-1 text-meta font-bold tracking-wide text-subtle uppercase">Suggested query</p>
                   <div className="flex items-start gap-2">
                     <SqlBlock sql={a.query_rewrite.optimized_sql} className="flex-1" />
                     <CopyButton text={a.query_rewrite.optimized_sql} />
@@ -529,7 +529,7 @@ function RecommendationsSection({ ai, onRunAi }) {
                     {a.query_rewrite.changes_made.map((c, i) => <li key={i}>{c}</li>)}
                   </ul>
                 )}
-                {a.query_rewrite.explanation && <p className="text-[11px] text-subtle">{a.query_rewrite.explanation}</p>}
+                {a.query_rewrite.explanation && <p className="text-meta text-subtle">{a.query_rewrite.explanation}</p>}
               </div>
             </Panel>
           )}

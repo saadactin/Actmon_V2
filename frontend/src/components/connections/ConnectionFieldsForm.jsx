@@ -71,8 +71,8 @@ function Field({ field, value, error, onChange, className }) {
       </label>
       {control}
       {error
-        ? <p className="mt-0.5 text-[11px] text-danger-fg">{error}</p>
-        : field.hint && <p className="mt-0.5 text-[11px] leading-snug text-subtle">{field.hint}</p>}
+        ? <p className="mt-0.5 text-meta text-danger-fg">{error}</p>
+        : field.hint && <p className="mt-0.5 text-meta leading-snug text-subtle">{field.hint}</p>}
     </div>
   );
 }

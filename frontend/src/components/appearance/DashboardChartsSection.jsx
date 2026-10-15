@@ -168,10 +168,10 @@ function GaugeStyleCard({ id, active, onSelect }) {
         </span>
       )}
       <Thumb pct={68} c={c} />
-      <span className={cn('text-[11.5px] font-semibold', active ? 'text-accent-text' : 'text-fg')}>
+      <span className={cn('text-meta font-semibold', active ? 'text-accent-text' : 'text-fg')}>
         {INDICATOR_LABELS[id] || id}
       </span>
-      <span className="text-[10px] leading-snug text-subtle">{INDICATOR_HINTS[id]}</span>
+      <span className="text-micro leading-snug text-subtle">{INDICATOR_HINTS[id]}</span>
     </button>
   );
 }
@@ -231,7 +231,7 @@ export default function DashboardChartsSection() {
               options={SCOPES.map((s) => ({ id: s.key, label: s.label }))}
             />
             {isOverridden && (
-              <p className="mt-1.5 flex items-center gap-1 text-[11px] text-accent-text">
+              <p className="mt-1.5 flex items-center gap-1 text-meta text-accent-text">
                 <Icon name="check" size={11} /> {scopeLabel} has its own settings
               </p>
             )}
@@ -277,7 +277,7 @@ export default function DashboardChartsSection() {
                       />
                       <span
                         className={cn(
-                          'truncate-safe w-full text-center text-[10px] font-semibold',
+                          'truncate-safe w-full text-center text-micro font-semibold',
                           active ? 'text-accent-text' : 'text-muted',
                         )}
                       >
@@ -298,7 +298,7 @@ export default function DashboardChartsSection() {
           <Tile className={WIDE}>
             <div className="mb-3 flex items-center justify-between">
               <p className="text-[12px] font-semibold text-fg">Gauge type</p>
-              <p className="text-[11px] text-subtle">Click a style to select it</p>
+              <p className="text-meta text-subtle">Click a style to select it</p>
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {INDICATOR_STYLES.map((s) => (
@@ -320,9 +320,9 @@ export default function DashboardChartsSection() {
         <Tile className={WIDE}>
           <div className="mb-3">
             <p className="text-[12px] font-semibold text-fg">Live preview</p>
-            <p className="text-[11px] text-subtle">Exactly how {scopeLabel}'s dashboard will render it</p>
+            <p className="text-meta text-subtle">Exactly how {scopeLabel}'s dashboard will render it</p>
           </div>
-          <Suspense fallback={<div className="flex h-[220px] items-center justify-center text-[11px] text-subtle">Loading preview…</div>}>
+          <Suspense fallback={<div className="flex h-[220px] items-center justify-center text-meta text-subtle">Loading preview…</div>}>
             <div className="mx-auto max-w-xs">
               <Gauge
                 pct={68}

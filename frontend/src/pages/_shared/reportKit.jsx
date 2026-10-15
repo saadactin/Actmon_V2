@@ -77,7 +77,7 @@ export function statusBadge(val) {
     : bad.includes(v) ? 'bg-red-100 text-red-700 border-red-200'
     : warn.includes(v) ? 'bg-amber-100 text-amber-700 border-amber-200'
     : 'bg-slate-100 text-slate-600 border-slate-200';
-  return <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${color}`}>{val || '—'}</span>;
+  return <span className={`px-2 py-0.5 rounded-full text-micro font-bold border ${color}`}>{val || '—'}</span>;
 }
 
 /* ─── building blocks ─── */
@@ -95,9 +95,9 @@ export function RSection({ title, icon: Icon, color = C.blue, children, classNam
 export function KStat({ label, value, color = '#1e293b', sub }) {
   return (
     <div className="bg-slate-50 rounded-lg p-3 border border-slate-100">
-      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{label}</p>
+      <p className="text-micro text-slate-400 font-bold uppercase tracking-wide">{label}</p>
       <p className="text-lg font-black mt-0.5" style={{ color }}>{value ?? '—'}</p>
-      {sub && <p className="text-[9px] text-slate-400 mt-0.5">{sub}</p>}
+      {sub && <p className="text-micro text-slate-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -107,7 +107,7 @@ export function RTable({ headers, rows, emptyMsg = 'No data' }) {
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="bg-slate-50 border-y border-slate-200">
-            {headers.map(h => <th key={h} className="px-3 py-2 text-left text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>)}
+            {headers.map(h => <th key={h} className="px-3 py-2 text-left text-micro font-bold text-slate-400 uppercase whitespace-nowrap">{h}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -135,7 +135,7 @@ export function UsageBar({ label, pct, sub, color }) {
       <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
         <div className="h-2 rounded-full transition-all" style={{ width: `${p}%`, background: c }} />
       </div>
-      {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
+      {sub && <p className="text-micro text-slate-400 mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -215,7 +215,7 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
   };
 
   const inp = 'w-full px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-400 focus:outline-none';
-  const lbl = 'block text-[11px] font-bold text-slate-500 mb-1';
+  const lbl = 'block text-meta font-bold text-slate-500 mb-1';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.65)' }}>
@@ -225,7 +225,7 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
             <Mail size={18} />
             <div>
               <p className="font-black text-sm">Send {engine.label} Report</p>
-              <p className="text-[11px] opacity-70">{connName} · PDF attached automatically</p>
+              <p className="text-meta opacity-70">{connName} · PDF attached automatically</p>
             </div>
           </div>
           <button onClick={onClose} className="text-white/70 hover:text-white text-lg leading-none">✕</button>
@@ -243,7 +243,7 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
         {busy && (
           <div className="px-5 py-2.5 bg-blue-50 border-b border-blue-100 flex items-center gap-3">
             <div className="h-1.5 w-20 rounded-full bg-blue-500 animate-pulse" />
-            <p className="text-[11px] font-bold text-blue-700 flex items-center gap-2">
+            <p className="text-meta font-bold text-blue-700 flex items-center gap-2">
               <RefreshCw size={11} className="animate-spin flex-shrink-0" /> Sending email with PDF report…
             </p>
           </div>
@@ -255,33 +255,33 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
               <CheckCircle2 size={16} className="text-green-600 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-black text-green-800">{smtpCfg.name}</p>
-                <p className="text-[11px] text-green-700 truncate">{smtpCfg.sender_email} · via {smtpCfg.smtp_host}:{smtpCfg.smtp_port}</p>
+                <p className="text-meta text-green-700 truncate">{smtpCfg.sender_email} · via {smtpCfg.smtp_host}:{smtpCfg.smtp_port}</p>
               </div>
-              <Link to="/settings" onClick={onClose} className="text-[11px] font-bold text-green-700 underline flex-shrink-0">Change</Link>
+              <Link to="/settings" onClick={onClose} className="text-meta font-bold text-green-700 underline flex-shrink-0">Change</Link>
             </div>
           ) : (
             <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-xl">
               <XCircle size={16} className="text-red-500 flex-shrink-0" />
               <div className="flex-1">
                 <p className="text-xs font-black text-red-700">No SMTP configured</p>
-                <p className="text-[11px] text-red-600">Set up mail server in Settings first</p>
+                <p className="text-meta text-red-600">Set up mail server in Settings first</p>
               </div>
-              <Link to="/settings" onClick={onClose} className="text-[11px] font-bold text-red-700 underline flex-shrink-0">Configure</Link>
+              <Link to="/settings" onClick={onClose} className="text-meta font-bold text-red-700 underline flex-shrink-0">Configure</Link>
             </div>
           )}
 
           {capturedPdfB64 ? (
-            <div className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-[11px] text-green-700">
+            <div className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-meta text-green-700">
               <CheckCircle2 size={14} className="flex-shrink-0 text-green-500" />
               <span><b>Report PDF captured</b> — exact copy of your current view will be attached.</span>
             </div>
           ) : (
-            <div className="flex flex-col gap-1 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-700">
+            <div className="flex flex-col gap-1 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-meta text-amber-700">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={14} className="flex-shrink-0 text-amber-500" />
                 <span>PDF capture failed — <b>backend will generate a report PDF</b> from live data.</span>
               </div>
-              {captureErrMsg && <div className="ml-6 mt-0.5 px-2 py-1 bg-amber-100 rounded text-[10px] font-mono text-amber-800 break-all">{captureErrMsg}</div>}
+              {captureErrMsg && <div className="ml-6 mt-0.5 px-2 py-1 bg-amber-100 rounded text-micro font-mono text-amber-800 break-all">{captureErrMsg}</div>}
             </div>
           )}
 
@@ -307,7 +307,7 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
 
           {tab === 'schedule' && (
             <div className="border-t border-slate-100 pt-4 space-y-3">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recurrence</p>
+              <p className="text-micro font-black text-slate-400 uppercase tracking-widest">Recurrence</p>
               <div><label className={lbl}>Frequency</label>
                 <select className={inp} value={freq} onChange={e => setFreq(e.target.value)}>
                   <option value="hourly">Every Hour</option>
@@ -334,7 +334,7 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
                       ))}
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1">= {String(hour24()).padStart(2, '0')}:{String(minute).padStart(2, '0')} UTC</p>
+                  <p className="text-micro text-slate-400 mt-1">= {String(hour24()).padStart(2, '0')}:{String(minute).padStart(2, '0')} UTC</p>
                 </div>
               )}
               {freq === 'hourly' && (
@@ -382,7 +382,7 @@ function EmailScheduleModal({ id, engine, connName, capturedPdfB64, captureErrMs
                 <span>{result.msg}</span>
               </div>
               {(result.ok || result.warn) && (
-                <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-600 space-y-1">
+                <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-100 text-meta text-slate-600 space-y-1">
                   <p className="font-bold text-slate-700">📬 Not in inbox?</p>
                   <ul className="list-disc pl-4 space-y-0.5">
                     <li>Check <b>Outlook → Junk Email</b> folder → right-click → "Not Junk"</li>
@@ -563,7 +563,7 @@ export function ReportShell({
               {PERIODS.map(p => (
                 <button key={p.id} onClick={() => setPeriod(p.id)}
                   aria-pressed={period === p.id}
-                  className={`h-7 rounded-control px-2.5 text-[11px] font-bold transition-colors ${
+                  className={`h-7 rounded-control px-2.5 text-meta font-bold transition-colors ${
                     period === p.id ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg'}`}>
                   {p.label}
                 </button>
@@ -596,18 +596,18 @@ export function ReportShell({
         )}
       >
         <div className="mt-gutter-sm flex flex-wrap items-center gap-3">
-          <span className="rounded-full px-3 py-1 text-[11px] font-bold"
+          <span className="rounded-full px-3 py-1 text-meta font-bold"
             style={{ background: periodObj.color + '22', color: periodObj.color, border: `1px solid ${periodObj.color}55` }}>
             {periodObj.label} Report
           </span>
-          <span className="text-[11px] text-subtle">Generated: {genTime}</span>
+          <span className="text-meta text-subtle">Generated: {genTime}</span>
           {period === 'live' && (
-            <span className="flex items-center gap-1.5 text-[10px] font-bold text-success-fg">
+            <span className="flex items-center gap-1.5 text-micro font-bold text-success-fg">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />AUTO-REFRESH 30s
             </span>
           )}
           {alertBadges.filter(Boolean).map((b, i) => (
-            <span key={i} className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+            <span key={i} className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-micro font-bold ${
               b.tone === 'red' ? 'bg-danger-soft text-danger-fg' : 'bg-warning-soft text-warning-fg'}`}>
               {b.tone === 'red' ? <AlertOctagon size={10} /> : <AlertTriangle size={10} />} {b.label}
             </span>
@@ -641,7 +641,7 @@ export function ReportShell({
 export function HealthChecks({ checks }) {
   return (
     <>
-      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Health Checks</p>
+      <p className="text-micro font-bold text-slate-400 uppercase tracking-widest mb-2">Health Checks</p>
       <div className="flex flex-wrap gap-2">
         {checks.map(({ ok, label }) => (
           <span key={label} className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>

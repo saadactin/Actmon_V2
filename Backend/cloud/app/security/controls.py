@@ -36,9 +36,9 @@ Three rules this module exists to enforce:
 
 **Two kinds of framework, two failure rules.**
 
-* Principle-based frameworks (SOC 2, HIPAA, PCI-DSS, ISO 27001, RBI, SEBI) are
-  failed only by a CRITICAL, HIGH or MEDIUM finding. A LOW or INFO finding is
-  real hygiene and not a control violation.
+* Principle-based frameworks (SOC 2, HIPAA, PCI-DSS, ISO 27001, GDPR, RBI,
+  SEBI) are failed only by a CRITICAL, HIGH or MEDIUM finding. A LOW or INFO
+  finding is real hygiene and not a control violation.
 * CIS Benchmarks are different: each recommendation is a pass/fail test, and a
   rule mapped to one tests exactly that recommendation. Those controls are
   `strict` — ANY confirmed finding fails them, whatever its severity. Without
@@ -107,10 +107,11 @@ ISO27001 = "ISO27001"
 CIS_AWS = "CIS-AWS"
 CIS_AZURE = "CIS-AZURE"
 CIS_OCI = "CIS-OCI"
+GDPR = "GDPR"
 RBI = "RBI"
 SEBI = "SEBI-CSCRF"
 
-FRAMEWORKS: Tuple[str, ...] = (SOC2, HIPAA, PCI, ISO27001, CIS_AWS, CIS_AZURE, CIS_OCI,
+FRAMEWORKS: Tuple[str, ...] = (SOC2, HIPAA, PCI, ISO27001, GDPR, CIS_AWS, CIS_AZURE, CIS_OCI,
                                RBI, SEBI)
 
 KIND_STANDARD = "standard"
@@ -143,6 +144,19 @@ FRAMEWORK_META: Dict[str, Dict[str, object]] = {
         "note": ("Annex A controls are objectives, so configuration findings are partial "
                  "evidence for them by nature. Control titles are the standard's own; the "
                  "requirement text is a paraphrase. Not a certification audit."),
+    },
+    GDPR: {
+        "label": "GDPR",
+        "full_name": "EU General Data Protection Regulation (Regulation (EU) 2016/679)",
+        "kind": KIND_REGULATION, "providers": None,
+        "note": ("Cross-walk to the published Articles, covering only the technical "
+                 "security-of-processing measures a cloud configuration scan can observe "
+                 "(Art. 32). The organisational and legal obligations that make up most of "
+                 "the Regulation — lawful basis, records of processing (Art. 30), breach "
+                 "notification (Art. 33), DPIAs (Art. 35), international transfers "
+                 "(Chapter V) — are listed as NOT_EVALUATED on purpose rather than omitted, "
+                 "because a control nobody checked is the one most likely to be failing. "
+                 "Not a legal opinion and not a substitute for a DPO's assessment."),
     },
     CIS_AWS: {
         "label": "CIS AWS",
@@ -820,6 +834,58 @@ CONTROLS: Tuple[Control, ...] = (
             "Networks are secured, including micro-segmentation.", _SG_RULES),
     Control(SEBI, "CF 6.2.12", "Cloud Framework — backup and recovery",
             "A backup and recovery solution is in place.", _BACKUP_RULES),
+
+    # ── GDPR — Regulation (EU) 2016/679 ──────────────────────────────────────
+    # Titles are Actmon's paraphrase of the Article; quote the Regulation's own
+    # text to a DPO or regulator. Most of GDPR is a lawful-basis and process
+    # question a configuration scan cannot answer — those Articles are listed
+    # with empty rules on purpose (see FRAMEWORK_META[GDPR]).
+    Control(GDPR, "Art. 5(1)(f)", "Integrity and confidentiality principle",
+            "Personal data is processed in a manner that ensures appropriate security, "
+            "including protection against unauthorised or unlawful processing and "
+            "against accidental loss, destruction or damage.",
+            _ENCRYPTION_RULES + _PUBLIC_ACCESS_RULES),
+    Control(GDPR, "Art. 5(1)(c)", "Data minimisation",
+            "Personal data is adequate, relevant and limited to what is necessary for "
+            "the purposes for which it is processed.", ()),  # needs data classification
+    Control(GDPR, "Art. 25", "Data protection by design and by default",
+            "Technical and organisational measures implement data-protection principles "
+            "effectively, by design and by default.", ()),  # a design review, not a scan
+    Control(GDPR, "Art. 32(1)(a)", "Pseudonymisation and encryption",
+            "Appropriate technical measures include the pseudonymisation and encryption "
+            "of personal data.", _ENCRYPTION_RULES),
+    Control(GDPR, "Art. 32(1)(b)", "Confidentiality, integrity, availability and resilience",
+            "The ongoing confidentiality, integrity, availability and resilience of "
+            "processing systems and services is ensured.",
+            _EXPOSURE_RULES + _SG_RULES + _SECURE_CONFIG_RULES),
+    Control(GDPR, "Art. 32(1)(c)", "Timely restoration after an incident",
+            "The ability to restore the availability and access to personal data in a "
+            "timely manner in the event of a physical or technical incident.",
+            _BACKUP_RULES),
+    Control(GDPR, "Art. 32(1)(d)", "Regular testing and evaluation",
+            "A process for regularly testing, assessing and evaluating the effectiveness "
+            "of technical and organisational measures. A configuration scan is not VA/PT.",
+            ()),
+    Control(GDPR, "Art. 32(2)", "Risks of accidental or unlawful processing",
+            "Measures account for the risks of accidental or unlawful destruction, loss, "
+            "alteration, unauthorised disclosure of, or access to, personal data "
+            "transmitted, stored or otherwise processed.",
+            _PUBLIC_ACCESS_RULES + _PUBLIC_STORAGE_RULES + _TRANSIT_RULES),
+    Control(GDPR, "Art. 32(4)", "Access limited to authorised persons",
+            "Any person acting under the authority of the controller or processor who "
+            "has access to personal data processes it only on instructions.",
+            _IAM_RULES),
+    Control(GDPR, "Art. 30", "Records of processing activities",
+            "A record of processing activities is maintained.", ()),
+    Control(GDPR, "Art. 33", "Notification of a personal data breach",
+            "A personal data breach is notified to the supervisory authority, and where "
+            "required to the data subject, without undue delay.", ()),
+    Control(GDPR, "Art. 35", "Data protection impact assessment",
+            "A DPIA is carried out where processing is likely to result in a high risk "
+            "to natural persons.", ()),
+    Control(GDPR, "Art. 44", "General principle for transfers",
+            "Any transfer of personal data to a third country takes place only in "
+            "compliance with the conditions of Chapter V.", ()),
 )
 
 BY_KEY: Dict[str, Control] = {c.key: c for c in CONTROLS}

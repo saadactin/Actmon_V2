@@ -114,7 +114,7 @@ export default function EngineDashboardHeader({
 
       {/* The quick links collapse out of the header on narrow screens — keep them
           reachable rather than hidden entirely. */}
-      <div className="no-scrollbar mb-gutter flex gap-1 overflow-x-auto xl:hidden">
+      <div className="mb-gutter flex flex-wrap gap-1 xl:hidden">
         {links.map(({ to, label, icon }) => (
           <Link
             key={to}
@@ -155,7 +155,7 @@ function EngineTabs({ tabs, activeTab, onTabChange, alerts }) {
             {TabIcon && <TabIcon size={15} />}
             {tab.label}
             {alert > 0 && (
-              <span className="grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] font-bold text-white tabular-nums">
+              <span className="grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-micro font-bold text-white tabular-nums">
                 {alert}
               </span>
             )}

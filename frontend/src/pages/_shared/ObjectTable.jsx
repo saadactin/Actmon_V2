@@ -135,7 +135,7 @@ export default function ObjectTable({
           {filtered.length === items.length ? items.length : `${filtered.length} / ${items.length}`}
         </Badge>
         {note && (
-          <span className="hidden items-center gap-1 text-[11px] text-subtle sm:inline-flex">
+          <span className="hidden items-center gap-1 text-meta text-subtle sm:inline-flex">
             <Icon name="info" size={11} />
             {note}
           </span>
@@ -249,7 +249,7 @@ function CardGrid({ items, columns, ctx, loading, empty }) {
           <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
             {rest.map((c) => (
               <div key={c.key} className="min-w-0">
-                <dt className="text-[10px] font-bold tracking-wide text-subtle uppercase">{c.label}</dt>
+                <dt className="text-micro font-bold tracking-wide text-subtle uppercase">{c.label}</dt>
                 <dd className="text-[12px] text-fg">
                   {c.render(item, ctx) ?? <span className="text-subtle">—</span>}
                 </dd>

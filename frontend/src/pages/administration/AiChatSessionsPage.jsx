@@ -127,14 +127,14 @@ export default function AiChatSessionsPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold text-subtle">Date range</span>
+        <span className="text-meta font-semibold text-subtle">Date range</span>
         <input
           type="date"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
         />
-        <span className="text-[11px] text-subtle">to</span>
+        <span className="text-meta text-subtle">to</span>
         <input
           type="date"
           value={dateTo}
@@ -230,7 +230,7 @@ function ConversationDialog({ open, sessionId, title, userName, onClose }) {
                 {m.role === 'user'
                   ? <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.content}</p>
                   : <FormatMessage text={m.content} />}
-                <p className="mt-1 text-[10px] text-subtle">{fullTime(m.created_at)}</p>
+                <p className="mt-1 text-micro text-subtle">{fullTime(m.created_at)}</p>
               </div>
             </div>
           ))

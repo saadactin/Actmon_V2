@@ -42,7 +42,7 @@ function StatCard({ icon: Icon, label, value, tone = 'slate' }) {
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex items-center gap-2 mb-1.5">
         <Icon size={14} className={TONES[tone] || TONES.slate} />
-        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wide">{label}</span>
+        <span className="text-meta font-bold text-slate-400 uppercase tracking-wide">{label}</span>
       </div>
       <p className="text-lg font-black text-slate-800 truncate" title={typeof value === 'string' ? value : undefined}>
         {value ?? '—'}
@@ -204,7 +204,7 @@ export default function BinaryLogs() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="bg-slate-50">
-                    <tr className="text-left text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                    <tr className="text-left text-micro font-bold uppercase tracking-wide text-slate-400">
                       <th className="px-5 py-2.5 w-8"></th>
                       <SortableTh label="File Name" sortKey="name" sort={sort} onSort={toggleSort} />
                       <SortableTh label="Size" sortKey="size" sort={sort} onSort={toggleSort} align="right" />
@@ -228,11 +228,11 @@ export default function BinaryLogs() {
                         <td className="px-3 py-2.5 text-right font-mono text-slate-500">{f.first_position ?? '—'}</td>
                         <td className="px-3 py-2.5">
                           {f.is_current ? (
-                            <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-bold text-green-700 border border-green-200">
+                            <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-micro font-bold text-green-700 border border-green-200">
                               Active
                             </span>
                           ) : (
-                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-micro font-bold text-slate-500">
                               Rotated
                             </span>
                           )}
@@ -269,7 +269,7 @@ export default function BinaryLogs() {
           )}
         </div>
 
-        <p className="text-[11px] text-slate-400">
+        <p className="text-meta text-slate-400">
           Retention: {status?.retention || '—'}. Files are read and paginated on the server — this page never
           loads binary log event data until you open a specific file.
         </p>

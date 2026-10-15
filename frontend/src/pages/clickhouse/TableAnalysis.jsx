@@ -310,7 +310,7 @@ export default function ClickHouseTableAnalysis() {
         </TablePanel>
 
         <Panel className="bg-sunken">
-          <div className="space-y-1.5 text-[11px] leading-relaxed text-muted">
+          <div className="space-y-1.5 text-meta leading-relaxed text-muted">
             <p className="flex items-start gap-1.5">
               <Icon name="info" size={12} className="mt-0.5 shrink-0" />
               <span>
@@ -362,7 +362,7 @@ function PressureTab({ rows, total, capped }) {
                   table: (
                     <span className="flex flex-col gap-0.5">
                       <span className="font-semibold text-accent-text">{r.table}</span>
-                      <span className="font-mono text-[10px] text-subtle">{r.database}</span>
+                      <span className="font-mono text-micro text-subtle">{r.database}</span>
                     </span>
                   ),
                   parts: (
@@ -405,7 +405,7 @@ function PressureTab({ rows, total, capped }) {
             )}
           />
           {capped && rows.length > 0 && (
-            <p className="border-t border-border px-card py-2 text-[11px] text-subtle">
+            <p className="border-t border-border px-card py-2 text-meta text-subtle">
               Counts come from a grouped <span className="font-mono">system.parts</span> query where
               available, so they are not limited by the parts sample.
             </p>
@@ -439,11 +439,11 @@ function PartsTab({ rows, total, sort, onSort, capped }) {
         table: (
           <span className="flex flex-col gap-0.5">
             <span className="font-semibold text-accent-text">{p.table}</span>
-            <span className="font-mono text-[10px] text-subtle">{p.database}</span>
+            <span className="font-mono text-micro text-subtle">{p.database}</span>
           </span>
         ),
         partition: (
-          <span className="font-mono text-[11px] text-muted">{p.partition || p.partition_id || null}</span>
+          <span className="font-mono text-meta text-muted">{p.partition || p.partition_id || null}</span>
         ),
         rows: <span className="font-mono">{fmtNumber(p.rows)}</span>,
         disk: (
@@ -494,7 +494,7 @@ function PartsTab({ rows, total, sort, onSort, capped }) {
             )}
           />
           {capped && (
-            <p className="border-t border-border px-card py-2 text-[11px] text-subtle">
+            <p className="border-t border-border px-card py-2 text-meta text-subtle">
               The {PARTS_LIMIT} largest active parts. Smaller parts are not listed — and it is the small
               ones that pile up, so read Part pressure for counts.
             </p>
@@ -555,7 +555,7 @@ function MergesTab({ rows, total }) {
                     table: (
                       <span className="flex flex-col gap-0.5">
                         <span className="font-semibold text-accent-text">{m.table}</span>
-                        <span className="font-mono text-[10px] text-subtle">{m.database}</span>
+                        <span className="font-mono text-micro text-subtle">{m.database}</span>
                       </span>
                     ),
                     elapsed: (
@@ -581,7 +581,7 @@ function MergesTab({ rows, total }) {
                       ? (
                         <span className="font-mono text-[12px] text-muted">
                           {fmtNumber(collapsed)}
-                          <span className="ml-1 text-[10px] text-subtle">
+                          <span className="ml-1 text-micro text-subtle">
                             ({Math.round((collapsed / read) * 100)}%)
                           </span>
                         </span>
@@ -634,7 +634,7 @@ function TableStatsTab({ rows, total }) {
                   table: (
                     <span className="flex flex-col gap-0.5">
                       <span className="font-semibold text-accent-text">{name}</span>
-                      <span className="font-mono text-[10px] text-subtle">{t.database}</span>
+                      <span className="font-mono text-micro text-subtle">{t.database}</span>
                     </span>
                   ),
                   engine: t.engine
@@ -696,7 +696,7 @@ function CompressionTab({ rows, total }) {
                   table: (
                     <span className="flex flex-col gap-0.5">
                       <span className="font-semibold text-accent-text">{c.table}</span>
-                      <span className="font-mono text-[10px] text-subtle">{c.database}</span>
+                      <span className="font-mono text-micro text-subtle">{c.database}</span>
                     </span>
                   ),
                   uncompressed: (
@@ -738,7 +738,7 @@ function CompressionTab({ rows, total }) {
             )}
           />
           {rows.length > 0 && (
-            <p className="border-t border-border px-card py-2 text-[11px] text-subtle">
+            <p className="border-t border-border px-card py-2 text-meta text-subtle">
               Largest by uncompressed size, capped at 100 tables. A low ratio on a large table is worth a
               look: a column-appropriate codec (Delta, DoubleDelta, Gorilla for numeric series; LowCardinality
               for repeated strings) usually beats the default LZ4 by a wide margin.

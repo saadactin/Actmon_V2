@@ -16,7 +16,15 @@ export default function LogoMark({ size = 48, className, title = APP.name }) {
   return (
     <span className={cn('inline-grid shrink-0 place-items-center', className)} style={{ width: size, height: size }}>
       {asset ? (
-        <img src={asset} alt={title} width={size} height={size} className="h-full w-full object-contain" />
+        <img
+          src={asset}
+          alt={title}
+          // `size` may be a CSS length (the module bar passes a calc()); the
+          // attributes only take numbers, and the wrapper sizes it either way.
+          width={typeof size === 'number' ? size : undefined}
+          height={typeof size === 'number' ? size : undefined}
+          className="h-full w-full object-contain"
+        />
       ) : (
         <svg viewBox="0 0 500 500" className="h-full w-full" role="img" aria-label={title}>
           <g fill="#0c23a0">

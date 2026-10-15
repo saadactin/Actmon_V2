@@ -148,7 +148,7 @@ function Empty({ filtered }) {
         <Icon name="check" size={20} strokeWidth={2.6} />
       </span>
       <p className="text-[13px] font-semibold text-fg">{filtered ? 'None at this severity' : 'All clear'}</p>
-      <p className="text-[11px] text-subtle">
+      <p className="text-meta text-subtle">
         {filtered ? 'Other alerts are still firing.' : 'No alerts are firing.'}
       </p>
     </div>

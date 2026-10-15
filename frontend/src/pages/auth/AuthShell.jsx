@@ -64,7 +64,7 @@ export default function AuthShell({
           </div>
         </div>
 
-        <p className="relative text-[11px] font-bold tracking-widest uppercase opacity-50">
+        <p className="relative text-meta font-bold tracking-widest uppercase opacity-50">
           {footnote}
         </p>
       </div>

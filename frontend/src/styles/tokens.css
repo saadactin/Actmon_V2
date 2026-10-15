@@ -562,12 +562,22 @@ html[data-header='gradient'] .header-surface > * {
 
    The scroll container is <main> in AppShell, so `top: 0` parks the header right
    beneath the top bar. One attribute drives every page that renders <PageHeader>;
-   there is nothing per-page to set and nothing for a page to get wrong. */
-html[data-header-scroll='off'] .page-header {
-  position: sticky;
-  top: 0;
-  /* above page content, below the top bar (30), the drawer (80) and dialogs (90) */
-  z-index: 20;
+   there is nothing per-page to set and nothing for a page to get wrong.
+
+   Pinning needs the height to pay for it, so every pinning rule below sits in
+   `@media (min-height: 800px)`. The pinned band (module bar + page header +
+   tabs) is a fixed number of CSS pixels, and browser zoom shrinks the viewport
+   in CSS pixels: on a 1080p screen a cloud account page's band took 26% of the
+   height at 100%, 38% at 150% and 51% at 200% — content scrolled under a header
+   covering half the screen, which read as sections disappearing. Below 800 CSS
+   px the header scrolls away with the page; the module bar stays. */
+@media (min-height: 800px) {
+  html[data-header-scroll='off'] .page-header {
+    position: sticky;
+    top: 0;
+    /* above page content, below the top bar (30), the drawer (80) and dialogs (90) */
+    z-index: 20;
+  }
 }
 
 /* The scrollport's top padding lives on .content-shell, ABOVE the header. Left
@@ -583,8 +593,24 @@ html[data-header-scroll='off'] .page-header {
   padding-top: var(--gap-lg);
 }
 
-html[data-header-scroll='off'] .content-shell:has(.page-header) {
-  padding-top: 0;
+/* Room to scroll the last rows out from under the floating ActMon AI launcher.
+   It floats over the bottom-right corner, so without this the final row of a
+   table could be parked beneath it with nowhere further to scroll. Sized to the
+   launcher plus its 24px gap; the compact launcher (chatStore.launcherSize) is
+   used on short or narrow viewports, mirrored here. */
+.content-shell.has-floating-launcher {
+  padding-bottom: 112px;
+}
+@media (max-height: 699.98px), (max-width: 1099.98px) {
+  .content-shell.has-floating-launcher {
+    padding-bottom: 88px;
+  }
+}
+
+@media (min-height: 800px) {
+  html[data-header-scroll='off'] .content-shell:has(.page-header) {
+    padding-top: 0;
+  }
 }
 
 /* Full width while pinned. An inset, rounded header leaves gutters either side
@@ -592,21 +618,25 @@ html[data-header-scroll='off'] .content-shell:has(.page-header) {
    the container's inline padding and re-applying it inside makes the header a
    bar the width of the top bar above it. Inline margins do not affect vertical
    sticky behaviour, so this is purely geometric. */
-html[data-header-scroll='off'] .content-shell .page-header {
-  margin-inline: calc(-1 * var(--content-pad-x));
-  padding-inline: var(--content-pad-x);
-  padding-top: var(--gap-lg);
-  border-radius: 0;
+@media (min-height: 800px) {
+  html[data-header-scroll='off'] .content-shell .page-header {
+    margin-inline: calc(-1 * var(--content-pad-x));
+    padding-inline: var(--content-pad-x);
+    padding-top: var(--gap-lg);
+    border-radius: 0;
+  }
 }
 
 /* A pinned header has to be opaque or the page scrolls through it. The solid and
    gradient styles already paint a background of their own; `plain` has none, so
    it borrows the page's and takes a divider to separate itself from whatever
    passes underneath. */
-html[data-header-scroll='off'][data-header='plain'] .page-header {
-  background-color: var(--bg);
-  padding-bottom: var(--gap-sm);
-  border-bottom: 1px solid var(--border);
+@media (min-height: 800px) {
+  html[data-header-scroll='off'][data-header='plain'] .page-header {
+    background-color: var(--bg);
+    padding-bottom: var(--gap-sm);
+    border-bottom: 1px solid var(--border);
+  }
 }
 
 /* Surface style — one switch changes how every card in the app is drawn.
@@ -652,6 +682,21 @@ html[data-header-scroll='off'][data-header='plain'] .page-header {
 @media (max-width: 640px) {
   :root {
     --content-pad-x: 12px;
+  }
+}
+
+/* The module bar on a short viewport. 100px of chrome is 11% of a 1080p screen
+   at 100% zoom but 21% at 200%, where the viewport is only ~475 CSS px tall.
+   Below 700px of height it tightens to 72px: same icons, same labels at the same
+   size, nothing hidden — only the padding and icon size give way. */
+@media (max-height: 700px) {
+  :root {
+    --topnav-h: 72px;
+    --topnav-pad-y: 8px;
+    --topnav-icon: 22px;
+    --topnav-stack-gap: 4px;
+    --topnav-brand: 44px;
+    --topnav-avatar: 32px;
   }
 }
 

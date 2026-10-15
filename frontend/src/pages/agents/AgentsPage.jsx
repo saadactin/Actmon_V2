@@ -514,7 +514,7 @@ function PillGroup({ label, options, value, onChange }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span
-        className="rounded-full px-2.5 py-1 text-[0.6875rem] font-bold whitespace-nowrap text-white"
+        className="rounded-full px-2.5 py-1 text-meta font-bold whitespace-nowrap text-white"
         style={{ background: 'var(--agent-slate-900)' }}
       >
         {label}
@@ -528,7 +528,7 @@ function PillGroup({ label, options, value, onChange }) {
             type="button"
             onClick={() => onChange(o.id)}
             aria-pressed={active}
-            className="rounded-full px-2.5 py-1 text-[0.6875rem] font-semibold capitalize transition-colors"
+            className="rounded-full px-2.5 py-1 text-meta font-semibold capitalize transition-colors"
             style={active
               ? { background: color, color: '#fff', border: `1px solid ${color}` }
               : { background: 'var(--surface)', color: `color-mix(in srgb, ${color} 75%, var(--fg-muted))`, border: `1px solid color-mix(in srgb, ${color} 45%, transparent)` }}

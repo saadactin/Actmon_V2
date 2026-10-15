@@ -21,7 +21,7 @@ export default function Stepper({ steps, current, orientation = 'horizontal' }) 
                 {i < steps.length - 1 && <div className={`w-0.5 flex-1 my-1 rounded-full ${i < current ? 'bg-emerald-500' : 'bg-slate-200'}`} style={{ minHeight: 28 }} />}
               </div>
               <div className="pt-1 pb-4">
-                <p className={`text-[10px] font-bold uppercase tracking-wide ${i <= current ? 'text-blue-600' : 'text-slate-400'}`}>Step {i + 1}</p>
+                <p className={`text-micro font-bold uppercase tracking-wide ${i <= current ? 'text-blue-600' : 'text-slate-400'}`}>Step {i + 1}</p>
                 <p className={`text-sm font-black ${i <= current ? 'text-slate-800' : 'text-slate-400'}`}>{label}</p>
               </div>
             </div>
@@ -32,7 +32,9 @@ export default function Stepper({ steps, current, orientation = 'horizontal' }) 
   }
 
   return (
-    <div className="overflow-x-auto no-scrollbar">
+    // A connected stepper cannot wrap without breaking its connectors, so it
+    // scrolls — with its scrollbar showing, so the later steps are discoverable.
+    <div className="overflow-x-auto pb-1">
       <div className="flex items-start min-w-max">
         {steps.map((label, i) => {
           const done = i < current;

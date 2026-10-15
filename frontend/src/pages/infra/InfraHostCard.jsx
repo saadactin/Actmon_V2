@@ -68,7 +68,7 @@ export default function InfraHostCard({ host, onOpen, onTerminal, onRefresh, ref
           <div className="truncate-safe text-[13px] font-bold text-fg group-hover:text-accent-text">
             {host.server_name}
           </div>
-          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-subtle">
+          <div className="mt-0.5 flex items-center gap-1 text-meta text-subtle">
             <Icon name="globe" size={11} className="shrink-0" />
             <span className="truncate-safe">{host.hostname || host.ip_address || '—'}</span>
           </div>
@@ -96,13 +96,13 @@ export default function InfraHostCard({ host, onOpen, onTerminal, onRefresh, ref
       </div>
 
       {/* ── db services · uptime ── */}
-      <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5 text-[11px]">
+      <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5 text-meta">
         <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {services.length > 0 ? (
             services.slice(0, 3).map((s) => (
               <span
                 key={s}
-                className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                className="shrink-0 rounded-full px-1.5 py-0.5 text-micro font-bold"
                 style={{ background: `color-mix(in srgb, ${engineColor(s)} 14%, transparent)`, color: engineColor(s) }}
               >
                 {s}

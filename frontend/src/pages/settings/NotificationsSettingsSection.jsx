@@ -215,8 +215,8 @@ function SeverityRoutingPanel() {
                     onClick={() => toggle(sev.id, ct)}
                     className={
                       active
-                        ? 'rounded-control border border-accent-border bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-text transition-colors'
-                        : 'rounded-control border border-border px-2.5 py-1 text-[11px] font-semibold text-muted transition-colors hover:border-strong hover:text-fg'
+                        ? 'rounded-control border border-accent-border bg-accent-soft px-2.5 py-1 text-meta font-semibold text-accent-text transition-colors'
+                        : 'rounded-control border border-border px-2.5 py-1 text-meta font-semibold text-muted transition-colors hover:border-strong hover:text-fg'
                     }
                   >
                     {CHANNEL_DEFS[ct].label}

@@ -28,7 +28,7 @@ export default function AppearanceDrawer() {
       width={400}
       footer={
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[11px] text-subtle">
+          <span className="text-meta text-subtle">
             {THEMES.find((t) => t.id === a.theme)?.label} · {a.accent}
           </span>
           <button

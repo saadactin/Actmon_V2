@@ -203,7 +203,7 @@ function DiagnosisCenter({ id, error, data, refetch }) {
                   <Icon size={16} className={color} />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-white">{label}</p>
-                    <p className="text-[11px] text-slate-500">{sub}</p>
+                    <p className="text-meta text-slate-500">{sub}</p>
                   </div>
                   <ChevronRight size={14} className="text-slate-600 group-hover:text-slate-400 flex-shrink-0" />
                 </button>
@@ -223,12 +223,12 @@ function DiagnosisCenter({ id, error, data, refetch }) {
                       sev === 'ERROR'    ? 'text-orange-400' :
                       sev === 'WARNING'  ? 'text-yellow-400' : 'text-slate-400'
                     }`}>{cnt}</span>
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">{sev}</span>
+                    <span className="text-micro text-slate-500 uppercase tracking-wider mt-0.5">{sev}</span>
                   </div>
                 ))}
               </div>
               {logsData.source && (
-                <p className="text-[11px] text-slate-500 mt-3 text-center">
+                <p className="text-meta text-slate-500 mt-3 text-center">
                   Source: <span className="text-cyan-500">{logsData.source}</span>
                   {logsData.log_path && logsData.log_path !== 'none' && (
                     <span className="ml-1 font-mono">{logsData.log_path}</span>
@@ -246,7 +246,7 @@ function DiagnosisCenter({ id, error, data, refetch }) {
               <Terminal size={15} className="text-cyan-400" />
               <span className="font-semibold text-sm text-white">Last Known Server Logs</span>
               {logsData?.source && (
-                <span className="text-[11px] px-2 py-0.5 bg-cyan-900/40 border border-cyan-800 text-cyan-400 rounded-full">
+                <span className="text-meta px-2 py-0.5 bg-cyan-900/40 border border-cyan-800 text-cyan-400 rounded-full">
                   {logsData.source}
                 </span>
               )}
@@ -299,10 +299,10 @@ function DiagnosisCenter({ id, error, data, refetch }) {
                   return (
                     <div
                       key={i}
-                      className={`px-3 py-2 rounded-lg text-[11px] font-mono border-l-2 ${SEV_STYLE[sev] || SEV_STYLE.INFO}`}
+                      className={`px-3 py-2 rounded-lg text-meta font-mono border-l-2 ${SEV_STYLE[sev] || SEV_STYLE.INFO}`}
                     >
                       <div className="flex gap-2 items-start">
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${SEV_BADGE[sev] || SEV_BADGE.INFO}`}>
+                        <span className={`text-micro font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${SEV_BADGE[sev] || SEV_BADGE.INFO}`}>
                           {sev}
                         </span>
                         {log.logged && (
@@ -319,7 +319,7 @@ function DiagnosisCenter({ id, error, data, refetch }) {
 
           {/* Footer hint */}
           <div className="border-t border-slate-800 px-5 py-3 flex items-center justify-between flex-shrink-0">
-            <p className="text-[11px] text-slate-600">
+            <p className="text-meta text-slate-600">
               {logs.length > 0 ? `Showing ${logs.length} most recent entries` : 'SSH credentials needed for remote log access'}
             </p>
             <button
@@ -680,8 +680,8 @@ export default function MySQLDashboard() {
                     { name: 'ROLLBK', v: query_stats.Com_rollback|| 0 },
                   ]} barCategoryGap="25%">
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fontSize: 10, fontWeight: 600 }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 9 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fontWeight: 600 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtNum} axisLine={false} tickLine={false} />
                     <Tooltip formatter={v => fmtNum(v)} cursor={{ fill: '#f8fafc' }} />
                     <Bar dataKey="v" radius={[5,5,0,0]}>
                       {[C.teal, C.green, C.orange, C.red, C.blue, C.purple].map((fill, i) => (
@@ -703,8 +703,8 @@ export default function MySQLDashboard() {
                   <ResponsiveContainer width="100%" height={200}>
                     <BarChart layout="vertical" data={databases.filter(d => !['information_schema','performance_schema','mysql','sys'].includes(d.name)).slice(0, 8)}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 9 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
-                      <YAxis width={110} type="category" dataKey="name" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => `${v}MB`} axisLine={false} tickLine={false} />
+                      <YAxis width={110} type="category" dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                       <Tooltip formatter={v => `${v} MB`} cursor={{ fill: '#f8fafc' }} />
                       <Bar dataKey="size_mb" radius={[0,5,5,0]}>
                         {databases.slice(0, 8).map((_, i) => (
@@ -854,7 +854,7 @@ export default function MySQLDashboard() {
                 });
 
               const SortTh = ({ label, k }) => (
-                <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 cursor-pointer select-none hover:text-cyan-600 whitespace-nowrap"
+                <th className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500 cursor-pointer select-none hover:text-cyan-600 whitespace-nowrap"
                   onClick={() => setPerfStmtSort(s => ({ key: k, asc: s.key === k ? !s.asc : false }))}>
                   {label}{perfStmtSort.key===k ? (perfStmtSort.asc ? ' ↑' : ' ↓') : ''}
                 </th>
@@ -862,9 +862,9 @@ export default function MySQLDashboard() {
 
               const Stat = ({ label, value, sub, accent = 'slate', warn }) => (
                 <div className={`bg-white border rounded-xl p-3.5 flex flex-col gap-1 ${warn ? 'border-red-200 bg-red-50' : 'border-slate-100'}`}>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</p>
+                  <p className="text-micro font-bold uppercase tracking-wide text-slate-400">{label}</p>
                   <p className={`text-xl font-black ${warn ? 'text-red-600' : accent === 'green' ? 'text-emerald-600' : accent === 'red' ? 'text-red-600' : accent === 'orange' ? 'text-orange-500' : 'text-slate-800'}`}>{value}</p>
-                  {sub && <p className="text-[10px] text-slate-400 leading-tight">{sub}</p>}
+                  {sub && <p className="text-micro text-slate-400 leading-tight">{sub}</p>}
                 </div>
               );
 
@@ -932,7 +932,7 @@ export default function MySQLDashboard() {
                           </ResponsiveContainer>
                           <div className="flex flex-wrap gap-x-3 gap-y-1 justify-center mt-1">
                             {[['Data',C.blue],['Free',C.green],['Dirty',C.orange],['Misc',C.slate]].map(([l,c]) => (
-                              <span key={l} className="flex items-center gap-1 text-[10px] text-slate-500">
+                              <span key={l} className="flex items-center gap-1 text-micro text-slate-500">
                                 <span className="w-2 h-2 rounded-full inline-block" style={{background:c}}/>{l}
                               </span>
                             ))}
@@ -954,7 +954,7 @@ export default function MySQLDashboard() {
                             ['Pool Size (MB)', bp.size_mb||0],
                           ].map(([l,v]) => (
                             <div key={l} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                              <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                              <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                               <p className="text-sm font-bold text-slate-700">{v}</p>
                             </div>
                           ))}
@@ -972,7 +972,7 @@ export default function MySQLDashboard() {
                             const cls   = e.event_name.includes('io') ? 'bg-blue-400' : e.event_name.includes('lock') ? 'bg-red-400' : e.event_name.includes('mutex') ? 'bg-orange-400' : 'bg-slate-400';
                             return (
                               <div key={i}>
-                                <div className="flex justify-between text-[10px] text-slate-600 mb-0.5">
+                                <div className="flex justify-between text-micro text-slate-600 mb-0.5">
                                   <span className="truncate max-w-[65%] font-medium">{e.event_name.replace('wait/','')}</span>
                                   <span className="font-semibold text-slate-700">{fmtNum(e.total_ms)} ms</span>
                                 </div>
@@ -996,13 +996,13 @@ export default function MySQLDashboard() {
                             ['Pending Reads',     io.pending_reads||0,               'text-slate-800'],
                           ].map(([l,v,cls]) => (
                             <div key={l} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                              <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                              <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                               <p className={`text-sm font-bold ${cls}`}>{v}</p>
                             </div>
                           ))}
                         </div>
                       )}
-                      {!ps && <p className="text-[10px] text-slate-400 mt-3">Enable performance_schema for full wait event analysis.</p>}
+                      {!ps && <p className="text-micro text-slate-400 mt-3">Enable performance_schema for full wait event analysis.</p>}
                     </Panel>
                   </div>
                   )}
@@ -1020,7 +1020,7 @@ export default function MySQLDashboard() {
                         ]} barSize={36}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
                           <XAxis dataKey="name" tick={{fontSize:11}}/>
-                          <YAxis tick={{fontSize:10}} tickFormatter={fmtNum}/>
+                          <YAxis tick={{fontSize:11}} tickFormatter={fmtNum}/>
                           <Tooltip formatter={(v,n) => [fmtNum(v), n==='v'?'Total':'Per sec']}/>
                           <Bar dataKey="v" name="v" radius={[5,5,0,0]}>
                             {[C.blue,C.green,C.orange,C.red].map((c,i)=><Cell key={i} fill={c}/>)}
@@ -1035,7 +1035,7 @@ export default function MySQLDashboard() {
                           ['Delete/s',  ro.deletes_per_sec, C.red],
                         ].map(([l,v,c]) => (
                           <div key={l} className="text-center bg-slate-50 rounded-lg py-2 border border-slate-100">
-                            <p className="text-[10px] text-slate-400 font-bold uppercase">{l}</p>
+                            <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                             <p className="text-sm font-bold" style={{color:c}}>{v||0}</p>
                           </div>
                         ))}
@@ -1053,8 +1053,8 @@ export default function MySQLDashboard() {
                           { name:'Pages Written', v: io.pages_written || 0 },
                         ]} margin={{left:90}}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false}/>
-                          <XAxis type="number" tick={{fontSize:10}} tickFormatter={fmtNum}/>
-                          <YAxis dataKey="name" type="category" tick={{fontSize:10}} width={90}/>
+                          <XAxis type="number" tick={{fontSize:11}} tickFormatter={fmtNum}/>
+                          <YAxis dataKey="name" type="category" tick={{fontSize:11}} width={90}/>
                           <Tooltip formatter={fmtNum}/>
                           <Bar dataKey="v" radius={[0,4,4,0]}>
                             {[C.blue,C.teal,C.purple,C.orange,C.cyan,C.green].map((c,i)=><Cell key={i} fill={c}/>)}
@@ -1069,7 +1069,7 @@ export default function MySQLDashboard() {
                           ['DoubleWrite Writes',io.dblwr_writes     || 0],
                         ].map(([l,v]) => (
                           <div key={l} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                            <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                            <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                             <p className={`text-sm font-bold ${v>0?'text-orange-500':'text-slate-700'}`}>{fmtNum(v)}</p>
                           </div>
                         ))}
@@ -1091,12 +1091,12 @@ export default function MySQLDashboard() {
                           placeholder="Filter SQL digest…"
                           className="w-full pl-8 pr-3 h-9 rounded-xl border border-slate-200 text-[12px] bg-white focus:ring-2 focus:ring-cyan-300 focus:outline-none"/>
                       </div>
-                      <span className="text-[11px] text-slate-400">{filteredStm.length} of {stm.length} statements</span>
+                      <span className="text-meta text-slate-400">{filteredStm.length} of {stm.length} statements</span>
                     </div>
                     <PagedTable pageSize={10} rows={filteredStm}
                       headerRow={(
                         <tr>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 w-[35%]">SQL Digest</th>
+                          <th className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500 w-[35%]">SQL Digest</th>
                           <SortTh label="Count"    k="count"/>
                           <SortTh label="Avg (ms)" k="avg_ms"/>
                           <SortTh label="Max (ms)" k="max_ms"/>
@@ -1104,15 +1104,15 @@ export default function MySQLDashboard() {
                           <SortTh label="Rows Exam" k="rows_examined"/>
                           <SortTh label="Rows Sent" k="rows_sent"/>
                           <SortTh label="No Index"  k="no_index"/>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500">Last Seen</th>
+                          <th className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500">Last Seen</th>
                         </tr>
                       )}
                       renderRow={(s, i) => (
                         <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50/80 ${s.no_index>0?'bg-amber-50/40':''}`}>
-                          <td className="px-3 py-1.5 font-mono text-[10px] text-slate-700 max-w-[300px]">
+                          <td className="px-3 py-1.5 font-mono text-micro text-slate-700 max-w-[300px]">
                             <div className="truncate" title={s.digest_text}>{s.digest_text}</div>
-                            {s.no_index > 0 && <span className="inline-flex items-center gap-1 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5">⚠ no-index ×{s.no_index}</span>}
-                            {s.tmp_disk > 0 && <span className="inline-flex items-center gap-1 text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5 ml-1">tmp-disk ×{s.tmp_disk}</span>}
+                            {s.no_index > 0 && <span className="inline-flex items-center gap-1 text-micro bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5">⚠ no-index ×{s.no_index}</span>}
+                            {s.tmp_disk > 0 && <span className="inline-flex items-center gap-1 text-micro bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-semibold mt-0.5 ml-1">tmp-disk ×{s.tmp_disk}</span>}
                           </td>
                           <td className="px-3 py-1.5 text-center font-semibold text-slate-700">{fmtNum(s.count)}</td>
                           <td className="px-3 py-1.5 text-center font-mono text-blue-700">{Number(s.avg_ms||0).toFixed(2)}</td>
@@ -1121,9 +1121,9 @@ export default function MySQLDashboard() {
                           <td className="px-3 py-1.5 text-center text-slate-600">{Number(s.rows_examined||0).toFixed(1)}</td>
                           <td className="px-3 py-1.5 text-center text-slate-600">{Number(s.rows_sent||0).toFixed(1)}</td>
                           <td className="px-3 py-1.5 text-center">
-                            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${s.no_index>0?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{s.no_index}</span>
+                            <span className={`px-1.5 py-0.5 rounded-full text-micro font-bold ${s.no_index>0?'bg-red-100 text-red-700':'bg-green-100 text-green-700'}`}>{s.no_index}</span>
                           </td>
-                          <td className="px-3 py-1.5 text-slate-400 text-[10px] whitespace-nowrap">{s.last_seen}</td>
+                          <td className="px-3 py-1.5 text-slate-400 text-micro whitespace-nowrap">{s.last_seen}</td>
                         </tr>
                       )}/>
                   </Panel>
@@ -1154,7 +1154,7 @@ export default function MySQLDashboard() {
                           ['Lock Time Total',    `${fmtNum(lk.lock_time_ms||0)} ms`,   'text-slate-800'],
                         ].map(([l,v,cls]) => (
                           <div key={l} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                            <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                            <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                             <p className={`text-sm font-bold ${cls}`}>{v}</p>
                           </div>
                         ))}
@@ -1174,7 +1174,7 @@ export default function MySQLDashboard() {
                           ['Tmp Table Size',     `${tt.tmp_table_size_mb||0} MB`, 'text-slate-800'],
                         ].map(([l,v,cls]) => (
                           <div key={l} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                            <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                            <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                             <p className={`text-sm font-bold ${cls}`}>{v}</p>
                           </div>
                         ))}
@@ -1205,7 +1205,7 @@ export default function MySQLDashboard() {
                           const barCls = good === true ? 'bg-emerald-400' : good === false ? 'bg-red-400' : 'bg-blue-300';
                           return (
                             <div key={l}>
-                              <div className="flex justify-between text-[10px] mb-0.5">
+                              <div className="flex justify-between text-micro mb-0.5">
                                 <span className="font-mono font-bold text-slate-700">{l}</span>
                                 <span className="text-slate-500">{fmtNum(v)} <span className="text-slate-400">— {desc}</span></span>
                               </div>
@@ -1233,9 +1233,9 @@ export default function MySQLDashboard() {
                           ['Rollbacks',    fmtNum(qq.rollbacks||0),    'Com_rollback',            qq.rollbacks>0?'text-orange-600':'text-slate-800'],
                         ].map(([l,v,d,cls]) => (
                           <div key={l} className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
-                            <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                            <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                             <p className={`text-sm font-bold ${cls}`}>{v}</p>
-                            <p className="text-[9px] text-slate-400">{d}</p>
+                            <p className="text-micro text-slate-400">{d}</p>
                           </div>
                         ))}
                       </div>
@@ -1262,7 +1262,7 @@ export default function MySQLDashboard() {
                         ['MaxConn Errors',    co.errors_maxconn||0,       co.errors_maxconn>0?'text-red-600':'text-slate-800'],
                       ].map(([l,v,cls]) => (
                         <div key={l} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[9px] text-slate-400 font-bold uppercase leading-tight mb-1">{l}</p>
+                          <p className="text-micro text-slate-400 font-bold uppercase leading-tight mb-1">{l}</p>
                           <p className={`text-base font-black ${cls}`}>{v}</p>
                         </div>
                       ))}
@@ -1278,13 +1278,13 @@ export default function MySQLDashboard() {
                       headerRow={(
                         <tr>
                           {['Schema','Table','Fetch','Insert','Update','Delete','Total Wait (ms)','Avg Wait (ms)','Fetch ms','Insert ms','Update ms','Delete ms'].map(h => (
-                            <th key={h} className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
+                            <th key={h} className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       )}
                       renderRow={(t,i) => (
                         <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/80">
-                          <td className="px-3 py-1.5 text-slate-500 font-mono text-[10px]">{t.schema}</td>
+                          <td className="px-3 py-1.5 text-slate-500 font-mono text-micro">{t.schema}</td>
                           <td className="px-3 py-1.5 font-semibold text-slate-800">{t.table}</td>
                           <td className="px-3 py-1.5 text-right text-blue-700">{fmtNum(t.fetch)}</td>
                           <td className="px-3 py-1.5 text-right text-green-700">{fmtNum(t.insert)}</td>
@@ -1308,11 +1308,11 @@ export default function MySQLDashboard() {
                     <PagedTable pageSize={10} rows={mem}
                       headerRow={(
                         <tr>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500">Memory Event</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">Current (MB)</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">High (MB)</th>
-                          <th className="px-3 py-2 text-right text-[10px] font-bold uppercase text-slate-500">Alloc Count</th>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 w-[25%]">Usage Bar</th>
+                          <th className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500">Memory Event</th>
+                          <th className="px-3 py-2 text-right text-micro font-bold uppercase text-slate-500">Current (MB)</th>
+                          <th className="px-3 py-2 text-right text-micro font-bold uppercase text-slate-500">High (MB)</th>
+                          <th className="px-3 py-2 text-right text-micro font-bold uppercase text-slate-500">Alloc Count</th>
+                          <th className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500 w-[25%]">Usage Bar</th>
                         </tr>
                       )}
                       renderRow={(m2, i) => {
@@ -1320,7 +1320,7 @@ export default function MySQLDashboard() {
                         const pct = Math.round(m2.current_mb / maxMem * 100);
                         return (
                           <tr key={i} className="border-t border-slate-50 hover:bg-slate-50/80">
-                            <td className="px-3 py-1.5 font-mono text-[10px] text-slate-700 truncate max-w-[250px]">{m2.event_name.replace('memory/','')}</td>
+                            <td className="px-3 py-1.5 font-mono text-micro text-slate-700 truncate max-w-[250px]">{m2.event_name.replace('memory/','')}</td>
                             <td className="px-3 py-1.5 text-right font-bold text-blue-700">{Number(m2.current_mb||0).toFixed(2)}</td>
                             <td className="px-3 py-1.5 text-right text-slate-500">{Number(m2.high_mb||0).toFixed(2)}</td>
                             <td className="px-3 py-1.5 text-right text-slate-500">{fmtNum(m2.count_used)}</td>
@@ -1343,21 +1343,21 @@ export default function MySQLDashboard() {
                       headerRow={(
                         <tr>
                           {['TRX ID','State','Duration','User','Host','Rows Locked','Rows Modified','Isolation','SQL'].map(h=>(
-                            <th key={h} className="px-3 py-2 text-left text-[10px] font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
+                            <th key={h} className="px-3 py-2 text-left text-micro font-bold uppercase text-slate-500 whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       )}
                       renderRow={(t,i) => (
                         <tr key={i} className={`border-t border-slate-50 hover:bg-slate-50 ${t.duration_sec>30?'bg-red-50/60':t.duration_sec>10?'bg-amber-50/40':''}`}>
-                          <td className="px-3 py-1.5 font-mono text-[10px] text-slate-600">{t.trx_id}</td>
-                          <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${t.state==='RUNNING'?'bg-green-100 text-green-700':t.state==='LOCK WAIT'?'bg-red-100 text-red-700':'bg-slate-100 text-slate-600'}`}>{t.state}</span></td>
+                          <td className="px-3 py-1.5 font-mono text-micro text-slate-600">{t.trx_id}</td>
+                          <td className="px-3 py-1.5"><span className={`px-1.5 py-0.5 rounded text-micro font-bold ${t.state==='RUNNING'?'bg-green-100 text-green-700':t.state==='LOCK WAIT'?'bg-red-100 text-red-700':'bg-slate-100 text-slate-600'}`}>{t.state}</span></td>
                           <td className="px-3 py-1.5 font-semibold text-center whitespace-nowrap"><span className={t.duration_sec>30?'text-red-600':t.duration_sec>10?'text-orange-500':'text-slate-700'}>{t.duration_sec}s</span></td>
                           <td className="px-3 py-1.5 text-slate-700">{t.user}</td>
-                          <td className="px-3 py-1.5 text-slate-500 text-[10px]">{t.host}</td>
+                          <td className="px-3 py-1.5 text-slate-500 text-micro">{t.host}</td>
                           <td className="px-3 py-1.5 text-center font-bold text-red-600">{t.rows_locked}</td>
                           <td className="px-3 py-1.5 text-center font-semibold text-slate-700">{t.rows_modified}</td>
-                          <td className="px-3 py-1.5 text-[10px] text-slate-500">{t.isolation}</td>
-                          <td className="px-3 py-1.5 font-mono text-[10px] text-slate-600 max-w-[200px]"><div className="truncate" title={t.query}>{t.query||'—'}</div></td>
+                          <td className="px-3 py-1.5 text-micro text-slate-500">{t.isolation}</td>
+                          <td className="px-3 py-1.5 font-mono text-micro text-slate-600 max-w-[200px]"><div className="truncate" title={t.query}>{t.query||'—'}</div></td>
                         </tr>
                       )}/>
                   </Panel>
@@ -1370,13 +1370,13 @@ export default function MySQLDashboard() {
                       {lkw.map((lw,i) => (
                         <div key={i} className="flex items-start gap-3 bg-red-50 border border-red-100 rounded-xl p-3">
                           <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-bold text-red-700 uppercase mb-1">Waiting ({lw.waiting_user}) — {lw.wait_sec}s</p>
-                            <p className="font-mono text-[10px] text-slate-700 truncate">{lw.waiting_query||'—'}</p>
+                            <p className="text-micro font-bold text-red-700 uppercase mb-1">Waiting ({lw.waiting_user}) — {lw.wait_sec}s</p>
+                            <p className="font-mono text-micro text-slate-700 truncate">{lw.waiting_query||'—'}</p>
                           </div>
                           <div className="flex-shrink-0 text-slate-400 text-lg">→</div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-bold text-orange-700 uppercase mb-1">Blocked by ({lw.blocking_user})</p>
-                            <p className="font-mono text-[10px] text-slate-700 truncate">{lw.blocking_query||'—'}</p>
+                            <p className="text-micro font-bold text-orange-700 uppercase mb-1">Blocked by ({lw.blocking_user})</p>
+                            <p className="font-mono text-micro text-slate-700 truncate">{lw.blocking_query||'—'}</p>
                           </div>
                         </div>
                       ))}
@@ -1419,7 +1419,7 @@ export default function MySQLDashboard() {
                         const isBad  = (param==='slow_query_log'&&isOff)||(param==='performance_schema'&&isOff);
                         return (
                           <div key={param} className={`rounded-lg px-3 py-2 border ${isBad?'bg-amber-50 border-amber-200':'bg-slate-50 border-slate-100'}`}>
-                            <p className="text-[9px] font-mono text-slate-400 truncate" title={param}>{param}</p>
+                            <p className="text-micro font-mono text-slate-400 truncate" title={param}>{param}</p>
                             <p className={`text-sm font-bold truncate ${isOn?'text-emerald-600':isOff?'text-slate-500':'text-slate-800'}`}>{val}</p>
                           </div>
                         );
@@ -1443,7 +1443,7 @@ export default function MySQLDashboard() {
                         ['Blocks Unused',   fmtNum(kc.blocks_unused||0), 'text-slate-800'],
                       ].map(([l,v,cls]) => (
                         <div key={l} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-                          <p className="text-[9px] text-slate-400 font-bold uppercase">{l}</p>
+                          <p className="text-micro text-slate-400 font-bold uppercase">{l}</p>
                           <p className={`text-sm font-bold ${cls}`}>{v}</p>
                         </div>
                       ))}
@@ -1488,7 +1488,7 @@ export default function MySQLDashboard() {
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50">
                     <tr>{['ID','User','Host','DB','Command','Time (s)','State','Query'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase tracking-wider">{h}</th>
+                      <th key={h} className="px-4 py-3 text-left text-micro font-bold text-slate-400 uppercase tracking-wider">{h}</th>
                     ))}</tr>
                   </thead>
                   <tbody>
@@ -1509,7 +1509,7 @@ export default function MySQLDashboard() {
                             <td className="px-4 py-2.5 text-xs text-slate-400">{p.Host}</td>
                             <td className="px-4 py-2.5 text-xs">{p.db || '—'}</td>
                             <td className="px-4 py-2.5 text-xs">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.Command === 'Sleep' ? 'bg-slate-100 text-slate-500' : 'bg-blue-100 text-blue-700'}`}>
+                              <span className={`px-2 py-0.5 rounded-full text-micro font-bold ${p.Command === 'Sleep' ? 'bg-slate-100 text-slate-500' : 'bg-blue-100 text-blue-700'}`}>
                                 {p.Command}
                               </span>
                             </td>
@@ -1615,7 +1615,7 @@ export default function MySQLDashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-[17px] font-black text-slate-900 leading-tight truncate">{k.value}</p>
-                    <p className="text-[10px] text-slate-400 font-medium">{k.label}</p>
+                    <p className="text-micro text-slate-400 font-medium">{k.label}</p>
                   </div>
                 </div>
               ))}
@@ -1726,7 +1726,7 @@ export default function MySQLDashboard() {
                   </div>
 
                   <Panel title={`Active Transactions (${txns.length})`}
-                    action={<span className="text-[10px] text-slate-400">Click row to expand details</span>}>
+                    action={<span className="text-micro text-slate-400">Click row to expand details</span>}>
                     {txns.length === 0 ? (
                       <div className="text-center py-10">
                         <CheckCircle2 className="mx-auto text-green-400 mb-3" size={36} />
@@ -1738,7 +1738,7 @@ export default function MySQLDashboard() {
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50">
                             <tr>{['Trx ID','State','Started','Rows Locked','Rows Modified','Query'].map(h => (
-                              <th key={h} className="px-4 py-2.5 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
+                              <th key={h} className="px-4 py-2.5 text-left text-micro font-bold text-slate-400 uppercase">{h}</th>
                             ))}</tr>
                           </thead>
                           <tbody>
@@ -1756,14 +1756,14 @@ export default function MySQLDashboard() {
                                       </div>
                                     </td>
                                     <td className="px-4 py-3">
-                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${t.state === 'RUNNING' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                      <span className={`px-2 py-0.5 rounded-full text-micro font-bold ${t.state === 'RUNNING' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
                                         {t.state}
                                       </span>
                                     </td>
                                     <td className="px-4 py-3 text-xs text-slate-400">{t.started?.slice(0,19)}</td>
                                     <td className="px-4 py-3 font-bold text-orange-600">{t.rows_locked}</td>
                                     <td className="px-4 py-3 text-slate-700">{t.rows_modified}</td>
-                                    <td className="px-4 py-3 font-mono text-[10px] text-slate-500 max-w-[250px] truncate">{t.query || '—'}</td>
+                                    <td className="px-4 py-3 font-mono text-micro text-slate-500 max-w-[250px] truncate">{t.query || '—'}</td>
                                   </tr>
                                   {isExpT && (
                                     <tr><td colSpan={6} className="p-0"><TransactionDetail t={t} /></td></tr>
@@ -1819,7 +1819,7 @@ export default function MySQLDashboard() {
           const threadPill = (state) => {
             const ok = state === 'Yes' || state === 'Connecting';
             return (
-              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-meta font-bold ${ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`} />
                 {state || '—'}
               </span>
@@ -1833,7 +1833,7 @@ export default function MySQLDashboard() {
             const color = n === 0 ? 'bg-green-500' : n < 10 ? 'bg-yellow-500' : 'bg-red-500';
             return (
               <div className="mt-2">
-                <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                <div className="flex justify-between text-micro text-slate-500 mb-1">
                   <span>Replication Lag</span>
                   <span className="font-mono font-bold">{n}s</span>
                 </div>
@@ -1857,18 +1857,18 @@ export default function MySQLDashboard() {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-3 flex-wrap mb-2">
-                    {isGalera  && <span className="px-2.5 py-1 text-[11px] font-bold bg-purple-100 text-purple-700 rounded-full">Galera Cluster</span>}
-                    {isMaster  && <span className="px-2.5 py-1 text-[11px] font-bold bg-blue-100 text-blue-700 rounded-full">Primary / Master</span>}
-                    {isSlave   && <span className="px-2.5 py-1 text-[11px] font-bold bg-cyan-100 text-cyan-700 rounded-full">Replica / Slave</span>}
-                    {!isGalera && !isMaster && !isSlave && <span className="px-2.5 py-1 text-[11px] font-bold bg-slate-100 text-slate-600 rounded-full">Standalone</span>}
-                    <button onClick={() => refetchRepl()} className="ml-auto flex items-center gap-1.5 h-7 px-3 rounded-lg border border-slate-200 text-[11px] text-slate-600 font-semibold hover:bg-white/80 transition-all bg-white/60">
+                    {isGalera  && <span className="px-2.5 py-1 text-meta font-bold bg-purple-100 text-purple-700 rounded-full">Galera Cluster</span>}
+                    {isMaster  && <span className="px-2.5 py-1 text-meta font-bold bg-blue-100 text-blue-700 rounded-full">Primary / Master</span>}
+                    {isSlave   && <span className="px-2.5 py-1 text-meta font-bold bg-cyan-100 text-cyan-700 rounded-full">Replica / Slave</span>}
+                    {!isGalera && !isMaster && !isSlave && <span className="px-2.5 py-1 text-meta font-bold bg-slate-100 text-slate-600 rounded-full">Standalone</span>}
+                    <button onClick={() => refetchRepl()} className="ml-auto flex items-center gap-1.5 h-7 px-3 rounded-lg border border-slate-200 text-meta text-slate-600 font-semibold hover:bg-white/80 transition-all bg-white/60">
                       <RefreshCw size={11} /> Refresh
                     </button>
                     {replLoading && <Loader2 size={14} className="animate-spin text-slate-400" />}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {details.map((d, i) => (
-                      <div key={i} className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg ${d.ok ? 'bg-green-100/60 text-green-700' : 'bg-red-100/60 text-red-700'}`}>
+                      <div key={i} className={`flex items-center gap-1.5 text-meta px-2.5 py-1 rounded-lg ${d.ok ? 'bg-green-100/60 text-green-700' : 'bg-red-100/60 text-red-700'}`}>
                         {d.ok ? <CheckCircle2 size={11} /> : <XCircle size={11} />}
                         {d.message}
                       </div>
@@ -1886,19 +1886,19 @@ export default function MySQLDashboard() {
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 text-center">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Cluster Size</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase tracking-wide mb-1">Cluster Size</p>
                       <p className="text-3xl font-black text-slate-900">{galera.cluster_size ?? '—'}</p>
                     </div>
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 text-center">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Node State</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase tracking-wide mb-1">Node State</p>
                       <p className={`text-[14px] font-black ${galera.local_state_comment === 'Synced' ? 'text-green-600' : 'text-yellow-600'}`}>{galera.local_state_comment ?? '—'}</p>
                     </div>
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 text-center">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Cluster Status</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase tracking-wide mb-1">Cluster Status</p>
                       <p className={`text-[14px] font-black ${galera.cluster_status === 'Primary' ? 'text-green-600' : 'text-red-600'}`}>{galera.cluster_status ?? '—'}</p>
                     </div>
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 text-center">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Ready</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase tracking-wide mb-1">Ready</p>
                       <p className={`text-[14px] font-black ${galera.ready === 'ON' ? 'text-green-600' : 'text-red-600'}`}>{galera.ready ?? '—'}</p>
                     </div>
                   </div>
@@ -1923,7 +1923,7 @@ export default function MySQLDashboard() {
                       const bad = m.warn && m.warn(v);
                       return (
                         <div key={m.key} className={`rounded-xl border p-3 ${bad ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100'}`}>
-                          <p className="text-[9px] font-bold uppercase tracking-wide text-slate-400 mb-1">{m.label}</p>
+                          <p className="text-micro font-bold uppercase tracking-wide text-slate-400 mb-1">{m.label}</p>
                           <p className={`font-mono text-[12px] font-black ${bad ? 'text-red-700' : 'text-slate-800'}`}>{v}</p>
                         </div>
                       );
@@ -1933,7 +1933,7 @@ export default function MySQLDashboard() {
                   {/* Galera addresses */}
                   {galera.incoming_addresses && (
                     <div className="mt-3 bg-slate-900 rounded-xl px-4 py-3">
-                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Incoming Addresses</p>
+                      <p className="text-micro text-slate-400 font-bold uppercase mb-1">Incoming Addresses</p>
                       <p className="font-mono text-green-400 text-[12px]">{galera.incoming_addresses}</p>
                     </div>
                   )}
@@ -1951,23 +1951,23 @@ export default function MySQLDashboard() {
                   {/* Thread status row */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">IO Thread</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase mb-2">IO Thread</p>
                       {threadPill(slave.io_running)}
                     </div>
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">SQL Thread</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase mb-2">SQL Thread</p>
                       {threadPill(slave.sql_running)}
                     </div>
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Lag (seconds)</p>
+                      <p className="text-micro font-bold text-slate-400 uppercase mb-2">Lag (seconds)</p>
                       <p className={`text-2xl font-black ${Number(slave.seconds_behind_master) === 0 ? 'text-green-600' : Number(slave.seconds_behind_master) < 10 ? 'text-yellow-600' : 'text-red-600'}`}>
                         {slave.seconds_behind_master ?? '—'}
                       </p>
                       {slave.seconds_behind_master != null && lagBar(slave.seconds_behind_master)}
                     </div>
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Auto Position</p>
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${slave.auto_position ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
+                      <p className="text-micro font-bold text-slate-400 uppercase mb-2">Auto Position</p>
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-meta font-bold ${slave.auto_position ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'}`}>
                         {slave.auto_position ? 'GTID Mode' : 'File/Pos Mode'}
                       </span>
                     </div>
@@ -1989,7 +1989,7 @@ export default function MySQLDashboard() {
                       { label: 'Executed GTIDs',  val: slave.executed_gtid_set },
                     ].filter(f => f.val != null).map((f, i) => (
                       <div key={i} className="bg-slate-50 rounded-xl border border-slate-100 px-4 py-3">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
+                        <p className="text-micro font-bold text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
                         <p className="font-mono text-[12px] text-slate-800 font-semibold break-all">{String(f.val)}</p>
                       </div>
                     ))}
@@ -1998,8 +1998,8 @@ export default function MySQLDashboard() {
                   {/* Errors */}
                   {(slave.last_io_error || slave.last_sql_error) && (
                     <div className="mt-3 space-y-2">
-                      {slave.last_io_error  && <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3"><AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5" /><div><p className="text-[10px] font-bold text-red-700 uppercase mb-0.5">IO Error (errno {slave.last_io_errno})</p><p className="font-mono text-[11px] text-red-800">{slave.last_io_error}</p></div></div>}
-                      {slave.last_sql_error && <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3"><AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5" /><div><p className="text-[10px] font-bold text-red-700 uppercase mb-0.5">SQL Error (errno {slave.last_sql_errno})</p><p className="font-mono text-[11px] text-red-800">{slave.last_sql_error}</p></div></div>}
+                      {slave.last_io_error  && <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3"><AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5" /><div><p className="text-micro font-bold text-red-700 uppercase mb-0.5">IO Error (errno {slave.last_io_errno})</p><p className="font-mono text-meta text-red-800">{slave.last_io_error}</p></div></div>}
+                      {slave.last_sql_error && <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3"><AlertTriangle size={14} className="text-red-500 flex-shrink-0 mt-0.5" /><div><p className="text-micro font-bold text-red-700 uppercase mb-0.5">SQL Error (errno {slave.last_sql_errno})</p><p className="font-mono text-meta text-red-800">{slave.last_sql_error}</p></div></div>}
                     </div>
                   )}
                 </div>
@@ -2020,7 +2020,7 @@ export default function MySQLDashboard() {
                       { label: 'Binlog Ignore DB',val: master.binlog_ignore_db || '(none)' },
                     ].map((f, i) => (
                       <div key={i} className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
+                        <p className="text-micro font-bold text-slate-400 uppercase tracking-wide mb-1">{f.label}</p>
                         <p className="font-mono text-[13px] font-black text-blue-700 break-all">{String(f.val)}</p>
                       </div>
                     ))}
@@ -2045,7 +2045,7 @@ export default function MySQLDashboard() {
                       { label: 'Current Pos',      val: gtid.gtid_current_pos },
                     ].filter(f => f.val != null).map((f, i) => (
                       <div key={i} className="bg-amber-50 rounded-xl border border-amber-100 px-4 py-3">
-                        <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-1">{f.label}</p>
+                        <p className="text-micro font-bold text-amber-600 uppercase tracking-wide mb-1">{f.label}</p>
                         <p className="font-mono text-[12px] font-bold text-amber-900 break-all">{String(f.val)}</p>
                       </div>
                     ))}
@@ -2074,8 +2074,8 @@ export default function MySQLDashboard() {
                           <div className="p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-1.5">
                             {Object.entries(vars).map(([k, v]) => (
                               <div key={k} className="flex items-center gap-2 bg-white rounded-lg border border-slate-100 px-3 py-2">
-                                <span className="font-mono text-[10px] text-slate-500 flex-1 min-w-0 truncate">{k}</span>
-                                <span className="font-mono text-[11px] font-bold text-slate-900 flex-shrink-0 max-w-[120px] truncate">{String(v ?? '—')}</span>
+                                <span className="font-mono text-micro text-slate-500 flex-1 min-w-0 truncate">{k}</span>
+                                <span className="font-mono text-meta font-bold text-slate-900 flex-shrink-0 max-w-[120px] truncate">{String(v ?? '—')}</span>
                               </div>
                             ))}
                           </div>
@@ -2120,7 +2120,7 @@ export default function MySQLDashboard() {
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50">
                         <tr>{['User','Host','Connections','Active','Sleeping'].map(h => (
-                          <th key={h} className="px-4 py-3 text-left text-[10px] font-bold text-slate-400 uppercase">{h}</th>
+                          <th key={h} className="px-4 py-3 text-left text-micro font-bold text-slate-400 uppercase">{h}</th>
                         ))}</tr>
                       </thead>
                       <tbody>
@@ -2135,7 +2135,7 @@ export default function MySQLDashboard() {
                                   <div className="grid grid-cols-3 gap-3">
                                     {[['Connections', u.connections, 'blue'], ['Active', u.active, 'green'], ['Sleeping', u.sleeping, 'slate']].map(([l,v,a]) => (
                                       <div key={l} className={`rounded-xl border p-4 bg-${a}-50 border-${a}-200 text-${a}-700`}>
-                                        <p className="text-[10px] font-bold uppercase">{l}</p>
+                                        <p className="text-micro font-bold uppercase">{l}</p>
                                         <p className="text-2xl font-black mt-1">{v}</p>
                                       </div>
                                     ))}
@@ -2144,7 +2144,7 @@ export default function MySQLDashboard() {
                                     <p className="text-xs text-slate-500 mb-2">Processes from this user in the current process list:</p>
                                     <div className="space-y-1">
                                       {process_list.filter(p => p.User === u.user).map((p, pi) => (
-                                        <div key={pi} className="font-mono text-[10px] bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                                        <div key={pi} className="font-mono text-micro bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                                           <span className="font-bold text-cyan-700">ID:{p.Id}</span>
                                           <span className="ml-2 text-orange-600">Time:{p.Time}s</span>
                                           <span className="ml-2 text-slate-500">{p.Command}</span>
@@ -2166,10 +2166,10 @@ export default function MySQLDashboard() {
                             <td className="px-4 py-3 text-xs text-slate-400">{u.host}</td>
                             <td className="px-4 py-3 font-bold">{u.connections}</td>
                             <td className="px-4 py-3">
-                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded-full">{u.active}</span>
+                              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-micro font-bold rounded-full">{u.active}</span>
                             </td>
                             <td className="px-4 py-3">
-                              <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-[10px] font-bold rounded-full">{u.sleeping}</span>
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-500 text-micro font-bold rounded-full">{u.sleeping}</span>
                             </td>
                           </tr>
                         ))}
@@ -2270,8 +2270,8 @@ export default function MySQLDashboard() {
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart layout="vertical" data={topTables}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis type="number" tick={{ fontSize: 10 }} />
-                        <YAxis width={130} type="category" dataKey="table" tick={{ fontSize: 10 }} />
+                        <XAxis type="number" tick={{ fontSize: 11 }} />
+                        <YAxis width={130} type="category" dataKey="table" tick={{ fontSize: 11 }} />
                         <Tooltip formatter={v => `${v} MB`} />
                         <Bar dataKey="data_mb"  fill={C.blue}   radius={[0,4,4,0]} stackId="a" name="Data" />
                         <Bar dataKey="index_mb" fill={C.purple} radius={[0,4,4,0]} stackId="a" name="Index" />
@@ -2289,7 +2289,7 @@ export default function MySQLDashboard() {
                                 <div className="grid grid-cols-3 gap-3">
                                   {[['Total', `${t.total_mb} MB`, 'orange'], ['Data', `${t.data_mb} MB`, 'blue'], ['Index', `${t.index_mb} MB`, 'purple']].map(([l,v,a]) => (
                                     <div key={l} className={`rounded-xl border p-4 bg-${a}-50 border-${a}-200 text-${a}-700`}>
-                                      <p className="text-[10px] font-bold uppercase">{l}</p>
+                                      <p className="text-micro font-bold uppercase">{l}</p>
                                       <p className="text-xl font-black mt-1">{v}</p>
                                     </div>
                                   ))}
@@ -2396,7 +2396,7 @@ function BinlogEventBadge({ type }) {
     t === 'Stop'                ? { label: t, bg: 'bg-red-100',    text: 'text-red-600'    } :
                                   { label: t || '—', bg: 'bg-slate-100', text: 'text-slate-500' };
   return (
-    <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold ${cfg.bg} ${cfg.text} whitespace-nowrap`}>
+    <span className={`inline-block px-2 py-0.5 rounded-full text-micro font-bold ${cfg.bg} ${cfg.text} whitespace-nowrap`}>
       {cfg.label}
     </span>
   );
@@ -2425,7 +2425,7 @@ function KpiCard({ icon: Icon, title, value, accent }) {
     <div className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent]||acc.slate} p-4 hover:shadow-md transition-all`}>
       <div className="flex justify-between items-start">
         <div>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
+          <p className="text-micro text-slate-400 font-bold uppercase tracking-wide">{title}</p>
           <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
         </div>
         <Icon size={20} className="text-slate-300 mt-0.5" />
@@ -2444,7 +2444,7 @@ function MetricKpi({ title, value, accent }) {
   };
   return (
     <div className={`rounded-xl border p-4 ${acc[accent]||acc.slate}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
+      <p className="text-micro font-bold uppercase tracking-wide opacity-70">{title}</p>
       <p className="text-2xl font-black mt-1">{value ?? '—'}</p>
     </div>
   );
@@ -2485,10 +2485,10 @@ function Panel({ title, children, collapsible = false, defaultOpen = false, subt
         </div>
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-slate-800 text-sm leading-tight">{title}</h3>
-          {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+          {subtitle && <p className="text-meta text-slate-400 mt-0.5">{subtitle}</p>}
         </div>
-        {count != null && <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[11px] font-bold flex-shrink-0">{count}</span>}
-        {!open && <span className="text-[11px] font-bold text-cyan-600 flex items-center gap-1 flex-shrink-0"><Eye size={12} /> View</span>}
+        {count != null && <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-meta font-bold flex-shrink-0">{count}</span>}
+        {!open && <span className="text-meta font-bold text-cyan-600 flex items-center gap-1 flex-shrink-0"><Eye size={12} /> View</span>}
         <ChevronDown size={16} className={`text-slate-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && <div className="px-5 pb-5">{children}</div>}
@@ -2498,14 +2498,14 @@ function Panel({ title, children, collapsible = false, defaultOpen = false, subt
 
 // Pager stepper: ‹ 1 2 3 … › — compact numbered pages.
 function Stepper({ page, pages, total, pageSize, onChange }) {
-  if (pages <= 1) return <p className="text-[10px] text-slate-400 mt-2">{total} row{total === 1 ? '' : 's'} total</p>;
+  if (pages <= 1) return <p className="text-micro text-slate-400 mt-2">{total} row{total === 1 ? '' : 's'} total</p>;
   const nums = [...new Set([1, pages, page, page - 1, page + 1])].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
   const items = []; let prev = 0;
   nums.forEach((n) => { if (n - prev > 1) items.push('…' + n); items.push(n); prev = n; });
   const btn = 'min-w-[28px] h-7 px-2 rounded-lg text-xs font-bold transition-colors';
   return (
     <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
-      <span className="text-[10px] text-slate-400">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}</span>
+      <span className="text-micro text-slate-400">Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}</span>
       <div className="flex items-center gap-1">
         <button disabled={page === 1} onClick={() => onChange(page - 1)}
           className={`${btn} border border-slate-200 text-slate-500 disabled:opacity-40 hover:bg-slate-50`}>‹</button>
@@ -2530,7 +2530,7 @@ function PagedTable({ headerRow, rows = [], renderRow, pageSize = 10 }) {
   return (
     <>
       <div className="overflow-x-auto rounded-xl border border-slate-100">
-        <table className="w-full text-[11px]">
+        <table className="w-full text-meta">
           <thead className="bg-slate-50">{headerRow}</thead>
           <tbody>{slice.map(renderRow)}</tbody>
         </table>
@@ -2542,7 +2542,7 @@ function PagedTable({ headerRow, rows = [], renderRow, pageSize = 10 }) {
 function InfoBox({ label, value }) {
   return (
     <div className="bg-slate-50 rounded-xl border border-slate-100 p-3">
-      <p className="text-[10px] text-slate-400 font-semibold uppercase mb-1">{label}</p>
+      <p className="text-micro text-slate-400 font-semibold uppercase mb-1">{label}</p>
       <p className="font-bold text-slate-800">{value}</p>
     </div>
   );
@@ -2576,7 +2576,7 @@ function ActionCard({ icon, title, desc, onClick }) {
 function HeartbeatCard({ label, value, warn }) {
   return (
     <div className={`rounded-xl border p-4 ${warn ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-      <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">{label}</p>
+      <p className="text-micro text-slate-400 font-bold uppercase mb-1">{label}</p>
       <p className={`font-black text-lg ${warn ? 'text-red-700' : 'text-green-700'}`}>{String(value)}</p>
     </div>
   );
@@ -2584,7 +2584,7 @@ function HeartbeatCard({ label, value, warn }) {
 function SparkCard({ label, data, color }) {
   return (
     <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-      <p className="text-[10px] font-semibold text-slate-500 mb-2">{label}</p>
+      <p className="text-micro font-semibold text-slate-500 mb-2">{label}</p>
       <ResponsiveContainer width="100%" height={60}>
         <AreaChart data={data}>
           <defs>
@@ -2594,7 +2594,7 @@ function SparkCard({ label, data, color }) {
             </linearGradient>
           </defs>
           <Area type="monotone" dataKey="v" stroke={color} strokeWidth={2} fill={`url(#spark-${label})`} dot={false} />
-          <Tooltip contentStyle={{ fontSize: 10 }} />
+          <Tooltip contentStyle={{ fontSize: 11 }} />
         </AreaChart>
       </ResponsiveContainer>
       <p className="text-right text-xs font-black mt-1" style={{ color }}>{data[data.length-1]?.v}</p>
@@ -2616,7 +2616,7 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex justify-between items-center mb-2">
-        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{title}</p>
+        <p className="text-micro font-bold text-slate-500 uppercase tracking-wider">{title}</p>
         <span className="text-base font-black" style={{ color }}>{latest != null ? fmt(latest) : '—'}</span>
       </div>
       {/* Shared TrendChart, not a hardcoded AreaChart — this is what makes the
@@ -2626,7 +2626,7 @@ function TrendCard({ title, data, color, unit = '', fmtVal }) {
       <TrendChart data={data} xKey="t" height={68} showLegend={false}
         yDomain={['auto', 'auto']}
         series={[{ key: 'v', label: title, color }]} />
-      <div className="flex justify-between text-[9px] text-slate-300 mt-1">
+      <div className="flex justify-between text-micro text-slate-300 mt-1">
         <span>{first != null ? fmt(first) : '—'}</span>
         <span className="text-slate-400">{data.length} samples · 15s interval</span>
       </div>
@@ -2650,12 +2650,12 @@ function ClickableKpi({ title, value, accent, onClick, hint }) {
   return (
     <button onClick={onClick}
       className={`rounded-xl border p-4 text-left w-full transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] group cursor-pointer ${acc[accent] || acc.slate}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wide opacity-70">{title}</p>
+      <p className="text-micro font-bold uppercase tracking-wide opacity-70">{title}</p>
       <div className="flex items-center justify-between mt-1">
         <p className="text-2xl font-black">{value ?? '—'}</p>
         <ChevronRight size={14} className="opacity-0 group-hover:opacity-60 transition-opacity" />
       </div>
-      {hint && <p className="text-[9px] opacity-50 mt-0.5">{hint}</p>}
+      {hint && <p className="text-micro opacity-50 mt-0.5">{hint}</p>}
     </button>
   );
 }
@@ -2677,7 +2677,7 @@ function ClickableKpiCard({ icon: Icon, title, value, accent, onClick }) {
       className={`bg-white rounded-xl border border-slate-200 border-l-4 ${acc[accent]||acc.slate} p-4 hover:shadow-md transition-all hover:scale-[1.02] cursor-pointer w-full text-left group`}>
       <div className="flex justify-between items-start">
         <div>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">{title}</p>
+          <p className="text-micro text-slate-400 font-bold uppercase tracking-wide">{title}</p>
           <p className="text-lg font-black text-slate-800 mt-1">{value ?? 'N/A'}</p>
         </div>
         <div className="flex items-center gap-1">
@@ -2733,16 +2733,16 @@ function ProcessDetail({ p, onNavigate }) {
           ['State',      p.State || '—',           'text-slate-500'],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
-            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className="text-micro font-bold text-slate-400 uppercase">{label}</p>
             <p className={`text-xs mt-1 text-slate-700 truncate ${cls}`}>{val}</p>
           </div>
         ))}
       </div>
       {p.Info && p.Info !== 'NULL' && (
         <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Full Query</p>
+          <p className="text-micro font-bold text-slate-400 uppercase mb-1">Full Query</p>
           <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-start gap-2">
-            <pre className="font-mono text-[11px] text-cyan-300 flex-1 overflow-x-auto whitespace-pre-wrap">{p.Info}</pre>
+            <pre className="font-mono text-meta text-cyan-300 flex-1 overflow-x-auto whitespace-pre-wrap">{p.Info}</pre>
             <button onClick={() => navigator.clipboard.writeText(p.Info)}
               className="flex-shrink-0 p-1 rounded hover:bg-white/10 transition-colors">
               <Copy size={11} className="text-slate-400" />
@@ -2751,9 +2751,9 @@ function ProcessDetail({ p, onNavigate }) {
         </div>
       )}
       <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 flex items-center gap-2">
-        <code className="font-mono text-[10px] text-orange-700 flex-1">KILL {p.Id};</code>
+        <code className="font-mono text-micro text-orange-700 flex-1">KILL {p.Id};</code>
         <button onClick={() => navigator.clipboard.writeText(`KILL ${p.Id};`)}
-          className="text-[9px] font-bold text-orange-600 hover:text-orange-800 px-2 py-0.5 bg-orange-100 rounded">
+          className="text-micro font-bold text-orange-600 hover:text-orange-800 px-2 py-0.5 bg-orange-100 rounded">
           Copy KILL
         </button>
       </div>
@@ -2775,16 +2775,16 @@ function TransactionDetail({ t }) {
           ['Wait Time',     t.wait_time || '—',    ''],
         ].map(([label, val, cls]) => (
           <div key={label} className="bg-white rounded-xl border border-slate-200 p-3">
-            <p className="text-[9px] font-bold text-slate-400 uppercase">{label}</p>
+            <p className="text-micro font-bold text-slate-400 uppercase">{label}</p>
             <p className={`text-xs mt-1 text-slate-700 truncate ${cls}`}>{val ?? '—'}</p>
           </div>
         ))}
       </div>
       {t.query && (
         <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Active Query</p>
+          <p className="text-micro font-bold text-slate-400 uppercase mb-1">Active Query</p>
           <div className="bg-slate-900 rounded-xl px-4 py-3 flex items-start gap-2">
-            <pre className="font-mono text-[11px] text-cyan-300 flex-1 overflow-x-auto whitespace-pre-wrap">{t.query}</pre>
+            <pre className="font-mono text-meta text-cyan-300 flex-1 overflow-x-auto whitespace-pre-wrap">{t.query}</pre>
             <button onClick={() => navigator.clipboard.writeText(t.query)}
               className="flex-shrink-0 p-1 rounded hover:bg-white/10">
               <Copy size={11} className="text-slate-400" />

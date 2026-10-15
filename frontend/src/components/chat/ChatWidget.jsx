@@ -7,7 +7,7 @@ import IconButton from '@/components/ui/IconButton';
 import ActmonAiMark from '@/components/brand/ActmonAiMark';
 import FormatMessage from './formatMessage';
 import ActionProposalCard from './ActionProposalCard';
-import { useChatStore, LAUNCHER_SIZE } from '@/store/chatStore';
+import { useChatStore, launcherSize } from '@/store/chatStore';
 import { APP } from '@/config/app.config';
 
 export const SUGGESTIONS = [
@@ -90,28 +90,28 @@ function useDraggableLauncher() {
  * it, not in its default bottom-right orientation, or most of it would render
  * off-screen.
  */
-function usePanelPlacement(launcherPos) {
+function usePanelPlacement(launcherPos, size) {
   return useMemo(() => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const width = Math.min(PANEL_W, vw - EDGE_MARGIN * 2);
     const height = Math.min(PANEL_MAX_H, vh - EDGE_MARGIN * 2);
 
-    const spaceBelow = vh - (launcherPos.y + LAUNCHER_SIZE) - PANEL_GAP;
+    const spaceBelow = vh - (launcherPos.y + size) - PANEL_GAP;
     const spaceAbove = launcherPos.y - PANEL_GAP;
     const openBelow = spaceBelow >= spaceAbove;
     const top = openBelow
-      ? Math.min(launcherPos.y + LAUNCHER_SIZE + PANEL_GAP, vh - height - EDGE_MARGIN)
+      ? Math.min(launcherPos.y + size + PANEL_GAP, vh - height - EDGE_MARGIN)
       : Math.max(launcherPos.y - PANEL_GAP - height, EDGE_MARGIN);
 
     // Prefer right-aligning the panel with the launcher; fall back to
     // left-aligning it when that would push the panel off the left edge.
-    let left = launcherPos.x + LAUNCHER_SIZE - width;
+    let left = launcherPos.x + size - width;
     if (left < EDGE_MARGIN) left = launcherPos.x;
     left = Math.min(Math.max(left, EDGE_MARGIN), vw - width - EDGE_MARGIN);
 
     return { top, left, width, height };
-  }, [launcherPos.x, launcherPos.y]);
+  }, [launcherPos.x, launcherPos.y, size]);
 }
 
 /**
@@ -149,7 +149,10 @@ export default function ChatWidget() {
   const taRef = useRef(null);
 
   const launcher = useDraggableLauncher();
-  const panelStyle = usePanelPlacement(launcher.position);
+  // Read every render: a resize re-clamps the position, which re-renders this,
+  // so the size follows the viewport without a listener of its own.
+  const size = launcherSize();
+  const panelStyle = usePanelPlacement(launcher.position, size);
 
   // Reopens wherever the user last left off, once, on first mount — the
   // widget lives for the whole signed-in session (see AppShell).
@@ -219,16 +222,17 @@ export default function ChatWidget() {
         onPointerUp={launcher.onPointerUp}
         aria-label={open ? 'Close ActMon AI' : 'Open ActMon AI (drag to move)'}
         aria-expanded={open}
-        style={{ left: launcher.position.x, top: launcher.position.y }}
+        style={{ left: launcher.position.x, top: launcher.position.y, width: size, height: size }}
+        data-floating="chat-launcher"
         className={cn(
-          'fixed z-[70] grid h-20 w-20 touch-none place-items-center rounded-full select-none',
+          'fixed z-[70] grid touch-none place-items-center rounded-full select-none',
           'transition-transform hover:scale-105 active:scale-95',
           open && 'border border-border bg-surface shadow-lg',
         )}
       >
         {open
           ? <Icon name="close" size={24} className="text-fg" />
-          : <ActmonAiMark size={80} />}
+          : <ActmonAiMark size={size} />}
       </button>
 
       {/* ── panel ──
@@ -247,7 +251,7 @@ export default function ChatWidget() {
             <ActmonAiMark size={32} glow={false} />
             <div className="min-w-0 flex-1">
               <p className="truncate-safe text-[13px] font-bold text-fg">ActMon AI</p>
-              <p className="truncate-safe text-[11px] text-subtle">
+              <p className="truncate-safe text-meta text-subtle">
                 {streaming ? 'Thinking…' : `Ask about ${APP.name}`}
               </p>
             </div>
@@ -294,7 +298,7 @@ export default function ChatWidget() {
                 />
               )}
             </div>
-            <p className="mt-1.5 px-1 text-[10px] text-subtle">
+            <p className="mt-1.5 px-1 text-micro text-subtle">
               ActMon AI can be wrong about specifics — verify before acting on critical numbers.
             </p>
           </div>
@@ -361,7 +365,7 @@ export function Bubble({ message, onPick }) {
                 key={s}
                 type="button"
                 onClick={() => onPick?.(s)}
-                className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
+                className="rounded-full border border-border px-2.5 py-1 text-meta text-muted transition-colors hover:border-strong hover:bg-sunken hover:text-fg"
               >
                 {s}
               </button>

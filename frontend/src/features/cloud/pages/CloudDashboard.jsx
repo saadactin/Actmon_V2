@@ -1,8 +1,8 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useCloudAccounts } from '../hooks/useCloudAccounts';
 import {
   Server, DollarSign, ShieldAlert, LayoutDashboard, Share2,
-  GitCompareArrows, ScrollText, BellRing, Lightbulb, KeyRound,
+  GitCompareArrows, ScrollText, BellRing, Lightbulb, KeyRound, FileText,
 } from 'lucide-react';
 import CloudPageHeader from '../components/CloudPageHeader';
 import ProviderLogo from '../components/ProviderLogo';
@@ -21,6 +21,7 @@ import { EventLogPage } from './EventLogPage';
 import AlertsPage from './AlertsPage';
 import ResourceIntelligencePage from './ResourceIntelligencePage';
 import IdentityAccessPage from './IdentityAccessPage';
+import ReportBuilderPage from './reports/ReportBuilderPage';
 
 // NOTE: `getSecurityGrade` used to live here — a second, independent mapping
 // from score to letter grade, feeding a card that was itself scored by a
@@ -36,6 +37,10 @@ const TABS = [
   { id: 'intelligence', label: 'Intelligence', icon: Lightbulb },
   { id: 'resources', label: 'Resources', icon: Server },
   { id: 'cost', label: 'Cost', icon: DollarSign },
+  // Pulls from every tab before it (Security, Resource Intelligence, Cost)
+  // rather than owning a second copy of any of their data — see
+  // ReportBuilderPage.jsx and Backend/cloud/app/services/report_service.py.
+  { id: 'reports', label: 'Reports', icon: FileText },
   // One tab replaces the former Security, Compliance and Alerts trio. They were
   // three independent evaluations of the same estate with nothing enforcing
   // that they agreed — and on live data they did not: 3 of AWS's 20 MEDIUM
@@ -80,6 +85,7 @@ const TABS = [
 // `accountId`/`tab` are genuine dynamic route params.
 export const CloudDashboard = ({ provider: routeProviderSlug }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { accountId: routeAccountId, tab = 'overview' } = useParams();
   const { data: accounts } = useCloudAccounts();
 
@@ -137,6 +143,13 @@ export const CloudDashboard = ({ provider: routeProviderSlug }) => {
         />
       )}
       {tab === 'resources' && <ResourcesPage embedded accountId={routeAccountId} />}
+      {tab === 'reports' && (
+        <ReportBuilderPage
+          key={routeAccountId}
+          accountId={routeAccountId}
+          preSelectedResourceIds={location.state?.resourceIds || []}
+        />
+      )}
       {tab === 'cost' && (
         <CostIntelligencePage
           key={routeAccountId}

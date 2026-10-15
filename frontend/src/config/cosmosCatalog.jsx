@@ -176,14 +176,14 @@ export function GapTile({ id, label, className }) {
   const gap = COSMOS_GAPS[id] || { label: label || 'Not available', why: '', needs: '' };
   return (
     <div className={`rounded-card border border-dashed border-border bg-sunken px-3 py-2.5 ${className || ''}`}>
-      <p className="flex items-center gap-1 truncate text-[10px] font-bold tracking-wide text-subtle uppercase">
+      <p className="flex items-center gap-1 truncate text-micro font-bold tracking-wide text-subtle uppercase">
         {label || gap.label}
         <Tooltip label={`${gap.why} Needs: ${gap.needs}.`} side="top">
           <Icon name="info" size={10} className="shrink-0" />
         </Tooltip>
       </p>
       <p className="mt-0.5 text-[12px] leading-snug text-subtle italic">Not available from this connection</p>
-      {gap.needs && <p className="mt-0.5 text-[10px] leading-snug text-subtle">Needs {gap.needs.toLowerCase()}</p>}
+      {gap.needs && <p className="mt-0.5 text-micro leading-snug text-subtle">Needs {gap.needs.toLowerCase()}</p>}
     </div>
   );
 }
@@ -340,7 +340,7 @@ export const COSMOS_DATABASE_COLUMNS = [
           <span className="font-mono">{fmtNumber(s.total_documents)}</span>
           {s.total_documents_partial && (
             <Tooltip label="At least one container did not report a count, so this total is a floor." side="top">
-              <span className="font-mono text-[11px] font-bold text-warning-fg">+</span>
+              <span className="font-mono text-meta font-bold text-warning-fg">+</span>
             </Tooltip>
           )}
         </span>
@@ -424,7 +424,7 @@ export const COSMOS_CONTAINER_COLUMNS = [
     hint: 'The field Cosmos shards on. Every query that does not filter by it fans out to all partitions.',
     render: (c) => ((c.partition_key || []).length
       ? (
-        <span className="font-mono text-[11px] text-muted">
+        <span className="font-mono text-meta text-muted">
           {(c.partition_key || []).join(', ')}
         </span>
       )
@@ -454,7 +454,7 @@ export const COSMOS_CONTAINER_COLUMNS = [
       return (
         <span className="flex flex-wrap items-center gap-1">
           <Badge tone={mode === 'none' ? 'warning' : 'accent'} size="xs">{mode}</Badge>
-          <span className="text-[11px] text-muted">
+          <span className="text-meta text-muted">
             {c.indexing_policy?.automatic ? 'automatic' : 'manual'}
           </span>
         </span>
@@ -477,8 +477,8 @@ export const COSMOS_CONTAINER_COLUMNS = [
     sortable: true,
     sortValue: (c) => Number(c.details?.data_size_bytes || 0),
     render: (c) => {
-      if (c.detailsLoading) return <span className="text-[11px] text-subtle">reading…</span>;
-      if (!c.details) return <span className="text-[11px] text-subtle">not read yet</span>;
+      if (c.detailsLoading) return <span className="text-meta text-subtle">reading…</span>;
+      if (!c.details) return <span className="text-meta text-subtle">not read yet</span>;
       return (
         <span className="font-mono whitespace-nowrap tabular-nums">{fmtBytes(c.details.data_size_bytes)}</span>
       );
@@ -491,13 +491,13 @@ export const COSMOS_CONTAINER_COLUMNS = [
     sortable: true,
     sortValue: (c) => Number(c.details?.estimated_document_count || 0),
     render: (c) => {
-      if (c.detailsLoading) return <span className="text-[11px] text-subtle">reading…</span>;
-      if (!c.details) return <span className="text-[11px] text-subtle">not read yet</span>;
+      if (c.detailsLoading) return <span className="text-meta text-subtle">reading…</span>;
+      if (!c.details) return <span className="text-meta text-subtle">not read yet</span>;
       return c.details.estimated_document_count != null
         ? <span className="font-mono">{fmtNumber(c.details.estimated_document_count)}</span>
         : (
           <Tooltip label="Cosmos returned -1 — it does not track a document count for this container." side="top">
-            <span className="text-[11px] text-subtle">not tracked</span>
+            <span className="text-meta text-subtle">not tracked</span>
           </Tooltip>
         );
     },
@@ -509,7 +509,7 @@ export const COSMOS_CONTAINER_COLUMNS = [
     hint: 'Collection size minus data size — an estimate, and the only way to see it from here.',
     render: (c) => {
       const size = indexSizeOf(c.details);
-      if (c.detailsLoading) return <span className="text-[11px] text-subtle">reading…</span>;
+      if (c.detailsLoading) return <span className="text-meta text-subtle">reading…</span>;
       if (size == null) return null;
       return <span className="font-mono whitespace-nowrap text-[12px] text-muted">{fmtBytes(size)}</span>;
     },

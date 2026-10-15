@@ -5,6 +5,7 @@ import TopNav from './TopNav';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import AppearanceDrawer from '@/components/appearance/AppearanceDrawer';
 import ChatWidget from '@/components/chat/ChatWidget';
+import ResponsiveDebug from '@/components/dev/ResponsiveDebug';
 import Icon from '@/components/ui/Icon';
 import useShortcuts from '@/hooks/useShortcuts';
 import { useUIStore } from '@/store/uiStore';
@@ -29,6 +30,7 @@ export default function AppShell({ user, onSignOut }) {
   const bleed = BLEED_PREFIXES.some((p) => pathname.startsWith(p));
   const navHidden = useUIStore((s) => s.navHidden);
   const toggleNav = useUIStore((s) => s.toggleNav);
+  const chatLauncher = APP.features.chatbot && pathname !== '/ai-assistant';
   useShortcuts();
 
   return (
@@ -60,6 +62,7 @@ export default function AppShell({ user, onSignOut }) {
             className={cn(
               'mx-auto w-full',
               bleed ? 'px-6 pb-6 md:px-8 md:pb-8' : 'content-shell pb-gutter-lg',
+              !bleed && chatLauncher && 'has-floating-launcher',
             )}
             style={bleed ? undefined : {
               maxWidth: 'var(--content-max)',
@@ -84,7 +87,9 @@ export default function AppShell({ user, onSignOut }) {
       {/* Suppressed on the full-page chat itself — that page already renders the
           conversation, so the floating launcher would just be a redundant second
           entry point to the same store overlapping its own content. */}
-      {APP.features.chatbot && pathname !== '/ai-assistant' && <ChatWidget />}
+      {chatLauncher && <ChatWidget />}
+      {/* Dev-only layout diagnostics (`?rdebug=1`); stripped from production. */}
+      {import.meta.env.DEV && <ResponsiveDebug />}
     </div>
   );
 }
@@ -109,7 +114,7 @@ function ShowNavTab({ onShow }) {
       onClick={onShow}
       title={`Show menu bar (${keys})`}
       aria-label={`Show menu bar (${keys})`}
-      className="group fixed top-0 left-1/2 z-40 flex h-5 -translate-x-1/2 items-center gap-1.5 rounded-b-md bg-inverse px-3 text-[10px] font-semibold text-on-inverse opacity-70 transition-opacity hover:opacity-100"
+      className="group fixed top-0 left-1/2 z-40 flex h-5 -translate-x-1/2 items-center gap-1.5 rounded-b-md bg-inverse px-3 text-micro font-semibold text-on-inverse opacity-70 transition-opacity hover:opacity-100"
     >
       <Icon name="chevron-down" size={12} />
       <span className="hidden group-hover:inline">Show menu · {keys}</span>

@@ -58,7 +58,7 @@ function SevCard({ label, count, sev, active, onClick }) {
       }`}>
       <div className="flex justify-between items-start">
         <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+          <p className="text-micro font-bold text-slate-400 uppercase tracking-wide">{label}</p>
           <p className={`text-2xl font-black mt-1 ${
             sev === 'FATAL'   ? 'text-red-700'   :
             sev === 'ERROR'   ? 'text-red-600'   :
@@ -219,11 +219,11 @@ export default function ErrorLogs() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-white border-b border-slate-200 z-10">
                   <tr>
-                    <th className="px-4 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Logged</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Severity</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Component</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400 whitespace-nowrap">Context</th>
-                    <th className="px-3 py-3 text-left font-bold text-[11px] text-slate-400">Message</th>
+                    <th className="px-4 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Logged</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Severity</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Component</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400 whitespace-nowrap">Context</th>
+                    <th className="px-3 py-3 text-left font-bold text-meta text-slate-400">Message</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -232,19 +232,19 @@ export default function ErrorLogs() {
                     const Icon = cfg.icon;
                     return (
                       <tr key={i} className={`border-t border-slate-100 ${cfg.row}`}>
-                        <td className="px-4 py-2 font-mono text-slate-400 whitespace-nowrap text-[10px]">
+                        <td className="px-4 py-2 font-mono text-slate-400 whitespace-nowrap text-micro">
                           {log._logged}
                         </td>
                         <td className="px-3 py-2">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${cfg.badge}`}>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold ${cfg.badge}`}>
                             <Icon size={9} />
                             {log._severity}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap font-mono text-[10px]">
+                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap font-mono text-micro">
                           {log._component}
                         </td>
-                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap font-mono text-[10px]">
+                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap font-mono text-micro">
                           {log._context}
                         </td>
                         <td className="px-3 py-2 text-slate-700 max-w-2xl break-words">

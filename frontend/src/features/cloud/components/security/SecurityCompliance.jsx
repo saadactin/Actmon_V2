@@ -56,9 +56,10 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
 
   return (
     <div className="space-y-5">
-      {/* Framework tiles. Clicking one filters the control list. Up to seven
-          apply to one account (four cross-cloud, its own CIS benchmark, RBI and
-          SEBI), so the grid wraps to four across on wide screens. */}
+      {/* Framework tiles. Clicking one filters the control list. Up to eight
+          apply to one account (five cross-cloud — SOC 2, HIPAA, PCI-DSS, ISO
+          27001, GDPR — plus its own CIS benchmark, RBI and SEBI), so the grid
+          wraps to four across on wide screens. */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {frameworks.map((fw) => {
           const active = framework === fw.framework;

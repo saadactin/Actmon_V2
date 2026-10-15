@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
@@ -76,6 +76,7 @@ const MAX_ASSESSMENT_RESOURCES = 200;
 
 export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const scope = useCloudScope();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -100,7 +101,7 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
   const [sort, setSort] = useState({ key: 'resource_name', dir: 'asc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [groupBy, setGroupBy] = useState('');
+  const [groupBy, setGroupBy] = useState('service');
   const [columnKeys, setColumnKeys] = useColumnPreference();
   const [drawerResource, setDrawerResource] = useState(null);
   const [showDiagnostic, setShowDiagnostic] = useState(false);
@@ -125,7 +126,7 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
   const applyView = useCallback((view) => {
     applyFilters({ ...EMPTY_FILTERS, ...(view.filters || {}) });
     if (view.sort) setSort({ key: view.sort, dir: view.dir || 'asc' });
-    setGroupBy(view.groupBy || '');
+    setGroupBy(view.groupBy || 'service');
     if (view.columns?.length) setColumnKeys(view.columns);
   }, [applyFilters, setColumnKeys]);
 
@@ -186,6 +187,15 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
     } finally {
       setExportingAssessment(false);
     }
+  };
+
+  // The report builder lives at this same account's /reports tab (see
+  // CloudDashboard.jsx's TABS) -- derived from the current URL rather than
+  // a provider slug this page does not otherwise know, since this page is
+  // always reached at .../resources when embedded.
+  const openReportBuilder = () => {
+    const reportsPath = location.pathname.replace(/\/resources(?:\/.*)?$/, '/reports');
+    navigate(reportsPath, { state: { resourceIds: selectedIds } });
   };
 
   // ── Empty and error states, each saying the thing that is actually true ────
@@ -384,6 +394,16 @@ export const ResourcesPage = ({ embedded = false, accountId: accountIdProp }) =>
                 }
               >
                 Export Assessment
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="report"
+                disabled={activeScope === ALL_SCOPE}
+                onClick={openReportBuilder}
+                title="Open the report builder, pre-scoped to the selected resources — choose sections, format and layout before generating."
+              >
+                Build Report…
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setSelectedIds([])}>
                 Clear selection

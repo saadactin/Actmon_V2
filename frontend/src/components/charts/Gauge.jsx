@@ -80,7 +80,7 @@ export default function Gauge({
               <span className="block text-[19px] leading-none font-bold text-fg">
                 {hasData ? `${Math.round(pct)}%` : '—'}
               </span>
-              <span className="mt-1 flex items-center justify-center gap-1 text-[10px] font-semibold text-muted">
+              <span className="mt-1 flex items-center justify-center gap-1 text-micro font-semibold text-muted">
                 {icon && <Icon name={icon} size={10} />}
                 {label}
               </span>
@@ -95,7 +95,7 @@ export default function Gauge({
       </div>
 
       {showValue && hasData && (
-        <span className="flex items-center gap-1 text-[10px] font-semibold text-muted">
+        <span className="flex items-center gap-1 text-micro font-semibold text-muted">
           <Icon name={band.icon} size={9} strokeWidth={3} style={{ color: band.color }} />
           {band.label}
         </span>

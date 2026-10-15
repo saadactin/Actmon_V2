@@ -293,7 +293,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
               {d.noSeriesReason.body}
             </p>
             {d.deliveryFromRing && (
-              <p className="mt-2 text-[11px] text-subtle">
+              <p className="mt-2 text-meta text-subtle">
                 The Delivery figures above are blank for the same reason — the backend derives
                 them from the ring, not from the heartbeat. The last-heartbeat time in the header
                 is the one live signal.
@@ -343,7 +343,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
               <p className="text-[12px] font-bold text-warning-fg">
                 Telemetry stops at: {d.brokenStage.label}
               </p>
-              <p className="mt-0.5 text-[11px] text-warning-fg/80">{d.brokenStage.detail}</p>
+              <p className="mt-0.5 text-meta text-warning-fg/80">{d.brokenStage.detail}</p>
             </div>
           </div>
         )}
@@ -359,7 +359,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[12px] font-bold text-fg">{stage.label}</span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-muted">{stage.detail}</span>
+                <span className="mt-0.5 block text-meta leading-snug text-muted">{stage.detail}</span>
               </span>
               {i < d.pipeline.length - 1 && (
                 <Icon
@@ -373,7 +373,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
         </ol>
 
         <div className="mt-4 border-t border-border pt-3">
-          <p className="mb-2 text-[10px] font-bold tracking-wide text-subtle uppercase">
+          <p className="mb-2 text-micro font-bold tracking-wide text-subtle uppercase">
             Endpoints the agent posts to
           </p>
           <ul className="grid gap-1.5 sm:grid-cols-2">
@@ -384,7 +384,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
                   style={{ background: 'var(--status-good)' }}
                   aria-hidden="true"
                 />
-                <code className="min-w-0 font-mono text-[11px] break-all text-muted">{e}</code>
+                <code className="min-w-0 font-mono text-meta break-all text-muted">{e}</code>
               </li>
             ))}
             {(d.comm.endpoints || []).length === 0 && (
@@ -423,12 +423,12 @@ export default function HostAgentPage({ name, hasConnection = false }) {
                   <span className="block text-[15px] leading-none font-bold text-fg">
                     {svc.running ? 'Running' : 'Not running'}
                   </span>
-                  <span className="mt-1 block text-[11px] text-subtle">
+                  <span className="mt-1 block text-meta text-subtle">
                     reported state: {svc.state || '—'}
                   </span>
                 </span>
               </div>
-              {svc.detail && <p className="mt-3 text-[11px] leading-relaxed text-muted">{svc.detail}</p>}
+              {svc.detail && <p className="mt-3 text-meta leading-relaxed text-muted">{svc.detail}</p>}
             </>
           )}
         </div>
@@ -438,16 +438,16 @@ export default function HostAgentPage({ name, hasConnection = false }) {
           <p className="text-[15px] font-bold text-fg">
             {d.agent.agent_version || 'Not reported'}
           </p>
-          <p className="mt-1 text-[11px] text-subtle">
+          <p className="mt-1 text-meta text-subtle">
             {d.agent.agent_version
               ? 'reported on the last boot ping'
               : 'this host runs an agent from before version reporting'}
           </p>
           <div className="mt-3 border-t border-border pt-3">
             {!d.update ? (
-              <p className="text-[11px] text-subtle">Checking for pushed updates…</p>
+              <p className="text-meta text-subtle">Checking for pushed updates…</p>
             ) : !d.update.has_update ? (
-              <p className="flex items-center gap-1.5 text-[11px] text-muted">
+              <p className="flex items-center gap-1.5 text-meta text-muted">
                 <StatusKey status={{ ...STATUS.good, label: 'No pending update' }} />
               </p>
             ) : (
@@ -458,7 +458,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
 
         <div className="card p-card">
           <h3 className="mb-3 text-[13px] font-bold text-fg">Registration</h3>
-          <dl className="space-y-1.5 text-[11px]">
+          <dl className="space-y-1.5 text-meta">
             <Row label="Agent name" value={d.agent.name} />
             <Row label="Host" value={d.agent.hostname} />
             <Row label="IP address" value={d.agent.ip} />
@@ -482,7 +482,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
         ) : (
           <ul className="space-y-1.5">
             {d.events.map((e, i) => (
-              <li key={`${e.ts}-${i}`} className="flex items-start gap-2 text-[11px]">
+              <li key={`${e.ts}-${i}`} className="flex items-start gap-2 text-meta">
                 <Icon
                   name="alert" size={12} className="mt-0.5 shrink-0"
                   style={{ color: e.severity === 'critical' ? 'var(--status-critical)' : 'var(--status-warning)' }}
@@ -496,7 +496,7 @@ export default function HostAgentPage({ name, hasConnection = false }) {
       </div>
 
       {/* Host OS detail intentionally lives under Infrastructure, not here. */}
-      <p className="mt-gutter flex items-center gap-1.5 text-[11px] text-subtle">
+      <p className="mt-gutter flex items-center gap-1.5 text-meta text-subtle">
         <Icon name="info" size={12} className="shrink-0" />
         Looking for CPU, disks, processes or interfaces on this machine?
         <Link to="/infra" className="font-semibold text-accent-text hover:underline">Infrastructure</Link>
@@ -530,10 +530,10 @@ function Header({ name, d, state }) {
             </Badge>
           </span>
           <span className="hidden text-right sm:block">
-            <span className="block text-[11px] font-semibold text-fg">
+            <span className="block text-meta font-semibold text-fg">
               {d.agent.last_heartbeat ? ago(d.agent.last_heartbeat) : 'never'}
             </span>
-            <span className="block text-[10px] text-subtle">last heartbeat</span>
+            <span className="block text-micro text-subtle">last heartbeat</span>
           </span>
           <IconButton
             icon="refresh"
@@ -555,7 +555,7 @@ function SectionTitle({ icon, title, hint, actions, className }) {
           <Icon name={icon} size={14} className="text-subtle" />
           {title}
         </h2>
-        {hint && <span className="text-[11px] text-subtle">{hint}</span>}
+        {hint && <span className="text-meta text-subtle">{hint}</span>}
       </div>
       {actions}
     </div>
@@ -573,11 +573,11 @@ function Kpi({ icon, label, value, sub, tone = 'neutral' }) {
   return (
     <div className="card px-card py-3">
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate-safe text-[10px] font-bold tracking-wide text-subtle uppercase">{label}</p>
+        <p className="truncate-safe text-micro font-bold tracking-wide text-subtle uppercase">{label}</p>
         <Icon name={icon} size={14} className="shrink-0 text-subtle" />
       </div>
       <p className={cn('mt-1.5 text-[20px] leading-none font-bold', KPI_TONES[tone])}>{value}</p>
-      {sub && <p className="truncate-safe mt-1 text-[10px] text-subtle">{sub}</p>}
+      {sub && <p className="truncate-safe mt-1 text-micro text-subtle">{sub}</p>}
     </div>
   );
 }
@@ -592,12 +592,12 @@ function UpdateState({ update }) {
     <div>
       <div className="flex items-center gap-2">
         <Badge tone={TONES[update.status] || 'neutral'} size="xs">{update.status}</Badge>
-        <span className="text-[11px] text-muted">
+        <span className="text-meta text-muted">
           {update.from_version || '—'} → <b className="text-fg">{update.expected_version}</b>
         </span>
       </div>
-      {update.detail && <p className="mt-1.5 text-[11px] leading-relaxed text-muted">{update.detail}</p>}
-      <dl className="mt-2 space-y-1 text-[10px]">
+      {update.detail && <p className="mt-1.5 text-meta leading-relaxed text-muted">{update.detail}</p>}
+      <dl className="mt-2 space-y-1 text-micro">
         <Row label="Issued" value={update.issued_at ? fullTime(update.issued_at) : null} />
         <Row label="Delivered" value={update.delivered_at ? fullTime(update.delivered_at) : null} />
         <Row label="Confirmed" value={update.confirmed_at ? fullTime(update.confirmed_at) : null} />

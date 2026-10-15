@@ -345,7 +345,7 @@ export default function DatabaseAgentPage({ name, meta }) {
         <TelemetryChart title="Cache hit rate" metric="cache" slot={4} domain={[0, 100]} data={historySeriesFor('cache')} hasData={hasHistorySeries} loading={historyQ.isFetching} subtitle={`${rangeLabel} · ${granLabel}`} />
       </div>
       {!hasHistorySeries && (
-        <p className="mt-2 flex items-center gap-1.5 text-[11px] text-subtle">
+        <p className="mt-2 flex items-center gap-1.5 text-meta text-subtle">
           <Icon name="info" size={12} className="shrink-0" />
           No database telemetry samples in this range yet — this fills in as the collector reports.
         </p>
@@ -375,7 +375,7 @@ export default function DatabaseAgentPage({ name, meta }) {
 
       {activePanel === 'identity' && (
         <div className="card mt-gutter-sm p-card">
-          <dl className="space-y-1.5 text-[11px]">
+          <dl className="space-y-1.5 text-meta">
             <Row label="Technology" value={engine.label} />
             <Row label="Host" value={info?.host || meta?.hostname || meta?.ip_address} />
             <Row label="IP address" value={meta?.ip_address} />
@@ -402,12 +402,12 @@ export default function DatabaseAgentPage({ name, meta }) {
                   <span className="block text-[15px] leading-none font-bold text-fg">
                     {CHECK_DISPLAY[connectionCheck.status]?.label || 'Not checked yet'}
                   </span>
-                  <span className="mt-1 block text-[11px] text-subtle">
+                  <span className="mt-1 block text-meta text-subtle">
                     {info?.host}{info?.port ? `:${info.port}` : ''}
                   </span>
                 </span>
               </div>
-              <dl className="mt-3 space-y-1 border-t border-border pt-3 text-[11px]">
+              <dl className="mt-3 space-y-1 border-t border-border pt-3 text-meta">
                 <Row label="Last success" value={connectionCheck.last_success_at ? fullTime(connectionCheck.last_success_at) : 'never'} />
                 <Row label="Last failure" value={connectionCheck.last_failure_at ? fullTime(connectionCheck.last_failure_at) : 'never'} />
                 <Row label="Failure count" value={connectionCheck.failure_count} />
@@ -434,7 +434,7 @@ export default function DatabaseAgentPage({ name, meta }) {
             <div className="border-t border-border p-4">
               {permissionRows.filter((r) => r.issue).map((r) => (
                 <div key={r.category} className="mb-2 last:mb-0">
-                  <p className="mb-1 text-[11px] font-bold text-subtle">{r.category}</p>
+                  <p className="mb-1 text-meta font-bold text-subtle">{r.category}</p>
                   <PermissionIssue issue={r.issue} />
                 </div>
               ))}
@@ -456,15 +456,15 @@ export default function DatabaseAgentPage({ name, meta }) {
                   <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: 'var(--accent)' }} />
                   <span className="min-w-0 flex-1">
                     <span className="block text-[12.5px] font-bold text-fg">{e.label}</span>
-                    <span className="block text-[11px] text-muted">{e.detail}</span>
+                    <span className="block text-meta text-muted">{e.detail}</span>
                   </span>
-                  <span className="shrink-0 text-[11px] text-subtle">{e.timestamp ? fullTime(e.timestamp) : ''}</span>
+                  <span className="shrink-0 text-meta text-subtle">{e.timestamp ? fullTime(e.timestamp) : ''}</span>
                 </li>
               ))}
             </ul>
           )}
           {timelineEvents.length > 5 && (
-            <p className="mt-3 border-t border-border pt-2 text-[10.5px] text-subtle">
+            <p className="mt-3 border-t border-border pt-2 text-meta text-subtle">
               Showing the latest 5 of {timelineEvents.length} events.
             </p>
           )}
@@ -497,8 +497,8 @@ export default function DatabaseAgentPage({ name, meta }) {
                 <li key={i} className="flex items-start gap-2.5 py-2 first:pt-0 last:pb-0">
                   <Icon name={sev.icon} size={13} className={cn('mt-0.5 shrink-0', KPI_TONES[sev.tone === 'danger' ? 'critical' : sev.tone === 'warning' ? 'warning' : 'neutral'])} />
                   <Badge tone={sev.tone} size="xs" className="mt-px shrink-0">{e.severity}</Badge>
-                  <span className="min-w-0 flex-1 truncate-safe font-mono text-[11px] text-fg" title={e.message}>{e.message}</span>
-                  <span className="shrink-0 text-[10.5px] text-subtle">{displayLogTime(e.timestamp)}</span>
+                  <span className="min-w-0 flex-1 truncate-safe font-mono text-meta text-fg" title={e.message}>{e.message}</span>
+                  <span className="shrink-0 text-meta text-subtle">{displayLogTime(e.timestamp)}</span>
                 </li>
               );
             })}
@@ -506,7 +506,7 @@ export default function DatabaseAgentPage({ name, meta }) {
         )}
       </div>
 
-      <p className="mt-gutter flex items-center gap-1.5 text-[11px] text-subtle">
+      <p className="mt-gutter flex items-center gap-1.5 text-meta text-subtle">
         <Icon name="info" size={12} className="shrink-0" />
         This page monitors the ActMon agent's connection to
         {' '}{engine.label}, not the database's own workload dashboard.
@@ -537,10 +537,10 @@ function Header({ name, d, state, engine, info }) {
             </Badge>
           </span>
           <span className="hidden text-right sm:block">
-            <span className="block text-[11px] font-semibold text-fg">
+            <span className="block text-meta font-semibold text-fg">
               {d.agent.last_heartbeat ? ago(d.agent.last_heartbeat) : 'never'}
             </span>
-            <span className="block text-[10px] text-subtle">last heartbeat</span>
+            <span className="block text-micro text-subtle">last heartbeat</span>
           </span>
           <IconButton icon="refresh" label="Refresh now" onClick={d.refresh} iconClassName={d.isFetching ? 'animate-spin' : undefined} />
         </div>
@@ -557,7 +557,7 @@ function SectionTitle({ icon, title, hint, actions, className }) {
           <Icon name={icon} size={14} className="text-subtle" />
           {title}
         </h2>
-        {hint && <span className="text-[11px] text-subtle">{hint}</span>}
+        {hint && <span className="text-meta text-subtle">{hint}</span>}
       </div>
       {actions}
     </div>
@@ -570,11 +570,11 @@ function Kpi({ icon, label, value, sub, tone = 'neutral' }) {
   return (
     <div className="card px-card py-3">
       <div className="flex items-start justify-between gap-2">
-        <p className="truncate-safe text-[10px] font-bold tracking-wide text-subtle uppercase">{label}</p>
+        <p className="truncate-safe text-micro font-bold tracking-wide text-subtle uppercase">{label}</p>
         <Icon name={icon} size={14} className="shrink-0 text-subtle" />
       </div>
       <p className={cn('mt-1.5 text-[20px] leading-none font-bold', KPI_TONES[tone])}>{value}</p>
-      {sub && <p className="truncate-safe mt-1 text-[10px] text-subtle">{sub}</p>}
+      {sub && <p className="truncate-safe mt-1 text-micro text-subtle">{sub}</p>}
     </div>
   );
 }
@@ -602,7 +602,7 @@ function PanelCard({ icon, label, sub, tone = 'neutral', active, onClick }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate-safe text-[12.5px] font-bold text-fg">{label}</span>
-        {sub && <span className={cn('block truncate-safe text-[10.5px]', KPI_TONES[tone])}>{sub}</span>}
+        {sub && <span className={cn('block truncate-safe text-meta', KPI_TONES[tone])}>{sub}</span>}
       </span>
       <Icon name={active ? 'chevron-down' : 'chevron-right'} size={14} className="shrink-0 text-subtle" />
     </button>

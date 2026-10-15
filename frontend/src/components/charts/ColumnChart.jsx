@@ -47,7 +47,7 @@ export default function ColumnChart({
           {ticks.map((t) => (
             <span
               key={t}
-              className="absolute right-0 -translate-y-1/2 text-[11px] text-subtle tabular-nums"
+              className="absolute right-0 -translate-y-1/2 text-meta text-subtle tabular-nums"
               style={{ bottom: `${(t / ceiling) * 100}%` }}
             >
               {format(t)}
@@ -160,7 +160,7 @@ export default function ColumnChart({
           {items.map((item) => (
             <span
               key={item.key}
-              className="line-clamp-2 min-w-0 flex-1 text-center text-[11px] leading-tight break-words text-muted"
+              className="line-clamp-2 min-w-0 flex-1 text-center text-meta leading-tight break-words text-muted"
               title={item.label}
             >
               {item.label}

@@ -47,7 +47,7 @@ function Cell({ col, row, identity }) {
   }
   if (col.type === 'json') {
     return (
-      <pre className="max-w-xs overflow-auto rounded-control bg-sunken px-2 py-1.5 text-[11px] text-fg">
+      <pre className="max-w-xs overflow-auto rounded-control bg-sunken px-2 py-1.5 text-meta text-fg">
         {v ? JSON.stringify(v, null, 2) : '—'}
       </pre>
     );
@@ -89,7 +89,7 @@ function FieldControl({ field, value, onChange, options }) {
       return <Input type="date" value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={field.readOnly} />;
     case 'json':
       return (
-        <pre className="max-h-40 overflow-auto rounded-control bg-sunken px-2.5 py-2 text-[11px] text-fg">
+        <pre className="max-h-40 overflow-auto rounded-control bg-sunken px-2.5 py-2 text-meta text-fg">
           {value ? JSON.stringify(value, null, 2) : '—'}
         </pre>
       );
@@ -298,8 +298,8 @@ export default function AdminResourcePage({ config, orgId: orgIdProp, orgName: o
                       options={dynOptions[f.key]}
                     />
                   )}
-                  {form.errors?.[f.key] && <p className="mt-1 text-[11px] text-danger">{form.errors[f.key]}</p>}
-                  {f.help && <p className="mt-1 text-[11px] text-subtle">{f.help}</p>}
+                  {form.errors?.[f.key] && <p className="mt-1 text-meta text-danger">{form.errors[f.key]}</p>}
+                  {f.help && <p className="mt-1 text-meta text-subtle">{f.help}</p>}
                 </div>
               ))}
             </div>

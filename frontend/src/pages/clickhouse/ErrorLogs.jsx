@@ -194,7 +194,7 @@ export default function ClickHouseErrorLogs() {
 
         {codes.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-bold tracking-wide text-subtle uppercase">
+            <span className="text-meta font-bold tracking-wide text-subtle uppercase">
               What is failing
             </span>
             {codes.slice(0, 12).map(([label, n]) => (
@@ -223,7 +223,7 @@ export default function ClickHouseErrorLogs() {
                     onClick={() => setSeverity(k)}
                     aria-pressed={severity === k}
                     className={cn(
-                      'h-7 rounded-control px-2 text-[11px] font-bold transition-colors',
+                      'h-7 rounded-control px-2 text-meta font-bold transition-colors',
                       severity === k ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-sunken hover:text-fg',
                     )}
                   >
@@ -263,7 +263,7 @@ export default function ClickHouseErrorLogs() {
                       onClick: l.query ? () => setOpen(open === key ? null : key) : undefined,
                       cells: {
                         when: (
-                          <span className="font-mono text-[11px] whitespace-nowrap text-muted">
+                          <span className="font-mono text-meta whitespace-nowrap text-muted">
                             {String(l.logged || '').slice(0, 19) || null}
                           </span>
                         ),
@@ -277,22 +277,22 @@ export default function ClickHouseErrorLogs() {
                           ? <Badge tone="accent" size="xs">query</Badge>
                           : (
                             <span title={l.source}
-                              className="truncate-safe block max-w-[120px] font-mono text-[11px] text-muted">
+                              className="truncate-safe block max-w-[120px] font-mono text-meta text-muted">
                               {l.source}
                             </span>
                           ),
                         what: (
                           <span className="flex flex-col gap-0.5">
                             {l._name && <Badge tone="danger" size="xs">{l._name}</Badge>}
-                            {l._code && <span className="font-mono text-[10px] text-subtle">code {l._code}</span>}
+                            {l._code && <span className="font-mono text-micro text-subtle">code {l._code}</span>}
                           </span>
                         ),
-                        user: <span className="text-[11px] text-muted">{l.user}</span>,
+                        user: <span className="text-meta text-muted">{l.user}</span>,
                         msg: (
                           <span className="flex items-start gap-2">
                             <span className="min-w-0 flex-1 text-[12px] break-words text-fg">{l.message}</span>
                             {l.query && (
-                              <span className="flex shrink-0 items-center gap-1 text-[10px] font-bold whitespace-nowrap text-accent-text opacity-0 transition-opacity group-hover:opacity-100">
+                              <span className="flex shrink-0 items-center gap-1 text-micro font-bold whitespace-nowrap text-accent-text opacity-0 transition-opacity group-hover:opacity-100">
                                 Query <Icon name="chevron-right" size={11} />
                               </span>
                             )}
@@ -315,7 +315,7 @@ export default function ClickHouseErrorLogs() {
                   return (
                     <div key={key} className="space-y-2 border-t border-border bg-sunken px-card py-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[11px] font-bold tracking-wide text-subtle uppercase">
+                        <p className="text-meta font-bold tracking-wide text-subtle uppercase">
                           The query that failed
                         </p>
                         {l.elapsed_ms != null && (
@@ -324,7 +324,7 @@ export default function ClickHouseErrorLogs() {
                         <span className="ml-auto"><CopyButton text={l.query} /></span>
                       </div>
                       <SqlBlock sql={l.query} className="max-h-48 overflow-auto" />
-                      <p className="text-[11px] text-subtle">
+                      <p className="text-meta text-subtle">
                         Truncated to 300 characters by the collector.
                         {num(l.elapsed_ms) === 0
                           ? ' A duration of zero means it failed before it started running — a parse, permission or resource-limit rejection.'
@@ -339,7 +339,7 @@ export default function ClickHouseErrorLogs() {
           </Paged>
         </TablePanel>
 
-        <p className="flex items-start gap-1.5 text-[11px] text-subtle">
+        <p className="flex items-start gap-1.5 text-meta text-subtle">
           <Icon name="info" size={12} className="mt-0.5 shrink-0" />
           Both tables are capped at 200 rows by the collector and merged newest-first, so a busy
           server's older entries are not shown here — query <span className="font-mono">system.query_log</span>

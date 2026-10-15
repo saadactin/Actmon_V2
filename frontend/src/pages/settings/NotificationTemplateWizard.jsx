@@ -157,7 +157,7 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
                   )}
                 >
                   <p className="text-[12px] font-bold text-fg">{p.label}</p>
-                  <p className="mt-1 text-[11px] leading-snug text-muted">{p.desc}</p>
+                  <p className="mt-1 text-meta leading-snug text-muted">{p.desc}</p>
                 </button>
               ))}
             </div>
@@ -170,13 +170,13 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
                 Upload {isHtml ? '.html' : '.txt'} file
               </Button>
               <input ref={fileInputRef} type="file" accept=".html,.htm,.txt" className="hidden" onChange={handleUpload} />
-              <span className="text-[11px] text-subtle">Its contents become the body — edit and add {'{{Variables}}'} on the next step.</span>
+              <span className="text-meta text-subtle">Its contents become the body — edit and add {'{{Variables}}'} on the next step.</span>
             </div>
-            {fileError && <p className="mt-1.5 text-[11px] font-semibold text-danger-fg">{fileError}</p>}
+            {fileError && <p className="mt-1.5 text-meta font-semibold text-danger-fg">{fileError}</p>}
           </div>
 
           {initial?.is_override && (
-            <p className="flex items-start gap-2 rounded-control bg-info-soft px-3 py-2 text-[11px] leading-relaxed text-info-fg">
+            <p className="flex items-start gap-2 rounded-control bg-info-soft px-3 py-2 text-meta leading-relaxed text-info-fg">
               <Icon name="info" size={13} className="mt-px shrink-0" />
               This channel already has a saved custom template — it's loaded below. Pick a standard option or upload a
               file to replace it, or just click Next to keep editing it as-is.
@@ -195,7 +195,7 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
                   key={p.id}
                   type="button"
                   onClick={() => setSubject(p.value)}
-                  className="rounded-control border border-border px-2 py-1 text-[11px] font-semibold text-muted transition-colors hover:border-strong hover:text-fg"
+                  className="rounded-control border border-border px-2 py-1 text-meta font-semibold text-muted transition-colors hover:border-strong hover:text-fg"
                 >
                   {p.label}
                 </button>
@@ -219,7 +219,7 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
           </div>
 
           <div>
-            <p className="mb-1.5 text-[11px] font-bold tracking-wide text-subtle uppercase">Insert a variable</p>
+            <p className="mb-1.5 text-meta font-bold tracking-wide text-subtle uppercase">Insert a variable</p>
             <div className="flex flex-wrap gap-1.5">
               {TEMPLATE_VARIABLES.map((v) => (
                 <button
@@ -231,13 +231,13 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
                     if (target === 'subject') insertAtCursor(subjectRef, subject, setSubject, `{{${v}}}`);
                     else insertAtCursor(bodyRef, body, setBody, `{{${v}}}`);
                   }}
-                  className="rounded-control border border-border bg-sunken px-2 py-1 font-mono text-[11px] font-semibold text-muted transition-colors hover:border-strong hover:text-fg"
+                  className="rounded-control border border-border bg-sunken px-2 py-1 font-mono text-meta font-semibold text-muted transition-colors hover:border-strong hover:text-fg"
                 >
                   {`{{${v}}}`}
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] text-subtle">Click a field above first, then a variable to insert it there.</p>
+            <p className="mt-1.5 text-meta text-subtle">Click a field above first, then a variable to insert it there.</p>
           </div>
         </div>
       )}
@@ -256,7 +256,7 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
           {preview && (
             <div className="overflow-hidden rounded-control border border-border">
               <div className="border-b border-border bg-sunken px-4 py-2.5">
-                <p className="text-[10px] font-bold tracking-wide text-subtle uppercase">Subject</p>
+                <p className="text-micro font-bold tracking-wide text-subtle uppercase">Subject</p>
                 <p className="mt-0.5 text-[13px] font-semibold text-fg">{preview.subject}</p>
               </div>
               <div className="max-h-80 overflow-auto bg-surface p-4">
@@ -270,7 +270,7 @@ export default function NotificationTemplateWizard({ channelType, initial, onClo
             </div>
           )}
 
-          <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-[11px] leading-relaxed text-warning-fg">
+          <p className="flex items-start gap-2 rounded-control bg-warning-soft px-3 py-2 text-meta leading-relaxed text-warning-fg">
             <Icon name="alert" size={13} className="mt-px shrink-0" />
             This is a simplified preview — real mail/chat clients may render fonts and spacing slightly differently.
           </p>

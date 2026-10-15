@@ -242,7 +242,7 @@ async def run_checks(account_id: uuid.UUID) -> int:
         check("category budgets sum to 100",
               abs(sum(meta["scoring"]["category_budgets"].values()) - 100) < 0.01,
               str(sum(meta["scoring"]["category_budgets"].values())))
-        check("all nine frameworks are declared, each with its cloud scope",
+        check("all ten frameworks are declared, each with its cloud scope",
               set(meta["frameworks"]) == set(ctl.FRAMEWORKS)
               and meta["frameworks"]["CIS-OCI"]["providers"] == ["OCI"]
               and meta["frameworks"]["SOC2"]["providers"] is None,

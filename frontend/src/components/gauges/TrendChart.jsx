@@ -321,7 +321,7 @@ function GanttChart({ width = 600, height = 320, data }) {
   return (
     <div style={{ width, height, display: 'flex', overflow: 'hidden', fontSize: 11 }}>
       <div style={{ width: tableWidth, flexShrink: 0, borderRight: '1px solid #e2e8f0' }}>
-        <div style={{ height: headerH, display: 'flex', alignItems: 'center', fontWeight: 700, color: '#94a3b8', fontSize: 10, textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', padding: '0 8px' }}>
+        <div style={{ height: headerH, display: 'flex', alignItems: 'center', fontWeight: 700, color: '#94a3b8', fontSize: 11, textTransform: 'uppercase', borderBottom: '1px solid #e2e8f0', padding: '0 8px' }}>
           <span style={{ flex: 1 }}>Title</span><span style={{ width: 56, textAlign: 'right' }}>Duration</span>
         </div>
         {rows.map((t) => (
@@ -487,10 +487,10 @@ export default function TrendChart({
   return (
     <div>
       {title && <p className={`text-[15px] font-black text-slate-900 leading-tight ${type === 'gauge' ? 'text-center' : ''}`}>{title}</p>}
-      {subtitle && <p className={`text-[11.5px] text-slate-400 mb-2 ${type === 'gauge' ? 'text-center' : ''}`}>{subtitle}</p>}
+      {subtitle && <p className={`text-meta text-slate-400 mb-2 ${type === 'gauge' ? 'text-center' : ''}`}>{subtitle}</p>}
       {showLegend && !compact && type !== 'line' && type !== 'bar' && type !== 'barh' && type !== 'gauge' && type !== 'bubble' && type !== 'gantt'
         && !((type === 'pie' || type === 'donut') && xKey !== 't') && (
-        <div className="flex items-center gap-4 mb-2 text-[11px] text-slate-500 dark:text-slate-400">
+        <div className="flex items-center gap-4 mb-2 text-meta text-slate-500 dark:text-slate-400">
           {resolvedSeries.map((s) => (
             <span key={s.key} className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: s.color }} />
@@ -511,7 +511,7 @@ export default function TrendChart({
           { sizeKey, labelKey, xThreshold, yThreshold, zoneLabel })}
       </ResponsiveContainer>
       {showLegend && !compact && type === 'bar' && (
-        <div className="flex items-center justify-center gap-4 mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+        <div className="flex items-center justify-center gap-4 mt-2 text-meta text-slate-500 dark:text-slate-400">
           {resolvedSeries.map((s) => (
             <span key={s.key} className="inline-flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: s.color }} />
@@ -522,7 +522,7 @@ export default function TrendChart({
       )}
       {caption && (
         <div className="mt-3 rounded-md bg-emerald-50/60 border-l-2 border-emerald-300 px-3 py-2">
-          <p className="text-[11.5px] italic text-slate-600 leading-snug">{caption}</p>
+          <p className="text-meta italic text-slate-600 leading-snug">{caption}</p>
         </div>
       )}
     </div>
@@ -532,13 +532,13 @@ export default function TrendChart({
 function renderChart(type, data, xKey, series, compact, yDomain, uid, xLabel, yLabel, bubbleOpts = {}) {
   const sharedAxis = compact
     ? { hide: true }
-    : { tick: { fontSize: 10 }, tickLine: false, axisLine: { stroke: '#cbd5e1' } };
+    : { tick: { fontSize: 11 }, tickLine: false, axisLine: { stroke: '#cbd5e1' } };
   // Only set when the caller actually passes xLabel/yLabel — leaves every
   // existing dashboard's axes exactly as before unless it opts in.
   const yAxisLabel = compact || !yLabel ? undefined
-    : { value: yLabel, angle: -90, position: 'insideLeft', offset: 8, style: { fontSize: 10, fill: '#94a3b8' } };
+    : { value: yLabel, angle: -90, position: 'insideLeft', offset: 8, style: { fontSize: 11, fill: '#94a3b8' } };
   const xAxisLabel = compact || !xLabel ? undefined
-    : { value: xLabel, position: 'insideBottomRight', offset: -2, style: { fontSize: 10, fill: '#94a3b8' } };
+    : { value: xLabel, position: 'insideBottomRight', offset: -2, style: { fontSize: 11, fill: '#94a3b8' } };
   const bottomMargin = xLabel && !compact ? 16 : 0;
 
   if (type === 'gauge') {
@@ -714,7 +714,7 @@ function renderChart(type, data, xKey, series, compact, yDomain, uid, xLabel, yL
         )}
         {series.map((s) => (
           <Bar key={s.key} dataKey={s.key} fill={s.color} radius={[0, 2, 2, 0]} name={s.label}>
-            {!compact && <LabelList dataKey={s.key} position="right" style={{ fontSize: 10, fontWeight: 700, fill: '#334155' }} formatter={fmtAxisNum} />}
+            {!compact && <LabelList dataKey={s.key} position="right" style={{ fontSize: 11, fontWeight: 700, fill: '#334155' }} formatter={fmtAxisNum} />}
           </Bar>
         ))}
       </BarChart>

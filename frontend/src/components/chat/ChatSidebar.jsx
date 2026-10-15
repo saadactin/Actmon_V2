@@ -111,7 +111,7 @@ export default function ChatSidebar({ className }) {
                     <div className="min-w-0 flex-1">
                       <p className="truncate-safe text-[12.5px] font-semibold">{s.title || 'New chat'}</p>
                       {s.last_message && (
-                        <p className="truncate-safe text-[11px] text-subtle">{s.last_message}</p>
+                        <p className="truncate-safe text-meta text-subtle">{s.last_message}</p>
                       )}
                     </div>
                   )}

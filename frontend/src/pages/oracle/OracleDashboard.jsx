@@ -156,7 +156,7 @@ function OracleDeploymentBanner({ id, connection, topology, onSaved }) {
         Detected: {detectedTopologyLabel(topology)}
       </Badge>
       {mismatch && (
-        <span className="text-[11px] text-warning-fg">
+        <span className="text-meta text-warning-fg">
           Selection does not match the detected topology — ActMon always monitors the detected state.
         </span>
       )}
@@ -248,7 +248,7 @@ function OracleTopologyPeers({ id }) {
           ]} />
         <Button size="sm" onClick={addPeer} disabled={!peerId || saving}>Add Standby</Button>
       </div>
-      {error && <p className="mt-1.5 text-[11px] text-danger-fg">{error}</p>}
+      {error && <p className="mt-1.5 text-meta text-danger-fg">{error}</p>}
     </Panel>
   );
 }
@@ -260,7 +260,7 @@ function TopologyNodeBox({ label, sub, ok }) {
         <span className={cnDot(ok)} />
         {label}
       </span>
-      {sub && <span className="mt-0.5 text-[11px] text-subtle">{sub}</span>}
+      {sub && <span className="mt-0.5 text-meta text-subtle">{sub}</span>}
     </div>
   );
 }
@@ -286,7 +286,7 @@ function OracleTopologyDiagram({ topology, racNodes, dataGuard }) {
   return (
     <div className="flex flex-col gap-gutter">
       <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">
+        <p className="mb-1.5 text-meta font-bold uppercase tracking-wide text-subtle">
           {isRac ? 'RAC Cluster (Primary)' : 'Primary'}
         </p>
         <div className="flex flex-wrap gap-2">
@@ -303,7 +303,7 @@ function OracleTopologyDiagram({ topology, racNodes, dataGuard }) {
 
       {isDg && (
         <>
-          <div className="flex items-center gap-2 pl-2 text-[11px] text-muted">
+          <div className="flex items-center gap-2 pl-2 text-meta text-muted">
             <span>↓ Redo Transport</span>
             <Badge tone={dataGuard?.transport_status === 'failed' ? 'danger' : 'neutral'} size="xs">
               {dataGuard?.transport_status || 'unknown'}
@@ -311,7 +311,7 @@ function OracleTopologyDiagram({ topology, racNodes, dataGuard }) {
             <span>Lag: {dataGuard?.transport_lag_sec != null ? `${dataGuard.transport_lag_sec}s` : 'N/A'}</span>
           </div>
           <div>
-            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-subtle">Standby</p>
+            <p className="mb-1.5 text-meta font-bold uppercase tracking-wide text-subtle">Standby</p>
             <TopologyNodeBox label="Standby database" sub={`Apply: ${dataGuard?.apply_status || 'unknown'} · Lag: ${dataGuard?.apply_lag_sec != null ? `${dataGuard.apply_lag_sec}s` : 'N/A'}`}
               ok={dataGuard?.apply_status !== 'stopped'} />
           </div>
@@ -328,12 +328,12 @@ function WaitEventCell({ event, waitClass }) {
   return (
     <span className="block">
       <span className="flex items-center gap-1.5">
-        <span className="truncate-safe max-w-[200px] font-mono text-[11px] text-fg">{event}</span>
+        <span className="truncate-safe max-w-[200px] font-mono text-meta text-fg">{event}</span>
         {waitClass && (
           <Badge tone={WAIT_CLASS_TONES[waitClass] || 'neutral'} size="xs">{waitClass}</Badge>
         )}
       </span>
-      {k.why && <span className="mt-0.5 block max-w-[380px] text-[11px] leading-snug text-subtle">{k.why}</span>}
+      {k.why && <span className="mt-0.5 block max-w-[380px] text-meta leading-snug text-subtle">{k.why}</span>}
     </span>
   );
 }
@@ -860,7 +860,7 @@ export default function OracleDashboard() {
                               timeouts: <span className="font-mono">{fmtNumber(w.total_timeouts)}</span>,
                               sec: <span className="font-mono font-semibold">{fmtNumber(Math.round(num(w.time_waited_seconds)))}s</span>,
                               avg: <span className="font-mono">{w.avg_wait_ms} ms</span>,
-                              action: <span className="block max-w-[280px] text-[11px] leading-snug text-muted">{k.action}</span>,
+                              action: <span className="block max-w-[280px] text-meta leading-snug text-muted">{k.action}</span>,
                             },
                           };
                         })}
@@ -1170,18 +1170,18 @@ export default function OracleDashboard() {
                           dest: (
                             <span className="flex flex-col">
                               <span className="font-mono text-[12px] font-semibold">{a.dest_name}</span>
-                              {a.db_unique_name && <span className="text-[10px] text-subtle">{a.db_unique_name}</span>}
+                              {a.db_unique_name && <span className="text-micro text-subtle">{a.db_unique_name}</span>}
                             </span>
                           ),
                           target: <StateChip value={a.target} tones={{ STANDBY: 'accent', PRIMARY: 'info' }} />,
                           status: <StateChip value={a.status} tones={{ VALID: 'success', ERROR: 'danger', DEFERRED: 'warning' }} />,
                           sync: <StateChip value={a.synchronization_status}
                             tones={{ OK: 'success', 'CHECK CONFIGURATION': 'danger' }} />,
-                          archiver: <span className="text-[11px] text-muted">{a.archiver}</span>,
-                          scn: <span className="font-mono text-[11px]">{idNum(a.applied_scn)}</span>,
+                          archiver: <span className="text-meta text-muted">{a.archiver}</span>,
+                          scn: <span className="font-mono text-meta">{idNum(a.applied_scn)}</span>,
                           path: (
                             <span title={a.destination}
-                              className="truncate-safe block max-w-[200px] font-mono text-[11px] text-subtle">
+                              className="truncate-safe block max-w-[200px] font-mono text-meta text-subtle">
                               {a.destination}
                             </span>
                           ),
@@ -1208,7 +1208,7 @@ export default function OracleDashboard() {
                             rows={page.map((s, i) => ({
                               key: `dg-${i}`,
                               cells: {
-                                when: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{s.timestamp}</span>,
+                                when: <span className="font-mono text-meta whitespace-nowrap text-muted">{s.timestamp}</span>,
                                 sev: <StateChip value={s.severity}
                                   tones={{ Error: 'danger', Fatal: 'danger', Warning: 'warning', Informational: 'neutral' }} />,
                                 dest: <span className="font-mono">{s.dest_id || null}</span>,
@@ -1430,7 +1430,7 @@ export default function OracleDashboard() {
                         group: <span className="font-mono font-semibold">{g.group}</span>,
                         thread: <span className="font-mono">{g.thread}</span>,
                         seq: <span className="font-mono font-semibold">{idNum(g.sequence)}</span>,
-                        scn: <span className="font-mono text-[11px] text-muted">{idNum(g.first_change)}</span>,
+                        scn: <span className="font-mono text-meta text-muted">{idNum(g.first_change)}</span>,
                         members: (
                           <span className={num(g.members) < 2 ? 'font-mono font-bold text-warning-fg' : 'font-mono'}>
                             {g.members}
@@ -1439,7 +1439,7 @@ export default function OracleDashboard() {
                         size: <span className="font-mono text-[12px]">{fmtBytes(mb(g.size_mb))}</span>,
                         status: <StateChip value={g.status} tones={REDO_TONES} />,
                         archived: <StateChip value={g.archived} tones={{ YES: 'success', NO: 'warning' }} />,
-                        first: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{g.first_time}</span>,
+                        first: <span className="font-mono text-meta whitespace-nowrap text-muted">{g.first_time}</span>,
                       },
                     }))}
                     empty={<EmptyState icon="refresh" title="No redo log groups"
@@ -1462,12 +1462,12 @@ export default function OracleDashboard() {
                             key: `${f.group}-${i}`,
                             cells: {
                               group: <span className="font-mono font-semibold">{f.group}</span>,
-                              type: <span className="text-[11px] text-muted">{f.type}</span>,
+                              type: <span className="text-meta text-muted">{f.type}</span>,
                               status: f.file_status
                                 ? <StateChip value={f.file_status} tones={{ INVALID: 'danger', STALE: 'warning', DELETED: 'neutral' }} />
                                 : <Badge tone="success" size="xs">In use</Badge>,
                               member: (
-                                <span title={f.member} className="truncate-safe block max-w-[420px] font-mono text-[11px] text-fg">
+                                <span title={f.member} className="truncate-safe block max-w-[420px] font-mono text-meta text-fg">
                                   {f.member}
                                 </span>
                               ),
@@ -1520,9 +1520,9 @@ export default function OracleDashboard() {
                             key: `${p.pname}-${i}`,
                             cells: {
                               name: <span className="font-mono text-[12px] font-semibold text-accent-text">{p.pname}</span>,
-                              desc: <span className="truncate-safe block max-w-[280px] text-[11px] text-muted">{p.description}</span>,
+                              desc: <span className="truncate-safe block max-w-[280px] text-meta text-muted">{p.description}</span>,
                               pid: <span className="font-mono">{p.pid}</span>,
-                              spid: <span className="font-mono text-[11px]">{p.spid}</span>,
+                              spid: <span className="font-mono text-meta">{p.spid}</span>,
                               used: <span className="font-mono text-[12px]">{fmtBytes(mb(p.pga_used_mb))}</span>,
                               alloc: <span className="font-mono text-[12px] font-semibold">{fmtBytes(mb(p.pga_alloc_mb))}</span>,
                               max: <span className="font-mono text-[12px] text-muted">{fmtBytes(mb(p.pga_max_mb))}</span>,
@@ -1716,13 +1716,13 @@ export default function OracleDashboard() {
                               waiter: (
                                 <span className="flex flex-col">
                                   <span className="font-mono text-[12px] font-semibold">SID {l.waiter_sid}</span>
-                                  <span className="text-[10px] text-subtle">{l.waiter_user} · {l.waiter_machine}</span>
+                                  <span className="text-micro text-subtle">{l.waiter_user} · {l.waiter_machine}</span>
                                 </span>
                               ),
                               holder: (
                                 <span className="flex flex-col">
                                   <Badge tone="danger" size="xs">SID {l.holder_sid}</Badge>
-                                  <span className="mt-0.5 text-[10px] text-subtle">{l.holder_user} · {l.holder_machine}</span>
+                                  <span className="mt-0.5 text-micro text-subtle">{l.holder_user} · {l.holder_machine}</span>
                                 </span>
                               ),
                               secs: <span className="font-mono font-bold text-danger-fg">{fmtNumber(l.seconds_in_wait)}s</span>,
@@ -1853,7 +1853,7 @@ export default function OracleDashboard() {
                               : <Badge tone="accent" size="xs">Changed</Badge>,
                             modifiable: <StateChip value={p.modifiable}
                               tones={{ IMMEDIATE: 'success', DEFERRED: 'warning', FALSE: 'neutral' }} />,
-                            desc: <span className="block max-w-[300px] text-[11px] leading-snug text-muted">{p.description}</span>,
+                            desc: <span className="block max-w-[300px] text-meta leading-snug text-muted">{p.description}</span>,
                           },
                         }))}
                         empty={<EmptyState icon="settings" title="No parameters"
@@ -1901,7 +1901,7 @@ const USER_COLUMNS = [
     label: 'Profile',
     sortable: true,
     sortValue: (u) => u.profile || '',
-    render: (u) => <span className="text-[11px] text-muted">{u.profile}</span>,
+    render: (u) => <span className="text-meta text-muted">{u.profile}</span>,
   },
   {
     key: 'tablespace',
@@ -1909,7 +1909,7 @@ const USER_COLUMNS = [
     sortable: true,
     sortValue: (u) => u.default_tablespace || '',
     render: (u) => (
-      <span className="block text-[11px] leading-tight">
+      <span className="block text-meta leading-tight">
         <span className="block font-mono text-fg">{u.default_tablespace || '—'}</span>
         <span className="block text-subtle">{u.temporary_tablespace || '—'}</span>
       </span>
@@ -1920,7 +1920,7 @@ const USER_COLUMNS = [
     label: 'Created',
     sortable: true,
     sortValue: (u) => u.created || '',
-    render: (u) => <span className="font-mono text-[11px] whitespace-nowrap text-muted">{u.created}</span>,
+    render: (u) => <span className="font-mono text-meta whitespace-nowrap text-muted">{u.created}</span>,
   },
   {
     key: 'last_login',
@@ -1928,7 +1928,7 @@ const USER_COLUMNS = [
     hint: 'dba_users.last_login is only populated on Oracle 12c and later.',
     sortable: true,
     sortValue: (u) => u.last_login || '',
-    render: (u) => <span className="font-mono text-[11px] whitespace-nowrap text-muted">{u.last_login}</span>,
+    render: (u) => <span className="font-mono text-meta whitespace-nowrap text-muted">{u.last_login}</span>,
   },
 ];
 
@@ -1957,7 +1957,7 @@ function TopSqlPanel({ rows, title, actions, full = false }) {
                   sql: (
                     <span className="block">
                       <SqlCell sql={s.sql_text} max={110} />
-                      {s.sql_id && <span className="mt-0.5 block font-mono text-[10px] text-subtle">{s.sql_id}</span>}
+                      {s.sql_id && <span className="mt-0.5 block font-mono text-micro text-subtle">{s.sql_id}</span>}
                     </span>
                   ),
                   schema: s.parsing_schema_name
@@ -2014,7 +2014,7 @@ function SlowSqlPanel({ rows, onOpen }) {
                     sql: (
                       <span className="block">
                         <SqlCell sql={s.sql_text} max={100} />
-                        {s.sql_id && <span className="mt-0.5 block font-mono text-[10px] text-subtle">{s.sql_id}</span>}
+                        {s.sql_id && <span className="mt-0.5 block font-mono text-micro text-subtle">{s.sql_id}</span>}
                       </span>
                     ),
                     schema: s.parsing_schema_name
@@ -2029,7 +2029,7 @@ function SlowSqlPanel({ rows, onOpen }) {
                     execs: <span className="font-mono">{fmtNumber(s.executions)}</span>,
                     reads: <span className="font-mono">{fmtNumber(s.avg_disk_reads)}</span>,
                     gets: <span className="font-mono">{fmtNumber(s.avg_buffer_gets)}</span>,
-                    last: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{s.last_active_time}</span>,
+                    last: <span className="font-mono text-meta whitespace-nowrap text-muted">{s.last_active_time}</span>,
                   },
                 };
               })}
@@ -2079,7 +2079,7 @@ function SessionsPanel({ rows, loading }) {
                       /* module before program: "BillingBatch" identifies the code
                          that is running, "JDBC Thin Client" identifies every Java
                          app on the estate. */
-                      <span className="block text-[11px] leading-tight">
+                      <span className="block text-meta leading-tight">
                         <span className="truncate-safe block max-w-[130px] font-mono text-muted">{s.machine || '—'}</span>
                         <span className="truncate-safe block max-w-[130px] text-subtle">
                           {s.module || s.program || ''}

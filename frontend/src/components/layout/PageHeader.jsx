@@ -113,8 +113,9 @@ export default function PageHeader({
         )}
       </div>
 
+      {/* Wraps rather than scrolling behind a hidden scrollbar — see Tabs. */}
       {tabs && (
-        <div className="no-scrollbar mt-gutter-sm flex gap-1 overflow-x-auto border-b border-border">
+        <div className="mt-gutter-sm flex flex-wrap items-center gap-x-1 border-b border-border">
           {tabs}
         </div>
       )}

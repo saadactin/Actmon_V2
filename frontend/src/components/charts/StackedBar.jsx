@@ -82,7 +82,7 @@ export function StackedBarList({ rows, labelWidth = 96, emptyLabel = 'No data' }
             )}
           >
             <span
-              className="shrink-0 truncate text-[11px] font-medium text-muted"
+              className="shrink-0 truncate text-meta font-medium text-muted"
               style={{ width: labelWidth }}
               title={row.label}
             >
@@ -106,7 +106,7 @@ export function StackedBarList({ rows, labelWidth = 96, emptyLabel = 'No data' }
               </span>
             </span>
 
-            <span className="w-8 shrink-0 text-right text-[11px] font-bold text-fg tabular-nums">
+            <span className="w-8 shrink-0 text-right text-meta font-bold text-fg tabular-nums">
               {row.total}
             </span>
           </div>

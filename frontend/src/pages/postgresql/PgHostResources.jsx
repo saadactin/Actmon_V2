@@ -73,7 +73,7 @@ export default function HostResources({ connId, tech = 'postgresql' }) {
           <div className="flex items-center gap-2">
             <Server size={16} className="text-slate-500" />
             <h3 className="text-sm font-black text-slate-700 uppercase tracking-wide">Host Resources</h3>
-            {metrics?.load_avg && <span className="text-[11px] text-slate-400 font-semibold">· load {metrics.load_avg}{metrics.cpu_cores ? ` · ${metrics.cpu_cores} cores` : ''}</span>}
+            {metrics?.load_avg && <span className="text-meta text-slate-400 font-semibold">· load {metrics.load_avg}{metrics.cpu_cores ? ` · ${metrics.cpu_cores} cores` : ''}</span>}
           </div>
           <div className="flex items-center gap-1">
             <button onClick={() => setShowHistory(true)}
@@ -308,16 +308,16 @@ function HistoryModal({ connId, tech, onClose }) {
                 <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1">
                   {[[1, '1h'], [6, '6h'], [24, '24h']].map(([h, l]) => (
                     <button key={h} onClick={() => setHours(h)}
-                      className={`px-3 py-1 rounded-lg text-[11px] font-bold ${hours === h ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{l}</button>
+                      className={`px-3 py-1 rounded-lg text-meta font-bold ${hours === h ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{l}</button>
                   ))}
                 </div>
               </div>
               <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1 mb-4 w-fit">
                 <button onClick={() => setMetric('all')}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-bold ${metric === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>All</button>
+                  className={`px-3 py-1 rounded-lg text-meta font-bold ${metric === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>All</button>
                 {HISTORY_METRICS.map((m) => (
                   <button key={m.key} onClick={() => setMetric(m.key)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-[11px] font-bold ${metric === m.key ? 'text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-meta font-bold ${metric === m.key ? 'text-white' : 'text-slate-500 hover:bg-slate-100'}`}
                     style={metric === m.key ? { background: m.color } : undefined}>
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: m.color }} />
                     {m.label}
@@ -373,10 +373,10 @@ function HistoryModal({ connId, tech, onClose }) {
                             <span className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center"><Flame size={18} /></span>
                             <div>
                               <p className="font-bold text-slate-800 text-sm">{new Date(s.captured_at).toLocaleString()}</p>
-                              <p className="text-[11px] text-slate-400">CPU {s.cpu_pct ?? '—'}% · RAM {s.ram_pct ?? '—'}% · Disk {s.disk_pct ?? '—'}%</p>
+                              <p className="text-meta text-slate-400">CPU {s.cpu_pct ?? '—'}% · RAM {s.ram_pct ?? '—'}% · Disk {s.disk_pct ?? '—'}%</p>
                             </div>
                           </div>
-                          <span className="text-[11px] font-bold text-rose-600 flex items-center gap-1">analyse <ChevronRight size={13} /></span>
+                          <span className="text-meta font-bold text-rose-600 flex items-center gap-1">analyse <ChevronRight size={13} /></span>
                         </button>
                       ))}
                     </div>
@@ -393,23 +393,23 @@ function HistoryModal({ connId, tech, onClose }) {
                 <div className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between flex-wrap gap-3">
                   <div>
                     <p className="text-sm font-black text-slate-800">Snapshot · {new Date(detail.captured_at).toLocaleString()}</p>
-                    <p className="text-[11px] text-slate-400">CPU {detail.cpu_pct}% · RAM {detail.ram_pct}% · Disk {detail.disk_pct}%</p>
+                    <p className="text-meta text-slate-400">CPU {detail.cpu_pct}% · RAM {detail.ram_pct}% · Disk {detail.disk_pct}%</p>
                   </div>
                   <button onClick={openRca} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[12px] font-bold shadow hover:shadow-lg">
                     <Stethoscope size={15} /> Generate RCA Report
                   </button>
                 </div>
                 <div className="bg-white rounded-2xl border border-slate-200 p-4">
-                  <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Processes at that moment</h4>
+                  <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Processes at that moment</h4>
                   <table className="w-full text-sm">
-                    <thead className="text-[11px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">PID</th><th className="text-left">User</th><th className="text-right">CPU%</th><th className="text-right">MEM%</th><th className="text-left pl-3">Command</th></tr></thead>
+                    <thead className="text-meta uppercase text-slate-400 font-black"><tr><th className="text-left py-1">PID</th><th className="text-left">User</th><th className="text-right">CPU%</th><th className="text-right">MEM%</th><th className="text-left pl-3">Command</th></tr></thead>
                     <tbody>
                       {(detail.top_processes || []).map((p) => (
                         <tr key={p.pid} className={`border-t border-slate-100 ${p.is_db ? 'bg-indigo-50/40' : ''}`}>
                           <td className="py-1.5 font-mono text-xs">{p.pid}</td><td className="text-slate-500">{p.user}</td>
                           <td className="text-right font-bold" style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}</td>
                           <td className="text-right font-bold" style={{ color: colorFor(p.mem_pct) }}>{p.mem_pct}</td>
-                          <td className="pl-3 font-mono text-xs text-slate-700">{p.command}{p.is_db && <span className="ml-2 text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-600 text-white">DB</span>}</td>
+                          <td className="pl-3 font-mono text-xs text-slate-700">{p.command}{p.is_db && <span className="ml-2 text-micro font-black px-1.5 py-0.5 rounded bg-indigo-600 text-white">DB</span>}</td>
                         </tr>
                       ))}
                       {(detail.top_processes || []).length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">No process detail stored for this sample.</td></tr>}
@@ -418,7 +418,7 @@ function HistoryModal({ connId, tech, onClose }) {
                 </div>
                 {(detail.active_sessions || []).length > 0 && (
                   <div className="bg-white rounded-2xl border border-slate-200 p-4">
-                    <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Active queries at that moment</h4>
+                    <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Active queries at that moment</h4>
                     <div className="space-y-2">
                       {detail.active_sessions.map((s, i) => (
                         <div key={i} className="text-xs">
@@ -487,7 +487,7 @@ function WindowsProcesses({ connId }) {
   return (
     <div className="mt-3 bg-white rounded-2xl border border-slate-200 p-4">
       <div className="flex items-center justify-between mb-2">
-        <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Windows processes · real-time CPU%</h4>
+        <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider">Windows processes · real-time CPU%</h4>
         <button onClick={load} className="text-slate-400 hover:text-slate-700"><RefreshCw size={13} /></button>
       </div>
       {/* total bar */}
@@ -500,7 +500,7 @@ function WindowsProcesses({ connId }) {
         <div className="h-full rounded-full" style={{ width: `${Math.min(res.total_cpu_pct || 0, 100)}%`, background: colorFor(res.total_cpu_pct) }} />
       </div>
       <table className="w-full text-xs">
-        <thead className="text-[10px] uppercase text-slate-400 font-black">
+        <thead className="text-micro uppercase text-slate-400 font-black">
           <tr>
             <th className="text-left py-1">Process</th><th className="text-right">PID</th>
             <th className="text-right">CPU % (now)</th><th className="text-right">CPU (s) total</th><th className="text-right">Memory</th>
@@ -511,7 +511,7 @@ function WindowsProcesses({ connId }) {
             const isSql = /sqlservr/i.test(p.name);
             return (
               <tr key={i} className={`border-t border-slate-100 ${isSql ? 'bg-indigo-50/40' : i === 0 && p.cpu_pct > 0 ? 'bg-amber-50/60' : ''}`}>
-                <td className="py-1.5 font-mono">{p.name}{isSql && <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded bg-indigo-600 text-white">SQL</span>}{!isSql && i === 0 && p.cpu_pct > 0 && <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">TOP</span>}</td>
+                <td className="py-1.5 font-mono">{p.name}{isSql && <span className="ml-2 text-micro font-black px-1.5 py-0.5 rounded bg-indigo-600 text-white">SQL</span>}{!isSql && i === 0 && p.cpu_pct > 0 && <span className="ml-2 text-micro font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">TOP</span>}</td>
                 <td className="text-right text-slate-500">{p.pid}</td>
                 <td className="text-right font-black" style={{ color: colorFor(p.cpu_pct) }}>{p.cpu_pct}%</td>
                 <td className="text-right text-slate-500">{Number(p.cpu_seconds).toLocaleString()}</td>
@@ -522,7 +522,7 @@ function WindowsProcesses({ connId }) {
           {procs.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{note || 'No process data.'}</td></tr>}
         </tbody>
       </table>
-      <p className="text-[11px] text-slate-400 mt-2">{note}</p>
+      <p className="text-meta text-slate-400 mt-2">{note}</p>
     </div>
   );
 }
@@ -537,19 +537,19 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail, onRca, tec
       {/* summary strip */}
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">System CPU</p>
+          <p className="text-micro font-black text-slate-400 uppercase tracking-wider">System CPU</p>
           <p className="text-2xl font-black mt-0.5" style={{ color: colorFor(sysCpu) }}>{sysCpu == null ? '—' : `${sysCpu}%`}</p>
-          <p className="text-[11px] text-slate-400">{cores ? `across ${cores} core${cores > 1 ? 's' : ''}` : ''}</p>
+          <p className="text-meta text-slate-400">{cores ? `across ${cores} core${cores > 1 ? 's' : ''}` : ''}</p>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{techLabel} share</p>
+          <p className="text-micro font-black text-slate-400 uppercase tracking-wider">{techLabel} share</p>
           <p className="text-2xl font-black text-indigo-600 mt-0.5">{dbCpu == null ? '—' : `${dbCpu}%`}</p>
-          <p className="text-[11px] text-slate-400">of total host CPU</p>
+          <p className="text-meta text-slate-400">of total host CPU</p>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Other / OS</p>
+          <p className="text-micro font-black text-slate-400 uppercase tracking-wider">Other / OS</p>
           <p className="text-2xl font-black mt-0.5" style={{ color: colorFor(sysCpu == null || dbCpu == null ? null : Math.max(sysCpu - dbCpu, 0)) }}>{sysCpu == null || dbCpu == null ? '—' : `${Math.max(Math.round((sysCpu - dbCpu) * 10) / 10, 0)}%`}</p>
-          <p className="text-[11px] text-slate-400">non-database processes</p>
+          <p className="text-meta text-slate-400">non-database processes</p>
         </div>
       </div>
 
@@ -579,13 +579,13 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail, onRca, tec
         <div className="flex items-center gap-1 bg-white rounded-xl border border-slate-200 p-1">
           {[['cpu', 'By CPU'], ['mem', 'By Memory']].map(([k, l]) => (
             <button key={k} onClick={() => setSortBy(k)}
-              className={`px-3 py-1 rounded-lg text-[11px] font-bold ${sortBy === k ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{l}</button>
+              className={`px-3 py-1 rounded-lg text-meta font-bold ${sortBy === k ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>{l}</button>
           ))}
         </div>
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-[11px] uppercase text-slate-400 font-black">
+          <thead className="bg-slate-50 text-meta uppercase text-slate-400 font-black">
             <tr>
               <th className="px-4 py-2.5 text-left">PID</th><th className="px-4 py-2.5 text-left">User</th>
               <th className="px-4 py-2.5 text-right">{data?.is_external ? 'CPU TIME · %SQL' : 'CPU%'}</th><th className="px-4 py-2.5 text-right">MEM%</th>
@@ -607,7 +607,7 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail, onRca, tec
                 <td className="px-4 py-2.5 text-right text-slate-500">{p.rss_mb} MB</td>
                 <td className="px-4 py-2.5">
                   <span className="font-mono text-xs text-slate-700">{p.command}</span>
-                  {p.is_db && <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-600 text-white"><Database size={10} /> DB</span>}
+                  {p.is_db && <span className="ml-2 inline-flex items-center gap-1 text-micro font-black px-2 py-0.5 rounded-full bg-indigo-600 text-white"><Database size={10} /> DB</span>}
                 </td>
                 <td className="px-3 py-2.5 text-right whitespace-nowrap text-slate-300">
                   <ChevronRight size={15} className="inline" />
@@ -619,9 +619,9 @@ function ProcessList({ data, sortBy, setSortBy, onPick, onProcDetail, onRca, tec
         </table>
       </div>
       {data?.is_external && (
-        <p className="text-[11px] text-slate-400 mt-2"><b>%SQL</b> = each session's share of SQL Server's <i>own</i> CPU (which is only {dbCpu ?? 0}% of the host). The host's {sysCpu ?? 0}% is mostly <b>non-SQL</b> — use <b>Identify the Windows process</b> above to see it.</p>
+        <p className="text-meta text-slate-400 mt-2"><b>%SQL</b> = each session's share of SQL Server's <i>own</i> CPU (which is only {dbCpu ?? 0}% of the host). The host's {sysCpu ?? 0}% is mostly <b>non-SQL</b> — use <b>Identify the Windows process</b> above to see it.</p>
       )}
-      <p className="text-[11px] text-slate-400 mt-3">Click a row to drill in — {techLabel} rows open their live <b>queries</b>; other processes open a detail view. The <b>RCA report</b> is generated at the final step.</p>
+      <p className="text-meta text-slate-400 mt-3">Click a row to drill in — {techLabel} rows open their live <b>queries</b>; other processes open a detail view. The <b>RCA report</b> is generated at the final step.</p>
     </>
   );
 }
@@ -642,10 +642,10 @@ function SessionList({ data, connId, onPick, onGranted, techLabel = 'Database' }
             <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-xs text-slate-500">PID {s.pid}</span>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${stateColor(s.state)}`}>{(s.state || 'unknown').toUpperCase()}</span>
-                {s.wait_event && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">wait: {s.wait_event_type}/{s.wait_event}</span>}
+                <span className={`text-micro font-black px-2 py-0.5 rounded-full ${stateColor(s.state)}`}>{(s.state || 'unknown').toUpperCase()}</span>
+                {s.wait_event && <span className="text-micro font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">wait: {s.wait_event_type}/{s.wait_event}</span>}
               </div>
-              <div className="flex items-center gap-3 text-[11px] text-slate-500">
+              <div className="flex items-center gap-3 text-meta text-slate-500">
                 <span className="flex items-center gap-1"><Clock size={11} /> {s.query_seconds ?? 0}s</span>
                 <span>{s.usename}@{s.datname}</span>
                 <ChevronRight size={14} className="text-indigo-400" />
@@ -666,7 +666,7 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
   const blockers = Array.isArray(d.blocked_by) ? d.blocked_by : [];
   const Field = ({ label, value }) => (
     <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{label}</p>
+      <p className="text-micro font-black text-slate-400 uppercase tracking-wider">{label}</p>
       <p className="text-sm font-bold text-slate-800 mt-0.5 break-all">{value == null || value === '' ? '—' : String(value)}</p>
     </div>
   );
@@ -697,7 +697,7 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
       {d.query ? (
         <div>
-          <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Last query</p>
+          <p className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Last query</p>
           <pre className="bg-slate-900 text-emerald-200 rounded-2xl p-4 text-xs overflow-x-auto whitespace-pre-wrap break-all">{d.query}</pre>
         </div>
       ) : (
@@ -708,7 +708,7 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
       {a?.top_queries?.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Top queries by CPU · {a.database}</h4>
+          <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Top queries by CPU · {a.database}</h4>
           <div className="space-y-2">
             {a.top_queries.slice(0, 6).map((q, i) => (
               <div key={i} className="text-xs">
@@ -733,9 +733,9 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
           {a.tables?.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-4">
-              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Largest tables (size & rows)</h4>
+              <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Largest tables (size & rows)</h4>
               <table className="w-full text-xs">
-                <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Table</th><th className="text-right">Rows</th><th className="text-right">Total MB</th><th className="text-right">Index MB</th></tr></thead>
+                <thead className="text-micro uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Table</th><th className="text-right">Rows</th><th className="text-right">Total MB</th><th className="text-right">Index MB</th></tr></thead>
                 <tbody>
                   {a.tables.slice(0, 10).map((t, i) => (
                     <tr key={i} className={`border-t border-slate-100 ${(t.row_count || 0) > 1000000 ? 'bg-amber-50/60' : ''}`}>
@@ -752,12 +752,12 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
           {a.missing_indexes?.length > 0 && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
-              <h4 className="text-[11px] font-black text-emerald-600 uppercase tracking-wider mb-2">Missing indexes — create these</h4>
+              <h4 className="text-meta font-black text-emerald-600 uppercase tracking-wider mb-2">Missing indexes — create these</h4>
               <div className="space-y-2">
                 {a.missing_indexes.map((m, i) => (
                   <div key={i}>
                     <div className="flex justify-between text-xs"><span className="font-bold text-slate-700">[{m.table}]</span><span className="text-emerald-700 font-black">≈ {m.impact}% faster · {m.uses} uses</span></div>
-                    <code className="block font-mono text-[11px] text-slate-700 bg-white rounded px-2 py-1 mt-0.5 break-all">{m.ddl}</code>
+                    <code className="block font-mono text-meta text-slate-700 bg-white rounded px-2 py-1 mt-0.5 break-all">{m.ddl}</code>
                   </div>
                 ))}
               </div>
@@ -766,15 +766,15 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
           {a.indexes?.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-4">
-              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Index usage (seeks / scans / lookups / writes)</h4>
+              <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Index usage (seeks / scans / lookups / writes)</h4>
               <table className="w-full text-xs">
-                <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Table · Index</th><th className="text-right">Seek</th><th className="text-right">Scan</th><th className="text-right">Lookup</th><th className="text-right">Writes</th></tr></thead>
+                <thead className="text-micro uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Table · Index</th><th className="text-right">Seek</th><th className="text-right">Scan</th><th className="text-right">Lookup</th><th className="text-right">Writes</th></tr></thead>
                 <tbody>
                   {a.indexes.slice(0, 12).map((ix, i) => {
                     const unused = used(ix) === 0 && (ix.updates || 0) > 0 && ix.type_desc !== 'CLUSTERED';
                     return (
                       <tr key={i} className={`border-t border-slate-100 ${unused ? 'bg-red-50/60' : ''}`}>
-                        <td className="py-1.5 font-mono">{ix.table_name} · {ix.index_name}{unused && <span className="ml-2 text-[9px] font-black px-1.5 py-0.5 rounded bg-red-500 text-white">UNUSED</span>}</td>
+                        <td className="py-1.5 font-mono">{ix.table_name} · {ix.index_name}{unused && <span className="ml-2 text-micro font-black px-1.5 py-0.5 rounded bg-red-500 text-white">UNUSED</span>}</td>
                         <td className="text-right">{Number(ix.seeks).toLocaleString()}</td>
                         <td className="text-right">{Number(ix.scans).toLocaleString()}</td>
                         <td className="text-right">{Number(ix.lookups).toLocaleString()}</td>
@@ -789,7 +789,7 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
           {a.partition_candidates?.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-              <h4 className="text-[11px] font-black text-amber-600 uppercase tracking-wider mb-2">Partitioning candidates (very large, un-partitioned)</h4>
+              <h4 className="text-meta font-black text-amber-600 uppercase tracking-wider mb-2">Partitioning candidates (very large, un-partitioned)</h4>
               <div className="space-y-1.5">
                 {a.partition_candidates.map((t, i) => (
                   <div key={i} className="flex justify-between text-xs text-slate-700">
@@ -803,7 +803,7 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
 
           {a.recommendations?.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-4">
-              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Recommendations</h4>
+              <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Recommendations</h4>
               <ul className="space-y-1.5">
                 {a.recommendations.map((r, i) => (
                   <li key={i} className="flex items-start gap-2 text-xs text-slate-700"><span className="mt-1 w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0" />{r}</li>
@@ -814,7 +814,7 @@ function SessionDetail({ data, connId, onRca, onGranted }) {
         </>
       ) : data?.plan && (
         <div>
-          <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Execution plan</p>
+          <p className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Execution plan</p>
           <pre className="bg-white border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 overflow-x-auto whitespace-pre-wrap">{data.plan}</pre>
         </div>
       )}
@@ -835,7 +835,7 @@ function ProcDetail({ proc, onRca, techLabel = 'the database' }) {
   if (!proc) return null;
   const Field = ({ label, value, color }) => (
     <div className="bg-white rounded-xl border border-slate-200 px-4 py-3">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{label}</p>
+      <p className="text-micro font-black text-slate-400 uppercase tracking-wider">{label}</p>
       <p className="text-lg font-black mt-0.5" style={color ? { color } : undefined}>{value}</p>
     </div>
   );
@@ -935,14 +935,14 @@ function RcaReport({ data, resource }) {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Stethoscope size={20} />
-              <span className="text-[11px] font-black uppercase tracking-widest opacity-80">Root Cause Analysis · {resource}</span>
+              <span className="text-meta font-black uppercase tracking-widest opacity-80">Root Cause Analysis · {resource}</span>
             </div>
             <h3 className="text-xl font-black leading-tight max-w-2xl">{rca.title || rca.issue || 'Analysis'}</h3>
             {rca.issue && rca.title && <p className="text-sm opacity-90 mt-1 max-w-2xl">{rca.issue}</p>}
             <div className="flex items-center gap-2 mt-3 flex-wrap">
-              <span className="text-[11px] font-black px-2.5 py-1 rounded-full bg-white/20 backdrop-blur">{rca.severity || 'Medium'} severity</span>
-              <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/15">{isDb ? 'Database-related' : 'External (not the DB)'}</span>
-              <span className="text-[11px] opacity-80">Generated {now}</span>
+              <span className="text-meta font-black px-2.5 py-1 rounded-full bg-white/20 backdrop-blur">{rca.severity || 'Medium'} severity</span>
+              <span className="text-meta font-bold px-2.5 py-1 rounded-full bg-white/15">{isDb ? 'Database-related' : 'External (not the DB)'}</span>
+              <span className="text-meta opacity-80">Generated {now}</span>
             </div>
           </div>
           <button onClick={handleDownload} disabled={downloading} data-noprint
@@ -955,7 +955,7 @@ function RcaReport({ data, resource }) {
 
       {/* Step-wise decision path */}
       <div className="bg-white rounded-2xl border border-slate-200 p-5">
-        <p className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-3">Decision path</p>
+        <p className="text-meta font-black text-slate-400 uppercase tracking-wider mb-3">Decision path</p>
         <ol className="space-y-2.5">
           {[
             { t: `${resource} at ${ev.host_util_pct ?? '—'}% on the host`, ok: true },
@@ -973,7 +973,7 @@ function RcaReport({ data, resource }) {
                 ]),
           ].map((s, i) => (
             <li key={i} className="flex items-start gap-2.5 text-sm">
-              <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black flex-shrink-0 ${s.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{i + 1}</span>
+              <span className={`mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-micro font-black flex-shrink-0 ${s.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{i + 1}</span>
               <span className="text-slate-700">{s.t}</span>
             </li>
           ))}
@@ -1012,9 +1012,9 @@ function RcaReport({ data, resource }) {
         return (
           <div className="bg-white rounded-2xl border border-slate-200 p-5">
             <h4 className="text-sm font-black text-slate-700 uppercase tracking-wide mb-1">CPU breakdown — how the {host}% is made up</h4>
-            <p className="text-[11px] text-slate-500 mb-3">Total CPU in use is measured by the OS. Below, it is split into what we could trace to specific processes vs. the rest.</p>
+            <p className="text-meta text-slate-500 mb-3">Total CPU in use is measured by the OS. Below, it is split into what we could trace to specific processes vs. the rest.</p>
             {/* stacked bar — SQL + traced-other + untracked + idle always fills 100% */}
-            <div className="flex h-5 rounded-lg overflow-hidden mb-3 text-[10px] font-black text-white">
+            <div className="flex h-5 rounded-lg overflow-hidden mb-3 text-micro font-black text-white">
               {sqlc > 0 && <div style={{ width: `${sqlc}%`, background: '#6366f1' }} className="flex items-center justify-center" title={`${dbLabel} ${sqlc}%`}>{sqlc >= 6 ? `${sqlc}%` : ''}</div>}
               {other > 0 && <div style={{ width: `${other}%`, background: '#f59e0b' }} className="flex items-center justify-center" title={`Traced non-DB ${other}%`}>{other >= 6 ? `${other}%` : ''}</div>}
               {untracked > 0 && <div style={{ width: `${untracked}%`, background: '#94a3b8' }} className="flex items-center justify-center" title={`System / untracked ${untracked}%`}>{untracked >= 6 ? `${untracked}%` : ''}</div>}
@@ -1033,7 +1033,7 @@ function RcaReport({ data, resource }) {
             {topOs.length > 0 && (
               <p className="text-xs text-slate-500 mt-3">The <b>{other}%</b> traced non-DB is mainly: {topOs.map((p, i) => <span key={i}>{i ? ', ' : ''}<b>{p.name}</b> {p.cpu_pct}%</span>)}.</p>
             )}
-            <p className="text-[11px] text-slate-400 mt-2">
+            <p className="text-meta text-slate-400 mt-2">
               {sqlc}% ({dbLabel}) + {other}% (traced non-DB){untracked > 0 ? ` + ${untracked}% (system / untracked)` : ''} = {host}% in use, {idle}% idle.
               {untracked > 0 && ` The ${untracked}% "untracked" is kernel/system time plus short-lived or background processes not caught in the process snapshot — the OS counts it toward CPU, but no single process owns it.`}
             </p>
@@ -1050,13 +1050,13 @@ function RcaReport({ data, resource }) {
       {/* exact top consumer (named culprit) */}
       {ev.top_consumer && (
         <div className={`rounded-2xl p-4 border ${isDb ? 'bg-indigo-50 border-indigo-200' : 'bg-amber-50 border-amber-200'}`}>
-          <p className={`text-[11px] font-black uppercase tracking-wider mb-1.5 ${isDb ? 'text-indigo-500' : 'text-amber-600'}`}>Top consumer</p>
+          <p className={`text-meta font-black uppercase tracking-wider mb-1.5 ${isDb ? 'text-indigo-500' : 'text-amber-600'}`}>Top consumer</p>
           {ev.top_consumer.name ? (
             <p className="text-sm font-bold text-slate-800">
               {ev.top_consumer.name} · PID {ev.top_consumer.pid}
               {ev.top_consumer.cpu_pct != null ? ` · ${ev.top_consumer.cpu_pct}% CPU now` : ''}
               {ev.top_consumer.mem_mb != null ? ` · ${ev.top_consumer.mem_mb} MB` : ''}
-              <span className="ml-2 text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">NON-DB</span>
+              <span className="ml-2 text-micro font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">NON-DB</span>
             </p>
           ) : (
             <>
@@ -1078,13 +1078,13 @@ function RcaReport({ data, resource }) {
       {/* EXTERNAL cause → host CPU chart + the real OS processes (no DB tables/indexes shown) */}
       {!isDb && ev.os?.processes?.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Windows processes consuming {resource} (live %)</h4>
+          <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Windows processes consuming {resource} (live %)</h4>
           <div style={{ height: 220 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={ev.os.processes.slice(0, 8).map((p) => ({ name: p.name.replace(/\.exe$/i, ''), cpu: p.cpu_pct }))}
                 margin={{ top: 6, right: 12, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" />
-                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-20} textAnchor="end" height={50} />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} interval={0} angle={-20} textAnchor="end" height={50} />
                 <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} unit="%" />
                 <Tooltip />
                 <Bar dataKey="cpu" fill="#f59e0b" radius={[4, 4, 0, 0]} name="CPU %" />
@@ -1092,7 +1092,7 @@ function RcaReport({ data, resource }) {
             </ResponsiveContainer>
           </div>
           <table className="w-full text-xs mt-2">
-            <thead className="text-[10px] uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Process</th><th className="text-right">PID</th><th className="text-right">CPU %</th><th className="text-right">CPU (s)</th><th className="text-right">Memory</th></tr></thead>
+            <thead className="text-micro uppercase text-slate-400 font-black"><tr><th className="text-left py-1">Process</th><th className="text-right">PID</th><th className="text-right">CPU %</th><th className="text-right">CPU (s)</th><th className="text-right">Memory</th></tr></thead>
             <tbody>
               {ev.os.processes.slice(0, 10).map((p, i) => (
                 <tr key={i} className={`border-t border-slate-100 ${/sqlservr/i.test(p.name) ? 'bg-indigo-50/40' : i === 0 ? 'bg-amber-50/60' : ''}`}>
@@ -1105,7 +1105,7 @@ function RcaReport({ data, resource }) {
               ))}
             </tbody>
           </table>
-          <p className="text-[11px] text-slate-400 mt-2">Host CPU in use {ev.os.total_cpu_pct}% · idle {ev.os.idle_pct}% · {ev.os.cpu_cores} cores. SQL Server itself is only {ev.sql_server_cpu_pct}%.</p>
+          <p className="text-meta text-slate-400 mt-2">Host CPU in use {ev.os.total_cpu_pct}% · idle {ev.os.idle_pct}% · {ev.os.cpu_cores} cores. SQL Server itself is only {ev.sql_server_cpu_pct}%.</p>
         </div>
       )}
       {!isDb && ev.os && !ev.os.enabled && (
@@ -1117,7 +1117,7 @@ function RcaReport({ data, resource }) {
       {/* top queries (engine-agnostic: SQL Server / others) */}
       {ev.top_queries?.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Heaviest queries by CPU</h4>
+          <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Heaviest queries by CPU</h4>
           <div className="space-y-2">
             {ev.top_queries.slice(0, 6).map((q, i) => (
               <div key={i} className="text-xs">
@@ -1135,7 +1135,7 @@ function RcaReport({ data, resource }) {
       {/* top waits */}
       {ev.top_waits?.length > 0 && (
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Top wait types</h4>
+          <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Top wait types</h4>
           <div className="space-y-1.5">
             {ev.top_waits.slice(0, 6).map((w, i) => (
               <div key={i} className="flex justify-between text-xs text-slate-700">
@@ -1152,7 +1152,7 @@ function RcaReport({ data, resource }) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {ev.top_statements?.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-4">
-              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Top queries (pg_stat_statements)</h4>
+              <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Top queries (pg_stat_statements)</h4>
               <div className="space-y-2">
                 {ev.top_statements.map((q, i) => (
                   <div key={i} className="text-xs">
@@ -1165,7 +1165,7 @@ function RcaReport({ data, resource }) {
           )}
           {ev.index_candidates?.length > 0 && (
             <div className="bg-white rounded-2xl border border-slate-200 p-4">
-              <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-wider mb-2">Tables likely missing an index</h4>
+              <h4 className="text-meta font-black text-slate-400 uppercase tracking-wider mb-2">Tables likely missing an index</h4>
               <div className="space-y-1.5">
                 {ev.index_candidates.map((t, i) => (
                   <div key={i} className="flex justify-between text-xs text-slate-700">

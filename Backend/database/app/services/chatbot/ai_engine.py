@@ -3,6 +3,7 @@ ActMon AI Engine — Groq LLM integration with streaming, context building, and 
 Kept in app/services/chatbot/ so it can be reused by multiple route modules (database, cloud, infra).
 """
 
+from app.services.common.groq_config import groq_params
 import os, json, re, csv, io
 from typing import Generator, List, Optional
 
@@ -99,10 +100,9 @@ def stream_chat(messages: list) -> Generator[str, None, None]:
     full_text = ""
     try:
         stream = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
             messages=messages,
             stream=True,
-            max_tokens=2048,
+            **groq_params(2048),
             temperature=0.72,
         )
         for chunk in stream:
@@ -134,9 +134,8 @@ def chat_once(messages: list) -> str:
     from groq import Groq
     client = Groq(api_key=os.getenv("GROQ_API_KEY", ""))
     resp = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
         messages=messages,
-        max_tokens=1024,
+        **groq_params(1024),
         temperature=0.5,
     )
     return resp.choices[0].message.content or ""

@@ -237,7 +237,7 @@ function DdlTab({ section }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-bold tracking-wide text-subtle uppercase">CREATE TABLE statement</span>
+        <span className="text-meta font-bold tracking-wide text-subtle uppercase">CREATE TABLE statement</span>
         <CopyButton text={text} label="Copy DDL" />
       </div>
       {text ? <SqlBlock sql={text} className="max-h-[440px]" /> : (
@@ -268,7 +268,7 @@ function SampleDataTab({ section }) {
   }));
   return (
     <div className="space-y-2">
-      <p className="text-[11px] text-subtle">
+      <p className="text-meta text-subtle">
         Showing {section.returned ?? rows.length} of {section.total_rows != null ? fmtNumber(section.total_rows) : '—'} rows
       </p>
       <SectionTable columns={columns} rows={rows} empty="This table has no rows" />

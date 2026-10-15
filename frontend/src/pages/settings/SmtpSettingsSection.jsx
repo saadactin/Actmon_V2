@@ -131,7 +131,7 @@ export default function SmtpSettingsSection() {
       </div>
 
       <div className="mt-gutter border-t border-border pt-gutter">
-        <p className="mb-2 text-[10px] font-bold tracking-wide text-subtle uppercase">Quick presets</p>
+        <p className="mb-2 text-micro font-bold tracking-wide text-subtle uppercase">Quick presets</p>
         <div className="flex flex-wrap gap-2">
           {PRESETS.map((p) => (
             <button
@@ -139,7 +139,7 @@ export default function SmtpSettingsSection() {
               type="button"
               onClick={() => setForm({ ...EMPTY_FORM, smtp_host: p.smtp_host, smtp_port: p.smtp_port, smtp_tls: p.smtp_tls })}
               title={`${p.smtp_host}:${p.smtp_port}`}
-              className="rounded-control border border-border bg-sunken px-3 py-1.5 text-[11px] font-semibold text-muted transition-colors hover:bg-surface hover:text-fg"
+              className="rounded-control border border-border bg-sunken px-3 py-1.5 text-meta font-semibold text-muted transition-colors hover:bg-surface hover:text-fg"
             >
               {p.label}
             </button>

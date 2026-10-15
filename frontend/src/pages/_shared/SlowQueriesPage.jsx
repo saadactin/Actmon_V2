@@ -60,7 +60,7 @@ function SlowQuerySqlCell({ sql }) {
       </pre>
       <div className="mt-1 flex items-center gap-2">
         {isLong && (
-          <span className="text-[11px] font-semibold text-accent-text hover:underline">
+          <span className="text-meta font-semibold text-accent-text hover:underline">
             Show full query
           </span>
         )}
@@ -112,7 +112,7 @@ export function AiAnalysisResult({ a }) {
       <div className="flex flex-wrap items-center gap-2">
         <SeverityBadge severity={a.severity} />
         {a.estimated_overall_improvement && (
-          <span className="text-[11px] font-semibold text-success-fg">
+          <span className="text-meta font-semibold text-success-fg">
             Expected gain: {a.estimated_overall_improvement}
           </span>
         )}
@@ -136,7 +136,7 @@ export function AiAnalysisResult({ a }) {
                   {is.type}
                 </Badge>
                 <span className="ml-2 text-fg">{is.description}</span>
-                {is.evidence && <p className="mt-0.5 text-[11px] text-subtle">Evidence: {is.evidence}</p>}
+                {is.evidence && <p className="mt-0.5 text-meta text-subtle">Evidence: {is.evidence}</p>}
               </li>
             ))}
           </ul>
@@ -181,7 +181,7 @@ export function AiAnalysisResult({ a }) {
             <SqlBlock sql={a.query_rewrite.optimized_sql} className="flex-1" />
             <CopyButton text={a.query_rewrite.optimized_sql} />
           </div>
-          {a.query_rewrite.explanation && <p className="mt-1.5 text-[11px] text-subtle">{a.query_rewrite.explanation}</p>}
+          {a.query_rewrite.explanation && <p className="mt-1.5 text-meta text-subtle">{a.query_rewrite.explanation}</p>}
         </Panel>
       )}
 
@@ -190,7 +190,7 @@ export function AiAnalysisResult({ a }) {
           <ol className="space-y-1.5">
             {a.priority_actions.map((p, i) => (
               <li key={i} className="flex items-start gap-2 text-[12px] text-fg">
-                <span className="mt-0.5 font-mono text-[11px] font-bold text-accent-text">{i + 1}.</span>
+                <span className="mt-0.5 font-mono text-meta font-bold text-accent-text">{i + 1}.</span>
                 {p}
               </li>
             ))}
@@ -259,7 +259,7 @@ function SetupGuidePanel({ id, engine, onEnabled }) {
         )}
         <div className="flex items-center gap-3">
           <div className="h-px flex-1 bg-border" />
-          <span className="text-[10px] font-bold tracking-wide text-subtle uppercase">or set up manually</span>
+          <span className="text-micro font-bold tracking-wide text-subtle uppercase">or set up manually</span>
           <div className="h-px flex-1 bg-border" />
         </div>
         <div className="space-y-1.5">
@@ -349,8 +349,8 @@ function OverviewTab({ rows, cap, engine, id, data, onRefetch }) {
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={barData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} unit=" ms" width={55} />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} unit=" ms" width={55} />
                 <RTooltip
                   formatter={(v, n) => [fmtMs(v), n === 'avg' ? 'Avg time' : 'Max time']}
                   labelFormatter={(_, p) => p?.[0]?.payload?.label || ''}
@@ -412,10 +412,10 @@ function HotspotCard({ title, icon, items, metric }) {
         <div className="space-y-2">
           {items.map((r, i) => (
             <div key={i} className="flex items-start justify-between gap-2">
-              <span className="truncate-safe flex-1 font-mono text-[11px] text-muted">
+              <span className="truncate-safe flex-1 font-mono text-meta text-muted">
                 {(r.query_text || '').replace(/\s+/g, ' ').slice(0, 55)}
               </span>
-              <span className="shrink-0 font-mono text-[11px] font-bold text-accent-text">{metric(r)}</span>
+              <span className="shrink-0 font-mono text-meta font-bold text-accent-text">{metric(r)}</span>
             </div>
           ))}
         </div>
@@ -507,9 +507,9 @@ function ExplorerTab({ rows, cap, engine, id, isFetching, onRefetch, data }) {
       execs: <span className="font-mono">{fmtNumber(r.execution_count)}</span>,
       rows: <span className="font-mono text-muted">{fmtNumber(r.rows_returned)}</span>,
       user: r.user_name ? <span className="font-mono text-[12px]">{r.user_name}</span> : null,
-      host: r.host ? <span className="font-mono text-[11px] text-muted">{r.host}</span> : null,
+      host: r.host ? <span className="font-mono text-meta text-muted">{r.host}</span> : null,
       last: r.last_seen ? (
-        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
+        <span className="whitespace-nowrap font-mono text-meta text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
       ) : null,
     },
   })), sort), [filtered, sort, navigate, engine, id]);
@@ -682,10 +682,10 @@ function MysqlSlowQueryExplorer({ engine, id }) {
       rows_sent: <span className="font-mono text-muted">{fmtNumber(r.rows_returned)}</span>,
       rows_examined: <span className="font-mono text-muted">{fmtNumber(r.rows_affected)}</span>,
       last: r.last_seen ? (
-        <span className="whitespace-nowrap font-mono text-[11px] text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
+        <span className="whitespace-nowrap font-mono text-meta text-muted">{fmtDateTime(r.last_seen) || r.last_seen}</span>
       ) : null,
       who: (r.user_name || r.host) ? (
-        <span className="whitespace-nowrap font-mono text-[11px]">
+        <span className="whitespace-nowrap font-mono text-meta">
           {r.user_name || '—'}
           {r.host && <span className="text-subtle"> @ {r.host}</span>}
         </span>
@@ -734,7 +734,7 @@ function MysqlSlowQueryExplorer({ engine, id }) {
               onChange={(e) => setDateFrom(e.target.value)}
               className="h-control-sm rounded-control border border-border bg-surface px-2 text-[12px] text-fg"
             />
-            <span className="text-[11px] text-subtle">to</span>
+            <span className="text-meta text-subtle">to</span>
             <input
               type="date"
               value={dateTo}
@@ -820,7 +820,7 @@ function AiAnalysisTab({ rows, engine, id }) {
           <p className="text-[12px] text-subtle">No query data available yet.</p>
         ) : (
           <>
-            <p className="mb-2 text-[11px] font-bold tracking-wide text-subtle uppercase">Top 5 worst — quick pick</p>
+            <p className="mb-2 text-meta font-bold tracking-wide text-subtle uppercase">Top 5 worst — quick pick</p>
             <div className="space-y-1.5">
               {worst5.map((r, i) => (
                 <button
@@ -837,7 +837,7 @@ function AiAnalysisTab({ rows, engine, id }) {
                     </span>
                     <span className="shrink-0 font-mono font-bold">{fmtMs(r.average_execution_time)}</span>
                   </div>
-                  {r.user_name && <span className="text-[10px] text-subtle">user: {r.user_name}</span>}
+                  {r.user_name && <span className="text-micro text-subtle">user: {r.user_name}</span>}
                 </button>
               ))}
             </div>
@@ -1024,7 +1024,7 @@ export default function SlowQueriesPage({ tech }) {
       {tab === 'ai' && <AiAnalysisTab rows={rows} engine={engine} id={id} />}
       {tab === 'reports' && <ReportsTab rows={rows} engine={engine} id={id} />}
 
-      <p className="mt-gutter flex items-start gap-1.5 text-[11px] text-subtle">
+      <p className="mt-gutter flex items-start gap-1.5 text-meta text-subtle">
         <Icon name="info" size={12} className="mt-0.5 shrink-0" />
         {cap.aggregation === 'instance'
           ? 'These are individual observed operations, not aggregated statistics — this engine has no query-digest concept, so each row is a single point in time rather than a running average.'

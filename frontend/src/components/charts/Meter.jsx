@@ -24,7 +24,7 @@ export default function Meter({ label, value, icon, hint, color }) {
     <div>
       <div className="flex items-baseline gap-1.5">
         {icon && <Icon name={icon} size={13} className="shrink-0 self-center text-subtle" />}
-        <span className="text-[11px] font-semibold text-muted">{label}</span>
+        <span className="text-meta font-semibold text-muted">{label}</span>
         <span className="ml-auto text-[15px] leading-none font-bold text-fg">
           {hasData ? `${Math.round(pct)}%` : '—'}
         </span>
@@ -51,9 +51,9 @@ export default function Meter({ label, value, icon, hint, color }) {
       </div>
 
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] text-subtle">{hint}</span>
+        <span className="text-micro text-subtle">{hint}</span>
         {hasData && !color && (
-          <span className="flex items-center gap-1 text-[10px] font-semibold text-muted">
+          <span className="flex items-center gap-1 text-micro font-semibold text-muted">
             <Icon name={band.icon} size={9} strokeWidth={3} style={{ color: band.color }} />
             {band.label}
           </span>
