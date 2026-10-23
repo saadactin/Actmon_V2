@@ -135,6 +135,10 @@ async def real_resource_count() -> int:
 async def main() -> int:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # The exception columns on cloud_security_findings, and every other
+        # patch, exactly as the service's startup applies them.
+        from app.core import schema_patches
+        await schema_patches.apply(conn)
         # The alert-link columns are added by main.py's startup path, which does
         # not run under the ASGI test transport. Applied here so the suite tests
         # the real schema.
@@ -620,9 +624,11 @@ async def run_checks(account_id: uuid.UUID) -> int:
                          json={"status": "ACCEPTED_RISK"}, headers=hdr("administrator"))
         eq("accepting a risk without a reason returns 400", r.status_code, 400)
         r = await c.post(f"{BASE}/{aid}/findings/{ssh.fingerprint}/status",
-                         json={"status": "ACCEPTED_RISK", "reason": "bastion only"},
+                         json={"status": "ACCEPTED_RISK", "reason": "bastion only",
+                               "owner": "platform-team", "review_in_days": 30},
                          headers=hdr("administrator"))
-        eq("accepting a risk with a reason returns 200", r.status_code, 200)
+        eq("accepting a risk with a reason, owner and review date returns 200",
+           r.status_code, 200)
         r = await c.post(f"{BASE}/{aid}/findings/{ssh.fingerprint}/status",
                          json={"status": "NONSENSE"}, headers=hdr("administrator"))
         eq("an unknown status returns 400", r.status_code, 400)
@@ -637,6 +643,218 @@ async def run_checks(account_id: uuid.UUID) -> int:
         eq("a re-detected ACCEPTED_RISK finding stays accepted", row.status,
            "ACCEPTED_RISK")
         check("...and the human's reason survives", "bastion" in (row.status_reason or ""))
+
+        # ── 11b. Exceptions: owner, review date, and what ends them ─────────
+        # The port-that-cannot-be-closed case. An acceptance must name an owner
+        # and an end date; it must END when that date passes — even with no
+        # successful scan — and when the finding gets worse than what was
+        # approved; and it must never cover a port opened after it was given.
+        print("\n11b. Exceptions (owner, review date, lapse, escalation, scope)")
+        meta_exc = (await c.get(f"{BASE}/meta")).json().get("exceptions") or {}
+        eq("meta serves the exception terms: network findings cap at 180 days",
+           (meta_exc.get("max_days_by_category") or {}).get("Networking"), 180)
+        check("...and the compensating-control vocabulary",
+              any(x["id"] == "strong_auth" for x in meta_exc.get("compensating_controls", [])))
+
+        exp_rows = [f for f in by_rule["EXPOSURE_MANAGEMENT_PORT_WORLD_OPEN"]
+                    if (f.evidence or {}).get("port", {}).get("port") == 22]
+        check("fixture: a per-port SSH exposure finding exists on web-1", bool(exp_rows))
+        ssh_exp = exp_rows[0]
+        url = f"{BASE}/{aid}/findings/{ssh_exp.fingerprint}/status"
+
+        async def post_status(body, role="administrator"):
+            return await c.post(url, json=body, headers=hdr(role))
+
+        async def load(fp):
+            async with AsyncSessionLocal() as db:
+                return (await db.execute(select(CloudSecurityFinding).where(
+                    CloudSecurityFinding.fingerprint == fp,
+                    CloudSecurityFinding.account_id == account_id,
+                ))).scalar_one()
+
+        base = {"status": "ACCEPTED_RISK", "reason": "partner SFTP, sources not fixed"}
+        r = await post_status({**base, "review_in_days": 30})
+        eq("accepting with no owner returns 400", r.status_code, 400)
+        check("...and says an owner is required", "owner" in r.text.lower(), r.text[:160])
+        r = await post_status({**base, "owner": "integrations"})
+        eq("accepting with no review date returns 400", r.status_code, 400)
+        r = await post_status({**base, "owner": "integrations", "review_in_days": 200})
+        eq("a 200-day review on a network exposure returns 400", r.status_code, 400)
+        check("...naming the 180-day limit", "180" in r.text, r.text[:160])
+        r = await post_status({**base, "owner": "integrations",
+                               "expires_at": (NOW - timedelta(days=1)).isoformat()})
+        eq("a review date in the past returns 400", r.status_code, 400)
+        r = await post_status({**base, "owner": "integrations", "review_in_days": 30,
+                               "compensating_controls": ["prayer"]})
+        eq("an unknown compensating control returns 400", r.status_code, 400)
+        r = await post_status({**base, "owner": "integrations", "review_in_days": 90,
+                               "ticket": "CHG-1042",
+                               "compensating_controls": ["strong_auth", "monitored"]})
+        eq("a complete acceptance returns 200", r.status_code, 200)
+        body = r.json()
+        cur = (body.get("exception") or {}).get("current") or {}
+        eq("...recording the owner", cur.get("owner"), "integrations")
+        eq("...the ticket", cur.get("ticket"), "CHG-1042")
+        eq("...the declared controls", cur.get("compensating_controls"),
+           ["strong_auth", "monitored"])
+        eq("...the severity it was approved at", cur.get("approved_severity"),
+           ssh_exp.severity)
+        check("...and a review date as a column", body.get("exception_expires_at"))
+        eq("...which reads as ACTIVE", body.get("exception_state"), "ACTIVE")
+
+        r = await c.get(f"{BASE}/{aid}")
+        exc_sum = r.json()["findings_summary"].get("exceptions") or {}
+        check("the overview counts the active exception", exc_sum.get("active", 0) >= 1,
+              str(exc_sum))
+
+        # Scope: a port opened AFTER the acceptance is not covered by it.
+        async with AsyncSessionLocal() as db:
+            sg = (await db.execute(select(CloudResource).where(
+                CloudResource.account_id == account_id,
+                CloudResource.provider_resource_id == "sg-open"))).scalar_one()
+            sg.raw_data = {"IpPermissions": list(sg.raw_data["IpPermissions"]) + [
+                {"IpProtocol": "tcp", "FromPort": 5432, "ToPort": 5432,
+                 "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]}
+            await db.commit()
+        r = await c.post(f"{BASE}/{aid}/assess")
+        async with AsyncSessionLocal() as db:
+            pg = [f for f in (await db.execute(select(CloudSecurityFinding).where(
+                CloudSecurityFinding.account_id == account_id,
+                CloudSecurityFinding.resource_key == "i-web1",
+                CloudSecurityFinding.rule_id == "EXPOSURE_DATA_PORT_WORLD_OPEN",
+            ))).scalars().all() if (f.evidence or {}).get("port", {}).get("port") == 5432]
+        check("a port opened after the acceptance produces its own finding", bool(pg))
+        eq("...which is OPEN, not covered by the SSH exception",
+           pg[0].status if pg else None, "OPEN")
+        eq("...while the accepted SSH exposure stays accepted",
+           (await load(ssh_exp.fingerprint)).status, "ACCEPTED_RISK")
+
+        # Lapse on re-detection: the review date passes, the next assessment
+        # reopens it — a PARTIAL one included, since expiry is about the
+        # decision, not about whether the sweep was complete.
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(CloudSecurityFinding).where(
+                CloudSecurityFinding.fingerprint == ssh_exp.fingerprint,
+                CloudSecurityFinding.account_id == account_id))).scalar_one()
+            row.exception_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            await db.commit()
+        async with AsyncSessionLocal() as db:
+            out = await SecurityCenterService(db).assess(
+                account_id, triggered_by="test-lapse", sweep_complete=False, failed_scopes=2)
+        check("a PARTIAL assessment still ends a lapsed exception",
+              out["findings"].get("exceptions_ended", 0) >= 1, str(out["findings"]))
+        lapsed = await load(ssh_exp.fingerprint)
+        eq("...the finding is OPEN again", lapsed.status, "OPEN")
+        eq("...changed by the system, not a person", lapsed.status_changed_by,
+           "system:exception-review")
+        check("...with a reason naming the review date",
+              "review date" in (lapsed.status_reason or ""), lapsed.status_reason)
+        hist = (lapsed.exception or {}).get("history") or []
+        eq("...and the decision kept in history with its owner",
+           hist[0].get("owner") if hist else None, "integrations")
+        eq("...no decision is in force", (lapsed.exception or {}).get("current"), None)
+        eq("...and the review date is cleared", lapsed.exception_expires_at, None)
+
+        # Lapse with NO assessment at all: the timer loop's own code, confined
+        # to this fixture so no real account is touched.
+        from app.services import exception_expiry_scheduler as exc_sched
+        r = await post_status({**base, "owner": "integrations", "review_in_days": 30})
+        eq("re-accepting returns 200", r.status_code, 200)
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(CloudSecurityFinding).where(
+                CloudSecurityFinding.fingerprint == ssh_exp.fingerprint,
+                CloudSecurityFinding.account_id == account_id))).scalar_one()
+            row.exception_expires_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+            await db.commit()
+        swept = await exc_sched.run_once(account_id=account_id)
+        eq("the expiry loop lapses it without any scan", swept["lapsed"], 1)
+        eq("...and re-assesses the account so the score catches up",
+           swept["reassessed"], 1)
+        swept_row = await load(ssh_exp.fingerprint)
+        eq("...leaving it OPEN", swept_row.status, "OPEN")
+        eq("...with both decisions in history",
+           len((swept_row.exception or {}).get("history") or []), 2)
+
+        # Escalation: approved at a lower severity than it now has.
+        r = await post_status({**base, "owner": "integrations", "review_in_days": 30})
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(CloudSecurityFinding).where(
+                CloudSecurityFinding.fingerprint == ssh_exp.fingerprint,
+                CloudSecurityFinding.account_id == account_id))).scalar_one()
+            exc = dict(row.exception)
+            exc["current"] = {**exc["current"], "approved_severity": "LOW"}
+            row.exception = exc
+            await db.commit()
+        r = await c.post(f"{BASE}/{aid}/assess")
+        esc = await load(ssh_exp.fingerprint)
+        eq("a finding now worse than the approved severity reopens", esc.status, "OPEN")
+        check("...saying the severity rose past what was approved",
+              "Severity rose from LOW" in (esc.status_reason or ""), esc.status_reason)
+
+        # A person ending a decision files it in history too.
+        r = await post_status({**base, "owner": "integrations", "review_in_days": 30})
+        r = await post_status({"status": "IN_PROGRESS"}, role="security_analyst")
+        eq("moving an accepted finding to in-progress returns 200", r.status_code, 200)
+        moved = await load(ssh_exp.fingerprint)
+        check("...and records who ended the acceptance",
+              "In progress" in ((moved.exception or {}).get("history") or [{}])[0]
+              .get("ended_reason", ""), str((moved.exception or {}).get("history"))[:200])
+        eq("...clearing the review date", moved.exception_expires_at, None)
+
+        # Suppression keeps working without an owner: "this is not real" is a
+        # different statement from "this is real and we are keeping it".
+        r = await post_status({"status": "SUPPRESSED", "reason": "scanner false positive"})
+        eq("suppressing needs no owner or review date", r.status_code, 200)
+        eq("...and a suppression with no review date reads as NO_REVIEW_DATE",
+           r.json().get("exception_state"), "NO_REVIEW_DATE")
+
+        # Duplicates of an aggregate "not assessed" finding (the hash() bug)
+        # are closed as superseded — even by a PARTIAL assessment — while the
+        # live one stays open. One unreadable group is reported per resource;
+        # a second one is what makes the engine aggregate, so it is added for
+        # this check and removed after it.
+        async with AsyncSessionLocal() as db:
+            db.add(res(account_id, "SecurityGroup", "sg-unknown-2", key="sg-unknown-2",
+                       config={"inbound_rules": 3}, raw={}))
+            await db.commit()
+            await SecurityCenterService(db).assess(
+                account_id, triggered_by="test-gap", sweep_complete=False, failed_scopes=1)
+        async with AsyncSessionLocal() as db:
+            gap = next((f for f in (await db.execute(select(CloudSecurityFinding).where(
+                CloudSecurityFinding.account_id == account_id,
+                CloudSecurityFinding.resource_key.is_(None),
+                CloudSecurityFinding.verdict.in_(["UNKNOWN", "NOT_SCANNED"]),
+                CloudSecurityFinding.status == "OPEN",
+            ))).scalars().all() if (f.evidence or {}).get("reason")), None)
+            check("fixture: an aggregate not-assessed finding exists", gap is not None)
+            dup_fp = "zz-dup-" + uuid.uuid4().hex[:20]
+            if gap is not None:
+                db.add(CloudSecurityFinding(
+                    account_id=account_id, provider=gap.provider, fingerprint=dup_fp,
+                    rule_id=gap.rule_id, rule_version=gap.rule_version,
+                    resource_key=None, title=gap.title, description=gap.description,
+                    severity=gap.severity, category=gap.category, verdict=gap.verdict,
+                    confidence=gap.confidence, status="OPEN", evidence=dict(gap.evidence),
+                    detection_count=1))
+                await db.commit()
+        if gap is not None:
+            async with AsyncSessionLocal() as db:
+                out = await SecurityCenterService(db).assess(
+                    account_id, triggered_by="test-dup", sweep_complete=False,
+                    failed_scopes=1)
+            check("a PARTIAL assessment supersedes the duplicate",
+                  out["findings"].get("superseded", 0) >= 1, str(out["findings"]))
+            dup = await load(dup_fp)
+            eq("...the duplicate is RESOLVED", dup.status, "RESOLVED")
+            check("...as superseded, not as fixed",
+                  "Superseded" in (dup.status_reason or ""), dup.status_reason)
+            eq("...and the live gap stays OPEN", (await load(gap.fingerprint)).status,
+               "OPEN")
+        async with AsyncSessionLocal() as db:
+            await db.execute(text(
+                "DELETE FROM cloud_resources WHERE account_id = :a "
+                "AND provider_resource_id = 'sg-unknown-2'"), {"a": account_id})
+            await db.commit()
 
         # ── 12. §78.6 / §78.9 / §78.10 Resolution lifecycle ─────────────────
         print("\n12. Resolution lifecycle (§78.6, §78.9, §78.10)")

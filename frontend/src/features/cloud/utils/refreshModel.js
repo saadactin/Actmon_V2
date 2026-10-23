@@ -78,6 +78,64 @@ export function lastRefreshedView(latest) {
   };
 }
 
+/** "1 h 31 min", "4 min", "40 s" — a length of time as people say it. */
+export function durationText(seconds) {
+  // Number(null) is 0: an account with no finished refresh would "typically
+  // take 0 s".
+  if (seconds === null || seconds === undefined || seconds === '') return null;
+  const s = Math.round(Number(seconds));
+  if (!Number.isFinite(s) || s < 0) return null;
+  if (s < 60) return `${s} s`;
+  const minutes = Math.round(s / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+const RESTART_HINT = 'Start the service with Backend\\cloud\\start.ps1 (dev_server.py), '
+  + 'which holds a code reload until a running refresh finishes.';
+
+/**
+ * The warning beside Refresh all when the cloud service runs a bare
+ * `uvicorn --reload`. Saving any backend .py file then restarts the service and
+ * kills a running refresh. Between 12 and 23 Oct 2026 that was why every FAILED
+ * refresh failed, and nothing on screen said so. Null under dev_server.py
+ * ("guarded") or with no reload ("off").
+ */
+export function reloadWarning(latest) {
+  if (latest?.service?.auto_reload !== 'unguarded') return null;
+  const typical = durationText(latest.typical_duration_s);
+  return {
+    label: 'Auto-reload on: saving backend code stops a refresh',
+    text: 'The cloud service is running with uvicorn --reload. Saving any backend .py '
+      + 'file restarts it, and a refresh running at that moment fails as "Interrupted".'
+      + (typical ? ` A refresh of this account typically takes ${typical}.` : '')
+      + ` ${RESTART_HINT}`,
+  };
+}
+
+/**
+ * Why the last attempt failed, in words, for the line under the button. It
+ * used to say only "Last attempt 3 minutes ago failed", with the reason in a
+ * tooltip. Why the service restarts is `reloadWarning`'s line, shown below it.
+ */
+export function attemptFailureView(attempt) {
+  if (!attempt || attempt.status !== 'FAILED') return null;
+  const began = Date.parse(attempt.started_at || attempt.created_at || '');
+  const ended = Date.parse(attempt.completed_at || '');
+  const ran = Number.isFinite(began) && Number.isFinite(ended) && ended > began
+    ? durationText((ended - began) / 1000) : null;
+  if (attempt.error_code === 'interrupted') {
+    return {
+      reason: `The cloud service restarted ${ran ? `${ran} into the refresh` : 'during the refresh'}, `
+        + 'so it stopped. Existing data was kept.',
+      detail: attempt.error || null,
+    };
+  }
+  return { reason: attempt.error || null, detail: attempt.error || null };
+}
+
 /**
  * Should this account's tabs re-read, given the data version last acted on
  * and the one just observed?
@@ -152,6 +210,10 @@ export const REFRESHED_ROOTS = [
   // and the live JIT sessions are all stale afterwards. One root covers them
   // because every identity key starts with it.
   'identity',
+  // Report builder preview. Its key holds the whole request, account_id
+  // included, and the preview now states how fresh its data is — left alone
+  // after a refresh it would keep saying "last refreshed <old time>".
+  'cloudReports',
 ];
 
 const ROOT_SET = new Set(REFRESHED_ROOTS);

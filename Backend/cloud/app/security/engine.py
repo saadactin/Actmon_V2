@@ -37,6 +37,7 @@ What the engine guarantees:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple
@@ -739,7 +740,7 @@ def _build_undetermined_aggregate(*, rule: reg.SecurityRule, reason: str,
         fingerprint=fingerprint(
             provider=provider, account_id=account_id, rule_id=rule.rule_id,
             resource_key=None,
-            discriminator="undetermined:" + str(abs(hash(reason)) % (10 ** 12)),
+            discriminator=_gap_discriminator(reason),
         ),
         resource_key=None,
         resource_id=None,
@@ -769,6 +770,27 @@ def _build_undetermined_aggregate(*, rule: reg.SecurityRule, reason: str,
         affected_count=len(hits),
         affected_sample=sample,
     )
+
+
+def _gap_discriminator(reason: Optional[str]) -> str:
+    """Stable identity for an aggregate "could not be assessed" finding.
+
+    This was `hash(reason)`, and Python salts str hashes per process, so each
+    service restart gave the same gap a new fingerprint: oci_test accumulated
+    11 open copies of one finding. A digest is the same in every process.
+    """
+    return "undetermined:" + hashlib.sha256((reason or "").encode("utf-8")).hexdigest()[:12]
+
+
+def _exposure_title(rule: reg.SecurityRule, op: portcat.OpenPort) -> str:
+    """The finding title. A partial range is not "every port": 49152-65535 is
+    16,384 ports, and calling it everything sends the reader looking for an
+    allow-all rule that does not exist."""
+    if op.port is None and op.port_range and op.port_range != (0, 65535):
+        lo, hi = op.port_range
+        return (f"Wide port range reachable from the entire internet: {op.label} "
+                f"({hi - lo + 1:,} ports)")
+    return f"{rule.title}: {op.label}"
 
 
 # Which synthetic exposure rule a given open port maps to. Data ports first:
@@ -815,7 +837,7 @@ def _exposure_findings(e: exp.Exposure, *, provider: str, account_id: str,
             resource_name=e.resource_name,
             resource_type=e.resource_type,
             region=e.region,
-            title=f"{rule.title}: {op.label}",
+            title=_exposure_title(rule, op),
             description=(
                 f"{e.resource_name or 'This resource'} has public address "
                 f"{', '.join(e.public_addresses) or 'unknown'} and permits inbound traffic "
@@ -902,7 +924,7 @@ def _exposure_unknown_aggregate(*, reason: str, group: List[exp.Exposure], provi
         fingerprint=fingerprint(
             provider=provider, account_id=account_id, rule_id=rule.rule_id,
             resource_key=None,
-            discriminator="undetermined:" + str(abs(hash(reason)) % (10 ** 12)),
+            discriminator=_gap_discriminator(reason),
         ),
         resource_name=None,
         resource_type=None,

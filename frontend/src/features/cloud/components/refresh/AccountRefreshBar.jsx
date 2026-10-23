@@ -5,7 +5,7 @@ import Icon from '@/components/ui/Icon';
 import cn from '@/lib/cn';
 import { formatDateTime, relativeTime } from '../../utils/resourceModel';
 import {
-  busyView, isTerminal, lastRefreshedView, outcomeMessage,
+  attemptFailureView, busyView, isTerminal, lastRefreshedView, outcomeMessage, reloadWarning,
 } from '../../utils/refreshModel';
 import {
   useAccountDataSync, useLatestRefresh, useRefreshStatus,
@@ -54,6 +54,7 @@ export default function AccountRefreshBar({ account, accountId }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [watching, setWatching] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [warningOpen, setWarningOpen] = useState(false);
 
   const latest = useLatestRefresh(accountId);
   const activeId = watching || latest.data?.current?.refresh_id || null;
@@ -86,6 +87,10 @@ export default function AccountRefreshBar({ account, accountId }) {
     && lastAttempt.refresh_id !== lastSuccess?.refresh_id
     && (!last.at || Date.parse(lastAttempt.completed_at || lastAttempt.created_at)
       > Date.parse(last.at));
+  const failure = attemptFailed ? attemptFailureView(lastAttempt) : null;
+  // Under a bare `uvicorn --reload`, saving backend code kills a running
+  // refresh. Said before anyone starts one, not only after it has failed.
+  const warning = reloadWarning(latest.data);
 
   return (
     <div className="flex shrink-0 flex-col items-end gap-1">
@@ -150,8 +155,31 @@ export default function AccountRefreshBar({ account, accountId }) {
         )}
 
         {attemptFailed && !busy && (
-          <div className="text-danger" title={lastAttempt.error || undefined}>
-            Last attempt {relativeTime(lastAttempt.completed_at || lastAttempt.created_at)} failed
+          <div className="ml-auto max-w-xs" title={failure?.detail || undefined}>
+            <div className="text-danger">
+              Last attempt {relativeTime(lastAttempt.completed_at || lastAttempt.created_at)} failed
+            </div>
+            {failure?.reason && <div className="text-muted">{failure.reason}</div>}
+          </div>
+        )}
+
+        {warning && (
+          <div className="ml-auto max-w-xs">
+            <button
+              type="button"
+              onClick={() => setWarningOpen((v) => !v)}
+              aria-expanded={warningOpen}
+              title={warning.text}
+              className="inline-flex items-center gap-1 text-warning-fg hover:underline"
+            >
+              <Icon name="alert" size={11} className="shrink-0" />
+              {warning.label}
+            </button>
+            {warningOpen && (
+              <div className="mt-1 rounded-control border border-warning bg-warning-soft px-2 py-1 text-left text-fg">
+                {warning.text}
+              </div>
+            )}
           </div>
         )}
 

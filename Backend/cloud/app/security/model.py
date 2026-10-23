@@ -151,6 +151,10 @@ STATUS_LABEL: Dict[str, str] = {
 # Suppressing a CRITICAL exposure finding without saying why is exactly the
 # kind of act that needs to be defensible six months later.
 STATUS_REQUIRES_REASON = frozenset({SUPPRESSED, ACCEPTED_RISK})
+# Accepting a real risk additionally needs an accountable owner and a review
+# date (see "Exceptions" below). Suppression — "this is not a real problem" —
+# may carry a review date but does not have to.
+STATUS_REQUIRES_OWNER_AND_EXPIRY = frozenset({ACCEPTED_RISK})
 
 
 # ── Categories ───────────────────────────────────────────────────────────────
@@ -187,6 +191,70 @@ NON_SECURITY_CATEGORIES = frozenset({CAT_PERFORMANCE, CAT_COST})
 # contribution is capped hard (see scoring.py) so 550 missing Owner tags can
 # never outweigh one publicly-reachable database.
 HYGIENE_CATEGORIES = frozenset({CAT_GOVERNANCE, CAT_MAINTENANCE})
+
+
+# ── Exceptions: a muted finding is a decision with an owner and an end date ──
+# Some exposure cannot be closed: a partner SFTP endpoint on 22, a VPN gateway
+# on 500/4500, a bastion nobody has migrated yet. Accepting that is legitimate.
+# What is not legitimate is an acceptance that never ends and names nobody,
+# which is all "Risk accepted" used to record: one reason string, no review
+# date, and no re-detection could ever bring it back. That is how a port opened
+# "temporarily" for a vendor is still open three years later with nobody able
+# to say who agreed to it.
+#
+# PCI DSS v4.0 1.2.5 requires every allowed service, protocol and port to have
+# an identified, approved business need; 1.2.7 requires network security
+# controls to be reviewed at least every six months. Network exceptions are
+# therefore capped at 180 days, everything else at a year.
+EXCEPTION_DEFAULT_DAYS = 90
+EXCEPTION_MAX_DAYS = 365
+EXCEPTION_MAX_DAYS_NETWORK = 180
+_NETWORK_EXCEPTION_CATEGORIES = frozenset({CAT_EXPOSURE, CAT_NETWORKING})
+# How far ahead "expiring soon" looks — long enough to get a change approved.
+EXCEPTION_EXPIRING_SOON_DAYS = 14
+# Superseded exception records kept on the finding, newest first.
+EXCEPTION_HISTORY_LIMIT = 10
+
+
+def exception_max_days(category: Optional[str]) -> int:
+    return (EXCEPTION_MAX_DAYS_NETWORK if category in _NETWORK_EXCEPTION_CATEGORIES
+            else EXCEPTION_MAX_DAYS)
+
+
+# Compensating controls an approver can declare. They are DECLARED, never
+# verified: nothing ActMon collects can see fail2ban or an allow-list on an
+# upstream firewall, and the UI says so beside them. They exist so the approval
+# records what the risk is being held down by, which is the first thing an
+# auditor asks about an accepted exposure.
+COMPENSATING_CONTROLS: Dict[str, str] = {
+    "upstream_allowlist": "Source restricted upstream (firewall, WAF or proxy allow-list)",
+    "strong_auth": "Key-only or MFA authentication on the service",
+    "brute_force_protection": "Brute-force protection (fail2ban, lockout, rate limiting)",
+    "monitored": "Connections on this port are logged and alerted on",
+    "hardened_patched": "Service hardened and patched on a defined cycle",
+    "time_boxed": "Opened only for maintenance windows",
+    "migration_planned": "Migration or decommission scheduled",
+}
+
+# Where an exception stands, derived at read time from the expiry — never
+# stored, so it cannot go stale between sweeps.
+EXCEPTION_ACTIVE = "ACTIVE"
+EXCEPTION_EXPIRING = "EXPIRING"
+# Muted before review dates existed. Still honoured, but listed so someone
+# sets one; lapsing them all at once on upgrade would reopen every decision
+# ever made on the same morning.
+EXCEPTION_NO_REVIEW_DATE = "NO_REVIEW_DATE"
+
+
+def exception_state(status: Optional[str], expires_at: Optional[datetime],
+                    now: datetime) -> Optional[str]:
+    if status not in MUTED_FINDING_STATUSES:
+        return None
+    if expires_at is None:
+        return EXCEPTION_NO_REVIEW_DATE
+    if (expires_at - now).total_seconds() <= EXCEPTION_EXPIRING_SOON_DAYS * 86400:
+        return EXCEPTION_EXPIRING
+    return EXCEPTION_ACTIVE
 
 
 # ── Providers ────────────────────────────────────────────────────────────────

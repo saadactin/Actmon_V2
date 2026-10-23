@@ -31,6 +31,7 @@ import * as events from '../src/features/cloud/api/events.api.js';
 import * as intelligence from '../src/features/cloud/api/intelligence.api.js';
 import * as overview from '../src/features/cloud/api/overview.api.js';
 import * as refresh from '../src/features/cloud/api/refresh.api.js';
+import * as reports from '../src/features/cloud/api/reports.api.js';
 import * as resources from '../src/features/cloud/api/resources.api.js';
 import * as security from '../src/features/cloud/api/security.api.js';
 import * as securityCenter from '../src/features/cloud/api/securityCenter.api.js';
@@ -319,6 +320,10 @@ const PROBES = [
   ['securityCenter.getFindings (one object)', securityCenter.getFindings,
     ['ACC-1', { resource_key: 'ocid1.loadbalancer.x/certificates/y', status: 'OPEN,IN_PROGRESS', limit: 20 }]],
   ['securityCenter.getOverview', securityCenter.getOverview, ['ACC-1']],
+  // The audit export: `format` is the backend's Query alias for `fmt`, and the
+  // path must not be swallowed by /compliance/{framework}/{control_id}.
+  ['securityCenter.downloadComplianceExport', securityCenter.downloadComplianceExport,
+    ['ACC-1', { framework: 'CIS-OCI', format: 'zip' }]],
 
   // topology.api.js -- fully covered by the security/topology wire suite;
   // one probe.
@@ -374,6 +379,22 @@ const PROBES = [
   ['intelligence.getResourceTelemetry', intelligence.getResourceTelemetry, ['ACC-1', 'RES-1']],
   ['intelligence.getCoverage', intelligence.getCoverage, ['ACC-1']],
   ['intelligence.getRuns', intelligence.getRuns, ['ACC-1', 10]],
+
+  // Account report builder: preview/generate, templates, history, schedules.
+  ['reports.previewReport', reports.previewReport, [{ account_id: 'ACC-1' }]],
+  ['reports.generateReport', reports.generateReport, [{ account_id: 'ACC-1', layout: { format: 'pdf' } }]],
+  ['reports.listReportTemplates', reports.listReportTemplates, []],
+  ['reports.saveReportTemplate (create)', reports.saveReportTemplate, [{ name: 'x' }]],
+  ['reports.saveReportTemplate (update)', reports.saveReportTemplate, [{ name: 'x' }, 'TPL-1']],
+  ['reports.deleteReportTemplate', reports.deleteReportTemplate, ['TPL-1']],
+  ['reports.listReportHistory', reports.listReportHistory, ['ACC-1', 20]],
+  ['reports.downloadHistoryReport', reports.downloadHistoryReport, ['ACC-1', 'REP-1']],
+  ['reports.deleteHistoryReport', reports.deleteHistoryReport, ['ACC-1', 'REP-1']],
+  ['reports.listReportSchedules', reports.listReportSchedules, ['ACC-1']],
+  ['reports.saveReportSchedule (create)', reports.saveReportSchedule, ['ACC-1', { name: 'x' }]],
+  ['reports.saveReportSchedule (update)', reports.saveReportSchedule, ['ACC-1', { name: 'x' }, 'SCH-1']],
+  ['reports.deleteReportSchedule', reports.deleteReportSchedule, ['ACC-1', 'SCH-1']],
+  ['reports.runReportSchedule', reports.runReportSchedule, ['ACC-1', 'SCH-1', { send: true }]],
 ];
 
 check('the probe table covers all 15 api modules with a non-trivial number of calls',

@@ -47,6 +47,7 @@ const PAGES = {
   cost: acct('cost'),
   security: acct('security'),
   'security-certs': `${acct('security')}?view=certificates`,
+  'security-compliance': `${acct('security')}?view=compliance`,
   topology: acct('topology'),
   drift: acct('drift'),
   events: acct('events'),

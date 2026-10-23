@@ -36,8 +36,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.security import controls as ctl
 from app.security.model import (
-    ACTIVE_FINDING_STATUSES, CRITICAL, HIGH, MEDIUM, NOT_APPLICABLE, NOT_SCANNED,
-    SAFE, UNKNOWN, VULNERABLE, severity_rank, worst_severity,
+    ACTIVE_FINDING_STATUSES, CRITICAL, HIGH, MEDIUM, MUTED_FINDING_STATUSES, NOT_APPLICABLE,
+    NOT_SCANNED, SAFE, UNKNOWN, VULNERABLE, severity_rank, worst_severity,
 )
 
 # Severities that constitute a control failure. LOW and INFO findings are real
@@ -63,6 +63,34 @@ def _rule_stats_for(control: ctl.Control, rid: str,
         for verdict, n in (rule_stats.get(ctl.stat_key(rid, rtype)) or {}).items():
             merged[verdict] = merged.get(verdict, 0) + n
     return merged
+
+
+def _rule_findings(control: ctl.Control, rid: str,
+                   findings_by_rule: Dict[str, List[Any]]) -> List[Any]:
+    """One rule's findings as this control sees them — narrowed to the
+    control's resource types when it declares any, like its statistics."""
+    found = findings_by_rule.get(rid, [])
+    if control.resource_types:
+        found = [f for f in found if _f(f, "resource_type") in control.resource_types]
+    return found
+
+
+def breaches(control: ctl.Control, finding: Any) -> bool:
+    """Whether this finding violates this control, setting its status aside.
+
+    The single definition of a violation: the control state, the export's
+    evidence and its exceptions register all ask this, so an accepted risk is
+    listed as an exception exactly when it would otherwise have failed the
+    control.
+    """
+    return (
+        _f(finding, "verdict") == VULNERABLE
+        # A strict (benchmark) control is failed by ANY confirmed finding: its
+        # rules test the recommendation itself, and the recommendation has no
+        # severity threshold.
+        and (control.strict
+             or (_f(finding, "severity") or "").upper() in FAILING_SEVERITIES)
+    )
 
 
 def _control_state(
@@ -97,20 +125,11 @@ def _control_state(
             saw_undetermined = True
             saw_applicable = True
             stat_undetermined += (stats.get(UNKNOWN) or 0) + (stats.get(NOT_SCANNED) or 0)
-        found = findings_by_rule.get(rid, [])
-        if control.resource_types:
-            found = [f for f in found if _f(f, "resource_type") in control.resource_types]
-        relevant.extend(found)
+        relevant.extend(_rule_findings(control, rid, findings_by_rule))
 
     failing = [
         f for f in relevant
-        if _f(f, "verdict") == VULNERABLE
-        # A strict (benchmark) control is failed by ANY confirmed finding: its
-        # rules test the recommendation itself, and the recommendation has no
-        # severity threshold.
-        and (control.strict
-             or (_f(f, "severity") or "").upper() in FAILING_SEVERITIES)
-        and _f(f, "status") in ACTIVE_FINDING_STATUSES
+        if breaches(control, f) and _f(f, "status") in ACTIVE_FINDING_STATUSES
     ]
     undetermined = [
         f for f in relevant
@@ -181,6 +200,81 @@ def _control_state(
 
     detail["reason"] = "Every check covering this control ran and found no violation."
     return ctl.PASS, relevant, detail
+
+
+def _weight(finding: Any) -> int:
+    """How many subjects a finding stands for — an aggregated finding (the
+    ownership-tag rule) is one row for many resources, and the rule
+    statistics count it that way too."""
+    return max(1, int(_f(finding, "affected_count") or 1))
+
+
+def control_evidence(
+    control: ctl.Control,
+    findings_by_rule: Dict[str, List[Any]],
+    rule_stats: Dict[str, Dict[str, int]],
+) -> Dict[str, Any]:
+    """What an auditor needs behind one control's state.
+
+    Per check: how many subjects it evaluated and what it concluded. Then the
+    findings themselves, split three ways:
+
+    * `breaching` — open findings that violate the control (why it FAILED);
+    * `undetermined` — open findings whose evidence could not be read (why it
+      is PARTIAL or UNKNOWN rather than passed);
+    * `exceptions` — findings that WOULD violate it but were suppressed or
+      accepted as a risk. They do not count toward the state, which is
+      exactly why they have to be shown: a control can read "passed" only
+      because someone accepted its violation, and an audit pack that hid
+      that would be misleading in the one way that matters.
+
+    Accepted findings still sit in the SAFE remainder of the statistics (the
+    statistics count open findings only), so `conforming` subtracts them back
+    out rather than claiming them as passes.
+    """
+    checks: List[Dict[str, Any]] = []
+    breaching: List[Any] = []
+    undetermined: List[Any] = []
+    exceptions: List[Any] = []
+
+    for rid in control.rules:
+        stats = _rule_stats_for(control, rid, rule_stats)
+        found = _rule_findings(control, rid, findings_by_rule)
+        active = [f for f in found if _f(f, "status") in ACTIVE_FINDING_STATUSES]
+        own_breaching = [f for f in active if breaches(control, f)]
+        own_advisory = [f for f in active
+                        if _f(f, "verdict") == VULNERABLE and not breaches(control, f)]
+        own_undetermined = [f for f in active
+                            if _f(f, "verdict") in (UNKNOWN, NOT_SCANNED)]
+        own_exceptions = [f for f in found
+                          if _f(f, "status") in MUTED_FINDING_STATUSES
+                          and breaches(control, f)]
+        breaching.extend(own_breaching)
+        undetermined.extend(own_undetermined)
+        exceptions.extend(own_exceptions)
+
+        n_exceptions = sum(_weight(f) for f in own_exceptions)
+        n_undetermined = (stats.get(UNKNOWN) or 0) + (stats.get(NOT_SCANNED) or 0)
+        checks.append({
+            "rule_id": rid,
+            "ran": bool(stats),
+            "evaluated": sum(n for verdict, n in stats.items() if verdict != NOT_APPLICABLE),
+            "conforming": max(0, (stats.get(SAFE) or 0) - n_exceptions),
+            "breaching": sum(_weight(f) for f in own_breaching),
+            # Below this control's bar (a LOW finding against a principle-
+            # based control): real, listed on the Findings tab, not a breach.
+            "advisory": sum(_weight(f) for f in own_advisory),
+            "undetermined": n_undetermined,
+            "exceptions": n_exceptions,
+            "not_applicable": stats.get(NOT_APPLICABLE) or 0,
+        })
+
+    return {
+        "checks": checks,
+        "breaching": breaching,
+        "undetermined": undetermined,
+        "exceptions": exceptions,
+    }
 
 
 def build(

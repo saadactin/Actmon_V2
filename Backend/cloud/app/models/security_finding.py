@@ -130,6 +130,16 @@ class CloudSecurityFinding(Base):
     status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True),
                                                                nullable=True)
 
+    # ── Exception (a SUPPRESSED / ACCEPTED_RISK decision) ───────────────────
+    # The review date is a column, not a JSON key, because the expiry sweep
+    # selects on it. `exception` holds the current decision — owner, ticket,
+    # declared compensating controls, the severity it was approved at — plus
+    # the decisions it superseded under "history", so a lapsed or reopened
+    # acceptance still says who agreed to what.
+    exception_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    exception: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
     __table_args__ = (
         UniqueConstraint("account_id", "fingerprint", name="uq_finding_account_fingerprint"),
         # The findings list is always "worst first, for one account, filtered by
@@ -143,7 +153,7 @@ class CloudSecurityFinding(Base):
     def to_dict(self, *, include_sample: bool = False) -> dict:
         from app.security.model import (
             CONFIDENCE_LABEL, STATUS_LABEL, VERDICT_LABEL, NON_SECURITY_CATEGORIES,
-            scores_toward_total,
+            exception_state, scores_toward_total,
         )
 
         def iso(dt):
@@ -190,6 +200,10 @@ class CloudSecurityFinding(Base):
             "status_reason": self.status_reason,
             "status_changed_by": self.status_changed_by,
             "status_changed_at": iso(self.status_changed_at),
+            "exception": self.exception,
+            "exception_expires_at": iso(self.exception_expires_at),
+            "exception_state": exception_state(
+                self.status, self.exception_expires_at, datetime.now(timezone.utc)),
             "scores": (scores_toward_total(self.confidence)
                        and self.category not in NON_SECURITY_CATEGORIES
                        and self.verdict == "VULNERABLE"),

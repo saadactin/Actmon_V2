@@ -22,11 +22,12 @@ added to them.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,12 +39,15 @@ from app.security import registry as reg
 from app.security import rulepack
 from app.security import scoring
 from app.security.model import (
-    CATEGORIES, CONFIDENCES, FINDING_STATUSES, SEVERITIES, VERDICTS,
+    CATEGORIES, COMPENSATING_CONTROLS, CONFIDENCES, EXCEPTION_DEFAULT_DAYS,
+    EXCEPTION_EXPIRING_SOON_DAYS, FINDING_STATUSES, SEVERITIES, VERDICTS,
+    exception_max_days,
 )
 from app.services.attack_path_service import AttackPathService
 from app.services.security_center_service import SecurityCenterService
 
 router = APIRouter(prefix="/cloud/security-center", tags=["Security Center"])
+_export_log = logging.getLogger("cloud_svc.security.export")
 
 # Computed once: the catalog is served on every page load and this does not
 # change between deploys.
@@ -151,6 +155,15 @@ async def get_meta(
         "frameworks": {fw: ctl.framework_meta(fw) for fw in ctl.FRAMEWORKS},
         "control_catalog": ctl.catalog_summary(),
         "threshold_kinds": [{"value": k, "label": v} for k, v in THRESHOLD_LABEL.items()],
+        # Terms for accepting or suppressing a finding. The engine enforces
+        # them; the UI only offers what will be accepted.
+        "exceptions": {
+            "default_days": EXCEPTION_DEFAULT_DAYS,
+            "max_days_by_category": {c: exception_max_days(c) for c in CATEGORIES},
+            "expiring_soon_days": EXCEPTION_EXPIRING_SOON_DAYS,
+            "compensating_controls": [{"id": k, "label": v}
+                                      for k, v in COMPENSATING_CONTROLS.items()],
+        },
         "scoring": {
             "methodology": scoring.METHODOLOGY,
             "category_budgets": scoring.CATEGORY_BUDGET,
@@ -466,6 +479,14 @@ class StatusPayload(BaseModel):
     status: str
     reason: Optional[str] = None
     assigned_to: Optional[str] = None
+    # The exception terms, read for SUPPRESSED / ACCEPTED_RISK only. Accepting
+    # a risk needs `owner` and one of `expires_at` / `review_in_days`.
+    expires_at: Optional[datetime] = None
+    review_in_days: Optional[int] = None
+    owner: Optional[str] = None
+    ticket: Optional[str] = None
+    compensating_controls: Optional[List[str]] = None
+    compensating_note: Optional[str] = None
 
 
 @router.post("/{account_id}/findings/{key}/status")
@@ -495,6 +516,10 @@ async def set_finding_status(
         account_id=account_id, key=key, status=payload.status,
         reason=payload.reason, actor=_actor(principal),
         assigned_to=payload.assigned_to,
+        expires_at=payload.expires_at, review_in_days=payload.review_in_days,
+        owner=payload.owner, ticket=payload.ticket,
+        compensating_controls=payload.compensating_controls,
+        compensating_note=payload.compensating_note,
     )
     if err:
         raise HTTPException(status_code=404 if err == "Finding not found" else 400,
@@ -534,6 +559,64 @@ async def _require_applicable(svc: SecurityCenterService, account_id: uuid.UUID,
                     f"{', '.join(ctl.FRAMEWORK_META[framework]['providers'])} accounts; "
                     f"this is a {account.provider} account."),
         )
+
+
+@router.get("/{account_id}/compliance/export")
+async def export_compliance(
+    account_id: uuid.UUID,
+    request: Request,
+    framework: Optional[str] = Query(
+        None, description="One framework; omitted, every framework that applies"),
+    fmt: str = Query("pdf", alias="format", description="pdf | xlsx | json | zip"),
+    raw: bool = Query(False, description="Include raw provider evidence (security:view_raw)"),
+    svc: SecurityCenterService = Depends(get_service),
+    principal: rbac.Principal = Depends(rbac.require(rbac.SECURITY_VIEW)),
+) -> Response:
+    """The audit-ready compliance pack: control states, the evidence behind
+    each, the exceptions register, the gaps and the method — as a signed-off
+    PDF, Excel working papers, JSON, or a ZIP of all three with checksums.
+
+    One path segment after `compliance`, so it can never be read as
+    `/compliance/{framework}/{control_id}` with a control named "export".
+
+    Exporting needs `reports:export` on top of `security:view` (a pack leaves
+    the product), and raw provider payloads need `security:view_raw` — the
+    same gate `_strip_evidence` applies to every other read here.
+    """
+    from app.services import compliance_export_service as cx
+
+    if fmt not in cx.FORMATS:
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown format {fmt!r}. Known: {', '.join(cx.FORMATS)}")
+    if framework and framework not in ctl.FRAMEWORKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown framework {framework!r}. Known: {', '.join(ctl.FRAMEWORKS)}",
+        )
+    if not principal.can(rbac.REPORT_EXPORT):
+        await rbac.deny(principal, rbac.REPORT_EXPORT, request)
+    if raw and not principal.can(rbac.SECURITY_VIEW_RAW):
+        await rbac.deny(principal, rbac.SECURITY_VIEW_RAW, request)
+    await _require_applicable(svc, account_id, framework)
+
+    try:
+        pack = await cx.ComplianceExportService(svc.db).build(
+            account_id, framework=framework, prepared_by=_actor(principal), include_raw=raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    name, media_type, body = cx.render(pack, fmt)
+    _export_log.info("compliance pack %s exported: account=%s scope=%s format=%s by=%s "
+                     "sha256=%s", pack["integrity"]["pack_id"], account_id,
+                     framework or "all", fmt, _actor(principal), pack["integrity"]["sha256"])
+    return Response(content=body, media_type=media_type, headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
+        "Cache-Control": "no-store",
+        # Lets a caller record the pack it received without parsing the body.
+        "X-Actmon-Pack-Id": pack["integrity"]["pack_id"],
+        "X-Actmon-Pack-Sha256": pack["integrity"]["sha256"],
+        "Access-Control-Expose-Headers": "Content-Disposition, X-Actmon-Pack-Id, "
+                                         "X-Actmon-Pack-Sha256",
+    })
 
 
 @router.get("/{account_id}/compliance/{framework}/{control_id:path}")

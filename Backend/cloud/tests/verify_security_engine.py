@@ -949,6 +949,69 @@ for n in (100, 1_000, 10_000):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+print("\n=== Stable identity, port catalog, exception policy ===")
+# ═════════════════════════════════════════════════════════════════════════════
+import os as _os  # noqa: E402
+import subprocess as _sp  # noqa: E402
+
+from app.security import ports as _ports  # noqa: E402
+from app.security import model as _model  # noqa: E402
+
+# The bug was hash(), salted per process — so the only honest test runs the
+# production function in two processes with different seeds.
+_snippet = ("import sys; sys.path.insert(0, '.'); from app.security import engine; "
+            "print(engine._gap_discriminator('kms_key_id not collected'))")
+_digests = set()
+for _seed in ("1", "2", "3"):
+    _out = _sp.run([sys.executable, "-c", _snippet], capture_output=True, text=True,
+                   cwd=str(pathlib.Path(__file__).resolve().parents[1]),
+                   env={**_os.environ, "PYTHONHASHSEED": _seed})
+    _digests.add(_out.stdout.strip())
+check("a not-assessed finding's identity is the same in every process",
+      len(_digests) == 1 and "" not in _digests, str(_digests))
+
+_rpc = _ports.classify_range(49152, 65535)
+eq("49152-65535 decomposes to one named range finding", len(_rpc), 1)
+check("...named for what it is", "dynamic RPC" in (_rpc[0].service or ""), _rpc[0].service)
+check("...whose rationale gives the actual fix (stateful rules / domain ranges)",
+      "stateful" in _rpc[0].why, _rpc[0].why[:120])
+check("...and does not claim a WireGuard endpoint inside it",
+      not any(p.port == 51820 for p in _rpc))
+_title = engine._exposure_title(engine.reg.RULES["EXPOSURE_ALL_PORTS_WORLD_OPEN"], _rpc[0])
+check("a partial range is not titled 'Every port'", not _title.startswith("Every port"),
+      _title)
+check("...and states how many ports it is", "16,384 ports" in _title, _title)
+_all = _ports.classify_range(0, 65535)
+check("0-65535 is still titled 'Every port'",
+      engine._exposure_title(engine.reg.RULES["EXPOSURE_ALL_PORTS_WORLD_OPEN"],
+                             _all[0]).startswith("Every port"))
+eq("a range still names the dangerous ports inside it",
+   [p.port for p in _ports.classify_range(3380, 3400) if p.port], [3389])
+
+for _p, _sev in ((464, HIGH), (137, HIGH), (138, HIGH), (3268, HIGH), (1723, HIGH),
+                 (500, "LOW"), (4500, "LOW"), (51820, "LOW")):
+    _info = _ports.describe(_p)
+    eq(f"port {_p} is catalogued at {_sev}", _info.severity if _info else None, _sev)
+for _p in (137, 138, 464, 3268, 500):
+    check(f"port {_p} stays outside the management/data sets (identity unchanged)",
+          _p not in _ports.MANAGEMENT_PORTS and _p not in _ports.DATA_PORTS)
+
+eq("network exposure exceptions cap at 180 days (PCI DSS 1.2.7)",
+   _model.exception_max_days(_model.CAT_EXPOSURE), 180)
+eq("...networking too", _model.exception_max_days(_model.CAT_NETWORKING), 180)
+eq("...other categories at a year", _model.exception_max_days(_model.CAT_ENCRYPTION), 365)
+_now = datetime.now(timezone.utc)
+eq("an open finding has no exception state",
+   _model.exception_state("OPEN", None, _now), None)
+eq("a muted finding with no review date says so",
+   _model.exception_state("ACCEPTED_RISK", None, _now), "NO_REVIEW_DATE")
+eq("one due within the window reads EXPIRING",
+   _model.exception_state("ACCEPTED_RISK", _now + timedelta(days=3), _now), "EXPIRING")
+eq("one further out reads ACTIVE",
+   _model.exception_state("SUPPRESSED", _now + timedelta(days=60), _now), "ACTIVE")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 print(f"\n{len(ok)} passed, {len(fail)} failed")
 if fail:
     print("\nFAILURES:")

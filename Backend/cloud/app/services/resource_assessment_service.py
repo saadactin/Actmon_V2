@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,11 +65,13 @@ _PERFORMANCE_SIGNALS = {"CONSTRAINED"}
 
 
 class TooManyResourcesError(Exception):
-    def __init__(self, requested: int):
+    def __init__(self, requested: int, limit: int = MAX_RESOURCES_PER_EXPORT,
+                 what: str = "the assessment export"):
         self.requested = requested
+        self.limit = limit
         super().__init__(
-            f"{requested} resources were requested; the assessment export is "
-            f"capped at {MAX_RESOURCES_PER_EXPORT} per request."
+            f"{requested} resources were requested; {what} is "
+            f"capped at {limit} per request."
         )
 
 
@@ -104,12 +106,48 @@ async def _security_rows(
         return [{**base, "assessment_category": CATEGORY_SECURITY, "severity": None,
                  "title": "No findings", "detail": "No open security findings for this resource.",
                  "metric_value": None, "status": None, "detected_at": None}]
-    return [
-        {**base, "assessment_category": CATEGORY_SECURITY, "severity": f.severity,
-         "title": f.title, "detail": f.description, "metric_value": None,
-         "status": f.status, "detected_at": _iso(f.first_detected_at)}
-        for f in findings
-    ]
+    return [security_finding_row(base, f) for f in findings]
+
+
+def security_finding_row(base: Dict[str, Any], f) -> Dict[str, Any]:
+    """One CloudSecurityFinding as an assessment row. Shared with the report
+    builder, which loads findings in one batch instead of per resource."""
+    return {**base, "assessment_category": CATEGORY_SECURITY, "severity": f.severity,
+            "title": f.title, "detail": f.description, "metric_value": None,
+            "status": f.status, "detected_at": _iso(f.first_detected_at),
+            # The rule's own "how to fix it" text, multi-line -- the same text
+            # the Security Center shows under the finding.
+            "remediation": getattr(f, "remediation", None)}
+
+
+def optimization_finding_row(base: Dict[str, Any], category: str, f) -> Dict[str, Any]:
+    savings = (f"Est. savings: {f.estimated_savings} {f.savings_currency}"
+               if f.estimated_savings is not None else "")
+    detail = f.description + (f" {savings}" if savings else "")
+    return {**base, "assessment_category": category, "severity": f.severity,
+            "title": f.title, "detail": detail,
+            "metric_value": f.signal, "status": f.status,
+            "detected_at": _iso(f.last_detected_at),
+            # Per month. None means "not quantified" and is never summed as 0.
+            "estimated_monthly_savings": f.estimated_savings,
+            "savings_currency": f.savings_currency if f.estimated_savings is not None else None}
+
+
+def telemetry_metric_row(base: Dict[str, Any], m: Dict[str, Any]) -> Dict[str, Any]:
+    """One CloudResourceTelemetry.to_dict() as an assessment row."""
+    stats = m.get("stats") or {}
+    stat_text = ", ".join(f"{k}={v}" for k, v in stats.items()) or "no stats"
+    return {
+        **base, "assessment_category": CATEGORY_UTILIZATION, "severity": None,
+        "title": m.get("label") or m.get("metric"),
+        "detail": f"{m.get('window_days', '?')}d window, {m.get('unit') or ''} ({stat_text})".strip(),
+        "metric_value": stat_text, "status": m.get("status"),
+        "detected_at": m.get("collected_at"),
+    }
+
+
+def optimization_category(finding) -> str:
+    return _optimization_category(finding)
 
 
 def _optimization_category(finding) -> str:
@@ -158,13 +196,7 @@ async def _optimization_rows(
                              "metric_value": None, "status": None, "detected_at": None})
             continue
         for f in items:
-            savings = (f"Est. savings: {f.estimated_savings} {f.savings_currency}"
-                       if f.estimated_savings is not None else "")
-            detail = f.description + (f" {savings}" if savings else "")
-            rows.append({**base, "assessment_category": cat, "severity": f.severity,
-                         "title": f.title, "detail": detail,
-                         "metric_value": f.signal, "status": f.status,
-                         "detected_at": _iso(f.last_detected_at)})
+            rows.append(optimization_finding_row(base, cat, f))
     return rows
 
 
@@ -182,26 +214,35 @@ async def _utilization_telemetry_rows(
         return [{**base, "assessment_category": CATEGORY_UTILIZATION, "severity": None,
                  "title": "No data", "detail": "No utilization telemetry collected for this resource.",
                  "metric_value": None, "status": None, "detected_at": None}]
-    rows = []
-    for m in metrics:
-        stats = m.get("stats") or {}
-        stat_text = ", ".join(f"{k}={v}" for k, v in stats.items()) or "no stats"
-        rows.append({
-            **base, "assessment_category": CATEGORY_UTILIZATION, "severity": None,
-            "title": m.get("label") or m.get("metric"),
-            "detail": f"{m.get('window_days', '?')}d window, {m.get('unit') or ''} ({stat_text})".strip(),
-            "metric_value": stat_text, "status": m.get("status"),
-            "detected_at": m.get("collected_at"),
-        })
-    return rows
+    return [telemetry_metric_row(base, m) for m in metrics]
 
 
-async def _account_anomaly_rows(db: AsyncSession, account_id: uuid.UUID) -> List[Dict[str, Any]]:
-    """Computed once per account, not per resource -- see module docstring."""
+# Anomaly detection compares each day with the 14 days before it, so a window
+# is analysed with this much extra history in front of it -- otherwise the
+# first two weeks of a short reporting period could never be checked at all.
+_ANOMALY_BASELINE_LEAD_DAYS = 14
+
+
+async def _account_anomaly_rows(
+    db: AsyncSession, account_id: uuid.UUID,
+    period: Optional[Tuple[date, date]] = None,
+) -> List[Dict[str, Any]]:
+    """Computed once per account, not per resource -- see module docstring.
+
+    `period` is (first_day, last_day), inclusive. Without it, the last 90
+    days -- the original export's fixed window.
+    """
+    if period is None:
+        last_day = date.today()
+        first_day = last_day - timedelta(days=90)
+    else:
+        first_day, last_day = period
+    window_text = (f"between {first_day.isoformat()} and {last_day.isoformat()}"
+                   if period is not None else "in the last 90 days")
     try:
-        end = date.today()
-        start = end - timedelta(days=90)
-        series = await CostFactRepository(db).daily_series([account_id], start, end)
+        series = await CostFactRepository(db).daily_series(
+            [account_id], first_day - timedelta(days=_ANOMALY_BASELINE_LEAD_DAYS),
+            last_day + timedelta(days=1))
         anomalies = cost_analytics.detect_anomalies(series)
         buckets = anomalies.get("by_currency") or {}
     except Exception as exc:  # noqa: BLE001
@@ -234,6 +275,11 @@ async def _account_anomaly_rows(db: AsyncSession, account_id: uuid.UUID) -> List
             continue
         any_available = True
         for a in bucket.get("anomalies", []):
+            # The lead-in days exist only to give the first days of the
+            # window a baseline; an anomaly ON one of them is outside the
+            # period that was asked about.
+            if not (first_day.isoformat() <= str(a["date"])[:10] <= last_day.isoformat()):
+                continue
             rows.append({"assessment_category": CATEGORY_ANOMALY, "severity": a["severity"],
                          "title": f"Spend anomaly on {a['date']}", "detail": a["basis"],
                          "metric_value": f"{a['delta']} {a['currency']}", "status": None,
@@ -242,7 +288,7 @@ async def _account_anomaly_rows(db: AsyncSession, account_id: uuid.UUID) -> List
     if any_available and not any(r["title"].startswith("Spend anomaly") for r in rows):
         rows.append({"assessment_category": CATEGORY_ANOMALY, "severity": None,
                      "title": "No anomalies",
-                     "detail": "No account-wide daily spend anomaly in the last 90 days.",
+                     "detail": f"No account-wide daily spend anomaly {window_text}.",
                      "metric_value": None, "status": None, "detected_at": None})
     return rows
 

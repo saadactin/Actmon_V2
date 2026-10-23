@@ -142,7 +142,12 @@ $suites = @(
     # Resource Intelligence: unknown is never zero (N/A with the backend's
     # reason), filters survive the URL, and a summary card opens exactly the
     # list it counted.
-    @{ Name = "intelligence model: N/A discipline, URL round trip, card filters"; Path = "src/features/cloud/utils/__tests__/intelligenceModel.test.mjs" }
+    @{ Name = "intelligence model: N/A discipline, URL round trip, card filters"; Path = "src/features/cloud/utils/__tests__/intelligenceModel.test.mjs" },
+    # Report builder: every option parsed against the backend schema (an
+    # option it refuses fails the preview with a bare 422), old session drafts
+    # mapped forward instead of refused, and the server's own message read out
+    # of a Blob error body instead of "Request failed with status code 400".
+    @{ Name = "report model: backend option parity, draft migration, Blob errors, NA"; Path = "src/features/cloud/utils/__tests__/reportModel.test.mjs" }
 )
 
 # ---- Discovery guard: catch the NEXT orphaned suite, not just this one ----

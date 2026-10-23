@@ -22,4 +22,6 @@ echo Starting service on port 8001...
 echo API Docs will be available at: http://127.0.0.1:8001/api/v1/cloud/docs
 echo.
 
-python -m uvicorn app.main:app --reload --port 8001 --host 0.0.0.0
+rem dev_server.py, not "uvicorn --reload": it holds a code reload until a
+rem running account refresh or scan finishes, instead of killing it.
+python dev_server.py --port 8001 --host 0.0.0.0

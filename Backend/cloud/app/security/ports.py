@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
-from app.security.model import CRITICAL, HIGH, INFO, MEDIUM
+from app.security.model import CRITICAL, HIGH, INFO, LOW, MEDIUM
 
 
 class PortInfo(NamedTuple):
@@ -125,6 +125,55 @@ _TRANSFER: Tuple[PortInfo, ...] = (
              "Authentication service. Public exposure enables offline ticket cracking."),
 )
 
+# ── Windows / Active Directory ──────────────────────────────────────────────
+# The rest of a domain controller's port set (LDAP, Kerberos, SMB, RPC and DNS
+# are catalogued with their families). Seen together on a public subnet they
+# usually mean AD ports were opened for domain members or replication and the
+# source was written as 0.0.0.0/0 instead of the domain's own ranges.
+# Deliberately NOT in _MANAGEMENT: that set maps to a different rule, and moving
+# a port between rules changes the finding's identity.
+_DIRECTORY: Tuple[PortInfo, ...] = (
+    PortInfo(137, "NetBIOS name service", HIGH,
+             "Answers name queries with the host's name, domain and logged-on users, and "
+             "is the target of NBNS spoofing. Domain-internal traffic only."),
+    PortInfo(138, "NetBIOS datagram", HIGH,
+             "Legacy Windows browsing traffic. Leaks domain structure; domain-internal only."),
+    PortInfo(464, "Kerberos password change", HIGH,
+             "kpasswd. Lets a client change a domain password; with Kerberos on 88 it puts "
+             "domain authentication within reach of the internet."),
+    PortInfo(3268, "AD Global Catalog", HIGH,
+             "Forest-wide directory search over LDAP. Exposes every object in the forest."),
+    PortInfo(3269, "AD Global Catalog (TLS)", HIGH,
+             "Forest-wide directory search over LDAPS. Still exposes the whole forest."),
+    PortInfo(9389, "AD Web Services", HIGH,
+             "Backs the PowerShell AD module. Directory administration should never face "
+             "the internet."),
+)
+
+# ── VPN endpoints ───────────────────────────────────────────────────────────
+# The commonest port that genuinely cannot be closed: a VPN gateway has to be
+# reachable to work at all. LOW rather than INFO so the finding still appears,
+# and can be recorded as an accepted risk on the gateway, while staying out of
+# the way of real exposure. PPTP is the exception: its crypto is broken.
+_VPN: Tuple[PortInfo, ...] = (
+    PortInfo(500, "IPsec IKE", LOW,
+             "IPsec key exchange. Expected on a VPN gateway, which has to be reachable; "
+             "anywhere else it means an IPsec endpoint nobody listed."),
+    PortInfo(4500, "IPsec NAT-T", LOW,
+             "IPsec through NAT. Expected on a VPN gateway alongside 500."),
+    PortInfo(1194, "OpenVPN", LOW,
+             "OpenVPN's default port. Expected on an OpenVPN server."),
+    PortInfo(51820, "WireGuard", LOW,
+             "WireGuard's default port. Expected on a WireGuard endpoint; WireGuard does "
+             "not answer unauthenticated packets, so the port does not reveal itself."),
+    PortInfo(1701, "L2TP", MEDIUM,
+             "L2TP provides no encryption itself and must be wrapped in IPsec; on its own "
+             "it is a cleartext tunnel."),
+    PortInfo(1723, "PPTP", HIGH,
+             "PPTP's MS-CHAPv2 authentication is cryptographically broken and recoverable "
+             "offline. Replace it rather than accepting it."),
+)
+
 # ── Mail ─────────────────────────────────────────────────────────────────────
 _MAIL: Tuple[PortInfo, ...] = (
     PortInfo(25, "SMTP", MEDIUM,
@@ -187,7 +236,8 @@ _WEB: Tuple[PortInfo, ...] = (
              "Broker management console, with well-known default credentials."),
 )
 
-_ALL: Tuple[PortInfo, ...] = _MANAGEMENT + _DATA + _TRANSFER + _MAIL + _INFRA + _WEB
+_ALL: Tuple[PortInfo, ...] = (_MANAGEMENT + _DATA + _TRANSFER + _DIRECTORY + _VPN
+                              + _MAIL + _INFRA + _WEB)
 
 CATALOG: Dict[int, PortInfo] = {p.port: p for p in _ALL}
 
@@ -205,6 +255,32 @@ RDP_PORTS = frozenset({3389})
 # Above this many ports in one rule, listing them individually is noise; the
 # range itself is the finding.
 _RANGE_SUMMARY_THRESHOLD = 12
+
+# Ranges with a known purpose. Naming them matters because the purpose is also
+# the fix: almost nobody opens 49152-65535 to the internet on purpose — it is
+# opened for return traffic or for Windows RPC, and neither needs 0.0.0.0/0.
+_NAMED_RANGES: Dict[Tuple[int, int], Tuple[str, str]] = {
+    (49152, 65535): (
+        "Windows dynamic RPC / ephemeral range",
+        "Windows allocates dynamic RPC here (Active Directory replication, DCOM, WMI), "
+        "and most operating systems use it for ephemeral client ports. It is usually "
+        "opened for one of two reasons and neither needs the whole internet: return "
+        "traffic for outbound connections is already allowed by a stateful rule (only "
+        "a stateless rule needs it, and then only from the destinations contacted), and "
+        "RPC between domain members should be limited to the domain's own ranges.",
+    ),
+    (1024, 65535): (
+        "every unprivileged port",
+        "Every port above 1023 — where application servers, admin consoles and "
+        "ephemeral listeners live. Usually written to allow return traffic on a "
+        "stateless rule, which a stateful rule makes unnecessary.",
+    ),
+    (32768, 60999): (
+        "Linux ephemeral range",
+        "The Linux default ephemeral port range. Opening it inbound is only needed for "
+        "return traffic on a stateless rule; a stateful rule allows that already.",
+    ),
+}
 # A range this wide is effectively "everything", regardless of the exact bounds.
 _RANGE_CRITICAL_SPAN = 50
 
@@ -270,13 +346,17 @@ def classify_range(pmin: Optional[int], pmax: Optional[int]) -> List[OpenPort]:
     if pmin <= 0 and pmax >= 65535:
         return [ALL_PORTS]
 
+    span = pmax - pmin + 1
+    # Inside a range, only ports worth singling out are named — the point is to
+    # surface RDP among hundreds. A LOW or INFO port says nothing the range
+    # does not: naming WireGuard (51820) inside an opened 49152-65535 claimed a
+    # VPN endpoint on eight hosts that had only had their RPC range opened.
     named = [
         OpenPort(port=info.port, service=info.service, severity=info.severity, why=info.why)
         for p, info in sorted(CATALOG.items())
-        if pmin <= p <= pmax
+        if pmin <= p <= pmax and (span == 1 or info.severity not in (LOW, INFO))
     ]
 
-    span = pmax - pmin + 1
     if span == 1:
         if named:
             return named
@@ -293,13 +373,16 @@ def classify_range(pmin: Optional[int], pmax: Optional[int]) -> List[OpenPort]:
     unnamed = span - len(named)
     if unnamed > 0:
         sev = CRITICAL if span > _RANGE_CRITICAL_SPAN else HIGH
+        known = _NAMED_RANGES.get((pmin, pmax))
+        why = (f"Ports {pmin}-{pmax} are open to the entire internet ({span} ports). A range "
+               "this wide almost never reflects an intended rule and exposes whatever "
+               "happens to be listening.")
         named.append(OpenPort(
             port=None,
-            service=f"{unnamed} further port{'s' if unnamed != 1 else ''}",
+            service=(known[0] if known
+                     else f"{unnamed} further port{'s' if unnamed != 1 else ''}"),
             severity=sev,
-            why=(f"Ports {pmin}-{pmax} are open to the entire internet ({span} ports). A range "
-                 "this wide almost never reflects an intended rule and exposes whatever "
-                 "happens to be listening."),
+            why=f"{why} {known[1]}" if known else why,
             port_range=(pmin, pmax),
         ))
     return named

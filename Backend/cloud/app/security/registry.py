@@ -139,11 +139,22 @@ _WORLD_CIDRS = {"0.0.0.0/0", "::/0"}
 _AZURE_WORLD_TOKENS = {"*", "internet", "any"}
 
 
+# A public source at least this broad is treated as the internet. A /8 is 16.7
+# million addresses; nobody's partner, office or VPN egress is that wide, so a
+# rule written this way is either a mistake or a way of making a world-open
+# finding disappear without closing anything — 0.0.0.0/1 plus 128.0.0.0/1 is
+# the whole internet in two rules that each read as "not 0.0.0.0/0".
+_BROAD_PUBLIC_PREFIX = {4: 8, 6: 16}
+
+
 def is_world_open(value: Optional[str]) -> bool:
-    """Whether a rule's source scope is the entire internet.
+    """Whether a rule's source scope is the entire internet, or a public range
+    so broad that it is the same thing in practice.
 
     Shared by every provider's rules and by the exposure analyser, so "what
-    counts as the whole internet" is decided once.
+    counts as the whole internet" is decided once. Private, loopback,
+    link-local and reserved ranges never count, however broad: 10.0.0.0/8 is
+    the classic legitimate wide internal source.
     """
     if not value:
         return False
@@ -151,9 +162,15 @@ def is_world_open(value: Optional[str]) -> bool:
     if v in _WORLD_CIDRS or v.lower() in _AZURE_WORLD_TOKENS:
         return True
     try:
-        return ipaddress.ip_network(v, strict=False).prefixlen == 0
+        net = ipaddress.ip_network(v, strict=False)
     except ValueError:
         return False
+    if net.prefixlen == 0:
+        return True
+    if net.prefixlen > _BROAD_PUBLIC_PREFIX[net.version]:
+        return False
+    return not (net.is_private or net.is_loopback or net.is_link_local
+                or net.is_multicast or net.is_reserved)
 
 
 def _bool_field(config: Dict[str, Any], key: str) -> Optional[bool]:
@@ -2360,7 +2377,12 @@ _SYNTHETIC: List[SecurityRule] = [
             "Restrict the rule's source to a VPN or bastion range, or remove public "
             "exposure entirely and use the provider's session service — AWS Systems "
             "Manager Session Manager, Azure Bastion, or OCI Bastion — none of which need "
-            "an inbound rule."
+            "an inbound rule.\n"
+            "If it genuinely has to stay reachable from anywhere, move the rule to a "
+            "network security group attached to this host alone (a subnet-wide "
+            "security list exposes every host in the subnet, including later ones), "
+            "then accept the risk here with an owner, a review date and the "
+            "compensating controls holding it down."
         ),
     ),
     SecurityRule(
@@ -2414,7 +2436,9 @@ _SYNTHETIC: List[SecurityRule] = [
         remediation=(
             "Identify what is listening on the port and either restrict the source range "
             "or close it. If it fronts a web service, put it behind a load balancer or "
-            "WAF rather than exposing the instance directly."
+            "WAF rather than exposing the instance directly.\n"
+            "If it must stay public (a VPN gateway, a partner endpoint whose sources "
+            "cannot be pinned), accept the risk here with an owner and a review date."
         ),
     ),
     SecurityRule(

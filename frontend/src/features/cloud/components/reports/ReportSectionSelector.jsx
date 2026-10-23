@@ -3,19 +3,56 @@ import Notice from '@/components/ui/Notice';
 import { Section } from '@/components/ui/Field';
 
 const SECTIONS = [
-  { key: 'executive_summary', label: 'Executive Summary', hint: 'Resource count, severity breakdown, key findings — always worth including.' },
+  {
+    key: 'executive_summary',
+    label: 'Executive Summary',
+    hint: 'Posture score, findings by severity, top risks with their fix, potential monthly savings, most expensive resources, and spend against the previous equal period — always worth including.',
+  },
   { key: 'inventory', label: 'Resource Inventory', hint: 'Name, type, region, status, tags, environment, discovery timestamps.' },
-  { key: 'security', label: 'Security Assessment', hint: 'Open findings from the Security Center — the canonical finding source.' },
-  { key: 'utilization', label: 'Resource Utilization', hint: 'CPU/memory/disk/network telemetry, where collected. Shows "not collected" rather than a guess.' },
+  {
+    key: 'security',
+    label: 'Security Assessment',
+    hint: 'Open findings from the Security Center. A whole-account report also includes account-level findings (e.g. subscription-wide access grants) that belong to no single resource.',
+  },
+  { key: 'utilization', label: 'Resource Utilization', hint: 'CPU/memory/disk/network telemetry over each metric\'s own collection window, where collected.' },
   { key: 'performance', label: 'Performance Analysis', hint: 'Constrained/bottlenecked resources from the Resource Intelligence engine.' },
   { key: 'recommendations', label: 'Recommendations', hint: 'Cost, storage, network and reliability advisories — kept separate from observed defects.' },
   {
     key: 'anomalies',
-    label: 'Detected Anomalies',
-    hint: 'Account-wide cost-spend anomaly detection. There is no per-resource anomaly engine in this product — every row here is labelled account-wide, not attributed to one resource.',
+    label: 'Spend Anomalies',
+    hint: 'Days in the reporting period when account-wide spend jumped above its trailing baseline. There is no per-resource anomaly engine — these are never attributed to one resource.',
   },
-  { key: 'cost', label: 'Cost', hint: 'Stored actual billing data only. A resource with no recorded cost shows "Not available", never 0.' },
-  { key: 'data_quality', label: 'Data Quality & Coverage', hint: 'What was available, unavailable, or never checked — so missing data is visible, not silent.' },
+  {
+    key: 'cost',
+    label: 'Cost',
+    hint: 'Each resource\'s latest billed cost (with currency and billing window), plus account spend and top services within the reporting period. No billed cost shows "Not available", never 0.',
+  },
+  {
+    key: 'posture',
+    label: 'Security Posture & Compliance',
+    hint: 'The Security Center score (or why it is withheld) and per-framework control results — CIS, ISO 27001, RBI, SEBI and more. Unevaluated controls count as unknown, never passed.',
+  },
+  {
+    key: 'identity',
+    label: 'Identity & Access',
+    hint: 'Administrators, standing admin, MFA gaps, dormant identities and the widest blast radius, from the last identity analysis. Account-wide.',
+  },
+  {
+    key: 'certificates',
+    label: 'Expiring Certificates & Secrets',
+    hint: 'Everything expired or expiring within 30 days. Stores that could not be read are named — an empty list is only an all-clear when every store was read.',
+  },
+  {
+    key: 'changes',
+    label: 'Configuration Changes',
+    hint: 'Every configuration change Config Drift detected during the reporting period, most recent first.',
+  },
+  {
+    key: 'activity',
+    label: 'Account Activity',
+    hint: 'Event Log activity in the reporting period: failures, denials, deletions, high-risk events and the most active actors. Account-wide.',
+  },
+  { key: 'data_quality', label: 'Data Quality & Coverage', hint: 'When each source last refreshed, whether that refresh was partial, and how many resources each section had something to report on.' },
 ];
 
 export default function ReportSectionSelector({ sections, onChange }) {

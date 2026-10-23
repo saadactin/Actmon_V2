@@ -596,8 +596,14 @@ print("\n=== is_world_open ===")
 
 for v in ("0.0.0.0/0", "::/0", "*", "Internet", "internet", "Any", "0.0.0.0/00"):
     check(f"{v!r} is world-open", reg.is_world_open(v))
-for v in (None, "", "10.0.0.0/8", "0.0.0.0/1", "52.1.2.3/32", "VirtualNetwork",
-          "AzureLoadBalancer", "garbage"):
+# A public source this broad is the internet in practice. 0.0.0.0/1 used to be
+# pinned as NOT world-open, which meant splitting 0.0.0.0/0 into two /1 rules
+# made every world-open finding vanish without closing anything.
+for v in ("0.0.0.0/1", "128.0.0.0/1", "1.0.0.0/8", "2000::/3"):
+    check(f"{v!r} is world-open (broad public range)", reg.is_world_open(v))
+# ...while broad PRIVATE ranges, and ordinary public ranges, never are.
+for v in (None, "", "10.0.0.0/8", "172.16.0.0/12", "100.64.0.0/10", "fd00::/8",
+          "1.2.0.0/16", "52.1.2.3/32", "VirtualNetwork", "AzureLoadBalancer", "garbage"):
     check(f"{v!r} is NOT world-open", not reg.is_world_open(v))
 
 

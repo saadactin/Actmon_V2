@@ -4,6 +4,7 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Drawer from '@/components/ui/Drawer';
 import Icon from '@/components/ui/Icon';
+import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Table, { EmptyState } from '@/components/ui/Table';
 import Textarea from '@/components/ui/Textarea';
@@ -11,10 +12,24 @@ import { PageLoading } from '@/components/ui/Loading';
 import CloudFilterBar from '../CloudFilterBar';
 import CloudSection from '../CloudSection';
 import {
-  categoryIcon, confidenceMeta, formatCount, formatDateTime, severityAccent,
-  severityTone, STATUS_NEEDS_REASON, statusMeta, verdictMeta,
+  categoryIcon, confidenceMeta, daysUntil, exceptionStateMeta, formatCount, formatDateTime,
+  REVIEW_PERIODS, RULE_LEVEL_RESOURCE_TYPES, severityAccent, severityTone,
+  STATUS_NEEDS_REASON, statusMeta, verdictMeta,
 } from '../../utils/securityModel';
-import { useFinding, useFindings, useSetFindingStatus } from '../../hooks/useSecurityCenter';
+import {
+  useFinding, useFindings, useSecurityMeta, useSetFindingStatus,
+} from '../../hooks/useSecurityCenter';
+
+const MUTED = new Set(['SUPPRESSED', 'ACCEPTED_RISK']);
+const SYSTEM_EXCEPTION_REVIEW = 'system:exception-review';
+
+/** "Review in 12 d", "Review overdue", "No review date" — for a list row. */
+function exceptionBadgeText(f) {
+  if (f.exception_state === 'NO_REVIEW_DATE') return 'No review date';
+  const d = daysUntil(f.exception_expires_at);
+  if (d == null) return null;
+  return d <= 0 ? 'Review due today' : `Review in ${d} d`;
+}
 
 const PAGE_SIZE = 50;
 
@@ -98,6 +113,11 @@ export default function SecurityFindings({ accountId, meta, initialFilters }) {
               // it, a reader comparing the finding count to the score concludes
               // the score is arbitrary.
               <Badge tone="neutral" size="xs">not scored</Badge>
+            )}
+            {f.exception_state && (
+              <Badge tone={exceptionStateMeta(f.exception_state)?.tone || 'outline'} size="xs">
+                {exceptionBadgeText(f)}
+              </Badge>
             )}
           </div>
           <div className="mt-0.5 truncate-safe text-meta text-subtle">{f.rule_id}</div>
@@ -266,22 +286,50 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: f, isLoading } = useFinding(accountId, findingKey);
+  const { data: securityMeta } = useSecurityMeta();
   const mutate = useSetFindingStatus();
   const [statusDraft, setStatusDraft] = useState(null);
   const [reason, setReason] = useState('');
+  const [owner, setOwner] = useState('');
+  const [reviewDays, setReviewDays] = useState('');
+  const [ticket, setTicket] = useState('');
+  const [controls, setControls] = useState([]);
   const [err, setErr] = useState(null);
 
-  const close = () => {
-    setStatusDraft(null); setReason(''); setErr(null); onClose();
+  const exceptionTerms = securityMeta?.exceptions;
+  const maxDays = exceptionTerms?.max_days_by_category?.[f?.category] ?? 365;
+  const periods = REVIEW_PERIODS.filter((d) => d <= maxDays);
+  const controlLabels = Object.fromEntries(
+    (exceptionTerms?.compensating_controls || []).map((c) => [c.id, c.label]));
+
+  const resetDraft = () => {
+    setStatusDraft(null); setReason(''); setOwner(''); setReviewDays('');
+    setTicket(''); setControls([]); setErr(null);
   };
+
+  const pickStatus = (v) => {
+    setStatusDraft(v || null); setErr(null);
+    // Accepting a risk always gets a review date; suppressing may go without.
+    const preset = Math.min(exceptionTerms?.default_days ?? 90, maxDays);
+    setReviewDays(v === 'ACCEPTED_RISK' ? String(preset) : '');
+  };
+
+  const close = () => { resetDraft(); onClose(); };
 
   const apply = async () => {
     setErr(null);
+    const muted = MUTED.has(statusDraft);
     try {
       await mutate.mutateAsync({
         accountId, key: findingKey, status: statusDraft, reason: reason.trim() || undefined,
+        ...(muted ? {
+          owner: owner.trim() || undefined,
+          review_in_days: reviewDays ? Number(reviewDays) : undefined,
+          ticket: ticket.trim() || undefined,
+          compensating_controls: controls,
+        } : {}),
       });
-      setStatusDraft(null); setReason('');
+      resetDraft();
     } catch (e) {
       setErr(e?.response?.data?.detail || e?.message || 'The update failed.');
     }
@@ -300,7 +348,7 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
         <div className="flex flex-wrap items-center gap-2">
           <Select
             value={statusDraft || ''}
-            onChange={(v) => { setStatusDraft(v || null); setErr(null); }}
+            onChange={pickStatus}
             options={[
               { id: '', label: 'Change status…' },
               { id: 'IN_PROGRESS', label: 'Mark in progress' },
@@ -344,7 +392,29 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
+              {MUTED.has(statusDraft) && (
+                <ExceptionTerms
+                  finding={f}
+                  status={statusDraft}
+                  owner={owner} setOwner={setOwner}
+                  reviewDays={reviewDays} setReviewDays={setReviewDays}
+                  periods={periods} maxDays={maxDays}
+                  ticket={ticket} setTicket={setTicket}
+                  controls={controls} setControls={setControls}
+                  options={exceptionTerms?.compensating_controls || []}
+                />
+              )}
               {err && <p className="mt-2 text-meta text-danger">{err}</p>}
+            </div>
+          )}
+
+          {/* A finding the system reopened says why, before anything else:
+              otherwise an acceptance that lapsed looks like a bug. */}
+          {f.status === 'OPEN' && f.status_changed_by === SYSTEM_EXCEPTION_REVIEW
+            && f.status_reason && (
+            <div className="rounded-control border border-warning-soft bg-warning-soft p-3 text-xs text-warning-fg">
+              <p className="font-semibold">Reopened — the exception no longer holds</p>
+              <p className="mt-1 leading-relaxed">{f.status_reason}</p>
             </div>
           )}
 
@@ -380,6 +450,13 @@ export function FindingDrawer({ accountId, findingKey, onClose, meta }) {
           {f.risk_context && (
             <Section title="Risk in context">
               <RiskContext ctx={f.risk_context} />
+            </Section>
+          )}
+
+          {(f.exception?.current || f.exception?.history?.length > 0
+            || MUTED.has(f.status)) && (
+            <Section title="Exception">
+              <ExceptionRecord finding={f} controlLabels={controlLabels} />
             </Section>
           )}
 
@@ -649,6 +726,163 @@ function Section({ title, children }) {
     <div>
       <h4 className="mb-2 text-meta font-bold uppercase tracking-wider text-muted">{title}</h4>
       {children}
+    </div>
+  );
+}
+
+const fieldLabel = 'mb-1 block text-meta font-semibold text-accent-text';
+
+/**
+ * The terms of a suppression or risk acceptance: who owns it, when it is
+ * looked at again, and what is holding the risk down meanwhile. The backend
+ * enforces every limit here; the form only avoids offering what it would
+ * refuse.
+ */
+function ExceptionTerms({
+  finding, status, owner, setOwner, reviewDays, setReviewDays, periods, maxDays,
+  ticket, setTicket, controls, setControls, options,
+}) {
+  const accepting = status === 'ACCEPTED_RISK';
+  const toggle = (id) => setControls((cur) => (
+    cur.includes(id) ? cur.filter((c) => c !== id) : [...cur, id]));
+  const reviewOn = reviewDays
+    ? formatDateTime(new Date(Date.now() + Number(reviewDays) * 86400000).toISOString())
+    : null;
+
+  return (
+    <div className="mt-3 space-y-3">
+      {RULE_LEVEL_RESOURCE_TYPES.has(finding.resource_type) && (
+        // The scope trap. A security list or group applies to every host it
+        // reaches, so accepting the rule silently accepts it for all of them,
+        // and for any host attached later.
+        <div className="rounded-control border border-warning-soft bg-warning-soft p-2.5 text-meta leading-relaxed text-warning-fg">
+          <span className="font-semibold">This finding is on the network rule, not on a host. </span>
+          Accepting it covers every host the {finding.resource_type} applies to, including
+          hosts added later. To keep one host&apos;s port open, accept that host&apos;s own
+          &quot;Internet-reachable …&quot; finding instead — ideally after moving the rule to a
+          group attached to that host alone.
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className={fieldLabel}>
+            Owner{accepting ? ' (required)' : ''}
+          </span>
+          <Input size="sm" placeholder="Person or team accountable" value={owner}
+            onChange={(e) => setOwner(e.target.value)} />
+        </label>
+        <label className="block">
+          <span className={fieldLabel}>
+            Review in{accepting ? ' (required)' : ''}
+          </span>
+          <Select
+            value={reviewDays}
+            onChange={(v) => setReviewDays(v || '')}
+            options={[
+              ...(accepting ? [] : [{ id: '', label: 'No review date' }]),
+              ...periods.map((d) => ({ id: String(d), label: `${d} days` })),
+            ]}
+          />
+        </label>
+      </div>
+
+      <label className="block">
+        <span className={fieldLabel}>Change or ticket reference</span>
+        <Input size="sm" placeholder="e.g. CHG-1042" value={ticket}
+          onChange={(e) => setTicket(e.target.value)} />
+      </label>
+
+      {options.length > 0 && (
+        <fieldset>
+          <legend className={fieldLabel}>What is holding the risk down meanwhile</legend>
+          <div className="space-y-1">
+            {options.map((o) => (
+              <label key={o.id} className="flex items-start gap-2 text-[12px] text-fg">
+                <input type="checkbox" className="mt-0.5" checked={controls.includes(o.id)}
+                  onChange={() => toggle(o.id)} />
+                <span>{o.label}</span>
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-meta italic text-subtle">
+            Declared by you. Nothing ActMon collects can verify these.
+          </p>
+        </fieldset>
+      )}
+
+      <p className="text-meta leading-relaxed text-accent-text">
+        {reviewOn
+          ? `Reopens by itself on ${reviewOn}`
+          : 'Stays muted until someone changes it'}
+        {` — or sooner if its severity rises above ${finding.severity}. `}
+        A port opened later on the same resource is a separate finding and is not covered.
+        {maxDays < 365 && ` ${finding.category} exceptions are reviewed at least every ${maxDays} days.`}
+      </p>
+    </div>
+  );
+}
+
+/** The decision in force on a finding, and the ones before it. */
+function ExceptionRecord({ finding: f, controlLabels }) {
+  const cur = f.exception?.current;
+  const history = f.exception?.history || [];
+  const state = exceptionStateMeta(f.exception_state);
+  const days = daysUntil(f.exception_expires_at);
+  const label = (ids) => (ids || []).map((id) => controlLabels[id] || id).join('; ');
+
+  return (
+    <div className="space-y-3">
+      {MUTED.has(f.status) && (
+        <>
+          {state && (
+            <Badge tone={state.tone}>
+              {state.label}
+              {days != null && ` · review ${days <= 0 ? 'due' : `in ${days} d`}`}
+            </Badge>
+          )}
+          <Rows
+            rows={[
+              ['Decision', statusMeta(f.status).label],
+              ['Reason', cur?.reason ?? f.status_reason],
+              ['Owner', cur?.owner || (cur ? 'Not named' : null)],
+              ['Approved by', cur?.approved_by ?? f.status_changed_by],
+              ['Approved', formatDateTime(cur?.approved_at ?? f.status_changed_at)],
+              ['Approved at severity', cur?.approved_severity],
+              ['Review date', f.exception_expires_at
+                ? formatDateTime(f.exception_expires_at) : 'None set'],
+              ['Ticket', cur?.ticket],
+              ['Compensating controls',
+                cur?.compensating_controls?.length
+                  ? `${label(cur.compensating_controls)} (declared, not verified)` : null],
+            ]}
+          />
+        </>
+      )}
+      {history.length > 0 && (
+        <div>
+          <p className="mb-1 text-meta font-semibold text-muted">Earlier decisions</p>
+          <ul className="space-y-1.5">
+            {history.map((h, i) => (
+              <li key={`${h.approved_at}-${i}`}
+                className="rounded-control border border-border px-2.5 py-1.5 text-meta">
+                <div className="text-fg">
+                  {statusMeta(h.status).label}
+                  {h.owner ? ` · owner ${h.owner}` : ''}
+                  {h.approved_by ? ` · by ${h.approved_by}` : ''}
+                  {h.approved_at ? ` · ${formatDateTime(h.approved_at)}` : ''}
+                </div>
+                {h.reason && <div className="text-muted">{h.reason}</div>}
+                {h.ended_reason && (
+                  <div className="text-subtle">
+                    Ended {formatDateTime(h.ended_at)}: {h.ended_reason}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

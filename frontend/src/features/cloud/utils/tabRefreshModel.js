@@ -109,6 +109,9 @@ export const TAB_REFRESH = {
   drift: { noun: 'drift', action: 'reload' },
   events: { noun: 'events', action: 'events' },
   alerts: { noun: 'alerts', action: 'reload' },
+  // A report is built from stored data, so a reload is the honest refresh:
+  // it rebuilds the preview from whatever the last sweep wrote.
+  reports: { noun: 'report preview', action: 'reload' },
 
   'security.overview': { noun: 'security', action: 'assess' },
   'security.findings': { noun: 'findings', action: 'assess' },

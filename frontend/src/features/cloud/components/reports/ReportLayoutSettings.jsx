@@ -1,5 +1,9 @@
 import Input from '@/components/ui/Input';
-import { Field, Section, Segmented } from '@/components/ui/Field';
+import Notice from '@/components/ui/Notice';
+import { Field, Section, Segmented, Select } from '@/components/ui/Field';
+import {
+  DETAIL_LEVELS, GROUP_BY_OPTIONS, PERIOD_PRESETS, SORT_BY_OPTIONS,
+} from '../../utils/reportModel';
 
 const FORMATS = [
   { id: 'csv', label: 'CSV' },
@@ -8,34 +12,14 @@ const FORMATS = [
   { id: 'json', label: 'JSON' },
 ];
 
-const DETAIL_LEVELS = [
-  { id: 'executive', label: 'Executive' },
-  { id: 'standard', label: 'Standard' },
-  { id: 'detailed', label: 'Detailed' },
-  { id: 'technical', label: 'Technical' },
-];
-
-const DATE_PRESETS = [
-  { id: '1h', label: 'Last hour' },
-  { id: '6h', label: 'Last 6 hours' },
-  { id: '24h', label: 'Last 24 hours' },
-  { id: '7d', label: 'Last 7 days' },
-  { id: '30d', label: 'Last 30 days' },
-  { id: '90d', label: 'Last 90 days' },
-];
-
-const DETAIL_HINT = {
-  executive: 'Summary and key metrics only — no per-resource row tables.',
-  standard: 'Summary plus full section tables.',
-  detailed: 'Same as Standard in this release — per-resource rows, findings and measurements.',
-  technical: 'Same as Detailed in this release — raw fields are already present in JSON/CSV/Excel.',
-};
-
-export default function ReportLayoutSettings({ layout, dateRange, onLayoutChange, onDateRangeChange }) {
+export default function ReportLayoutSettings({
+  layout, dateRange, periodProblem, onLayoutChange, onDateRangeChange,
+}) {
   const setMetadata = (key, value) => onLayoutChange({
     ...layout,
     metadata: { ...layout.metadata, [key]: value || undefined },
   });
+  const detail = DETAIL_LEVELS.find((d) => d.id === layout.detail_level) || DETAIL_LEVELS[1];
 
   return (
     <div className="space-y-5">
@@ -49,41 +33,64 @@ export default function ReportLayoutSettings({ layout, dateRange, onLayoutChange
           value={layout.detail_level}
           onChange={(detail_level) => onLayoutChange({ ...layout, detail_level })}
         />
-        <p className="mt-2 text-meta text-subtle">{DETAIL_HINT[layout.detail_level]}</p>
+        <p className="mt-2 text-meta text-subtle">{detail.hint} Applies to every format.</p>
+      </Section>
+
+      <Section title="Order">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Group rows by" hint="PDF sections get a sub-heading per group; files are ordered by it.">
+            <Select
+              options={GROUP_BY_OPTIONS}
+              value={layout.group_by || ''}
+              onChange={(group_by) => onLayoutChange({ ...layout, group_by: group_by || null })}
+            />
+          </Field>
+          <Field label="Sort rows by" hint="Sections without that field keep their own order.">
+            <Select
+              options={SORT_BY_OPTIONS}
+              value={layout.sort_by || ''}
+              onChange={(sort_by) => onLayoutChange({ ...layout, sort_by: sort_by || null })}
+            />
+          </Field>
+        </div>
       </Section>
 
       <Section title="Reporting Period">
         <p className="mb-2 text-meta text-subtle">
-          Applies to cost and anomaly data. Inventory and security are always a
-          snapshot as of generation time.
+          Applies to account spend and spend anomalies. Inventory, findings and
+          per-resource billed cost are the current state as of the last refresh.
+          Days end at midnight in {dateRange.timezone}.
         </p>
         <Segmented
-          options={[...DATE_PRESETS, { id: 'custom', label: 'Custom' }]}
+          options={PERIOD_PRESETS}
           value={dateRange.preset}
           onChange={(preset) => onDateRangeChange({ ...dateRange, preset })}
         />
         {dateRange.preset === 'custom' && (
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Start">
+            <Field label="First day">
               <Input
-                type="datetime-local"
+                type="date"
                 value={dateRange.start || ''}
-                onChange={(e) => onDateRangeChange({ ...dateRange, start: e.target.value })}
+                onChange={(e) => onDateRangeChange({ ...dateRange, start: e.target.value || null })}
               />
             </Field>
-            <Field label="End">
+            <Field label="Last day">
               <Input
-                type="datetime-local"
+                type="date"
                 value={dateRange.end || ''}
-                onChange={(e) => onDateRangeChange({ ...dateRange, end: e.target.value })}
+                onChange={(e) => onDateRangeChange({ ...dateRange, end: e.target.value || null })}
               />
             </Field>
           </div>
         )}
+        {periodProblem && (
+          <Notice tone="warning" className="mt-3">{periodProblem}</Notice>
+        )}
       </Section>
 
       <Section title="Report Details">
-        <p className="mb-2 text-meta text-subtle">All fields optional.</p>
+        <p className="mb-2 text-meta text-subtle">All fields optional. Shown on the PDF cover and in every file's metadata.</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Title">
             <Input value={layout.metadata.title || ''} onChange={(e) => setMetadata('title', e.target.value)} placeholder="Resource Assessment Report" />

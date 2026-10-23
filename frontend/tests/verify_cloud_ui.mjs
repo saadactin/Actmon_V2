@@ -646,10 +646,10 @@ console.log('\n11. Two refresh names: "Refresh all" in the header, "Refresh <tab
   ];
   // A guard on the PARSER, not a cap on tabs: if either table stops being
   // readable (renamed const, changed quoting) both lists come back empty and
-  // the refresh check below would pass vacuously. 10 account tabs since
-  // Identity & Access; 13 Security Center sub-tabs since Threats and Ransomware.
-  check('the tab tables were read (10 account tabs, 13 Security Center sub-tabs)',
-    mainIds.length === 10 && subIds.length === 13, `${mainIds.length} / ${subIds.length}`);
+  // the refresh check below would pass vacuously. 11 account tabs since
+  // Reports; 13 Security Center sub-tabs since Threats and Ransomware.
+  check('the tab tables were read (11 account tabs, 13 Security Center sub-tabs)',
+    mainIds.length === 11 && subIds.length === 13, `${mainIds.length} / ${subIds.length}`);
   check('every account tab and Security Center sub-tab declares its refresh in '
     + 'tabRefreshModel.js', missing.length === 0, missing.join(', '));
 }

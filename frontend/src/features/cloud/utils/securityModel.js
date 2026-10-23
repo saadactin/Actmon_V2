@@ -108,8 +108,38 @@ export const statusMeta = (s) => STATUS_META[s] || { label: s || '—', tone: 'n
 export const STATUS_NEEDS_REASON = {
   SUPPRESSED: 'Suppressing a real finding stops it counting toward the score and closes '
     + 'its alerts. Record why, so the decision is defensible later.',
-  ACCEPTED_RISK: 'Accepting a risk records a deliberate decision to leave it in place. '
-    + 'Record the justification and, ideally, who approved it.',
+  ACCEPTED_RISK: 'Accepting a risk records a deliberate decision to leave it in place, '
+    + 'for a limited time. Name who owns it and when it must be looked at again: it '
+    + 'reopens by itself on that date, or sooner if it gets worse.',
+};
+
+// ── Exceptions (a suppressed or risk-accepted finding) ───────────────────────
+// The limits — the longest review period per category, the compensating
+// controls on offer — come from /security-center/meta, which is what the
+// backend enforces. These are only the labels.
+export const EXCEPTION_STATE_META = {
+  ACTIVE: { label: 'Exception in force', tone: 'outline', icon: 'shield' },
+  EXPIRING: { label: 'Review due soon', tone: 'warning', icon: 'clock' },
+  NO_REVIEW_DATE: { label: 'No review date', tone: 'warning', icon: 'alert' },
+};
+
+export const exceptionStateMeta = (s) => EXCEPTION_STATE_META[s] || null;
+
+// Review periods offered in the dialog; the ones longer than the finding's
+// category allows are filtered out rather than refused after submit.
+export const REVIEW_PERIODS = [30, 60, 90, 180, 365];
+
+// Findings that sit on a network RULE rather than on a host. Accepting one
+// covers every host the rule reaches, including hosts added later — worth
+// saying before someone does it to stop one bastion's finding.
+export const RULE_LEVEL_RESOURCE_TYPES = new Set([
+  'SecurityList', 'SecurityGroup', 'NetworkSecurityGroup',
+]);
+
+export const daysUntil = (iso) => {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  return Number.isFinite(ms) ? Math.ceil(ms / 86400000) : null;
 };
 
 // ── Exposure verdict ────────────────────────────────────────────────────────

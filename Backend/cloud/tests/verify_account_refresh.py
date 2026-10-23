@@ -14,6 +14,8 @@ The assertions guard the decisions that are expensive to get wrong:
   D  one refresh per account: the second request is refused, not queued.
   E  account isolation: a refresh id from another account is not readable.
   F  a failed refresh does not move `last_success_at`.
+  G  the service says how it is run (a bare --reload kills refreshes), and an
+     old refresh is released only when no task in this process owns it.
 
 The DB-backed sections skip loudly when Postgres is down — a suite reporting
 "all passed" having checked nothing is worse than a failure.
@@ -526,6 +528,140 @@ async def test_db():
             await db.commit()
 
 
+def test_reload_mode():
+    section("F. How the service is run (what the header warns about)")
+    import os
+
+    from app.core import inflight
+
+    saved_argv, saved_env = list(sys.argv), {
+        k: os.environ.get(k) for k in (inflight.RELOAD_GUARD_ENV, "UVICORN_RELOAD")}
+    try:
+        for k in saved_env:
+            os.environ.pop(k, None)
+        # What the worker of `uvicorn app.main:app --reload` sees: spawn copies
+        # the parent's argv into the child.
+        sys.argv = ["uvicorn/__main__.py", "app.main:app", "--port", "8001", "--reload"]
+        check("a bare --reload worker is 'unguarded'",
+              inflight.reload_mode() == inflight.RELOAD_UNGUARDED)
+        os.environ["UVICORN_RELOAD"] = "true"
+        sys.argv = ["uvicorn/__main__.py", "app.main:app"]
+        check("...and so is UVICORN_RELOAD=true, uvicorn's env spelling",
+              inflight.reload_mode() == inflight.RELOAD_UNGUARDED)
+        os.environ[inflight.RELOAD_GUARD_ENV] = "1"
+        check("dev_server.py's worker is 'guarded', whatever else is set",
+              inflight.reload_mode() == inflight.RELOAD_GUARDED)
+        for k in saved_env:
+            os.environ.pop(k, None)
+        check("no reload is 'off'", inflight.reload_mode() == inflight.RELOAD_OFF)
+        info = inflight.service_info()
+        check("service_info carries the mode and the process start",
+              info["auto_reload"] == inflight.RELOAD_OFF and info["started_at"])
+    finally:
+        sys.argv = saved_argv
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+async def test_db_stale():
+    section("G. An old refresh is dead only if no task here owns it (needs Postgres)")
+    labels = ["a 4-hour-old refresh still running here is not released",
+              "an old refresh no process owns is released as interrupted",
+              "typical duration is the median of finished refreshes"]
+    if not await db_available():
+        for label in labels:
+            skip(label, "Postgres is not reachable")
+        return
+
+    from sqlalchemy import delete
+
+    from app.core import inflight
+    from app.core.database import AsyncSessionLocal
+    from app.models.account_refresh import CloudAccountRefresh
+    from app.models.cloud_account import CloudAccount
+    from app.services import account_refresh_service as ars
+
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        acct = CloudAccount(account_name=PREFIX + "stale", provider="OCI",
+                            environment="Test", tenant_or_region="ap-mumbai-1",
+                            credentials_enc="")
+        db.add(acct)
+        await db.commit()
+        await db.refresh(acct)
+        acct_id = acct.id
+        svc = ars.AccountRefreshService(db)
+        holder = None
+        try:
+            # The 2026-10-23 case: an OCI sweep four hours in, alive in this
+            # process. The old rule failed it as "the service restarted".
+            slow = CloudAccountRefresh(
+                account_id=acct_id, provider="OCI", status="RUNNING",
+                started_at=now - timedelta(hours=4), created_at=now - timedelta(hours=4),
+                components={n: {"status": "PENDING"} for n in COMPONENTS})
+            db.add(slow)
+            await db.commit()
+            await db.refresh(slow)
+            holder = asyncio.create_task(asyncio.sleep(60), name=f"refresh:{slow.id}")
+            ars._running.add(holder)
+
+            kept = await svc.active_refresh(acct_id)
+            await db.refresh(slow)
+            check("a 4-hour-old refresh still running here is not released",
+                  kept is not None and kept.id == slow.id and slow.status == "RUNNING",
+                  slow.status)
+            check("/health/inflight lists it, so dev_server.py holds the reload",
+                  {"kind": "refresh", "name": f"refresh:{slow.id}"} in inflight.inflight(),
+                  str(inflight.inflight()))
+
+            # Its task gone: now it really is an orphan.
+            holder.cancel()
+            ars._running.discard(holder)
+            await asyncio.sleep(0)
+            released = await svc.active_refresh(acct_id)
+            await db.refresh(slow)
+            check("an old refresh no process owns is released as interrupted",
+                  released is None and slow.status == "FAILED"
+                  and slow.error_code == "interrupted", f"{slow.status} {slow.error_code}")
+            check("...and the reason does not claim more than is known",
+                  "no running service process owns" in (slow.error or ""), slow.error)
+
+            # Typical duration: the median, so one 17-hour overnight run (a
+            # laptop that slept) does not become the estimate.
+            for minutes, status in ((90, "PARTIAL"), (95, "SUCCEEDED"),
+                                    (17 * 60, "PARTIAL"), (88, "PARTIAL")):
+                db.add(CloudAccountRefresh(
+                    account_id=acct_id, provider="OCI", status=status,
+                    started_at=now - timedelta(days=1, minutes=minutes),
+                    completed_at=now - timedelta(days=1),
+                    components={n: {"status": "SUCCEEDED"} for n in COMPONENTS}))
+            await db.commit()
+            latest = await svc.latest(acct_id)
+            check("typical duration is the median of finished refreshes",
+                  latest["typical_duration_s"] == int(92.5 * 60),
+                  str(latest["typical_duration_s"]))
+            check("...a FAILED attempt does not count towards it",
+                  slow.status == "FAILED" and latest["typical_duration_s"] < 17 * 3600)
+            check("latest() says how the service is run",
+                  (latest.get("service") or {}).get("auto_reload")
+                  in (inflight.RELOAD_OFF, inflight.RELOAD_GUARDED, inflight.RELOAD_UNGUARDED),
+                  str(latest.get("service")))
+        finally:
+            if holder is not None:
+                holder.cancel()
+                ars._running.discard(holder)
+            await db.rollback()
+            await db.execute(delete(CloudAccountRefresh).where(
+                CloudAccountRefresh.account_id == acct_id))
+            await db.execute(delete(CloudAccountRefreshSchedule).where(
+                CloudAccountRefreshSchedule.account_id == acct_id))
+            await db.execute(delete(CloudAccount).where(CloudAccount.id == acct_id))
+            await db.commit()
+
+
 async def main():
     print("Account refresh: scheduling, locking, grading and data safety")
     print("=" * 62)
@@ -533,7 +669,9 @@ async def main():
     test_cadence()
     test_descriptions()
     test_grading()
+    test_reload_mode()
     await test_db()
+    await test_db_stale()
 
     print("\n" + "=" * 62)
     print(f"PASS {len(ok)}   FAIL {len(fail)}   SKIP {len(skipped)}")

@@ -188,5 +188,21 @@ check('a silenced notification says the alert was still recorded',
 check('silence is a warning, not a neutral no-op',
   NOTIFICATION_META.SILENCED.tone === 'warning');
 
+console.log('\n9. Exceptions due for review surface on the Overview');
+const withExceptions = buildAttentionItems({
+  summary: {},
+  posture: { findings_summary: { exceptions: { active: 4, expiring_soon: 2, no_review_date: 1 } } },
+});
+const expiring = withExceptions.find((i) => i.id === 'exceptions-expiring');
+const undated = withExceptions.find((i) => i.id === 'exceptions-undated');
+check('accepted risks nearing their review date are listed with their count',
+  expiring?.count === 2 && /review date/.test(expiring.message), expiring?.message);
+check('muted findings with no review date are listed as never revisited',
+  undated?.count === 1 && /never be revisited/.test(undated.message), undated?.message);
+check('exceptions still in force are not attention items',
+  !withExceptions.some((i) => i.count === 4));
+check('no exception data produces no exception items',
+  !buildAttentionItems({ summary: {}, posture: {} }).some((i) => i.id.startsWith('exceptions-')));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

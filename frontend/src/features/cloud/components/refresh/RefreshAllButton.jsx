@@ -3,7 +3,7 @@ import Button from '@/components/ui/Button';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useRefreshAll } from '../../hooks/useAccountRefresh';
 import {
-  REFRESH_ALL_BUSY_LABEL, REFRESH_ALL_LABEL, REFRESH_ALL_TITLE,
+  REFRESH_ALL_BUSY_LABEL, REFRESH_ALL_LABEL, REFRESH_ALL_TITLE, reloadWarning,
 } from '../../utils/refreshModel';
 
 /**
@@ -34,7 +34,9 @@ export default function RefreshAllButton({
   onError,
 }) {
   const { canHere } = usePermissions();
-  const { busy, scanRunning, run } = useRefreshAll(accountId);
+  const {
+    latest, busy, scanRunning, run,
+  } = useRefreshAll(accountId);
   const [error, setError] = useState(null);
 
   // Starting a refresh changes state → requires Execute on this page.
@@ -56,11 +58,14 @@ export default function RefreshAllButton({
     });
   };
 
-  const title = busy
+  // Rendered in places with no AccountRefreshBar (the account list, the
+  // Attention Center), so the auto-reload warning rides on the tooltip too.
+  const warning = reloadWarning(latest.data);
+  const title = (busy
     ? (scanRunning
       ? 'A discovery scan is already running for this account. It updates the same data.'
       : 'A refresh is already running for this account.')
-    : REFRESH_ALL_TITLE;
+    : REFRESH_ALL_TITLE) + (warning ? `\n\nWarning: ${warning.text}` : '');
 
   return (
     <span className="inline-flex flex-col items-end gap-0.5">

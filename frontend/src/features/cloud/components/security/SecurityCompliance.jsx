@@ -6,6 +6,7 @@ import Icon from '@/components/ui/Icon';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
 import CloudSection from '../CloudSection';
+import ComplianceExportPanel from './ComplianceExportPanel';
 import {
   controlStateMeta, formatCount, formatPct, severityTone,
 } from '../../utils/securityModel';
@@ -56,6 +57,8 @@ export default function SecurityCompliance({ accountId, onOpenFindings }) {
 
   return (
     <div className="space-y-5">
+      <ComplianceExportPanel accountId={accountId} frameworks={frameworks} selected={framework} />
+
       {/* Framework tiles. Clicking one filters the control list. Up to eight
           apply to one account (five cross-cloud — SOC 2, HIPAA, PCI-DSS, ISO
           27001, GDPR — plus its own CIS benchmark, RBI and SEBI), so the grid

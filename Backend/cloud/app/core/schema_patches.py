@@ -73,7 +73,22 @@ BUDGET_PATCHES = (
      "ON cloud_cost_budget_notifications (budget_id, period_key, threshold, kind)"),
 )
 
-ALL_PATCHES = CLIENT_PATCHES + DISCOVERY_PATCHES + BUDGET_PATCHES
+# Risk acceptances with an owner and a review date (security_finding.py). Both
+# nullable: findings muted before this existed keep working and are listed as
+# having no review date rather than lapsing all at once.
+SECURITY_EXCEPTION_PATCHES = (
+    ("cloud_security_findings", "column", "exception_expires_at",
+     "ALTER TABLE cloud_security_findings ADD COLUMN IF NOT EXISTS "
+     "exception_expires_at TIMESTAMP WITH TIME ZONE"),
+    ("cloud_security_findings", "column", "exception",
+     "ALTER TABLE cloud_security_findings ADD COLUMN IF NOT EXISTS exception JSONB"),
+    ("cloud_security_findings", "index", "ix_cloud_security_findings_exception_expires_at",
+     "CREATE INDEX IF NOT EXISTS ix_cloud_security_findings_exception_expires_at "
+     "ON cloud_security_findings (exception_expires_at)"),
+)
+
+ALL_PATCHES = (CLIENT_PATCHES + DISCOVERY_PATCHES + BUDGET_PATCHES
+               + SECURITY_EXCEPTION_PATCHES)
 
 _EXISTS = {
     "column": ("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() "

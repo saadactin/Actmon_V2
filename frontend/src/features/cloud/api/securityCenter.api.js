@@ -82,6 +82,56 @@ export const getControl = async (accountId, framework, controlId) => {
   return data;
 };
 
+/**
+ * Download the audit-ready compliance pack and hand it to the browser.
+ *
+ *   framework  one framework key, or omitted for every framework that applies
+ *   format     'pdf' | 'xlsx' | 'json' | 'zip' (zip = all three + SHA256SUMS)
+ *
+ * The server names the file and returns the pack's ID and SHA-256 in headers,
+ * which are passed back so the UI can show which pack was issued. A refusal
+ * (403 without reports:export) arrives as a JSON body inside a Blob, because
+ * the request asked for a blob — it is unpacked so the user sees the reason
+ * rather than "Request failed with status code 403".
+ */
+export const downloadComplianceExport = async (accountId, { framework, format = 'pdf' } = {}) => {
+  let response;
+  try {
+    response = await cloudAxios.get(
+      `/security-center/${accountId}/compliance/export${toQuery({ framework, format })}`,
+      { responseType: 'blob', timeout: 180000 },
+    );
+  } catch (err) {
+    const blob = err?.response?.data;
+    if (blob instanceof Blob) {
+      try {
+        const body = JSON.parse(await blob.text());
+        if (body?.detail) err.message = String(body.detail);
+      } catch { /* not JSON — keep axios's message */ }
+    }
+    throw err;
+  }
+  const disposition = response.headers?.['content-disposition'] || '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  const filename = match ? match[1] : `compliance-audit.${format}`;
+  const url = URL.createObjectURL(response.data);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return {
+    filename,
+    packId: response.headers?.['x-actmon-pack-id'] || null,
+    sha256: response.headers?.['x-actmon-pack-sha256'] || null,
+  };
+};
+
 export const getExposure = async (accountId) => {
   const { data } = await cloudAxios.get(`/security-center/${accountId}/exposure`);
   return data;

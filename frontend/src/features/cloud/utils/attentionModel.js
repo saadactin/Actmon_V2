@@ -107,6 +107,34 @@ export function buildAttentionItems({
     });
   }
 
+  // Exceptions: decisions about to run out, and decisions made with no end at
+  // all. Neither is wrong today; both are how a port "accepted for now" is
+  // still open years later. 14 days is the backend's expiring-soon window
+  // (EXCEPTION_EXPIRING_SOON_DAYS), which is what produced the count.
+  const exceptions = posture?.findings_summary?.exceptions || {};
+  if (exceptions.expiring_soon > 0) {
+    const n = exceptions.expiring_soon;
+    items.push({
+      id: 'exceptions-expiring',
+      severity: 'MEDIUM',
+      count: n,
+      message: `${n} accepted risk${n === 1 ? ' reaches its' : 's reach their'} review date within 14 days — renew or fix ${n === 1 ? 'it' : 'them'}`,
+      action: 'security',
+      actionLabel: 'Review Exceptions',
+    });
+  }
+  if (exceptions.no_review_date > 0) {
+    const n = exceptions.no_review_date;
+    items.push({
+      id: 'exceptions-undated',
+      severity: 'MEDIUM',
+      count: n,
+      message: `${n} suppressed or accepted finding${n === 1 ? ' has' : 's have'} no review date and will never be revisited`,
+      action: 'security',
+      actionLabel: 'Review Exceptions',
+    });
+  }
+
   // A failed scan is the most actionable thing on the page: everything else
   // shown is only as current as the sweep that produced it.
   if (discovery?.last_attempt_failed) {

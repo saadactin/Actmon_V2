@@ -23,9 +23,18 @@ it would tell the user a problem is solved when it is not. It is the same rule
 that already protects the inventory prune and the storage alerts, and it exists
 because a partially-failed OCI scan once deleted 62 live resources.
 
-A finding a user has SUPPRESSED or accepted as risk is never resurrected to
-OPEN by a re-detection. Their decision stands until they change it; only
-`last_detected_at` and the counters move.
+A finding a user has SUPPRESSED or accepted as risk is not resurrected to OPEN
+by a mere re-detection. Their decision stands — until it runs out. Two things
+end it, both recorded in the finding's exception history with the reason:
+
+* **its review date passes** — checked here for re-detected findings, and by
+  `lapse_expired_exceptions` (run on a timer) for everything else, so a
+  lapsed acceptance reopens even on an account whose scans keep failing;
+* **the finding gets worse than what was approved** — accepting SSH at HIGH
+  is not accepting it at CRITICAL.
+
+A *new* port on the same host is never covered: exposure findings are one per
+port, so it arrives with its own fingerprint and opens normally.
 """
 from __future__ import annotations
 
@@ -42,11 +51,112 @@ from app.models.security_finding import (
 )
 from app.security import policies as pol
 from app.security.model import (
-    ACTIVE_FINDING_STATUSES, ASSESS_COMPLETE, MUTED_FINDING_STATUSES, OPEN, RESOLVED,
-    SEVERITIES, severity_rank,
+    ACTIVE_FINDING_STATUSES, ASSESS_COMPLETE, EXCEPTION_HISTORY_LIMIT,
+    MUTED_FINDING_STATUSES, NOT_SCANNED, OPEN, RESOLVED, SEVERITIES, STATUS_LABEL,
+    UNKNOWN, severity_rank,
 )
 
 logger = logging.getLogger("cloud_svc.security.repo")
+
+# Who is recorded as changing a status when no person did.
+SYSTEM_EXCEPTION_REVIEW = "system:exception-review"
+
+
+def _iso(dt: Optional[datetime]) -> Optional[str]:
+    return dt.isoformat() if dt else None
+
+
+def _current_decision(row: CloudSecurityFinding) -> Optional[Dict[str, Any]]:
+    """The muting decision in force on `row`, or None.
+
+    Findings muted before exceptions had owners carry no `exception` record;
+    their decision is rebuilt from the status columns so it still lands in
+    history when it ends rather than vanishing.
+    """
+    if row.status not in MUTED_FINDING_STATUSES:
+        return None
+    current = (row.exception or {}).get("current")
+    if current:
+        return dict(current)
+    return {
+        "status": row.status,
+        "reason": row.status_reason,
+        "approved_by": row.status_changed_by,
+        "approved_at": _iso(row.status_changed_at),
+        "expires_at": None,
+        "legacy": True,
+    }
+
+
+def close_exception(row: CloudSecurityFinding, now: datetime, why: str) -> None:
+    """Move the decision in force into history. Does not change the status."""
+    decision = _current_decision(row)
+    history = list((row.exception or {}).get("history") or [])
+    if decision:
+        decision.update({"ended_at": _iso(now), "ended_reason": why})
+        history.insert(0, decision)
+    # Reassigned, never mutated in place: SQLAlchemy does not see in-place
+    # changes to a JSONB dict, and the old decision would silently not save.
+    row.exception = {"current": None, "history": history[:EXCEPTION_HISTORY_LIMIT]}
+    row.exception_expires_at = None
+
+
+def open_exception(row: CloudSecurityFinding, *, status: str, reason: Optional[str],
+                   actor: Optional[str], now: datetime,
+                   expires_at: Optional[datetime] = None, owner: Optional[str] = None,
+                   ticket: Optional[str] = None,
+                   compensating_controls: Optional[Sequence[str]] = None,
+                   compensating_note: Optional[str] = None) -> None:
+    """Record a new muting decision, archiving whichever one it replaces."""
+    if row.status in MUTED_FINDING_STATUSES:
+        close_exception(row, now, f"Replaced by a new decision from {actor or 'unknown'}")
+    history = list((row.exception or {}).get("history") or [])
+    row.exception = {
+        "current": {
+            "status": status,
+            "reason": reason,
+            "owner": owner,
+            "ticket": ticket,
+            "compensating_controls": list(compensating_controls or []),
+            "compensating_note": compensating_note,
+            "approved_by": actor,
+            "approved_at": _iso(now),
+            # What was agreed to. A later escalation past it reopens the finding.
+            "approved_severity": row.severity,
+            "expires_at": _iso(expires_at),
+        },
+        "history": history,
+    }
+    row.exception_expires_at = expires_at
+
+
+def exception_end_reason(row: CloudSecurityFinding, now: datetime) -> Optional[str]:
+    """Why a muted finding's decision no longer holds, or None while it does."""
+    if row.status not in MUTED_FINDING_STATUSES:
+        return None
+    decision = (row.exception or {}).get("current") or {}
+    label = STATUS_LABEL.get(row.status, row.status).lower()
+    expires = row.exception_expires_at
+    if expires is not None and expires <= now:
+        who = decision.get("approved_by") or "unknown"
+        return (f"The {label} decision reached its review date on {expires:%Y-%m-%d} "
+                f"(approved by {who}: {decision.get('reason') or 'no reason recorded'}). "
+                "Fix the finding or approve it again.")
+    approved = decision.get("approved_severity")
+    if approved and severity_rank(row.severity) < severity_rank(approved):
+        return (f"Severity rose from {approved} to {row.severity} after this was "
+                f"{label}. The decision covered {approved}, not {row.severity}, so it "
+                "needs to be made again.")
+    return None
+
+
+def reopen_from_exception(row: CloudSecurityFinding, now: datetime, why: str) -> None:
+    close_exception(row, now, why)
+    row.status = OPEN
+    row.status_reason = why
+    row.status_changed_by = SYSTEM_EXCEPTION_REVIEW
+    row.status_changed_at = now
+    row.resolved_at = None
 
 
 class SecurityRepository:
@@ -91,7 +201,8 @@ class SecurityRepository:
 
         seen: Set[str] = set()
         newly_opened: Set[str] = set()
-        stats = {"new": 0, "updated": 0, "resolved": 0, "reopened": 0, "escalated": 0}
+        stats = {"new": 0, "updated": 0, "resolved": 0, "reopened": 0, "escalated": 0,
+                 "exceptions_ended": 0, "superseded": 0}
 
         for f in findings:
             fp = f.fingerprint
@@ -141,9 +252,18 @@ class SecurityRepository:
                 newly_opened.add(fp)
                 stats["reopened"] += 1
             elif row.status in MUTED_FINDING_STATUSES:
-                # Suppressed / risk-accepted: a human decision. Re-detecting it
-                # does not override them; only the counters move.
-                pass
+                # Suppressed / risk-accepted: a human decision, and re-detecting
+                # the finding does not override it — unless the decision has
+                # reached its review date, or the finding is now worse than the
+                # severity that was approved. Neither depends on the sweep
+                # being complete: both are facts about the decision, not about
+                # whether the resource was enumerated.
+                why = exception_end_reason(row, now)
+                if why:
+                    reopen_from_exception(row, now, why)
+                    newly_opened.add(fp)
+                    stats["reopened"] += 1
+                    stats["exceptions_ended"] += 1
             stats["updated"] += 1
 
         # ── Resolution, gated on a complete assessment ──────────────────────
@@ -168,6 +288,37 @@ class SecurityRepository:
                     "so an absent finding may only mean the sweep could not enumerate "
                     "its resource.", unseen, account_id, outcome,
                 )
+
+        # ── Copies left by an unstable identity ─────────────────────────────
+        # The aggregate "not assessed" findings once hashed their reason with
+        # Python's hash(), which is salted per process, so every service
+        # restart minted a new fingerprint for the same gap. oci_test ended up
+        # with 11 open copies of one EXPOSURE_UNDETERMINED finding, and none
+        # could ever resolve, because that account's sweeps are never
+        # complete. The gap is still represented, by the row this run DID see,
+        # so closing the copies is correct even from a PARTIAL assessment:
+        # nothing is being declared fixed.
+        live_gaps = {
+            (f.rule_id, (f.evidence or {}).get("reason"))
+            for f in findings
+            if f.resource_key is None and f.verdict in (UNKNOWN, NOT_SCANNED)
+            and (f.evidence or {}).get("reason")
+        }
+        if live_gaps:
+            for fp, row in existing.items():
+                if (fp in seen or row.status not in ACTIVE_FINDING_STATUSES
+                        or row.resource_key is not None
+                        or row.verdict not in (UNKNOWN, NOT_SCANNED)):
+                    continue
+                if (row.rule_id, (row.evidence or {}).get("reason")) in live_gaps:
+                    row.status = RESOLVED
+                    row.resolved_at = now
+                    row.status_reason = (
+                        "Superseded: a duplicate of the same not-assessed finding, "
+                        "created when its identity changed on a service restart. The "
+                        "gap itself is still open under its current finding."
+                    )
+                    stats["superseded"] += 1
 
         await self.db.flush()
         return {**stats, "newly_opened": newly_opened, "unchanged_total": len(seen)}
@@ -329,11 +480,21 @@ class SecurityRepository:
         self, *, account_id: uuid.UUID, key: str, status: str,
         reason: Optional[str], actor: Optional[str],
         assigned_to: Optional[str] = None,
+        exception: Optional[Dict[str, Any]] = None,
     ) -> Optional[CloudSecurityFinding]:
+        """`exception` carries expires_at / owner / ticket / compensating
+        controls for a SUPPRESSED or ACCEPTED_RISK decision; the service has
+        already validated it."""
         row = await self.get_finding(account_id, key)
         if row is None:
             return None
         now = datetime.now(timezone.utc)
+        if status in MUTED_FINDING_STATUSES:
+            open_exception(row, status=status, reason=reason, actor=actor, now=now,
+                           **(exception or {}))
+        elif row.status in MUTED_FINDING_STATUSES:
+            close_exception(row, now, f"Status changed to {STATUS_LABEL.get(status, status)} "
+                                      f"by {actor or 'unknown'}")
         row.status = status
         row.status_reason = reason
         row.status_changed_by = actor
@@ -346,6 +507,32 @@ class SecurityRepository:
             row.resolved_at = None
         await self.db.flush()
         return row
+
+    async def lapse_expired_exceptions(
+        self, *, now: Optional[datetime] = None,
+        account_id: Optional[uuid.UUID] = None,
+    ) -> List[CloudSecurityFinding]:
+        """Reopen every muted finding whose review date has passed.
+
+        `persist_findings` already does this for findings an assessment
+        re-detects, but that is not enough on its own: an account whose scans
+        keep failing may go weeks without an assessment, and an expiry that
+        only takes effect when a scan succeeds is not an expiry.
+        """
+        now = now or datetime.now(timezone.utc)
+        stmt = select(CloudSecurityFinding).where(
+            CloudSecurityFinding.status.in_(list(MUTED_FINDING_STATUSES)),
+            CloudSecurityFinding.exception_expires_at.isnot(None),
+            CloudSecurityFinding.exception_expires_at <= now,
+        )
+        if account_id is not None:
+            stmt = stmt.where(CloudSecurityFinding.account_id == account_id)
+        rows = list((await self.db.execute(stmt)).scalars().all())
+        for row in rows:
+            reopen_from_exception(row, now, exception_end_reason(row, now)
+                                  or "The review date passed.")
+        await self.db.flush()
+        return rows
 
     async def facets(self, account_ids: Sequence[uuid.UUID]) -> Dict[str, Any]:
         """Distinct values for the filter dropdowns, computed in SQL.

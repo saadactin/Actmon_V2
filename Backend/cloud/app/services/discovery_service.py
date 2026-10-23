@@ -26,7 +26,8 @@ def _launch_scan(job_id: uuid.UUID, account_id: uuid.UUID) -> None:
     """
     from app.workers.discovery_worker import run_discovery_scan
 
-    task = asyncio.create_task(run_discovery_scan(job_id, account_id))
+    task = asyncio.create_task(run_discovery_scan(job_id, account_id),
+                               name=f"discovery:{job_id}")
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 

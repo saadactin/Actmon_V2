@@ -5,8 +5,8 @@
 # Pre-reqs:  .\venv\Scripts\pip install -r requirements.txt
 #            PostgreSQL running with actmon DB and migration_user access
 #
-# Usage:  .\start.ps1            # dev, auto-reload on file changes
-#         .\start.ps1 -NoDev     # no reload — use this while scanning
+# Usage:  .\start.ps1            # dev, auto-reload held while a refresh/scan runs
+#         .\start.ps1 -NoDev     # no reload at all
 #         .\start.ps1 -Force     # take over the port if something holds it
 
 param(
@@ -74,7 +74,8 @@ Write-Host "[CLOUD] Starting FastAPI on port $Port (single worker)..." -Foregrou
 if ($NoDev) {
     & $py -m uvicorn app.main:app --host 0.0.0.0 --port $Port --log-level info
 } else {
-    # --reload restarts on file change; it will interrupt an in-flight scan, so
-    # prefer -NoDev while a discovery scan is running.
-    & $py -m uvicorn app.main:app --host 0.0.0.0 --port $Port --reload --log-level info
+    # Not `uvicorn --reload`: that restarts on every save and kills a running
+    # refresh. dev_server.py reloads on changes to app\ but holds the restart
+    # until in-flight refreshes and scans finish (see its docstring).
+    & $py dev_server.py --host 0.0.0.0 --port $Port --log-level info
 }

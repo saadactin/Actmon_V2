@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import statistics
 import uuid
 from datetime import datetime, time as dtime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -59,10 +60,15 @@ ALLOWED_INTERVAL_HOURS = (1, 2, 3, 6, 12, 24, 48)
 DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
              "Saturday", "Sunday")
 
-# A refresh still RUNNING after this long is assumed dead — the process that
-# owned it was restarted. Without this the account's lock would be held
-# forever by a job nobody is running, and every later refresh would be refused.
+# A refresh still RUNNING after this long, whose task is NOT alive in this
+# process, is assumed dead — the process that owned it is gone. Without this
+# the account's lock would be held forever by a job nobody is running, and
+# every later refresh would be refused. Age alone is not enough: see
+# `active_refresh`.
 STALE_RUNNING_AFTER = timedelta(hours=3)
+
+# How many finished refreshes the "typically takes" estimate is the median of.
+TYPICAL_DURATION_SAMPLE = 5
 
 
 # What a component that never reported is told to the user. It is a failure,
@@ -170,8 +176,14 @@ class RefreshError(RuntimeError):
 
 # Strong references to in-flight orchestration tasks, so the event loop cannot
 # garbage-collect a refresh mid-run. Same reason discovery_service keeps its
-# own set.
+# own set. Each task is named `refresh:<id>` so a row can be matched to it.
 _running: set = set()
+
+
+def _owned_here(refresh_id: uuid.UUID) -> bool:
+    """Is this refresh's workflow alive in this process right now?"""
+    name = f"refresh:{refresh_id}"
+    return any(t.get_name() == name and not t.done() for t in _running)
 
 
 class AccountRefreshService:
@@ -206,10 +218,17 @@ class AccountRefreshService:
             return None
 
         started = row.started_at or row.created_at
-        if started and _aware(started) < datetime.now(timezone.utc) - STALE_RUNNING_AFTER:
+        # A refresh whose task is alive here is running, however long it takes.
+        # OCI sweeps have run past three hours (a laptop that sleeps stretches
+        # any of them), and on 2026-10-23 this rule failed one at 10:12 with
+        # "the service restarted" while it was still sweeping; the reload that
+        # really killed it came at 10:15.
+        if (started and not _owned_here(row.id)
+                and _aware(started) < datetime.now(timezone.utc) - STALE_RUNNING_AFTER):
             row.status = REFRESH_FAILED
-            row.error = ("Interrupted: the service restarted while this refresh "
-                         "was running, so its outcome is unknown.")
+            row.error = ("Interrupted: no running service process owns this "
+                         "refresh any more (the service was restarted), so its "
+                         "outcome is unknown.")
             row.error_code = "interrupted"
             row.completed_at = datetime.now(timezone.utc)
             await self.db.commit()
@@ -252,16 +271,12 @@ class AccountRefreshService:
                    CloudAccountRefresh.status.notin_(REFRESH_ACTIVE))
             .order_by(CloudAccountRefresh.created_at.desc()).limit(1)
         )).scalars().first()
-        last_success = (await self.db.execute(
-            select(CloudAccountRefresh)
-            .where(CloudAccountRefresh.account_id == account_id,
-                   CloudAccountRefresh.status.in_(
-                       [REFRESH_SUCCEEDED, REFRESH_PARTIAL]))
-            .order_by(CloudAccountRefresh.completed_at.desc().nullslast()).limit(1)
-        )).scalars().first()
+        last_success = await self._last_success(account_id)
 
         schedule = await self.get_schedule(account_id)
         pulls = await self._data_pulls(account_id, current, last_success)
+        from app.core.inflight import service_info
+
         return {
             "account_id": str(account_id),
             "current": current.to_dict() if current else None,
@@ -280,7 +295,51 @@ class AccountRefreshService:
             "is_busy": current is not None or pulls["active_scan"] is not None,
             "last_refreshed": pulls["last_refreshed"],
             "data_version": pulls["data_version"],
+            # How the service is run. Under a bare `--reload`, saving any
+            # backend .py file restarts it and kills a running refresh, which
+            # the header warns about before and during one.
+            "service": service_info(),
+            "typical_duration_s": await self._typical_duration_s(account_id),
         }
+
+    async def _typical_duration_s(self, account_id: uuid.UUID) -> Optional[int]:
+        """Median length of this account's last few finished refreshes.
+
+        The median, not the mean: an overnight run on a laptop that slept
+        lasted 17 hours, and one such run must not make the estimate absurd.
+        """
+        rows = (await self.db.execute(
+            select(CloudAccountRefresh.started_at, CloudAccountRefresh.completed_at)
+            .where(CloudAccountRefresh.account_id == account_id,
+                   CloudAccountRefresh.status.in_([REFRESH_SUCCEEDED, REFRESH_PARTIAL]),
+                   CloudAccountRefresh.started_at.isnot(None),
+                   CloudAccountRefresh.completed_at.isnot(None))
+            .order_by(CloudAccountRefresh.created_at.desc())
+            .limit(TYPICAL_DURATION_SAMPLE)
+        )).all()
+        secs = [(_aware(done) - _aware(began)).total_seconds() for began, done in rows]
+        secs = [s for s in secs if s > 0]
+        return int(statistics.median(secs)) if secs else None
+
+    async def last_refreshed(self, account_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+        """The header's "Last refreshed" line, and nothing else.
+
+        Strictly read-only, unlike `latest()`: that one creates the account's
+        schedule row on first read and releases stuck refresh locks, which a
+        report generator has no business doing as a side effect.
+        """
+        last_success = await self._last_success(account_id)
+        pulls = await self._data_pulls(account_id, None, last_success)
+        return pulls["last_refreshed"]
+
+    async def _last_success(self, account_id: uuid.UUID) -> Optional[CloudAccountRefresh]:
+        return (await self.db.execute(
+            select(CloudAccountRefresh)
+            .where(CloudAccountRefresh.account_id == account_id,
+                   CloudAccountRefresh.status.in_(
+                       [REFRESH_SUCCEEDED, REFRESH_PARTIAL]))
+            .order_by(CloudAccountRefresh.completed_at.desc().nullslast()).limit(1)
+        )).scalars().first()
 
     async def _data_pulls(self, account_id: uuid.UUID, current,
                           last_success) -> Dict[str, Any]:
@@ -404,7 +463,8 @@ class AccountRefreshService:
         await _record_event(account, row, "started",
                             f"Account refresh started ({trigger_type}).")
 
-        task = asyncio.create_task(_run_refresh(row.id, account_id))
+        task = asyncio.create_task(_run_refresh(row.id, account_id),
+                                   name=f"refresh:{row.id}")
         _running.add(task)
         task.add_done_callback(_running.discard)
         return row

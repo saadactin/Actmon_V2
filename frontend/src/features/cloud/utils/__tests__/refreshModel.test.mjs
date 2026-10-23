@@ -10,9 +10,9 @@
  * provider-backed queries along with it.
  */
 import {
-  busyRefusal, busyView, componentProgress, isActive, isBusy, isTerminal,
-  lastRefreshedView, mentionsAccount, outcomeMessage, REFRESH_ALL_LABEL,
-  REFRESHED_ROOTS, shouldInvalidate, syncDecision,
+  attemptFailureView, busyRefusal, busyView, componentProgress, durationText, isActive,
+  isBusy, isTerminal, lastRefreshedView, mentionsAccount, outcomeMessage, REFRESH_ALL_LABEL,
+  REFRESHED_ROOTS, reloadWarning, shouldInvalidate, syncDecision,
 } from '../refreshModel.js';
 
 let pass = 0;
@@ -292,6 +292,54 @@ const bothMsg = outcomeMessage({
 check('a failure and an incomplete sweep are both named',
   bothMsg.includes('Cost data could not be updated')
   && bothMsg.includes('Resource discovery read only part of the account'), bothMsg);
+
+/* ── Auto-reload: the restart that kept killing refreshes ────────────────── */
+// Every FAILED refresh from 12 to 23 Oct 2026 was "Interrupted: the service
+// restarted": the service ran `uvicorn --reload` and code was being saved.
+eq('seconds read as seconds', durationText(40), '40 s');
+eq('minutes are rounded', durationText(211), '4 min');
+eq('hours carry their minutes', durationText(5633), '1 h 34 min');
+eq('a whole hour drops the minutes', durationText(7200), '2 h');
+eq('nonsense is null, not "NaN min"', durationText('x'), null);
+
+const unguarded = { service: { auto_reload: 'unguarded' }, typical_duration_s: 5467 };
+const warn = reloadWarning(unguarded);
+check('a bare --reload service warns before a refresh starts', !!warn);
+check('...says a save stops a running refresh', /stops a refresh/.test(warn.label), warn.label);
+check('...with this account\'s typical length', warn.text.includes('1 h 31 min'), warn.text);
+check('...and how to avoid it', warn.text.includes('dev_server.py'), warn.text);
+check('no typical length is not printed as "null"',
+  !reloadWarning({ service: { auto_reload: 'unguarded' } }).text.includes('null'));
+// The backend sends null, not undefined, for an account with no finished
+// refresh, and Number(null) is 0.
+check('a null typical length is left out, not printed as "0 s"',
+  !reloadWarning({ service: { auto_reload: 'unguarded' }, typical_duration_s: null })
+    .text.includes('typically'));
+eq('the guarded dev server needs no warning',
+  reloadWarning({ service: { auto_reload: 'guarded' } }), null);
+eq('no reload needs no warning', reloadWarning({ service: { auto_reload: 'off' } }), null);
+eq('an older backend without the field needs no warning', reloadWarning({}), null);
+
+const interrupted = {
+  status: 'FAILED',
+  error_code: 'interrupted',
+  error: 'Interrupted: the service restarted while this refresh was running, so its outcome is unknown.',
+  started_at: '2026-10-23T05:29:21Z',
+  completed_at: '2026-10-23T05:32:53Z',
+};
+const why = attemptFailureView(interrupted);
+check('an interrupted attempt says the service restarted, and when',
+  why.reason.includes('restarted 4 min into the refresh'), why.reason);
+check('...that existing data was kept', why.reason.includes('Existing data was kept'));
+check('...and keeps the stored error for the tooltip', why.detail === interrupted.error);
+check('no recorded times still gives a reason',
+  attemptFailureView({ status: 'FAILED', error_code: 'interrupted' }).reason
+    .includes('restarted during the refresh'));
+eq('another failure shows its own error',
+  attemptFailureView({ status: 'FAILED', error: 'Credentials rejected.' }).reason,
+  'Credentials rejected.');
+eq('a successful attempt has no failure view',
+  attemptFailureView({ status: 'SUCCEEDED' }), null);
 
 /* ── Report ──────────────────────────────────────────────────────────────── */
 console.log('\nAccount refresh — model tests\n');

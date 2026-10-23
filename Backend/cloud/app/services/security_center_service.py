@@ -52,9 +52,11 @@ from app.security import controls as ctl
 from app.security import engine, exposure, identity, policies as pol, scoring
 from app.security import registry as reg
 from app.security.model import (
-    ACTIVE_FINDING_STATUSES, ASSESS_COMPLETE, AWS, AZURE, CRITICAL,
+    ACTIVE_FINDING_STATUSES, ASSESS_COMPLETE, AWS, AZURE, COMPENSATING_CONTROLS, CRITICAL,
+    EXCEPTION_ACTIVE, EXCEPTION_EXPIRING, EXCEPTION_NO_REVIEW_DATE,
     FINDING_STATUSES, MUTED_FINDING_STATUSES, OCI, OPEN, RESOLVED,
-    STATUS_REQUIRES_REASON, SEVERITIES, normalize_provider,
+    STATUS_REQUIRES_OWNER_AND_EXPIRY, STATUS_REQUIRES_REASON, SEVERITIES,
+    exception_max_days, exception_state, normalize_provider,
 )
 
 logger = logging.getLogger("cloud_svc.security.center")
@@ -401,6 +403,7 @@ class SecurityCenterService:
                 "confirmed": len(confirmed),
                 "undetermined": len(undetermined),
                 "muted": sum(1 for f in findings if f.status in MUTED_FINDING_STATUSES),
+                "exceptions": _exception_summary(findings, datetime.now(timezone.utc)),
                 "resolved": sum(1 for f in findings if f.status == RESOLVED),
                 "by_severity": {
                     sev: sum(1 for f in confirmed if f.severity == sev)
@@ -634,18 +637,39 @@ class SecurityCenterService:
         self, *, account_id: uuid.UUID, key: str, status: str,
         reason: Optional[str], actor: Optional[str],
         assigned_to: Optional[str] = None,
+        expires_at: Optional[datetime] = None,
+        review_in_days: Optional[int] = None,
+        owner: Optional[str] = None,
+        ticket: Optional[str] = None,
+        compensating_controls: Optional[List[str]] = None,
+        compensating_note: Optional[str] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         """Returns (finding, error). Suppression and risk acceptance require a
         written reason — those are the two transitions someone will have to
-        defend later."""
+        defend later. Accepting a risk also needs an owner and a review date
+        within the category's window (see "Exceptions" in security/model.py)."""
         if status not in FINDING_STATUSES:
             return None, f"Unknown status {status!r}. Valid: {', '.join(FINDING_STATUSES)}"
         if status in STATUS_REQUIRES_REASON and not (reason or "").strip():
             return None, (f"A reason is required to set status {status}: it records why "
                           "a known risk was deliberately left in place.")
+
+        exception = None
+        if status in MUTED_FINDING_STATUSES:
+            existing = await self.repo.get_finding(account_id, key)
+            if existing is None:
+                return None, "Finding not found"
+            exception, err = _validate_exception(
+                status=status, category=existing.category, expires_at=expires_at,
+                review_in_days=review_in_days, owner=owner, ticket=ticket,
+                compensating_controls=compensating_controls,
+                compensating_note=compensating_note)
+            if err:
+                return None, err
+
         row = await self.repo.set_status(
             account_id=account_id, key=key, status=status, reason=reason,
-            actor=actor, assigned_to=assigned_to)
+            actor=actor, assigned_to=assigned_to, exception=exception)
         if row is None:
             return None, "Finding not found"
 
@@ -682,16 +706,31 @@ class SecurityCenterService:
         rather than stored because it is derived data, and storing it would give
         two sources of truth for whether a control was assessed.
         """
-        findings = await self.repo.findings_for_account(account_id)
-        rule_stats = await self._rule_stats(account_id, findings)
-        account = await self.accounts.get_by_id(account_id)
-        out = comp.build(findings=findings, rule_stats=rule_stats,
-                         account_id=str(account_id), framework=framework,
-                         provider=normalize_provider(account.provider) if account else None)
+        out = (await self.compliance_dataset(account_id, framework=framework))["view"]
         if include_diff:
             prev = await self.repo.latest_assessment(account_id, offset=1)
             out["trend"] = comp.diff(out, _stored_compliance(prev))
         return out
+
+    async def compliance_dataset(
+        self, account_id: uuid.UUID, *, framework: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The compliance view together with what it was computed from.
+
+        The audit export needs the same findings (every status, so accepted
+        risks can be listed as exceptions) and the same rule statistics the
+        view was resolved against. Handing them back from one place is what
+        keeps the export from ever disagreeing with the Compliance tab.
+        """
+        findings = await self.repo.findings_for_account(account_id)
+        rule_stats = await self._rule_stats(account_id, findings)
+        account = await self.accounts.get_by_id(account_id)
+        provider = normalize_provider(account.provider) if account else None
+        view = comp.build(findings=findings, rule_stats=rule_stats,
+                          account_id=str(account_id), framework=framework,
+                          provider=provider)
+        return {"view": view, "findings": findings, "rule_stats": rule_stats,
+                "account": account, "provider": provider}
 
     async def _rule_stats(
         self, account_id: uuid.UUID, findings: Sequence[Any],
@@ -1264,6 +1303,76 @@ def _identity_diagnosis(state, provider: Optional[str], resources) -> Dict[str, 
 _ESCALATION_RULES = frozenset({
     "AWS_IAM_ROLE_ESCALATION", "OCI_IAM_POLICY_ESCALATION", "AZURE_RBAC_ESCALATION",
 })
+
+
+def _validate_exception(
+    *, status: str, category: Optional[str], expires_at: Optional[datetime],
+    review_in_days: Optional[int], owner: Optional[str], ticket: Optional[str],
+    compensating_controls: Optional[List[str]], compensating_note: Optional[str],
+    now: Optional[datetime] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Check a SUPPRESSED / ACCEPTED_RISK decision; return (exception, error).
+
+    The review date may be given as a date or as days from now. Either way it
+    must be in the future and inside the category's window — 180 days for
+    network exposure, a year otherwise — because an acceptance with no end is
+    the failure this exists to prevent.
+    """
+    now = now or datetime.now(timezone.utc)
+    owner = (owner or "").strip() or None
+    ticket = (ticket or "").strip() or None
+    note = (compensating_note or "").strip() or None
+
+    if expires_at is None and review_in_days is not None:
+        if review_in_days < 1:
+            return None, "review_in_days must be at least 1."
+        expires_at = now + timedelta(days=review_in_days)
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if status in STATUS_REQUIRES_OWNER_AND_EXPIRY:
+        if not owner:
+            return None, ("An owner is required to accept a risk: the person or team "
+                          "accountable for it while it stays in place.")
+        if expires_at is None:
+            return None, ("A review date is required to accept a risk (expires_at or "
+                          "review_in_days). An acceptance with no end is never revisited.")
+    if expires_at is not None:
+        if expires_at <= now:
+            return None, "The review date must be in the future."
+        limit = exception_max_days(category)
+        # A day's grace so "180 days" chosen in a browser in another timezone
+        # is not refused for being a few hours over.
+        if expires_at > now + timedelta(days=limit + 1):
+            return None, (f"The review date can be at most {limit} days away for a "
+                          f"{category or 'finding'} finding."
+                          + (" PCI DSS 4.0 requirement 1.2.7 reviews network security "
+                             "controls at least every six months." if limit < 365 else ""))
+
+    controls = [c for c in (compensating_controls or []) if c]
+    unknown = [c for c in controls if c not in COMPENSATING_CONTROLS]
+    if unknown:
+        return None, (f"Unknown compensating control(s): {', '.join(unknown)}. "
+                      f"Known: {', '.join(COMPENSATING_CONTROLS)}")
+
+    return {
+        "expires_at": expires_at,
+        "owner": owner,
+        "ticket": ticket,
+        "compensating_controls": controls,
+        "compensating_note": note,
+    }, None
+
+
+def _exception_summary(findings: Sequence[Any], now: datetime) -> Dict[str, int]:
+    """How the account's muted findings stand against their review dates."""
+    out = {EXCEPTION_ACTIVE: 0, EXCEPTION_EXPIRING: 0, EXCEPTION_NO_REVIEW_DATE: 0}
+    for f in findings:
+        state = exception_state(f.status, f.exception_expires_at, now)
+        if state:
+            out[state] += 1
+    return {"active": out[EXCEPTION_ACTIVE], "expiring_soon": out[EXCEPTION_EXPIRING],
+            "no_review_date": out[EXCEPTION_NO_REVIEW_DATE]}
 
 
 def _threshold_labels() -> Dict[str, str]:
