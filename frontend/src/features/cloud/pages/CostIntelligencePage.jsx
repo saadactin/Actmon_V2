@@ -94,6 +94,10 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
   const accountParam = params.get('account') || 'ALL';
   const serviceFilter = params.get('service') || null;
   const regionFilter = params.get('region') || null;
+  // The Explorer's service, kept apart from `service` (which narrows the
+  // Overview): a top cost driver links to `?tab=explorer&explore_service=X`,
+  // so the drill-down survives refresh and Back, and can be shared.
+  const exploreService = params.get('explore_service') || null;
   // A custom window only applies when BOTH ends are present. The backend
   // rejects a half-pair rather than falling back to `days`, so the page must
   // not send one either — a chart labelled "last 30 days" showing some other
@@ -120,6 +124,15 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
       return next;
     }, { replace: true });
   }, [setParams]);
+
+  // Keeps the account and date range, so the Explorer opens on the same scope
+  // the Overview was showing.
+  const explorerHref = useCallback((service) => {
+    const next = new URLSearchParams(params);
+    next.set('tab', 'explorer');
+    next.set('explore_service', service);
+    return { search: `?${next}` };
+  }, [params]);
 
   // Switching account clears every filter but the tab and range.
   const onAccountChange = useCallback((id) => {
@@ -517,11 +530,11 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
               )}
             </CloudSection>
 
-            <CloudSection title="Top cost drivers" description="Click to filter the page">
+            <CloudSection title="Top cost drivers" description="Click a service to open it in Explorer">
               <TopCostDrivers
                 rows={serviceRows}
                 currency={primaryCurrency}
-                onSelect={(name) => setParam({ service: name })}
+                hrefFor={explorerHref}
               />
             </CloudSection>
           </div>
@@ -573,6 +586,8 @@ export default function CostIntelligencePage({ embedded = false, accountId, prov
           accountId={accountView}
           potentialSavings={a?.potential_savings}
           savingsCurrency={a?.currency}
+          initialService={exploreService}
+          onServiceChange={(service) => setParam({ explore_service: service })}
         />
       )}
 

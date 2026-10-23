@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Filter, Link2, Unlink, PowerOff, Sparkles, AlertTriangle, X, Loader2,
@@ -50,17 +50,30 @@ function groupRows(rows, dimId) {
     .sort((a, b) => b.cost - a.cost);
 }
 
-export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency }) => {
+/**
+ * `initialService` opens the Explorer already narrowed to one service and
+ * grouped by resource — what a top cost driver on the Overview links to.
+ * It is read once, on mount; after that the panel's own filter is the truth,
+ * and every change to it goes back out through `onServiceChange` so the page
+ * URL always describes what is on screen.
+ */
+export const CostExplorerPanel = ({
+  accountId, potentialSavings, savingsCurrency, initialService = null, onServiceChange,
+}) => {
   const navigate = useNavigate();
   const [days, setDays] = useState(30);
-  const [groupBy, setGroupBy] = useState('service');
+  const [groupBy, setGroupBy] = useState(initialService ? 'resource' : 'service');
   const [treeSelection, setTreeSelection] = useState(EMPTY_TREE_SELECTION);
   // Narrow layouts only (below md the tree stacks above the table): collapsed
   // until asked for, so the results are not pushed a screen down.
   const [treeOpen, setTreeOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState('All');
-  const [serviceFilter, setServiceFilter] = useState('All');
+  const [serviceFilter, setServiceFilterState] = useState(initialService || 'All');
+  const setServiceFilter = useCallback((value) => {
+    setServiceFilterState(value);
+    onServiceChange?.(value === 'All' ? null : value);
+  }, [onServiceChange]);
   const [regionFilter, setRegionFilter] = useState('All');
   const [typeFilter, setTypeFilter] = useState('All');
   const [componentFilter, setComponentFilter] = useState('All');
@@ -81,9 +94,12 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
     if (isLoading || !data) return;
     if (rawRows.length === 0 && !autoFellBack) {
       setAutoFellBack(true);
-      setGroupBy('service');
+      // With a service already chosen (a link from the Overview), land where
+      // clicking that service's row would: its resource types. The fallback
+      // has no per-resource rows to group by.
+      setGroupBy(serviceFilter !== 'All' ? 'resource_type' : 'service');
     }
-  }, [isLoading, data, rawRows.length, autoFellBack]);
+  }, [isLoading, data, rawRows.length, autoFellBack, serviceFilter]);
   const { data: fallbackData, isLoading: fallbackLoading } = useCostReport(
     accountId, days, autoFellBack, 'service',
   );
@@ -102,6 +118,20 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
   const resourceTypes = useMemo(() => uniqSorted('resource_type', rows), [rows]);
   const components = useMemo(() => uniqSorted('cost_component', rows), [rows]);
   const statuses = useMemo(() => uniqSorted('status', rows), [rows]);
+
+  // The Overview's service names come from the billing summary, the rows here
+  // from the per-resource report. A name that differs only in case is the
+  // same service, so adopt the spelling the rows use. A name with no rows at
+  // all was billed outside this range, or without naming a resource (licence
+  // charges, for example); `serviceMissing` says so rather than leaving an
+  // empty table to be read as "this service costs nothing".
+  useEffect(() => {
+    if (serviceFilter === 'All' || !services.length || services.includes(serviceFilter)) return;
+    const match = services.find((s) => s.toLowerCase() === serviceFilter.toLowerCase());
+    if (match) setServiceFilter(match);
+  }, [services, serviceFilter, setServiceFilter]);
+  const serviceMissing = serviceFilter !== 'All' && rows.length > 0
+    && !services.some((s) => s.toLowerCase() === serviceFilter.toLowerCase());
 
   const treeFiltered = useMemo(() => rows.filter((r) => matchesTreeSelection(r, treeSelection)), [rows, treeSelection]);
 
@@ -274,7 +304,10 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
     {
       key: 'service', value: serviceFilter,
       onChange: (v) => { setServiceFilter(v); setPage(1); },
-      options: [{ id: 'All', label: 'All Services' }, ...services.map((s) => ({ id: s, label: s }))],
+      // A linked service with no rows stays selectable, so the dropdown shows
+      // what is actually applied instead of silently reading "All Services".
+      options: [{ id: 'All', label: 'All Services' }, ...services.map((s) => ({ id: s, label: s })),
+        ...(serviceMissing ? [{ id: serviceFilter, label: `${serviceFilter} (no rows in range)` }] : [])],
     },
     resourceTypes.length > 0 && {
       key: 'type', value: typeFilter,
@@ -460,6 +493,33 @@ export const CostExplorerPanel = ({ accountId, potentialSavings, savingsCurrency
                 </Button>
               )}
             </div>
+
+            {serviceMissing && (
+              <div role="status" className="rounded-control border border-warning/30 bg-warning-soft px-4 py-3 text-xs text-warning-fg">
+                <p className="font-semibold">
+                  No Explorer rows for &ldquo;{serviceFilter}&rdquo; in the last {days} days.
+                </p>
+                <p className="mt-1 leading-relaxed">
+                  The Overview figure for this service comes from the provider&rsquo;s billing summary.
+                  Here it was either billed outside this range, or billed without naming a resource
+                  (licence charges, for example), so it has no per-resource row.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {DAY_PRESETS.filter((d) => d > days).map((d) => (
+                    <Button key={d} size="sm" variant="secondary" onClick={() => { setDays(d); setPage(1); }}>
+                      Search last {d} days
+                    </Button>
+                  ))}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => { setServiceFilter('All'); setGroupBy('service'); setPage(1); }}
+                  >
+                    Show all services
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-sunken px-4 py-2.5">
               <span className="text-xs text-muted">

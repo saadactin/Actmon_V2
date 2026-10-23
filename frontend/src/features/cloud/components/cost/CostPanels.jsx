@@ -8,6 +8,7 @@
  * show that figures moved together, not that one produced the other.
  */
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import cn from '@/lib/cn';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
@@ -21,8 +22,14 @@ import {
 import { CostForecastChart, CostWaterfall } from './CostCharts';
 import { compact, exact, formatDate, isMissing, percent, seriesColor } from '../../utils/costFormat';
 
-/** Ranked cost drivers. Clicking one filters the rest of the page. */
-export function TopCostDrivers({ rows, currency, onSelect, dimension = 'service' }) {
+/**
+ * Ranked cost drivers.
+ *
+ * With `hrefFor`, each row is a real link (the Overview opens the service in
+ * the Explorer), so Ctrl/middle-click opens it in a new tab and Back returns
+ * to the Overview. Without it, a row calls `onSelect` to filter in place.
+ */
+export function TopCostDrivers({ rows, currency, onSelect, hrefFor, dimension = 'service' }) {
   const items = (rows || [])
     .filter((r) => !isMissing(r.amount))
     .sort((a, b) => b.amount - a.amount)
@@ -38,51 +45,59 @@ export function TopCostDrivers({ rows, currency, onSelect, dimension = 'service'
       {items.map((row, i) => {
         const name = row[dimension] || row.name || 'Unknown';
         const share = total ? (Number(row.amount) / total) * 100 : 0;
+        const rowClass = 'group flex w-full items-center gap-3 rounded-control px-2 py-1.5 text-left transition-colors hover:bg-sunken';
+        const content = (
+          <>
+            <span className="w-4 text-meta font-bold tabular-nums text-subtle">
+              {i + 1}
+            </span>
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-sm"
+              style={{ background: seriesColor(i) }}
+              aria-hidden
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px] font-medium text-fg">
+                {name}
+              </span>
+              {/* the bar is a secondary encoding of the same share the number
+                  states, so the ranking survives without colour vision */}
+              <span className="mt-1 block h-1 w-full rounded-full bg-[var(--chart-track)]">
+                <span
+                  className="block h-1 rounded-full"
+                  style={{ width: `${Math.max(2, share)}%`, background: seriesColor(i) }}
+                />
+              </span>
+            </span>
+            <span className="text-right">
+              <span
+                className="block text-[12.5px] font-semibold tabular-nums text-fg"
+                title={exact(row.amount, row.currency || currency)}
+              >
+                {compact(row.amount, row.currency || currency)}
+              </span>
+              <span className="block text-meta tabular-nums text-subtle">
+                {percent(share)}
+              </span>
+            </span>
+            <ChevronRight
+              size={14}
+              className="shrink-0 text-subtle opacity-0 transition-opacity group-hover:opacity-100"
+              aria-hidden
+            />
+          </>
+        );
         return (
           <li key={`${name}-${i}`}>
-            <button
-              type="button"
-              onClick={() => onSelect?.(name)}
-              className="group flex w-full items-center gap-3 rounded-control px-2 py-1.5 text-left transition-colors hover:bg-sunken"
-            >
-              <span className="w-4 text-meta font-bold tabular-nums text-subtle">
-                {i + 1}
-              </span>
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-sm"
-                style={{ background: seriesColor(i) }}
-                aria-hidden
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12.5px] font-medium text-fg">
-                  {name}
-                </span>
-                {/* the bar is a secondary encoding of the same share the number
-                    states, so the ranking survives without colour vision */}
-                <span className="mt-1 block h-1 w-full rounded-full bg-[var(--chart-track)]">
-                  <span
-                    className="block h-1 rounded-full"
-                    style={{ width: `${Math.max(2, share)}%`, background: seriesColor(i) }}
-                  />
-                </span>
-              </span>
-              <span className="text-right">
-                <span
-                  className="block text-[12.5px] font-semibold tabular-nums text-fg"
-                  title={exact(row.amount, row.currency || currency)}
-                >
-                  {compact(row.amount, row.currency || currency)}
-                </span>
-                <span className="block text-meta tabular-nums text-subtle">
-                  {percent(share)}
-                </span>
-              </span>
-              <ChevronRight
-                size={14}
-                className="shrink-0 text-subtle opacity-0 transition-opacity group-hover:opacity-100"
-                aria-hidden
-              />
-            </button>
+            {hrefFor ? (
+              <Link to={hrefFor(name)} className={rowClass} title={`Open ${name} in Explorer`}>
+                {content}
+              </Link>
+            ) : (
+              <button type="button" onClick={() => onSelect?.(name)} className={rowClass}>
+                {content}
+              </button>
+            )}
           </li>
         );
       })}
