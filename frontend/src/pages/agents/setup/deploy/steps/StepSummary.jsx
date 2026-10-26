@@ -32,10 +32,9 @@ const Sep = () => <span className="text-slate-300">|</span>;
 export default function StepSummary({ data, goToStep }) {
   const navigate = useNavigate();
 
-  // Live agent lookup by the ingestion token used in this wizard run.
+  // Live agent lookup by the name chosen in this wizard run (the list never carries tokens).
   const { data: agents = [] } = useQuery({ queryKey: QK.agents, queryFn: listAgents, refetchInterval: 5000 });
-  const agent = agents.find((a) => a.agent_token === data.token)
-    || agents.find((a) => data.tokenName && (a.name || '').toLowerCase().startsWith(data.tokenName.toLowerCase()));
+  const agent = agents.find((a) => data.tokenName && (a.name || '').toLowerCase().startsWith(data.tokenName.toLowerCase()));
   const online = agent?.status === 'online';
   const agentName = agent?.name || data.tokenName || '—';
 
@@ -91,7 +90,7 @@ export default function StepSummary({ data, goToStep }) {
             // bar or browser history. AgentSetupPage falls back to the
             // (legacy) query-string param if state is absent, e.g. on a
             // hard refresh of the destination page.
-            state: { agent: agent?.name || data.tokenName || '', token: data.token || '' },
+            state: { agent: agent?.name || data.tokenName || '' },
           })}
           className="w-full text-left rounded-lg border border-slate-200 bg-slate-50/80 hover:border-blue-300 hover:bg-blue-50/30 p-5 flex items-start gap-4 transition-all">
           <div className="w-11 h-11 rounded-lg bg-orange-100 text-orange-500 flex items-center justify-center flex-shrink-0"><Database size={24} /></div>

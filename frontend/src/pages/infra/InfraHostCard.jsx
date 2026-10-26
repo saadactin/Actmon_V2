@@ -42,7 +42,7 @@ export const pctOf = (v) => Math.max(0, Math.min(100, Math.round(parseFloat(v) |
  * the keyboard path open the detail page, matching how a clickable Table row
  * behaves elsewhere in the app.
  */
-export default function InfraHostCard({ host, onOpen, onTerminal, onRefresh, refreshing, canExecute }) {
+export default function InfraHostCard({ host, onOpen, onTerminal, onRefresh, refreshing, canExecute, extraAction }) {
   const status = hostStatus(host);
   const services = Array.isArray(host.database_services) ? host.database_services : [];
   const cpu = pctOf(host.cpu_usage);
@@ -136,6 +136,7 @@ export default function InfraHostCard({ host, onOpen, onTerminal, onRefresh, ref
           onClick={(e) => { e.stopPropagation(); onRefresh(host.id); }}
           iconClassName={refreshing ? 'animate-spin' : undefined}
         />
+        {extraAction}
       </div>
     </div>
   );

@@ -10,7 +10,9 @@ import Notice from '@/components/ui/Notice';
 import Textarea from '@/components/ui/Textarea';
 import Toasts, { useToasts } from '@/components/ui/Toast';
 import { Panel, SqlBlock, StatCell } from '@/pages/_shared/enginePanels';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import { explainWait } from '@/config/oracleWaits';
 import { ACTION_LABELS, JOB_STATUS_TONES, fmtIST } from './storageHealthConstants';
 
@@ -356,9 +358,9 @@ export default function OracleJobDetailPage() {
               <StatCell label="Started" value={j.execution_started_at ? fmtIST(j.execution_started_at) : '—'} />
               <StatCell label="Completed" value={j.execution_ended_at ? fmtIST(j.execution_ended_at) : '—'} />
               <StatCell label="Duration" value={durationText(j.execution_started_at, j.execution_ended_at) || '—'} />
-              <StatCell label="Before" value={j.before_metrics?.size_mb != null ? `${fmtNumber(j.before_metrics.size_mb)} MB` : '—'} />
-              <StatCell label="After" value={j.after_metrics?.size_mb != null ? `${fmtNumber(j.after_metrics.size_mb)} MB` : '—'} />
-              <StatCell label="Reclaimed" value={j.reclaimed_mb != null ? `${fmtNumber(j.reclaimed_mb)} MB` : '—'} tone="good" />
+              <StatCell label="Before" value={j.before_metrics?.size_mb != null ? fmtMB(j.before_metrics.size_mb) : '—'} />
+              <StatCell label="After" value={j.after_metrics?.size_mb != null ? fmtMB(j.after_metrics.size_mb) : '—'} />
+              <StatCell label="Reclaimed" value={j.reclaimed_mb != null ? fmtMB(j.reclaimed_mb) : '—'} tone="good" />
             </div>
             {j.reclaimed_mb === 0 && (
               <p className="mt-2 text-[11px] text-subtle">

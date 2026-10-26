@@ -72,9 +72,12 @@ function BrandMark() {
       to="/dashboard"
       aria-label={`${APP.name} home`}
       className="grid shrink-0 place-items-center rounded-md transition-opacity hover:opacity-85"
-      style={{ height: 'var(--topnav-h)', width: 'auto', padding: '10px 0' }}
+      style={{ height: 'var(--topnav-h)', width: 'auto', padding: '6px 0' }}
     >
-      <LogoMark size={80} />
+      {/* A stacked lockup — icon over ACTMON over the tagline — so it takes
+          the bar's full height less 6px each side. At 88px the wordmark is
+          about 30px tall: big enough to read the name, not just see a shape. */}
+      <LogoMark size={88} />
     </NavLink>
   );
 }

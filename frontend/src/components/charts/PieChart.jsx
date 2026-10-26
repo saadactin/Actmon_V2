@@ -99,7 +99,8 @@ export default function PieChart({
             /* 2px surface stroke = the surface gap, radially */
             stroke="var(--surface)"
             strokeWidth={2}
-            className="cursor-default transition-opacity duration-[var(--dur-fast)]"
+            className={cn('transition-opacity duration-[var(--dur-fast)]', s.onClick ? 'cursor-pointer' : 'cursor-default')}
+            onClick={s.onClick}
             style={{ opacity: active && active !== s.key ? 0.45 : 1 }}
             onMouseEnter={() => setActive(s.key)}
             onMouseLeave={() => setActive(null)}

@@ -1112,6 +1112,15 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
     def _rac_nodes_and_flush():
         result = oracle_rac_nodes(conn_id, db)
         _hist.flush_rac_nodes(agent_name, conn_id, result, db)
+        # Keep one host record per RAC node so the servers page shows the
+        # cluster rather than the single node the agent happens to sit on.
+        # Best-effort: a node that cannot be reached is simply not registered,
+        # and nothing here may fail the collection cycle.
+        try:
+            from app.services.oracle.oracle_rac_registration_service import sync_rac_hosts
+            sync_rac_hosts(conn_id, db)
+        except Exception:  # noqa: BLE001
+            pass
         return result
 
     def _services_and_flush():
@@ -1129,7 +1138,14 @@ def _collect_oracle_snapshots(agent_name: str, conn_id: int, db):
         _hist.flush_storage(agent_name, conn_id, result, db)
         return result
 
+    def _sysmetric_store():
+        # Oracle's 60 s system metrics into ClickHouse — the Performance tab's
+        # PGA / reads / I/O / redo history. Best-effort like the others.
+        from app.services.oracle.oracle_perf_service import collect_sysmetric
+        return collect_sysmetric(conn_id, db, agent_name)
+
     _run_snaps(agent_name, conn_id, db, [
+        ("oracle_sysmetric",     _sysmetric_store),
         ("oracle_dashboard",     lambda: oracle_dashboard(conn_id, db)),
         ("oracle_sga_detail",    lambda: oracle_sga_detail(conn_id, db)),
         ("oracle_pga_detail",    lambda: oracle_pga_detail(conn_id, db)),

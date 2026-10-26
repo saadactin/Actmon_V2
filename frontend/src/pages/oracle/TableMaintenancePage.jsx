@@ -8,7 +8,9 @@ import Notice from '@/components/ui/Notice';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import {
   ActionsMenu, CategorySummaryBar, OperationConfirmDialog, RefreshBar, useDirectMaintenance,
 } from './maintenanceShared';
@@ -92,7 +94,7 @@ export default function TableMaintenancePage({ connId }) {
         { label: 'Total Tables', value: fmtNumber(s.total_tables) },
         { label: 'Needing Maintenance', value: fmtNumber(s.needing_maintenance), tone: s.needing_maintenance ? 'warn' : 'good' },
         { label: 'With Reclaimable Space', value: fmtNumber(s.with_reclaimable_space) },
-        { label: 'Reclaimable Total', value: `${fmtNumber(s.reclaimable_total_mb)} MB` },
+        { label: 'Reclaimable Total', value: fmtMB(s.reclaimable_total_mb) },
         { label: 'Running', value: s.running, tone: s.running ? 'warn' : 'good' },
         { label: 'Failed', value: s.failed, tone: s.failed ? 'bad' : 'good' },
       ]}
@@ -105,7 +107,7 @@ export default function TableMaintenancePage({ connId }) {
             {s.largest_reclaimable.map((t) => (
               <span key={t.object_name} className="rounded-control border border-border bg-surface px-2.5 py-1 text-[11px]">
                 <span className="font-mono font-semibold text-fg">{t.object_name}</span>
-                <span className="ml-1.5 text-subtle">{fmtNumber(t.reclaimable_mb)} MB</span>
+                <span className="ml-1.5 text-subtle">{fmtMB(t.reclaimable_mb)}</span>
               </span>
             ))}
           </div>
@@ -130,6 +132,9 @@ export default function TableMaintenancePage({ connId }) {
         {(page, pager) => (
           <>
             <Table
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'object', label: 'Owner.Table' },
                 { key: 'tablespace', label: 'Tablespace' },
@@ -145,15 +150,15 @@ export default function TableMaintenancePage({ connId }) {
               rows={page.map((t) => ({
                 key: t.object_name,
                 cells: {
-                  object: <span className="font-mono text-[12px] font-semibold text-accent-text">{t.object_name}</span>,
-                  tablespace: <span className="text-[12px]">{t.tablespace_name}</span>,
-                  size: <span className="font-mono text-[12px]">{fmtNumber(t.size_mb)} MB</span>,
+                  object: <span className="font-mono font-semibold text-accent-text">{t.object_name}</span>,
+                  tablespace: <span>{t.tablespace_name}</span>,
+                  size: <span className="font-mono">{fmtMB(t.size_mb)}</span>,
                   reclaim: t.reclaimable_mb != null ? (
-                    <span className="font-mono text-[12px]">
-                      {fmtNumber(t.reclaimable_mb)} MB <span className="text-subtle">({t.reclaimable_pct}%)</span>
+                    <span className="font-mono">
+                      {fmtMB(t.reclaimable_mb)} <span className="text-subtle">({t.reclaimable_pct}%)</span>
                     </span>
                   ) : <span className="text-subtle">—</span>,
-                  rows: <span className="font-mono text-[12px]">{t.num_rows != null ? fmtNumber(t.num_rows) : '—'}</span>,
+                  rows: <span className="font-mono">{t.num_rows != null ? fmtNumber(t.num_rows) : '—'}</span>,
                   analyzed: (
                     <span className={t.stats_stale ? 'text-[11px] text-warning-fg' : 'text-[11px] text-muted'}>
                       {t.last_analyzed ? fmtIST(t.last_analyzed) : 'Never'}
@@ -162,7 +167,7 @@ export default function TableMaintenancePage({ connId }) {
                   rowmove: <Badge tone={t.row_movement_enabled ? 'success' : 'neutral'} size="xs">{t.row_movement_enabled ? 'Enabled' : 'Disabled'}</Badge>,
                   lastop: t.last_operation ? (
                     <span className="flex flex-col gap-0.5">
-                      <span className="text-[11px] text-fg">{ACTION_LABELS[t.last_operation] || t.last_operation}</span>
+                      <span className="text-fg">{ACTION_LABELS[t.last_operation] || t.last_operation}</span>
                       <Badge tone={t.last_status === 'succeeded' ? 'success' : t.last_status === 'failed' ? 'danger' : 'info'} size="xs">{t.last_status}</Badge>
                     </span>
                   ) : <span className="text-subtle">—</span>,
@@ -187,8 +192,8 @@ export default function TableMaintenancePage({ connId }) {
         onConfirm={runConfirmed}
         extra={confirmState?.row && (confirmState.action === 'shrink_space' || confirmState.action === 'move') && (
           <p className="text-[12px] text-muted">
-            Current size <span className="font-semibold text-fg">{fmtNumber(confirmState.row.size_mb)} MB</span>,
-            {' '}estimated reclaimable <span className="font-semibold text-fg">{fmtNumber(confirmState.row.reclaimable_mb)} MB</span>.
+            Current size <span className="font-semibold text-fg">{fmtMB(confirmState.row.size_mb)}</span>,
+            {' '}estimated reclaimable <span className="font-semibold text-fg">{fmtMB(confirmState.row.reclaimable_mb)}</span>.
             The exact amount reclaimed is measured after execution.
           </p>
         )}

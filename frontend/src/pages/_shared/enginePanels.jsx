@@ -155,19 +155,27 @@ export function StatCell({ label, value, hint, tone = 'neutral' }) {
  * Pass/fail chip. Always icon + text: the status steps are not all ≥3:1 against a
  * light surface, so colour alone would not carry the meaning (see tokens.css).
  */
+/**
+ * `ok` has three states, not two: true (pass), false (fail) and null/undefined
+ * (the check could not be made). The third exists because a metric that failed
+ * to collect used to arrive as 0 and pass the threshold, so a database that
+ * answered nothing showed a row of green ticks.
+ */
 export function StatusPill({ ok, label, hint, onClick }) {
   const Wrapper = onClick ? 'button' : 'span';
+  const unknown = ok === null || ok === undefined;
   const chip = (
     <Wrapper
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold',
-        ok ? 'bg-success-soft text-success-fg' : 'bg-danger-soft text-danger-fg',
+        unknown ? 'border border-border bg-sunken text-muted'
+          : ok ? 'bg-success-soft text-success-fg' : 'bg-danger-soft text-danger-fg',
         onClick && 'transition-opacity hover:opacity-85',
       )}
     >
-      <Icon name={ok ? 'check' : 'alert'} size={11} />
+      <Icon name={unknown ? 'info' : ok ? 'check' : 'alert'} size={11} />
       {label}
       {onClick && <Icon name="chevron-right" size={11} className="opacity-60" />}
     </Wrapper>
@@ -221,6 +229,24 @@ export function SqlCell({ sql, max = 120, className }) {
       className={cn('truncate-safe block max-w-[380px] font-mono text-[11px] text-muted', className)}
     >
       {text.slice(0, max)}
+    </span>
+  );
+}
+
+/**
+ * An engine identifier the reader copies out and takes elsewhere — an Oracle
+ * sql_id or plan_hash_value, a MySQL digest. Monospace and full width, never
+ * truncated: half an identifier is useless, which is why these get a column of
+ * their own rather than a caption under the statement.
+ *
+ * Zero is Oracle's "no plan yet", so it reads as absent rather than as a hash.
+ */
+export function IdCell({ value, className }) {
+  const text = value === 0 || value === null || value === undefined ? '' : String(value).trim();
+  if (!text) return <span className="text-subtle">—</span>;
+  return (
+    <span className={cn('select-all whitespace-nowrap font-mono text-[11px] text-fg', className)}>
+      {text}
     </span>
   );
 }

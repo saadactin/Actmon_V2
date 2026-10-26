@@ -59,6 +59,12 @@ export default function Table({
   /** Opt-in dark header band (Agents list is specced to match a reference
       design with one) — every other table keeps the default light header. */
   darkHeader = false,
+  /** Apply the list format's body typography (16px/500/#6B7280) to every cell
+      from here, rather than each cell re-typing it.
+      Opt-in rather than folded into `darkHeader`: the pages that adopted that
+      look earlier already set the typography on their own spans, so switching
+      it on for them would change tables this has no business touching. */
+  cellText = false,
   /** Opt-in windowed rendering for very large row sets. Only actually engages
       once `rows.length` clears `virtualizeThreshold` and `rowHeight` is set
       (the window math is fixed-height) — small/medium tables render exactly
@@ -238,6 +244,7 @@ export default function Table({
                   !darkHeader && 'border-b border-border last:border-0',
                   !darkHeader && (selected ? 'bg-accent-softer' : 'hover:bg-sunken'),
                   row.onClick && 'cursor-pointer focus-visible:bg-sunken',
+                  row.className,
                 )}
               >
                 {selectable && (
@@ -271,6 +278,18 @@ export default function Table({
                          can't be rounded or shadowed itself, so every cell
                          carries the card's chrome; border-spacing above
                          makes the 8px gap between rows. */
+                      /* One definition of the list's body text, instead of it
+                         being re-typed on every span. A cell that needs its own
+                         size, weight or colour still sets it and still wins,
+                         because that class lands on the child. */
+                      /* The list size and weight, WITHOUT CELL_TEXT's
+                         whitespace-nowrap. Every cell used to inherit that, so
+                         a sentence-length cell ("What it means", an alert-log
+                         message) could not wrap: the row grew wider than its
+                         table and ran past the header band and out of the
+                         panel. Short values still sit on one line because they
+                         are short, not because they are forbidden to break. */
+                      cellText && 'text-[1rem] leading-[1.35rem] font-medium break-words',
                       darkHeader && [
                         'shadow-[0_2px_4px_rgba(0,0,0,0.08)] transition-colors',
                         selected ? 'bg-accent-softer' : 'bg-[var(--agent-row-bg)] group-hover:bg-sunken',
@@ -278,6 +297,7 @@ export default function Table({
                         i === columns.length - 1 && 'rounded-r-[0.5rem]',
                       ],
                     )}
+                    style={cellText ? CELL_TEXT_STYLE : undefined}
                   >
                     {row.cells[c.key] ?? <span className="text-subtle">—</span>}
                   </td>

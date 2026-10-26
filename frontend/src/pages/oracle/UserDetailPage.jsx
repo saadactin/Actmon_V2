@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { fmtMB } from '@/config/dbCatalog';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Sparkles } from 'lucide-react';
@@ -88,7 +89,7 @@ export default function OracleUserDetailPage() {
         roles: roles.map((r) => r.role).join(', ') || '(none)',
         system_privileges: sysPrivs.map((sp) => sp.privilege).join(', ') || '(none)',
         object_privilege_count: s.object_privilege_count,
-        tablespace_quotas: quotas.map((q) => `${q.tablespace_name}: ${q.used_mb}MB used${q.max_mb != null ? ` of ${q.max_mb}MB` : ' (unlimited)'}`).join('; ') || '(none)',
+        tablespace_quotas: quotas.map((q) => `${q.tablespace_name}: ${fmtMB(q.used_mb)} used${q.max_mb != null ? ` of ${fmtMB(q.max_mb)}` : ' (unlimited)'}`).join('; ') || '(none)',
       };
 
       const res = await client.post(`/connections/oracle/${id}/oracle-storage-ai-explain`, {
@@ -152,6 +153,9 @@ export default function OracleUserDetailPage() {
         <TablePanel title="Granted roles" icon="layers"
           subtitle="dba_role_privs — a role bundles many privileges together under one name">
           <Table
+            rowHeight={64}
+            darkHeader
+            cellText
             columns={[
               { key: 'role', label: 'Role' },
               { key: 'default', label: 'Default at login' },
@@ -160,7 +164,7 @@ export default function OracleUserDetailPage() {
             rows={roles.map((r) => ({
               key: r.role,
               cells: {
-                role: <span className="font-mono text-[12px] font-semibold text-fg">{r.role}</span>,
+                role: <span className="font-mono font-semibold text-fg">{r.role}</span>,
                 default: r.default_role
                   ? <Badge tone="success" size="xs">Yes</Badge>
                   : <span className="text-subtle">No</span>,
@@ -176,6 +180,9 @@ export default function OracleUserDetailPage() {
         <TablePanel title="System privileges" icon="key"
           subtitle="dba_sys_privs — privileges granted directly, not through a role">
           <Table
+            rowHeight={64}
+            darkHeader
+            cellText
             columns={[
               { key: 'privilege', label: 'Privilege' },
               { key: 'admin', label: 'Can grant to others' },
@@ -183,7 +190,7 @@ export default function OracleUserDetailPage() {
             rows={sysPrivs.map((sp, i) => ({
               key: `${sp.privilege}-${i}`,
               cells: {
-                privilege: <span className="font-mono text-[12px] text-fg">{sp.privilege}</span>,
+                privilege: <span className="font-mono text-fg">{sp.privilege}</span>,
                 admin: sp.admin_option
                   ? <Badge tone="warning" size="xs">Yes (ADMIN OPTION)</Badge>
                   : <span className="text-subtle">No</span>,
@@ -196,6 +203,9 @@ export default function OracleUserDetailPage() {
         <TablePanel title="Object privileges" icon="database"
           subtitle={`dba_tab_privs — access to specific tables/views (capped at 300 rows)${s.object_privilege_count > objPrivs.length ? ', more exist than shown' : ''}`}>
           <Table
+            rowHeight={64}
+            darkHeader
+            cellText
             columns={[
               { key: 'object', label: 'Object' },
               { key: 'privilege', label: 'Privilege' },
@@ -204,7 +214,7 @@ export default function OracleUserDetailPage() {
             rows={objPrivs.map((op, i) => ({
               key: `${op.owner}.${op.object_name}-${op.privilege}-${i}`,
               cells: {
-                object: <span className="font-mono text-[12px] text-fg">{op.owner}.{op.object_name}</span>,
+                object: <span className="font-mono text-fg">{op.owner}.{op.object_name}</span>,
                 privilege: <Badge tone="neutral" size="xs">{op.privilege}</Badge>,
                 grantable: op.grantable
                   ? <Badge tone="warning" size="xs">Yes</Badge>
@@ -218,6 +228,9 @@ export default function OracleUserDetailPage() {
         {quotas.length > 0 && (
           <TablePanel title="Tablespace quotas" icon="desktop" subtitle="dba_ts_quotas — how much space this account is allowed to use">
             <Table
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'ts', label: 'Tablespace' },
                 { key: 'used', label: 'Used', align: 'right' },
@@ -226,9 +239,9 @@ export default function OracleUserDetailPage() {
               rows={quotas.map((q) => ({
                 key: q.tablespace_name,
                 cells: {
-                  ts: <span className="font-mono text-[12px] text-fg">{q.tablespace_name}</span>,
-                  used: <span className="font-mono text-[12px]">{q.used_mb} MB</span>,
-                  max: <span className="font-mono text-[12px] text-muted">{q.max_mb != null ? `${q.max_mb} MB` : 'Unlimited'}</span>,
+                  ts: <span className="font-mono text-fg">{q.tablespace_name}</span>,
+                  used: <span className="font-mono">{fmtMB(q.used_mb)}</span>,
+                  max: <span className="font-mono text-muted">{q.max_mb != null ? fmtMB(q.max_mb) : 'Unlimited'}</span>,
                 },
               }))}
               empty={<EmptyState icon="desktop" title="No quotas set" />}

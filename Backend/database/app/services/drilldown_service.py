@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.services.postgres import postgres_drilldown_service as pg
+from app.services.common.cpu_cmd import LINUX_CPU_BUSY_PCT
 
 # shared engine-agnostic helpers
 _run = pg._run
@@ -1458,7 +1459,7 @@ def host_metrics(tech: str, conn_id: int, db: Session) -> dict:
             return with_link(m)
     ssh = _ssh_connect(conn, db)
     try:
-        cpu = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+        cpu = _num(_run(ssh, LINUX_CPU_BUSY_PCT))
         ram_u = _num(_run(ssh, "free -m | awk 'NR==2{print $3}'"))
         ram_t = _num(_run(ssh, "free -m | awk 'NR==2{print $2}'"))
         disk = _num(_run(ssh, "df -h / | awk 'NR==2{print $5}'"))
@@ -1581,7 +1582,7 @@ def rca(tech: str, conn_id: int, db: Session, pid: Optional[int] = None,
         cores = _num(_run(ssh, "nproc"), int) or 1
         all_procs = _collect(ssh, cores, cfg["procs"])
         if resource == "cpu":
-            host_util = _num(_run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+            host_util = _num(_run(ssh, LINUX_CPU_BUSY_PCT))
         else:
             host_util = _num(_run(ssh, "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'"))
         ssh.close()

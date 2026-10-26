@@ -1,0 +1,103 @@
+KOEL — INTERACTIVE ARCHITECTURE DOCUMENTATION
+==============================================
+
+WHAT TO OPEN
+------------
+
+  koel-3d-explorer.html     Start here. An explorable 3D model of the estate.
+  koel-doc.html             The same content as a document you scroll.
+
+Double-click either file. It opens in your browser. Nothing to install, no
+server to run, no internet connection needed beyond the first load (the 3D
+library and the fonts come from a public CDN; without them the explorer
+switches to its 2D view automatically and loses nothing but the picture).
+
+Chrome, Edge, Firefox and Safari all work.
+
+
+THE EXPLORER IN THIRTY SECONDS
+------------------------------
+
+  Drag              look around
+  Scroll            zoom in and out
+  Shift + drag      pan
+  Click an object   its detail opens in the panel on the right
+  Enter             descend into whatever is selected
+  Backspace         back up one level
+  T                 play the guided tour (ten chapters, pausable)
+  F                 switch to the 2D index — every object as a flat list
+  /                 search
+  ?                 show the full key list
+  0                 back to the estate overview
+
+The breadcrumb across the top always shows where you are, and every step of
+it is clickable.
+
+
+WHAT YOU ARE LOOKING AT
+-----------------------
+
+The first thing you see is the whole estate over a turning Earth: three
+platforms, left to right in the order data travels, with every connection
+between them labelled. One arrowhead means the diagram draws one direction;
+two facing apart mean it draws both.
+
+The Earth is a setting, not a map. The diagram names no country, region or
+data-centre site anywhere, so nothing on the globe should be read as a
+location.
+
+
+Three zones:
+
+  Third-party ecosystem    18 external feeds — banks, tax gateways, logistics,
+                           expense and reconciliation platforms — all arriving
+                           at a single integration server.
+
+  On-premises data centre  KOEL's own network: identity, edge security, the
+                           ingestion hub, and two databases that stayed on site.
+
+  Oracle Cloud (OCI)       One region, one VCN. A public DMZ above; below it the
+                           Oracle ERP application and 2-node RAC database, the
+                           analytics warehouse, and the Siebel CRM stack of
+                           twelve servers.
+
+One encrypted IPsec/MACsec tunnel joins the second to the third.
+
+
+HOW MUCH OF THIS IS CERTAIN
+---------------------------
+
+This document has exactly ONE source: the architecture diagram
+KOEL_ARCHITECTURE1.1. No repository, configuration file or running system was
+inspected.
+
+So every statement carries a label saying how it is known. The four labels are
+shown in the legend at the bottom-left of the explorer:
+
+  On the diagram                        literally in the file
+  Implied by the diagram                follows necessarily from what is drawn
+  Product knowledge, not KOEL-specific  true of Oracle ERP or Siebel generally;
+                                        NOT a statement about this estate
+  Not answered by the diagram           a gap, listed so it can be asked
+
+Two sections are worth reading before any decision is made from this:
+
+  "What the diagram does not say"   Eight questions this document cannot
+                                    answer, each with who would know.
+
+  "Where monitoring would go"       The only opinion in the document. It is
+                                    marked as a proposal throughout.
+
+No IP address, hostname, credential or connection string appears anywhere in
+these files. None was available, and none was invented.
+
+
+FILES
+-----
+
+  koel-3d-explorer.html    the explorer
+  koel-doc.html            the scrolling document
+  interactive/             the five JavaScript modules both pages load
+  README.md                the same information in more detail
+
+Keep the folder together — the pages load the modules from interactive/.

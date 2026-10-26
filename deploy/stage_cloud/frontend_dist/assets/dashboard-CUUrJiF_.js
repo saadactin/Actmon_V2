@@ -1,0 +1,1 @@
+import{s,t as e}from"./index-BExsi85l.js";const r=()=>s.get("/os-servers/summary").then(t=>t.data||{}),n=()=>s.get("/os-servers/").then(t=>e(t.data)),c=()=>s.get("/agents/").then(t=>e(t.data)),o=()=>s.get("/alerts/active").then(t=>e(t.data)),l=()=>s.get("/cloud/accounts").then(t=>e(t.data));export{c as a,o as b,l as c,r as g,n as l};

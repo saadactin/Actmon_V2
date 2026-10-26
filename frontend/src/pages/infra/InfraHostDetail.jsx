@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Cell, ResponsiveContainer, ScatterChart, Scatter,
@@ -25,6 +25,9 @@ import PageHeader from '@/components/layout/PageHeader';
 import Tabs from '@/components/ui/Tabs';
 import Table, { EmptyState } from '@/components/ui/Table';
 import ChartCard from '@/components/charts/ChartCard';
+import HostOverview from './HostOverview';
+import { BUCKET_LABEL as OV_BUCKET_LABEL, RANGES as OV_RANGES } from '../memory/memoryUtil';
+import { listAgents } from '@/api/agents';
 import Meter from '@/components/charts/Meter';
 import { bandFor } from '@/components/charts/status';
 import { hostStatus, osLabel } from './InfraHostCard';
@@ -2154,7 +2157,7 @@ function ProcessesPanel({ processes = [], id, onBack, backLabel }) {
  * (area/line/column/step/sparkline) every agent telemetry chart offers, fed by
  * this host's own ClickHouse history instead of a single point-in-time reading.
  */
-function TrendTile({ cardId, title, data, hasData, subtitle, loading, color, emptyHint }) {
+function TrendTile({ cardId, title, data, hasData, subtitle, loading, color, emptyHint, action }) {
   return (
     <ChartCard
       cardId={cardId} family="trend" defaultKind="area" items={data}
@@ -2162,7 +2165,7 @@ function TrendTile({ cardId, title, data, hasData, subtitle, loading, color, emp
         color, unit: '%', domain: [0, 100], thresholds: true,
         emptyLabel: 'Waiting for samples', emptyHint,
       }}
-      title={title} icon="activity"
+      title={title} icon="activity" action={action}
       subtitle={hasData ? subtitle : undefined}
       loading={loading && hasData}
       tableColumns={hasData ? [{ key: 'time', label: 'Time' }, { key: 'value', label: title, align: 'right' }] : undefined}
@@ -2186,16 +2189,28 @@ function NetDetailRow({ label, value }) {
 }
 
 // White dashboard tile with a light title bar.
-function DashTile({ title, sub, children, className = '', onClick }) {
+function DashTile({ title, sub, children, className = '', onClick, action }) {
   return (
     <div onClick={onClick}
       className={cn('card flex flex-col', onClick && 'cursor-pointer hover:border-strong hover:bg-raised transition-colors', className)}>
-      <div className="px-4 pt-3.5 pb-2">
-        <p className="text-[12px] font-bold text-muted leading-tight uppercase tracking-wide">{title}</p>
-        {sub && <p className="text-[11px] text-subtle mt-0.5">{sub}</p>}
+      <div className="flex items-start justify-between gap-2 px-4 pt-3.5 pb-2">
+        <div className="min-w-0">
+          <p className="text-[12px] font-bold text-muted leading-tight uppercase tracking-wide">{title}</p>
+          {sub && <p className="text-[11px] text-subtle mt-0.5">{sub}</p>}
+        </div>
+        {action}
       </div>
       <div className="px-4 pb-4 flex-1 min-h-0">{children}</div>
     </div>
+  );
+}
+
+// "CPU / Memory / Disk details" link on an overview tile → that resource's consumption page.
+function DetailLink({ to, label }) {
+  return (
+    <Link to={to} onClick={(e) => e.stopPropagation()} className="inline-flex shrink-0 items-center gap-1 rounded-control border border-border bg-surface px-2 py-1 text-[11.5px] font-semibold text-accent hover:bg-raised">
+      {label}<Icon name="arrow-right" size={12} />
+    </Link>
   );
 }
 
@@ -2277,103 +2292,24 @@ export default function InfraHostDetail() {
   const tab = TAB_SLUG[tabSlug] || 'Overview';
   const setTab = (t) => navigate(`/infra/${id}${t !== 'Overview' ? `/${SLUG_FOR_TAB[t]}` : ''}`);
   const [showRestart, setShowRestart] = useState(false);
+  // Overview time context (shared by its cards/charts and handed to the CPU/Memory/Disk pages it opens)
+  const [ovRangeIdx, setOvRangeIdx] = useState(2);
+  const [ovBucket, setOvBucket] = useState(60);
+  const [ovAuto, setOvAuto] = useState(true);
   const [showUpdate, setShowUpdate] = useState(false);
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ['hostInfraDetail', id],
     queryFn: () => getHostInfraDetail(id),
     retry: false,
-    refetchInterval: 30000,
+    refetchInterval: ovAuto ? 30000 : false,
   });
 
   const host = data?.host || {};
+  const agentsQ = useQuery({ queryKey: ['infraHost', 'agents'], queryFn: listAgents, enabled: host.collector === 'agent', staleTime: 5 * 60_000 });
+  const agentRow = (agentsQ.data || []).find((a) => [host.server_name, host.hostname, host.ip_address].filter(Boolean).map((x) => String(x).toLowerCase())
+    .some((n) => n === String(a.hostname || '').toLowerCase() || n === String(a.name || '').toLowerCase()));
   const failed = data?.status === 'error';
-
-  // ── live CPU/Memory trend for the Performance row ──────────────────────────
-  // Agent-collected hosts get the real thing: the same range/granularity picker
-  // and persisted ClickHouse history the Agent monitoring page uses (keyed by
-  // `host.server_name`, which IS the agent_name these metrics are stored under).
-  //
-  // SSH-polled hosts get real persisted history too now — os_server_refresh_
-  // scheduler.py writes an AgentMetric row (kind='infra', tech='host') on every
-  // 3-minute SSH poll, the same table the agent-push path writes to, keyed by
-  // the same host.server_name. So BOTH collector types query the same
-  // ClickHouse-backed history below; `agentSeries` is named for the original
-  // agent-only case but is really just "the persisted series," whichever
-  // collector produced it. The client-side session buffer (`sshBuffer` below)
-  // is kept as a fallback ONLY for whichever hosts have no persisted samples
-  // yet (a brand-new host, or one the scheduler hasn't ticked for yet) — it's
-  // session-local (resets on reload, caps at 120 points ≈ 1 hour), so persisted
-  // history is always preferred once it exists.
-  const [showSystemInfo, setShowSystemInfo] = useState(false);
-  const [perfRange, setPerfRange] = useState('60');
-  const [perfCustomMinutes, setPerfCustomMinutes] = useState('1440');
-  const [perfGranularity, setPerfGranularity] = useState('60');
-  const perfMinutes = perfRange === 'custom' ? (Number(perfCustomMinutes) || 1440) : Number(perfRange);
-  const perfBucketSeconds = Number(perfGranularity);
-  const isAgentHost = host.collector === 'agent';
-
-  const perfHistoryQ = useQuery({
-    queryKey: ['agents', 'metrics-history', host.server_name, perfMinutes, perfBucketSeconds],
-    // kind/tech pin this to the host's OWN table — see getMetricsHistory's own
-    // note on why omitting them silently dilutes the result with this same
-    // agent's database-engine rows (their host_cpu/host_memory are always 0).
-    queryFn: () => getMetricsHistory(host.server_name, { minutes: perfMinutes, bucketSeconds: perfBucketSeconds, kind: 'infra', tech: 'host' }),
-    refetchInterval: Math.max(15_000, Math.min(60_000, perfBucketSeconds * 250)),
-    enabled: Boolean(host.server_name),
-    retry: false,
-  });
-
-  const agentSeries = useMemo(() => {
-    const rows = perfHistoryQ.data?.samples || [];
-    return rows.slice().reverse().map((s) => {
-      // ClickHouse's history endpoint always pins its output to UTC (see
-      // metrics_history_service.py) regardless of that server's own display
-      // timezone — parse with an explicit 'Z', never as a naive local string.
-      const at = new Date(`${String(s.ts).replace(' ', 'T')}Z`);
-      const label = Number.isNaN(at.getTime())
-        ? String(s.ts)
-        : perfMinutes > 1440
-          ? at.toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-          : at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      return { label, cpu: Number(s.host_cpu || 0), mem: Number(s.host_memory || 0), disk: Number(s.host_disk || 0) };
-    });
-  }, [perfHistoryQ.data, perfMinutes]);
-
-  const [sshBuffer, setSshBuffer] = useState([]);
-  useEffect(() => {
-    if (!data || failed) return;
-    const cpuVal = pctNum(data.cpu_pct);
-    const memVal = pctNum((data.memory || {}).used_pct);
-    // Same "busiest mount" reduction the Overview tab uses below for its own
-    // static Disk reading — kept in sync so the trend and the point-in-time
-    // number never disagree about which filesystem "the" disk % refers to.
-    const diskVal = pctNum(Math.max(0, ...(data.filesystems || []).map((f) => f.use_pct ?? 0), 0));
-    setSshBuffer((buf) => [...buf, { ts: Date.now(), cpu: cpuVal, mem: memVal, disk: diskVal }].slice(-120));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, failed]);
-  const sshSeries = useMemo(() => sshBuffer.map((s) => ({
-    label: new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-    cpu: s.cpu, mem: s.mem, disk: s.disk,
-  })), [sshBuffer]);
-
-  // Prefer persisted (ClickHouse-backed) history whenever it actually has
-  // samples — for either collector type now — and fall back to the client-side
-  // session buffer only while a host has none yet.
-  const usingPersisted = agentSeries.length > 0;
-  const liveSeries = usingPersisted ? agentSeries : sshSeries;
-  const cpuSeries = liveSeries.map((s) => ({ label: s.label, value: s.cpu }));
-  const memSeries = liveSeries.map((s) => ({ label: s.label, value: s.mem }));
-  const diskSeries = liveSeries.map((s) => ({ label: s.label, value: s.disk }));
-  const hasPerfSeries = liveSeries.length > 0;
-  const perfRangeLabel = PERF_RANGE_OPTIONS.find((o) => o.id === perfRange)?.label || '';
-  const perfGranularityLabel = PERF_GRANULARITY_OPTIONS.find((o) => o.id === perfGranularity)?.label || '';
-  const perfSubtitle = usingPersisted
-    ? `${perfRangeLabel} · ${perfGranularityLabel}`
-    : `Live session trend · updates every ${Math.round((data?.poll_interval_s || 30))}s`;
-  const perfEmptyHint = isAgentHost
-    ? 'This agent has not reported host telemetry yet — check back shortly.'
-    : 'Building the trend from live polls — keep this page open, the chart fills in as new readings arrive.';
 
   const isWin = (host.os_type || '').toLowerCase().startsWith('win');
   // IP Configuration is available for all hosts; on Windows it's read-only (from the
@@ -2390,7 +2326,9 @@ export default function InfraHostDetail() {
       <PageHeader
         backTo="/infra"
         title={host.server_name || `Host #${id}`}
-        description={[host.hostname || host.ip_address, host.os_type && osLabel(host.os_type), host.collector && `via ${host.collector}`].filter(Boolean).join(' · ')}
+        description={[data?.system?.os || (host.os_type && osLabel(host.os_type)), `Host ID: ${id}`, host.ip_address && `IP: ${host.ip_address}`,
+          host.collector === 'agent' ? `Agent: ${agentRow?.agent_version ? `v${String(agentRow.agent_version).replace(/^v/, '')}` : 'version N/A'}` : host.collector && 'via SSH',
+          data?.uptime && `Uptime: ${String(data.uptime).replace(/^up\s+/, '')}`].filter(Boolean).join('  •  ')}
         leading={
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-sunken text-muted">
             <Icon name="desktop" size={20} />
@@ -2403,18 +2341,27 @@ export default function InfraHostDetail() {
               <Icon name={headerStatus.icon} size={10} strokeWidth={3} />
               {headerStatus.label}
             </Badge>
-            <Button variant="secondary" size="sm" icon="folder" onClick={() => navigate(`/infra/${id}/files`)}>File Explorer</Button>
-            <Button variant="secondary" size="sm" icon="shield-check" onClick={() => setTab('IP Configuration')}>Firewall</Button>
-            {host.collector === 'agent' && isWin && can('/infra/:id', 'execute') && (
-              <Button variant="secondary" size="sm" icon="download" title="Download the latest agent and upgrade in place" onClick={() => setShowUpdate(true)}>Update Agent</Button>
-            )}
-            {can('/infra/:id', 'restart') && (
-              <Button variant="secondary" size="sm" icon="power" onClick={() => setShowRestart(true)}>Restart</Button>
+            {tab === 'Overview' && (
+              <>
+                <button type="button" role="switch" aria-checked={ovAuto} aria-label="Auto refresh" onClick={() => setOvAuto(!ovAuto)}
+                  className={cn('flex h-control items-center gap-2 rounded-control border border-border px-2.5 text-[12px] font-semibold', ovAuto ? 'text-accent' : 'text-muted')}>
+                  <span className={cn('relative h-4 w-7 rounded-full transition-colors', ovAuto ? 'bg-accent' : 'bg-strong')}><span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all', ovAuto ? 'left-[14px]' : 'left-0.5')} /></span>
+                  Auto Refresh
+                </button>
+                <select aria-label="Time range" value={ovRangeIdx} onChange={(e) => { const i = Number(e.target.value); setOvRangeIdx(i); if (!OV_RANGES[i].buckets.includes(ovBucket)) setOvBucket(OV_RANGES[i].buckets[0]); }}
+                  className="h-control rounded-control border border-border bg-surface px-2 text-[12px] text-fg">
+                  {OV_RANGES.map((r, i) => <option key={r.minutes} value={i}>{r.label}</option>)}
+                </select>
+                <select aria-label="Aggregation interval" value={ovBucket} onChange={(e) => setOvBucket(Number(e.target.value))}
+                  className="h-control rounded-control border border-border bg-surface px-2 text-[12px] text-fg">
+                  {OV_RANGES[ovRangeIdx].buckets.map((b) => <option key={b} value={b}>{OV_BUCKET_LABEL[b]}</option>)}
+                </select>
+              </>
             )}
             {can('/infra/:id', 'view') && (
               <button
                 type="button"
-                onClick={() => qc.invalidateQueries(['hostInfraDetail', id])}
+                onClick={() => { qc.invalidateQueries(['hostInfraDetail', id]); qc.invalidateQueries({ queryKey: ['ov'] }); }}
                 title="Refresh now"
                 className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-semibold text-muted transition-colors hover:bg-sunken hover:text-fg"
               >
@@ -2437,186 +2384,10 @@ export default function InfraHostDetail() {
       ) : (
         <div className="flex flex-col gap-gutter-lg">
           {/* ── OVERVIEW (tiled dashboard) ── */}
-          {tab === 'Overview' && (() => {
-            const mem = data.memory || {};
-            const rootFs = (data.filesystems || []).reduce((m, f) => ((f.use_pct ?? 0) > (m?.use_pct ?? -1) ? f : m), null);
-            const procs = data.processes || [];
-            const topMem = procs.map((p) => ({ name: p.command, sub: `pid ${p.pid}`, value: pctNum(p.mem) }))
-              .sort((a, b) => b.value - a.value).slice(0, 6);
-            const topCpu = procs.map((p) => ({ name: p.command, sub: `pid ${p.pid}`, value: pctNum(p.cpu) }))
-              .sort((a, b) => b.value - a.value).slice(0, 6);
-            const scatter = procs.map((p) => ({ name: p.command, x: pctNum(p.cpu), y: pctNum(p.mem), z: 1, color: pctColor(pctNum(p.cpu)) }));
-            const fsRank = (data.filesystems || [])
-              .map((f) => ({ name: f.mount, mount: f.mount, value: pctNum(f.use_pct), color: pctColor(pctNum(f.use_pct)), right: `${f.used} / ${f.size} · ${pctNum(f.use_pct)}%` }))
-              .sort((a, b) => b.value - a.value).slice(0, 8);
-            const ifaces = data.interfaces || [];
-            const ifUp = ifaces.filter((i) => String(i.state).toUpperCase() === 'UP').length;
-            const memPct = pctNum(mem.used_pct);
-            return (
-              <>
-                {/* ── PERFORMANCE ──
-                    CPU/Memory get the same half-width prominence as the Agent
-                    monitoring page's own trend charts — a quarter-width slot
-                    alongside Disk/Load made them cramped. Those two move to
-                    their own smaller row below. */}
-                <SectionBand
-                  icon="activity" title="Performance"
-                  right={
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Select value={perfRange} onChange={setPerfRange} options={PERF_RANGE_OPTIONS} size="sm" width="auto" aria-label="Time range" />
-                      {perfRange === 'custom' && (
-                        <Input
-                          type="number" min={1} value={perfCustomMinutes}
-                          onChange={(e) => setPerfCustomMinutes(e.target.value)}
-                          wrapperClassName="w-20" size="sm" aria-label="Custom minutes"
-                        />
-                      )}
-                      <Select value={perfGranularity} onChange={setPerfGranularity} options={PERF_GRANULARITY_OPTIONS} size="sm" width="auto" aria-label="Granularity" />
-                      {!isAgentHost && (
-                        <span className="text-[11px] text-subtle">SSH-polled every 3 min — finer granularities will look sparse</span>
-                      )}
-                    </div>
-                  }
-                />
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
-                  <TrendTile
-                    cardId="infra-host-cpu-trend" title="CPU Utilization"
-                    data={cpuSeries} hasData={hasPerfSeries} loading={perfHistoryQ.isFetching}
-                    color="var(--chart-2)" emptyHint={perfEmptyHint}
-                    subtitle={perfSubtitle}
-                  />
-                  <TrendTile
-                    cardId="infra-host-memory-trend" title="Memory Utilization"
-                    data={memSeries} hasData={hasPerfSeries} loading={perfHistoryQ.isFetching}
-                    color="var(--chart-5)" emptyHint={perfEmptyHint}
-                    subtitle={perfSubtitle}
-                  />
-                </div>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
-                  <TrendTile
-                    cardId="infra-host-disk-trend" title="Disk Utilization"
-                    data={diskSeries} hasData={hasPerfSeries} loading={perfHistoryQ.isFetching}
-                    color="var(--chart-1)" emptyHint={perfEmptyHint}
-                    subtitle={rootFs ? `${perfSubtitle} · busiest: ${rootFs.mount}` : perfSubtitle}
-                  />
-                  <DashTile title="Process CPU vs Memory" sub="each dot is a running process">
-                    {scatter.length ? <ProcScatter points={scatter} /> : <p className="text-[13px] text-subtle py-10 text-center">No process data</p>}
-                  </DashTile>
-                </div>
-
-                {/* ── COMPUTE — PROCESSES ── */}
-                <SectionBand icon="box" title="Compute — Processes" />
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-gutter">
-                  <DashTile title="Top processes by CPU">
-                    <RankBars items={topCpu} empty="No process data" onItem={() => setTab('Processes')} />
-                  </DashTile>
-                  <DashTile title="Top processes by Memory">
-                    <RankBars items={topMem} empty="No process data" onItem={() => setTab('Processes')} />
-                  </DashTile>
-                </div>
-
-                {/* ── STORAGE & NETWORK ── */}
-                <SectionBand icon="desktop" title="Storage & Network" />
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-gutter">
-                  <DashTile title="Filesystem usage" sub={isWin ? 'disk usage per mount' : 'click a mount to browse files'}>
-                    <RankBars items={fsRank} empty="No filesystem data"
-                      onItem={isWin ? undefined : (f) => navigate(`/infra/${id}/files?path=${encodeURIComponent(f.mount)}`)} />
-                  </DashTile>
-                  <DashTile title="Memory breakdown">
-                    <div className="flex h-full flex-col justify-center gap-3">
-                      <Meter label="Used" value={memPct} hint={mem.total_mb ? `${fmtMB(mem.used_mb)} of ${fmtMB(mem.total_mb)}` : 'physical memory'} />
-                      <div className="grid grid-cols-3 gap-2">
-                        {[['Total', mem.total_mb], ['Used', mem.used_mb], ['Free', mem.available_mb ?? mem.free_mb]].map(([k, v]) => (
-                          <div key={k} className="bg-sunken rounded-control p-2.5 text-center">
-                            <p className="text-[10px] font-bold text-subtle uppercase">{k}</p>
-                            <p className="text-[14px] font-black text-fg mt-0.5">{v != null ? fmtMB(v) : '—'}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </DashTile>
-                  <DashTile title="Network">
-                    <div className="flex h-full flex-col justify-center gap-3">
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        {[['Interfaces', `${ifUp}/${ifaces.length}`, 'up'],
-                          ['Connections', data.connections?.count ?? 0, 'active'],
-                          ['Devices', data.neighbors?.length ?? 0, 'seen']].map(([k, v, s]) => (
-                          <button key={k} onClick={() => setTab('Network')} className="hover:opacity-70">
-                            <p className="text-[20px] font-black text-fg leading-none">{v}</p>
-                            <p className="text-[10px] font-bold text-muted mt-1">{k}</p>
-                            <p className="text-[9px] text-subtle">{s}</p>
-                          </button>
-                        ))}
-                      </div>
-                      <div className="divide-y divide-border border-t border-border pt-1.5">
-                        <NetDetailRow label="Gateway" value={data.network?.gateway} />
-                        <NetDetailRow label="DNS" value={(data.network?.dns || []).join(', ')} />
-                      </div>
-                    </div>
-                  </DashTile>
-                </div>
-
-                {/* ── SYSTEM INFORMATION ──
-                    Collapsed by default — a wall of OS/hardware facts nobody
-                    reads on every visit doesn't need to be open by default;
-                    "View details" is one click away when someone actually
-                    wants it. */}
-                <SectionBand icon="info" title="System Information" />
-                <div className="card">
-                  <button
-                    type="button"
-                    onClick={() => setShowSystemInfo((v) => !v)}
-                    className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
-                  >
-                    <Icon name="desktop" size={16} className="shrink-0 text-subtle" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate-safe text-[13px] font-bold text-fg">
-                        {data.system?.os || host.os_type || 'Host details'}
-                      </span>
-                      <span className="mt-0.5 block truncate-safe text-[11px] text-subtle">
-                        {[data.system?.hostname, host.ip_address, data.system?.hardware_vendor && data.system?.hardware_model
-                          ? `${data.system.hardware_vendor} ${data.system.hardware_model}` : null]
-                          .filter(Boolean).join(' · ')}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1.5 text-[12px] font-semibold text-accent-text">
-                      {showSystemInfo ? 'Hide details' : 'View details'}
-                      <Icon name="chevron-right" size={13} className={cn('transition-transform', showSystemInfo && 'rotate-90')} />
-                    </span>
-                  </button>
-
-                  {showSystemInfo && (
-                    <div className="divide-y divide-border border-t border-border px-4">
-                      {[
-                        ['Operating System', data.system?.os],
-                        ['Kernel', data.system?.kernel],
-                        ['Architecture', data.system?.architecture],
-                        ['Hostname', data.system?.hostname],
-                        ['IP Address', host.ip_address],
-                        ['Environment', host.environment],
-                        ['Collector', host.collector === 'agent' ? 'ActMon Agent (push)' : 'SSH (poll)'],
-                        // Hardware / virtualization (from hostnamectl on Linux, CIM on Windows)
-                        ['Virtualization', data.system?.virtualization],
-                        ['Chassis', data.system?.chassis],
-                        ['Hardware Vendor', data.system?.hardware_vendor],
-                        ['Hardware Model', data.system?.hardware_model],
-                        ['Machine ID', data.system?.machine_id],
-                        ['Boot ID', data.system?.boot_id],
-                        ['Firmware', data.system?.firmware_version && data.system?.firmware_date
-                          ? `${data.system.firmware_version} (${data.system.firmware_date})`
-                          : data.system?.firmware_version],
-                      ].filter(([, v]) => v).map(([k, v]) => (
-                        <div key={k} className="flex items-center gap-4 py-2.5">
-                          <span className="w-48 flex-shrink-0 text-[13px] font-bold text-muted uppercase tracking-wide">{k}</span>
-                          <span className={cn('text-[15px] font-semibold text-fg break-all', ['Machine ID', 'Boot ID'].includes(k) && 'font-mono text-[13px]')}>{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            );
-          })()}
+          {tab === 'Overview' && (
+            <HostOverview id={Number(id)} data={data} serverName={host.server_name} agentVersion={agentRow?.agent_version}
+              range={OV_RANGES[ovRangeIdx]} bucket={ovBucket} auto={ovAuto} />
+          )}
 
           {/* ── PORTS ── */}
           {tab === 'Ports' && <PortsPanel ports={data.ports || []} id={id} />}

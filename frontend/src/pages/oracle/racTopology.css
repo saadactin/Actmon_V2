@@ -1,0 +1,210 @@
+/**
+ * Layout and connectors for the Oracle RAC topology diagram.
+ *
+ * The three columns are declared here rather than with utility classes
+ * because the node row, the connector row and the storage row must share one
+ * template — that shared template is what makes a connector drop land exactly
+ * under its node's centre, at any width, with no measurement in JavaScript.
+ *
+ * The connectors are drawn with repeating gradients rather than dashed
+ * borders, because a border's dashes cannot be animated and a frozen dash
+ * pattern reads as a diagram of a dead link. The movement is decoration: it
+ * says "these nodes are joined and these disks are shared", which is a fact
+ * about the cluster's shape, not a measurement. Nothing here is driven by
+ * traffic, replication or throughput.
+ */
+
+/* ── the shared three-column template ──────────────────────────────────── */
+
+.rac-grid {
+  display: grid;
+  /* The side columns must be free to shrink below their content, and
+     `minmax(0, 1fr)` is what allows that: a bare `1fr` floors at min-content,
+     which is how a long hostname could push a card wider than its column and
+     into the interconnect beside it. */
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px) minmax(0, 1fr);
+  align-items: center;
+  /* The centre column IS the gap between the cards. Adding a column gap as
+     well would stop the rail reaching the card edges it is meant to join. */
+  column-gap: 0;
+}
+
+.rac-grid > * {
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* ── the interconnect column ───────────────────────────────────────────── */
+
+/* Stacked, not strung out in a row.
+   Side by side, the two end chips, the "Private Network" pill and the two
+   rails need about 259px of unshrinkable width inside a 224px column — so the
+   row overflowed and spilled across both node cards. That overflow was the
+   collision; margins would only have moved it. Each part now has its own line
+   and the rail is the only thing that has to absorb a width change. */
+.rac-interconnect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  text-align: center;
+}
+
+/* The rail reclaims the column's padding so its ends meet the cards, while the
+   labels above and below keep their breathing room. */
+.rac-interconnect-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% + 28px);
+  margin: 0 -14px;
+}
+
+.rac-rail {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 20px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent-border, #bfdbfe);
+}
+
+/* One travelling dot. Three are stacked with different delays so the rail
+   reads as a stream rather than a single pulse. */
+.rac-rail-dot {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  margin-left: -3px;
+  border-radius: 9999px;
+  background: var(--accent, #3b6ef5);
+  animation: rac-rail-flow 2.6s linear infinite;
+}
+
+.rac-rail-dot:nth-child(2) { animation-delay: 0.85s; }
+.rac-rail-dot:nth-child(3) { animation-delay: 1.7s; }
+
+@keyframes rac-rail-flow {
+  0%   { left: 0;    opacity: 0; }
+  12%  { opacity: 1; }
+  88%  { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+
+/* ── the connector row ─────────────────────────────────────────────────── */
+
+/* A bracket: down from under each node, inward to the centre, then down into
+   the top of the storage card. It occupies its own grid row, so no part of it
+   can cross a card — there is nothing there to cross, and nothing to
+   intercept a click either. */
+.rac-connectors { height: 44px; }
+
+.rac-conn {
+  position: relative;
+  height: 100%;
+}
+
+.rac-conn::before,
+.rac-conn::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+
+/* A horizontal run is the default; a vertical one re-declares both the
+   gradient direction and the dash pitch. */
+.rac-conn::before,
+.rac-conn::after {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--border-strong, #cbd3e1) 0 5px,
+    transparent 5px 11px
+  );
+  background-size: 11px 2px;
+}
+
+/* left column: drop from under node 1, then run right to the column's edge */
+.rac-conn--left::before {
+  left: 50%; top: 0; height: 50%; width: 2px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--border-strong, #cbd3e1) 0 5px,
+    transparent 5px 11px
+  );
+  background-size: 2px 11px;
+  animation: rac-dash-down 1.6s linear infinite;
+}
+.rac-conn--left::after {
+  left: 50%; right: 0; top: calc(50% - 1px); height: 2px;
+  animation: rac-dash-right 1.6s linear infinite;
+}
+
+/* centre column: carry both runs across, then drop into the storage card */
+.rac-conn--mid::before {
+  left: 0; right: 0; top: calc(50% - 1px); height: 2px;
+}
+.rac-conn--mid::after {
+  left: calc(50% - 1px); top: 50%; bottom: 0; width: 2px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--border-strong, #cbd3e1) 0 5px,
+    transparent 5px 11px
+  );
+  background-size: 2px 11px;
+  animation: rac-dash-down 1.6s linear infinite;
+}
+
+/* right column: the mirror of the left */
+.rac-conn--right::before {
+  left: 50%; top: 0; height: 50%; width: 2px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--border-strong, #cbd3e1) 0 5px,
+    transparent 5px 11px
+  );
+  background-size: 2px 11px;
+  animation: rac-dash-down 1.6s linear infinite;
+}
+.rac-conn--right::after {
+  left: 0; width: 50%; top: calc(50% - 1px); height: 2px;
+  animation: rac-dash-left 1.6s linear infinite;
+}
+
+@keyframes rac-dash-down  { to { background-position: 0 11px; } }
+@keyframes rac-dash-right { to { background-position: 11px 0; } }
+@keyframes rac-dash-left  { to { background-position: -11px 0; } }
+
+/* ── stacked (narrow) layout ───────────────────────────────────────────── */
+
+/* Below the breakpoint the three columns become one, the cards stack, and the
+   interconnect sits between them. A bracket reaching sideways to cards that
+   are no longer beside it would point at nothing, so only the centre drop
+   survives and it runs the full height of the connector row. */
+@media (max-width: 1023px) {
+  .rac-grid {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
+  }
+  .rac-interconnect { padding: 4px 0; }
+  .rac-interconnect-line { width: 100%; margin: 0; }
+  .rac-connectors { height: 28px; }
+  .rac-conn--left,
+  .rac-conn--right { display: none; }
+  .rac-conn--mid::before { display: none; }
+  .rac-conn--mid::after { top: 0; bottom: 0; }
+}
+
+/* ── motion preference ─────────────────────────────────────────────────── */
+
+/* Stopped mid-track, a travelling dot looks like a stuck element rather than a
+   deliberate absence of motion, so it is removed outright. The rail and the
+   dashed connectors stay, and they are what carry the meaning. */
+@media (prefers-reduced-motion: reduce) {
+  .rac-rail-dot { display: none; }
+  .rac-conn::before,
+  .rac-conn::after { animation: none; }
+}

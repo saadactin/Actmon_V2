@@ -115,6 +115,41 @@ def oracle_plan_diagnose(plan, sql_stats=None, actual_rows_by_step=None, zero_in
     return {"issues": issues, "hints": hints}
 
 
+def _fold_plan_instability_rows(raw, limit: int = 50):
+    """Fold the one-row-per-(sql_id, plan_hash_value) result into one entry per
+    statement, each carrying the list of plans it is switching between.
+
+    The query is ordered by plan_count DESC, so the first `limit` distinct
+    sql_ids are the worst offenders — the same cap the count-only version of
+    this panel applied, kept so the payload cannot grow without bound on an
+    instance with a badly-behaved cursor cache.
+
+    Split out from the query so it can be tested without an Oracle instance.
+    """
+    by_sql = {}
+    for r in raw:
+        sid = _safe_str(r.get("SQL_ID"))
+        entry = by_sql.get(sid)
+        if entry is None:
+            if len(by_sql) >= limit:
+                continue
+            entry = {
+                "sql_id":           sid,
+                "plan_count":       _safe_int(r.get("PLAN_COUNT")),
+                "child_cursors":    _safe_int(r.get("CHILD_CURSORS")),
+                "total_executions": _safe_int(r.get("TOTAL_EXECUTIONS")),
+                "sql_text":         _safe_str(r.get("SQL_TEXT")),
+                "plans":            [],
+            }
+            by_sql[sid] = entry
+        entry["plans"].append({
+            "plan_hash_value": _safe_int(r.get("PLAN_HASH_VALUE")),
+            "child_cursors":   _safe_int(r.get("PLAN_CHILD_CURSORS")),
+            "executions":      _safe_int(r.get("PLAN_EXECUTIONS")),
+        })
+    return list(by_sql.values())
+
+
 def oracle_plan_instability(conn_id: int, db: Session):
     """SQL statements currently holding MORE THAN ONE distinct plan_hash_value
     in the shared pool — Oracle is genuinely flip-flopping plans for the same
@@ -127,25 +162,36 @@ def oracle_plan_instability(conn_id: int, db: Session):
     unstable = []
     errors = []
     try:
+        # One row per (sql_id, plan_hash_value) so the actual hashes come back,
+        # not just a count of them — "5 distinct plans" is a symptom, the plan
+        # hashes are what you take to v$sql_plan or a SQL plan baseline.
+        #
+        # The statement-level totals ride along as analytic sums over the
+        # grouped rows, which keeps this to a single pass of v$sql. LISTAGG was
+        # the obvious alternative and was avoided deliberately: its result is
+        # VARCHAR2(4000) and ORA-01489 on a statement with many plans would
+        # take out the whole panel.
         raw = _rows(engine, """
-            SELECT sql_id, COUNT(DISTINCT plan_hash_value) AS plan_count, COUNT(*) AS child_cursors,
-                   SUM(executions) AS total_executions, MAX(sql_text) AS sql_text
-            FROM v$sql
-            GROUP BY sql_id
-            HAVING COUNT(DISTINCT plan_hash_value) > 1
-            ORDER BY plan_count DESC
-            FETCH FIRST 50 ROWS ONLY
+            SELECT sql_id, plan_hash_value, sql_text, plan_count, child_cursors,
+                   total_executions, plan_child_cursors, plan_executions
+            FROM (
+                SELECT sql_id,
+                       plan_hash_value,
+                       MAX(sql_text)                                  AS sql_text,
+                       COUNT(*)                                       AS plan_child_cursors,
+                       SUM(executions)                                AS plan_executions,
+                       COUNT(*)              OVER (PARTITION BY sql_id) AS plan_count,
+                       SUM(COUNT(*))         OVER (PARTITION BY sql_id) AS child_cursors,
+                       SUM(SUM(executions))  OVER (PARTITION BY sql_id) AS total_executions
+                FROM v$sql
+                GROUP BY sql_id, plan_hash_value
+            )
+            WHERE plan_count > 1
+            ORDER BY plan_count DESC, sql_id, plan_executions DESC
+            FETCH FIRST 400 ROWS ONLY
         """)
-        unstable = [
-            {
-                "sql_id":           _safe_str(r.get("SQL_ID")),
-                "plan_count":       _safe_int(r.get("PLAN_COUNT")),
-                "child_cursors":    _safe_int(r.get("CHILD_CURSORS")),
-                "total_executions": _safe_int(r.get("TOTAL_EXECUTIONS")),
-                "sql_text":         _safe_str(r.get("SQL_TEXT")),
-            }
-            for r in raw
-        ]
+
+        unstable = _fold_plan_instability_rows(raw)
     except Exception as exc:
         errors.append(f"plan_instability: {exc}")
 

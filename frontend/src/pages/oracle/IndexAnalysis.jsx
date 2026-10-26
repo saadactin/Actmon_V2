@@ -241,6 +241,9 @@ export default function OracleIndexAnalysis() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'index', label: 'Index' },
                       { key: 'table', label: 'Table' },
@@ -257,11 +260,11 @@ export default function OracleIndexAnalysis() {
                         cells: {
                           index: (
                             <span className="block">
-                              <span className="font-mono text-[12px] font-semibold text-accent-text">{f.index_name}</span>
-                              <span className="mt-0.5 block font-mono text-[10px] text-subtle">{f.owner}</span>
+                              <span className="font-mono font-semibold text-accent-text">{f.index_name}</span>
+                              <span className="mt-0.5 block font-mono text-subtle">{f.owner}</span>
                             </span>
                           ),
-                          table: <span className="font-mono text-[12px]">{f.table_name}</span>,
+                          table: <span className="font-mono">{f.table_name}</span>,
                           blevel: (
                             <span className={num(f.blevel) >= 5 ? 'font-mono font-bold text-danger-fg' : 'font-mono font-semibold'}>
                               {f.blevel}
@@ -298,6 +301,9 @@ export default function OracleIndexAnalysis() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'index', label: 'Index' },
                       { key: 'table', label: 'Table' },
@@ -313,11 +319,11 @@ export default function OracleIndexAnalysis() {
                         cells: {
                           index: (
                             <span className="block">
-                              <span className="font-mono text-[12px] font-semibold text-danger-fg">{u.index_name}</span>
-                              <span className="mt-0.5 block font-mono text-[10px] text-subtle">{u.owner}</span>
+                              <span className="font-mono font-semibold text-danger-fg">{u.index_name}</span>
+                              <span className="mt-0.5 block font-mono text-subtle">{u.owner}</span>
                             </span>
                           ),
-                          table: <span className="font-mono text-[12px]">{u.table_name}</span>,
+                          table: <span className="font-mono">{u.table_name}</span>,
                           type: <Badge tone="neutral" size="xs">{u.index_type}</Badge>,
                           unique: u.uniqueness === 'UNIQUE'
                             ? <Badge tone="warning" size="xs">Unique — blocks inserts</Badge>
@@ -363,6 +369,9 @@ export default function OracleIndexAnalysis() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'index', label: 'Index' },
                       { key: 'table', label: 'Table' },
@@ -377,11 +386,11 @@ export default function OracleIndexAnalysis() {
                       cells: {
                         index: (
                           <span className="block">
-                            <span className="font-mono text-[12px] font-semibold text-accent-text">{ix.index_name}</span>
-                            <span className="mt-0.5 block font-mono text-[10px] text-subtle">{ix.owner}</span>
+                            <span className="font-mono font-semibold text-accent-text">{ix.index_name}</span>
+                            <span className="mt-0.5 block font-mono text-subtle">{ix.owner}</span>
                           </span>
                         ),
-                        table: <span className="font-mono text-[12px]">{ix.table_name}</span>,
+                        table: <span className="font-mono">{ix.table_name}</span>,
                         type: <Badge tone="neutral" size="xs">{ix.index_type}</Badge>,
                         unique: ix.uniqueness === 'UNIQUE'
                           ? <Badge tone="info" size="xs">Unique</Badge> : null,
@@ -391,7 +400,7 @@ export default function OracleIndexAnalysis() {
                           </Badge>
                         ),
                         rows: <span className="font-mono">{fmtNumber(ix.num_rows)}</span>,
-                        leaf: <span className="font-mono text-[12px] text-muted">{fmtNumber(ix.leaf_blocks)}</span>,
+                        leaf: <span className="font-mono text-muted">{fmtNumber(ix.leaf_blocks)}</span>,
                       },
                     }))}
                     empty={<EmptyState icon="layers"

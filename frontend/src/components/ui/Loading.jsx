@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import cn from '@/lib/cn';
+import Actmon3DLoader from '@/components/loader/Actmon3DLoader';
+import { variantForPath } from '@/components/loader/loaderVariants';
 
 /**
  * LOADING STATES — one definition, so waiting looks the same everywhere.
@@ -81,113 +83,6 @@ export function MonitorBars({ className }) {
   );
 }
 
-// 5-frame mascot "story" — same character pulling the loading bar further
-// each frame, ending on a "Complete!" beat, then looping. Pre-converted to
-// WebP (was ~1.3MB/frame as PNG, ~55KB/frame as WebP — same look, a
-// fraction of the weight for an asset that repeats while waiting).
-const LOADER_FRAMES = [1, 2, 3, 4, 5].map((n) => encodeURI(`/loader annimation/loader${n}.webp`));
-// Boundaries — which frame is showing for a given live percentage. The last
-// one is 100 (not e.g. 95): the "Complete!" frame must switch in at the
-// exact same instant the percentage number below it reads 100, or the two
-// visibly disagree (image says done, number still climbing) for the last
-// stretch of the climb.
-const LOADER_THRESHOLDS = [22, 50, 77, 100];
-
-function frameIndexForPct(pct) {
-  for (let i = 0; i < LOADER_THRESHOLDS.length; i += 1) {
-    if (pct < LOADER_THRESHOLDS[i]) return i;
-  }
-  return LOADER_THRESHOLDS.length;
-}
-
-function preloadLoaderFrames() {
-  LOADER_FRAMES.forEach((src) => { const im = new Image(); im.src = src; });
-}
-
-function prefersReducedMotion() {
-  if (typeof document === 'undefined') return false;
-  return document.documentElement.getAttribute('data-motion') === 'reduced'
-    || (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
-}
-
-const STORY_CLIMB_MS = 5200; // 6% -> 100%, easing off near the end
-const STORY_HOLD_MS = 1600;  // linger on the "Complete!" beat before looping
-const STORY_CYCLE_MS = STORY_CLIMB_MS + STORY_HOLD_MS;
-
-/**
- * The mascot "story" — climbs from ~6% to 100% (easing off, not linear),
- * holds briefly on the frame-5 "Complete!" beat, then loops back to the
- * start. This is a repeating decorative loop, not a readout of the real
- * request's actual progress (there's no way to know that here) — the
- * caller's own `title`/`steps` text next to it is what stays honest about
- * what's actually happening; this is just company while it waits, the same
- * way a looping spinner GIF would be, except it periodically resolves into
- * its own little "done!" beat instead of spinning forever with no payoff.
- *
- * Frames are preloaded on mount so advancing through them never pops in
- * blank. Skipped down to a single static first frame under reduced motion.
- */
-function LoaderStory({ className }) {
-  const [pct, setPct] = useState(6);
-  const [skip] = useState(prefersReducedMotion);
-
-  useEffect(() => { preloadLoaderFrames(); }, []);
-
-  useEffect(() => {
-    if (skip) return undefined;
-    let raf;
-    let start = null;
-    let lastShown = -1;
-    const tick = (ts) => {
-      if (start === null) start = ts;
-      const elapsed = (ts - start) % STORY_CYCLE_MS;
-      let next;
-      if (elapsed < STORY_CLIMB_MS) {
-        const t = elapsed / STORY_CLIMB_MS;
-        const eased = 1 - (1 - t) ** 3;
-        next = Math.round(6 + eased * (100 - 6));
-      } else {
-        next = 100;
-      }
-      if (next !== lastShown) {
-        lastShown = next;
-        setPct(next);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [skip]);
-
-  const frameIdx = skip ? 0 : frameIndexForPct(pct);
-
-  return (
-    <div className={cn('mx-auto', className)}>
-      <img
-        src={LOADER_FRAMES[frameIdx]}
-        alt=""
-        aria-hidden="true"
-        className="mx-auto mb-3 w-full max-w-[560px] rounded-2xl object-contain shadow-md"
-      />
-      {!skip && (
-        <div className="mx-auto w-full max-w-[340px]" aria-hidden="true">
-          <div className="h-2 w-full overflow-hidden rounded-full bg-border">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${pct}%`,
-                background: pct >= 100 ? 'var(--success)' : 'var(--accent)',
-                transition: 'width 120ms linear, background-color 200ms ease',
-              }}
-            />
-          </div>
-          <p className="mt-1 text-[11px] font-semibold text-muted">{pct}%</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /**
  * A page or tab that has nothing to render yet.
  *
@@ -209,15 +104,84 @@ function LoaderStory({ className }) {
  * for the rare spot too tight for it (e.g. inside a small modal).
  */
 export function PageLoading({
-  title = 'Loading…', subtitle, steps, stepSeconds = 1.4, className, minHeight = 460, illustration = true,
+  title = 'Loading…', subtitle, steps, stepSeconds = 1.4, className, minHeight, illustration = true,
+  variant, delayMs = 220, done = false, failed = false, nodes,
 }) {
-  const [stepIdx, setStepIdx] = useState(0);
+  /* Waits shorter than this never show the composition: a 3D scene flashing
+     up for a 100 ms request is flicker, not feedback. The space is held, so
+     the layout does not jump when it does appear. */
+  const [shown, setShown] = useState(delayMs <= 0);
   useEffect(() => {
-    if (!steps || steps.length < 2) return undefined;
-    const t = setInterval(() => setStepIdx((i) => (i + 1) % steps.length), stepSeconds * 1000);
-    return () => clearInterval(t);
-  }, [steps, stepSeconds]);
+    if (delayMs <= 0) return undefined;
+    const t = setTimeout(() => setShown(true), delayMs);
+    return () => clearTimeout(t);
+  }, [delayMs]);
 
+  if (!illustration) {
+    return <CompactPageLoading {...{ title, subtitle, steps, stepSeconds, className, minHeight: minHeight ?? 460 }} />;
+  }
+
+  /* Inside the content area only — the nav, page header, tabs and instance
+     picker above stay visible and usable. The context (database, cloud,
+     infrastructure…) follows the route, so only the subsystems this page
+     actually queries are drawn. No task is registered, so the bar is
+     indeterminate and no percentage is shown. */
+  const ctx = variant || variantForPath(typeof window !== 'undefined' ? window.location.pathname : '');
+  return (
+    <div className={cn('w-full', className)} aria-live="polite" aria-busy="true">
+      {shown
+        ? (
+          <Actmon3DLoader variant={ctx} title={title} fullscreen={false} minHeight={minHeight}
+            done={done} failed={failed} nodes={nodes} />
+        )
+        : <div style={{ height: minHeight ?? 'clamp(440px, calc(100vh - 290px), 720px)' }} />}
+      {shown && (steps?.length || subtitle) && (
+        <p className="mt-2 flex items-center justify-center gap-2 text-[13px] text-muted">
+          <MonitorBars />
+          <CyclingStep steps={steps} subtitle={subtitle} stepSeconds={stepSeconds} />
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Keeps a page's loader mounted for the short reveal (stage 10) after its
+ * request SUCCEEDS — and only then.
+ *
+ *   const reveal = useLoaderReveal(isLoading, { ok: !error });
+ *   if (reveal.show) return <PageLoading done={reveal.done} … />;
+ *
+ * No reveal when the request failed (the page's error UI appears at once),
+ * and none when the loader never became visible (a fast request) — so a
+ * quick load is never held back to play an animation.
+ */
+export function useLoaderReveal(loading, { ok = true, ms = 520, delayMs = 220 } = {}) {
+  const startedAt = useRef(loading ? Date.now() : null);
+  const [prev, setPrev] = useState(loading);
+  const [exiting, setExiting] = useState(false);
+
+  // Derived during render (not in an effect), so the dashboard never paints
+  // for one frame before the reveal starts.
+  if (prev !== loading) {
+    setPrev(loading);
+    if (loading) startedAt.current = Date.now();
+    else if (ok && startedAt.current && Date.now() - startedAt.current > delayMs) setExiting(true);
+  }
+
+  useEffect(() => {
+    if (!exiting) return undefined;
+    const t = setTimeout(() => setExiting(false), ms);
+    return () => clearTimeout(t);
+  }, [exiting, ms]);
+
+  return { show: loading || exiting, done: !loading && exiting };
+}
+
+/** The radar-pulse version, for the few places too tight for the composition
+ *  (a small modal, a popover). Its own component so PageLoading's branch above
+ *  does not sit in front of this one's hooks. */
+function CompactPageLoading({ title, subtitle, steps, stepSeconds, className, minHeight }) {
   return (
     <div
       className={cn('grid w-full place-items-center', className)}
@@ -225,27 +189,29 @@ export function PageLoading({
       aria-live="polite"
     >
       <div className="text-center">
-        {illustration ? (
-          <LoaderStory className="mb-1" />
-        ) : (
-          <MonitorPulse size="lg" className="mx-auto" />
-        )}
+        <MonitorPulse size="lg" className="mx-auto" />
         <p className="mt-1 text-[15px] font-semibold text-fg">{title}</p>
-        {steps?.length > 0 && (
-          <p className="mt-1 flex items-center justify-center gap-2 text-[13px] text-muted transition-opacity">
-            <MonitorBars />
-            {steps[stepIdx]}
-          </p>
-        )}
-        {!steps?.length && subtitle && (
+        {(steps?.length > 0 || subtitle) && (
           <p className="mt-1 flex items-center justify-center gap-2 text-[13px] text-muted">
             <MonitorBars />
-            {subtitle}
+            <CyclingStep steps={steps} subtitle={subtitle} stepSeconds={stepSeconds} />
           </p>
         )}
       </div>
     </div>
   );
+}
+
+/** The optional "what is happening" line. Its own component because the hook
+ *  that cycles it cannot live after PageLoading's early return. */
+function CyclingStep({ steps, subtitle, stepSeconds = 1.4 }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (!steps || steps.length < 2) return undefined;
+    const t = setInterval(() => setI((x) => (x + 1) % steps.length), stepSeconds * 1000);
+    return () => clearInterval(t);
+  }, [steps, stepSeconds]);
+  return <>{steps?.length ? steps[i % steps.length] : subtitle}</>;
 }
 
 /** A panel, table or card that is filling in. Compact, no layout jump. */

@@ -52,6 +52,10 @@ export default function ApexDonut({ items = [], centerLabel = 'Total', height = 
       fontFamily: 'inherit',
       animations: { enabled: true, speed: 500 },
       background: 'transparent',
+      events: {
+        dataPointSelection: (_e, _ctx, cfg) => items[cfg.dataPointIndex]?.onClick?.(),
+        legendClick: (_ctx, i) => { items[i]?.onClick?.(); return false; },
+      },
     },
     labels,
     colors,
@@ -77,7 +81,7 @@ export default function ApexDonut({ items = [], centerLabel = 'Total', height = 
     dataLabels: { enabled: false },
     legend: {
       show: true, position: 'bottom', fontSize: '12px', fontFamily: 'inherit',
-      labels: { colors: muted }, markers: { size: 6 }, itemMargin: { horizontal: 8, vertical: 4 },
+      labels: { colors: muted }, markers: { size: 6 }, onItemClick: { toggleDataSeries: false }, itemMargin: { horizontal: 8, vertical: 4 },
     },
     tooltip: { y: { formatter: (val) => `${val} hosts` } },
   };

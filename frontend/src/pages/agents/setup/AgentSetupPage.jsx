@@ -352,8 +352,7 @@ export default function AgentSetupPage() {
   // query-string param, which is kept only as a fallback for a hard refresh
   // of this page (state doesn't survive that, the query string does).
   const agentParam = location.state?.agent ?? params.get('agent');
-  const tokenParam = location.state?.token ?? params.get('token');
-  const agentQS = agentParam ? `?agent=${encodeURIComponent(agentParam)}${tokenParam ? `&token=${encodeURIComponent(tokenParam)}` : ''}` : '';
+  const agentQS = agentParam ? `?agent=${encodeURIComponent(agentParam)}` : '';
 
   const isIntro = tab === 'Intro';
   const isDX = tab === 'Digital Experience';

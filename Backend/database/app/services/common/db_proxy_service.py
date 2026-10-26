@@ -12,6 +12,7 @@ using a direct SQLAlchemy connection.
     runner.via                          # 'agent' or 'direct'
 """
 import json
+import re
 import logging
 import time
 from urllib.parse import quote_plus
@@ -213,8 +214,11 @@ def _render_sql(clause, params):
                 rep = str(v)
             else:
                 rep = "'" + str(v).replace("'", "''") + "'"
-            # replace :key not part of a longer identifier
-            sql = sql.replace(":" + k, rep)
+            # Replace :key only as a whole bind name. A plain str.replace turned
+            # ":n10" into "<value of :n1>0" — ORA-00907 on any query with ten or
+            # more binds. A function replacement also keeps backslashes in the
+            # value literal.
+            sql = re.sub(r":" + re.escape(k) + r"(?![A-Za-z0-9_$#])", lambda _m, r=rep: r, sql)
     return sql
 
 

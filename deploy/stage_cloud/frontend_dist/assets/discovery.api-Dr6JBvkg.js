@@ -1,0 +1,1 @@
+import{c as a}from"./axios-ChsN9HTU.js";const r=async t=>{const{data:s}=await a.post(`/discovery/${t}`);return s},c=async t=>{const{data:s}=await a.get(`/discovery/status/${t}`);return s};export{c as g,r as t};

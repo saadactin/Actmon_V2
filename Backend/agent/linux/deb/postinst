@@ -26,7 +26,30 @@ case "$1" in
     # --break-system-packages is needed on PEP 668 (Debian 12+/Ubuntu 24.04+) systems.
     pip3 install --quiet --break-system-packages oracledb clickhouse-driver 2>/dev/null \
       || pip3 install --quiet oracledb clickhouse-driver 2>/dev/null \
-      || echo "Note: could not pip-install oracledb/clickhouse-driver — Oracle/ClickHouse push will stay idle on this host until installed manually." >&2
+      || true
+
+# Report what is actually importable afterwards. The pip above is allowed to
+# fail (no internet on a DB host is normal) and the install must still succeed,
+# but a silent failure here is what produces "No module named 'oracledb'" in a
+# connection test weeks later, with nothing pointing back to this moment.
+missing=""
+for m in oracledb clickhouse_driver; do
+  python3 -c "import $m" 2>/dev/null || missing="$missing $m"
+done
+if [ -n "$missing" ]; then
+  echo "**********************************************************************" >&2
+  echo " ActMon Agent: optional database drivers are NOT installed:$missing" >&2
+  echo "" >&2
+  echo " Everything else works. Those engines cannot be monitored from this" >&2
+  echo " host until the driver is present — a connection test will fail with" >&2
+  echo " \"No module named ...\"." >&2
+  echo "" >&2
+  echo " To fix (needs network or a local wheel):" >&2
+  echo "   pip3 install$missing" >&2
+  echo "   # on Debian 12+ / Ubuntu 24.04+ add: --break-system-packages" >&2
+  echo "   systemctl restart actmon-agent" >&2
+  echo "**********************************************************************" >&2
+fi
 
     # Remove any stale hand-made unit in /etc that would SHADOW this package's unit
     # (older installs ran the bash agent from /etc; it must not win over the Python one).

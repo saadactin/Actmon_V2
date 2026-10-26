@@ -269,7 +269,8 @@ def host_overview(agent_name: str, db: Session = Depends(get_db)):
             "memory": {"total_mb": mem.get("total_mb"), "used_mb": mem.get("used_mb"),
                        "used_pct": mem.get("used_pct")},
             "filesystems": fs[:8],
-            "network": (infra.get("interfaces") or infra.get("network") or [])[:8],
+            # "network" is a summary dict (its own "interfaces" list inside) — never slice the dict itself
+            "network": (infra.get("interfaces") or (infra.get("network") or {}).get("interfaces") or [])[:8],
             "uptime": infra.get("uptime"),
             "os": infra.get("os") or infra.get("os_version"),
             "processes_top": (infra.get("processes") or [])[:10],
@@ -278,3 +279,32 @@ def host_overview(agent_name: str, db: Session = Depends(get_db)):
         },
         "events": events,
     }
+
+
+# ── Remove an agent (Agents page → Remove) ────────────────────────────────────────────────────────
+# Both need the 'delete' permission on /agents (existing RBAC). /removal-plan is a dry run that lists exactly
+# what /by-id/{id} DELETE will remove, so the confirmation dialog never under-states it.
+from fastapi import HTTPException  # noqa: E402
+from app.services.agent import agent_removal_service as removal  # noqa: E402
+from app.services.auth.permission_guard import require_permission  # noqa: E402
+from app.services.auth.tenant_context import scope_org_id  # noqa: E402
+
+
+def _org(claims):
+    return scope_org_id({"org_id": claims.get("org_id"), "is_super": claims.get("role_id") == 1 and claims.get("org_id") == 1})
+
+
+@router.get("/by-id/{agent_id}/removal-plan", summary="What removing this agent would delete (dry run)")
+def route_agent_removal_plan(agent_id: int, db: Session = Depends(get_db), claims: dict = Depends(require_permission("/agents", "delete"))):
+    p = removal.plan(agent_id, db, _org(claims))
+    if p is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return p
+
+
+@router.delete("/by-id/{agent_id}", summary="Remove an agent from monitoring (revokes a host agent's token)")
+def route_remove_agent(agent_id: int, db: Session = Depends(get_db), claims: dict = Depends(require_permission("/agents", "delete"))):
+    res = removal.remove(agent_id, db, _org(claims), claims.get("user_id"))
+    if res is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return res

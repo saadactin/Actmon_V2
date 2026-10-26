@@ -19,7 +19,13 @@ export const APP = {
       background instead of showing a mismatched box) — override via
       VITE_APP_LOGO for a white-label build, or set both to '' to fall back
       to the drawn inline mark in LogoMark.jsx. */
-  logoUrl: env.VITE_APP_LOGO || '/actmon-logo-transparent.png',
+  /* "ACTMON Cloud Monitoring Logo (3).png", used as it is — icon, ACTMON and
+     INTELLIGENT MONITORING. The only change is the empty navy margin around
+     the artwork, trimmed away: the master is 1672x941 with the lockup in the
+     middle, and at top-bar height that margin would shrink the name to a
+     smudge. Unlike the earlier master, this one's wordmark is white and
+     bright blue, so it reads on the dark bar without any adjustment. */
+  logoUrl: env.VITE_APP_LOGO || '/actmon-logo-2026.webp',
   /** ActMon AI's mark. Point this at the Figma export (e.g. /actmon-ai.svg
       dropped in public/) and it replaces the drawn fallback everywhere. */
   aiLogoUrl: env.VITE_APP_AI_LOGO || '',

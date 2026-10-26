@@ -23,6 +23,16 @@ import {
 import { ago, fullTime, num } from '@/lib/format';
 import { APP } from '@/config/app.config';
 import AgentCard from './AgentCard';
+import { OsMark } from '@/components/dashboard/TopHostsCard';
+import { Suspense, lazy } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import InfraHostCard from '@/pages/infra/InfraHostCard';
+import { getLiveStatus, listOsServers, refreshServerStatus } from '@/api/servers';
+import { QK } from '@/api/queryKeys';
+
+const XTerminal = lazy(() => import('@/components/terminal/XTerminal'));
+import RemoveAgentDialog from './RemoveAgentDialog';
+import { usePermissions } from '@/hooks/usePermissions';
 
 /** KPI card accents — reference-matched, same --agent-* tokens as the pill
     filters below, so a colour means the same thing in both places on this
@@ -56,9 +66,38 @@ const STATUS_BADGE_COLORS = {
  * tones, thresholds and the poll interval are configuration rather than literals
  * scattered through this file.
  */
+/** OS label for the OS Server column: the agent's reported os_type, shortened to its family when that is all it says. */
+function osName(os) {
+  const v = String(os || '').trim();
+  if (!v) return 'Unknown';
+  if (/^win/i.test(v)) return v.length <= 8 ? 'Windows' : v;
+  if (/^linux$/i.test(v)) return 'Linux';
+  return v;
+}
+
 export default function AgentsPage() {
   const navigate = useNavigate();
   const api = useAgents();
+  const { can } = usePermissions();
+  const canRemove = can('/agents', 'delete');
+  const [removing, setRemoving] = useState(null);   // agent being removed (dialog open)
+  const [terminalServer, setTerminalServer] = useState(null);
+  const qc = useQueryClient();
+  // Grid cards are the SAME card the Infrastructure page uses, fed by the same host list + live-status merge,
+  // so both pages show identical values for a host.
+  const serversQ = useQuery({ queryKey: QK.osServers(), queryFn: () => listOsServers(), refetchInterval: 60000 });
+  const liveQ = useQuery({ queryKey: ['liveStatus'], queryFn: getLiveStatus, refetchInterval: 15000, staleTime: 10000 });
+  const refreshMutation = useMutation({ mutationFn: refreshServerStatus, onSuccess: () => qc.invalidateQueries({ queryKey: QK.osServers() }) });
+  const hostFor = useMemo(() => {
+    const live = {};
+    for (const r of (liveQ.data?.data || [])) live[r.id] = r;
+    const by = new Map();
+    for (const s of (serversQ.data || [])) {
+      const merged = live[s.id] && s.collector !== 'rac-peer' ? { ...s, status: live[s.id].os_status } : s;
+      [s.server_name, s.hostname].filter(Boolean).forEach((n) => { const k = String(n).toLowerCase(); if (!by.has(k)) by.set(k, merged); });
+    }
+    return (a) => by.get(String(a.name || '').toLowerCase()) || by.get(String(a.hostname || '').toLowerCase()) || null;
+  }, [serversQ.data, liveQ.data]);
 
   /* This page shows only the physical host agent that's actually installed on
      a server. A single host agent can feed many database connections, and the
@@ -66,7 +105,30 @@ export default function AgentsPage() {
      track that mapping — those rows are real and still power each database's
      own agent detail page (DatabaseAgentPage), but they are not separate
      installed agents, so they don't get their own row here. */
-  const agents = useMemo(() => api.agents.filter((a) => !a.has_connection), [api.agents]);
+  // Host agents only (the installed agent on each server); database rows live on the Database pages.
+  // RAC peers have no agent of their own: the agent on a sibling node of the same cluster reads them over SSH.
+  // They get a row here (marked "via <agent host>") so every monitored cluster node is visible, but no remove
+  // action, since there is no installed agent or token to revoke.
+  const agents = useMemo(() => {
+    const hostAgents = api.agents.filter((a) => !a.has_connection && String(a.db_type || '').toLowerCase() === 'host');
+    const servers = serversQ.data || [];
+    const known = new Set(hostAgents.flatMap((a) => [a.name, a.hostname]).filter(Boolean).map((n) => String(n).toLowerCase()));
+    const pct = (v) => { const n = parseFloat(String(v ?? '').replace('%', '')); return Number.isFinite(n) ? n : 0; };
+    const peers = servers
+      .filter((s) => s.collector === 'rac-peer' && !known.has(String(s.server_name || '').toLowerCase()))
+      .map((s) => {
+        const via = servers.find((o) => o.id !== s.id && o.collector === 'agent' && o.cluster_name && o.cluster_name === s.cluster_name);
+        return {
+          id: null, name: s.server_name, hostname: s.hostname, ip_address: s.ip_address, os_type: s.os_type || 'Linux',
+          environment: s.environment, db_type: 'host', viaPeer: via?.server_name || 'cluster peer', serverId: s.id,
+          status: s.status === 'Connected' ? 'online' : s.status === 'Warning' ? 'warning' : 'offline',
+          agent_host_cpu: pct(s.cpu_usage), agent_host_memory: pct(s.ram_usage), active_sessions: null,
+          last_heartbeat: s.updated_at || null,
+        };
+      });
+    // Only once the real agent list is in: peers alone would read as "these are all your agents".
+    return api.isLoading || api.error ? hostAgents : [...hostAgents, ...peers];
+  }, [api.agents, api.isLoading, api.error, serversQ.data]);
   const counts = useMemo(() => computeAgentCounts(agents), [agents]);
   const options = useMemo(() => computeAgentOptions(agents), [agents]);
 
@@ -123,19 +185,20 @@ export default function AgentsPage() {
     setStatus(next === 'all' ? 'all' : (STAT_CARDS.find((c) => c.key === next)?.filter || 'all'));
   };
 
-  const openAgent = (agent) => navigate(`/agents/${encodeURIComponent(agent.name)}`);
+  const openAgent = (agent) => navigate(agent.viaPeer ? `/infra/${agent.serverId}` : `/agents/${encodeURIComponent(agent.name)}`);
 
   /* ── list-view table ─────────────────────────────────────────────────────── */
   const columns = [
     { key: 'srNo', label: 'Sr. No.', align: 'center', width: 64 },
     { key: 'agent', label: 'Agent/Host', sortable: true, sortKey: 'name', width: 322 },
-    { key: 'engine', label: 'Engine', align: 'center', sortable: true, width: 116 },
+    { key: 'os', label: 'OS Server', align: 'center', sortable: true, width: 150 },
     { key: 'environment', label: 'Environment', align: 'center', sortable: true, width: 232 },
     { key: 'status', label: 'Status', align: 'center', sortable: true, width: 194 },
     { key: 'cpu', label: 'Agent CPU', align: 'center', sortable: true, width: 130 },
     { key: 'memory', label: 'Agent Host Memory', align: 'center', sortable: true, width: 150 },
     { key: 'sessions', label: 'Sessions', align: 'center', sortable: true, width: 90 },
     { key: 'seen', label: 'Last Seen', align: 'center', sortable: true, width: 104 },
+    ...(canRemove ? [{ key: 'actions', label: 'Actions', align: 'center', width: 90 }] : []),
   ];
 
   const rows = filtered.map((a) => {
@@ -150,7 +213,7 @@ export default function AgentsPage() {
       onClick: () => openAgent(a),
       sort: {
         name: a.name || '',
-        engine: engine.label,
+        os: osName(a.os_type),
         environment: a.environment || '',
         status: state.label,
         cpu,
@@ -180,9 +243,19 @@ export default function AgentsPage() {
                 <span className="font-normal text-subtle"> - {a.hostname || a.ip_address}</span>
               )}
             </span>
+            {a.viaPeer && (
+              <Badge tone="info" size="xs" className="shrink-0" title={`No agent installed on this node. The agent on ${a.viaPeer} collects it over SSH.`}>
+                via {a.viaPeer} (SSH)
+              </Badge>
+            )}
           </div>
         ),
-        engine: <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{engine.label}</span>,
+        os: (
+          <span className="inline-flex items-center gap-2" title={a.os_type || 'OS not reported'}>
+            <OsMark os={a.os_type} size={16} />
+            <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>{osName(a.os_type)}</span>
+          </span>
+        ),
         environment: (
           <span className={CELL_TEXT} style={CELL_TEXT_STYLE}>
             {a.environment || '—'}
@@ -226,6 +299,13 @@ export default function AgentsPage() {
             {a.last_heartbeat ? ago(a.last_heartbeat) : 'Never'}
           </span>
         ),
+        actions: canRemove && a.id != null ? (
+          <span className="inline-flex justify-center">
+            <IconButton icon="trash" label={`Remove agent ${a.name}`} size="sm"
+              onClick={(e) => { e.stopPropagation(); setRemoving(a); }}
+              className="text-danger-fg hover:bg-danger-soft" />
+          </span>
+        ) : null,
       },
     };
   });
@@ -440,13 +520,22 @@ export default function AgentsPage() {
 
       {/* ── the agents ── */}
       <div className="mt-6">
-        {filtered.length === 0 ? (
+        {api.error && agents.length === 0 ? (
+          <div className="card px-card py-14">
+            <EmptyState
+              icon="alert"
+              title="Agents could not be loaded"
+              body={api.error?.message || 'The agent list request failed. It is retried automatically.'}
+              action={<Button size="sm" icon="refresh" onClick={api.refresh}>Retry</Button>}
+            />
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="card px-card py-14">
             <EmptyState
               icon="agent"
-              title={agents.length === 0 ? 'No agents registered' : 'No agents match filters'}
+              title={agents.length === 0 ? 'No host agents registered' : 'No agents match filters'}
               body={agents.length === 0
-                ? 'Register a database agent to start monitoring.'
+                ? 'Install the ActMon agent on a server to start monitoring it.'
                 : 'Try adjusting your search or filter criteria.'}
               action={agents.length === 0 ? (
                 <Button variant="primary" icon="plus" onClick={() => navigate('/agents/setup')}>
@@ -461,7 +550,25 @@ export default function AgentsPage() {
           <>
             <div className="grid grid-cols-1 gap-gutter sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {pagedForGrid.map((agent) => (
-                <AgentCard key={agent.name} agent={agent} onOpen={openAgent} />
+                hostFor(agent) ? (
+                  <InfraHostCard
+                    key={agent.name}
+                    host={hostFor(agent)}
+                    onOpen={() => openAgent(agent)}
+                    onTerminal={setTerminalServer}
+                    onRefresh={refreshMutation.mutate}
+                    refreshing={refreshMutation.isPending && refreshMutation.variables === hostFor(agent).id}
+                    canExecute={can('/infra', 'execute')}
+                    extraAction={agent.viaPeer ? (
+                      <Badge tone="info" size="xs" title={`No agent installed on this node. The agent on ${agent.viaPeer} collects it over SSH.`}>via {agent.viaPeer} (SSH)</Badge>
+                    ) : canRemove && agent.id != null ? (
+                      <IconButton icon="trash" label={`Remove agent ${agent.name}`} size="sm" className="text-danger-fg hover:bg-danger-soft"
+                        onClick={(e) => { e.stopPropagation(); setRemoving(agent); }} />
+                    ) : null}
+                  />
+                ) : (
+                  <AgentCard key={agent.name} agent={agent} onOpen={openAgent} onRemove={canRemove && agent.id != null ? () => setRemoving(agent) : undefined} />
+                )
               ))}
             </div>
             {pager && <div className="card mt-4">{pager}</div>}
@@ -486,6 +593,24 @@ export default function AgentsPage() {
           </>
         )}
       </div>
+      {removing && <RemoveAgentDialog agent={removing} onClose={() => setRemoving(null)} />}
+      {terminalServer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setTerminalServer(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="relative flex h-[70vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-[#0b1220] shadow-2xl">
+            <div className="flex flex-shrink-0 items-center justify-between border-b border-white/10 px-4 py-2.5">
+              <p className="flex items-center gap-2 text-sm font-bold text-white">
+                <Icon name="terminal" size={14} className="text-emerald-400" /> {terminalServer.server_name} — SSH
+              </p>
+              <IconButton icon="close" label="Close" tone="chrome" size="sm" className="text-white" onClick={() => setTerminalServer(null)} />
+            </div>
+            <div className="min-h-0 flex-1">
+              <Suspense fallback={<div className="grid h-full place-items-center"><Icon name="spinner" size={24} className="animate-spin text-emerald-400" /></div>}>
+                <XTerminal serverId={terminalServer.id} serverName={terminalServer.server_name} height="100%" />
+              </Suspense>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

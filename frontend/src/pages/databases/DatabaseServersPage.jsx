@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import AllDbInstances from './AllDbInstances';
 import { useQuery, useMutation, useQueryClient, useIsFetching } from '@tanstack/react-query';
 import {
   Server, CheckCircle2, AlertTriangle, XCircle, Database, GitBranch,
@@ -11,6 +12,7 @@ import {
   listOsServers, getServerSummary, refreshServerStatus, deleteOsServer, getLiveStatus,
 } from '@/api/servers';
 import { listConnections } from '@/api/connections';
+import { listAtlasConnections } from '@/api/atlas';
 import client from '@/api/client';
 import { QK } from '@/api/queryKeys';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -112,7 +114,11 @@ const TECH_CONFIG = [
 ══════════════════════════════════════════════════════ */
 const CLOUD_TECH_CONFIG = [
   {
-    id: 'cosmosdb', name: 'Azure Cosmos DB', subtitle: 'Multi-model, globally distributed', emoji: '🌌',
+    id: 'mongoatlas', name: 'MongoDB Atlas', subtitle: 'Managed MongoDB', emoji: '🍃', route: '/mongoatlas-servers', addRoute: '/mongoatlas/new', cta: 'Connect Atlas', popular: true,
+    accent: 'bg-gradient-to-br from-emerald-500 to-green-700', lightBg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', available: true,
+  },
+  {
+    id: 'cosmosdb', route: '/cosmosdb-servers', addRoute: '/databases/add-data', cta: 'Connect Cosmos DB', name: 'Azure Cosmos DB', subtitle: 'Multi-model, globally distributed', emoji: '🌌',
     accent: 'bg-gradient-to-br from-sky-500 to-blue-700', lightBg: 'bg-sky-50', border: 'border-sky-200', text: 'text-sky-700', available: true,
   },
   { id: 'dynamodb', name: 'Amazon DynamoDB', subtitle: 'Key-value & document', emoji: '🟧', available: false },
@@ -120,12 +126,21 @@ const CLOUD_TECH_CONFIG = [
   { id: 'bigtable', name: 'Google Cloud Bigtable', subtitle: 'Wide-column store', emoji: '🟦', available: false },
   { id: 'tablestorage', name: 'Azure Table Storage', subtitle: 'NoSQL key-value store', emoji: '🗂️', available: false },
   { id: 'documentdb', name: 'Amazon DocumentDB', subtitle: 'MongoDB-compatible', emoji: '📄', available: false },
-  { id: 'mongoatlas', name: 'MongoDB Atlas', subtitle: 'Managed MongoDB', emoji: '🍃', available: false },
   { id: 'couchbase', name: 'Couchbase Capella', subtitle: 'Managed Couchbase', emoji: '🛋️', available: false },
   { id: 'firebase', name: 'Firebase Realtime Database', subtitle: 'Realtime JSON store', emoji: '🔥', available: false },
 ];
 
+// Pseudo-technology for the cross-technology list (/databases?status=…): every
+// server running at least one of the database engines below.
+const ALL_TECHS = '__all__';
+const ALL_TECHS_CONFIG = {
+  id: ALL_TECHS, name: 'All Database', subtitle: 'every database technology', emoji: '🗄️',
+  lightBg: 'bg-slate-100', accent: 'bg-slate-700', text: 'text-slate-700', border: 'border-slate-200', hover: '',
+};
+const STATUS_PARAMS = ['all', 'online', 'warning', 'offline', 'unknown'];
+
 function serverMatchesTech(server, tech) {
+  if (tech === ALL_TECHS) return TECH_CONFIG.some((t) => serverMatchesTech(server, t.id));
   const svcs = (server.database_services || []).map(s => s.toLowerCase());
   if (tech === 'mysql') return svcs.some(s => s === 'mysql' || s === 'mariadb');
   return svcs.some(s => s === tech);
@@ -169,8 +184,17 @@ const DEFAULT_PORTS = {
 export function serverTarget({ node, conn, linkedInst, want, dbUp }) {
   const connId = conn?.id || linkedInst?.connection_id;
   if (connId && !dbUp) return `/diagnose/${connId}`;
-  if (conn) return getDashboardPath(conn);
-  if (linkedInst) return getDashboardPath({ db_type: linkedInst.db_type, id: linkedInst.connection_id });
+  // Every node of a shared-storage cluster resolves to the SAME connection,
+  // because there is only one database. Without naming the node, both cards
+  // opened one dashboard describing one instance — node 2's button showed
+  // node 1's instance. The hostname rides along and the dashboard resolves it
+  // against GV$INSTANCE, which is the only thing that knows the mapping.
+  const clusterNode = node?.cluster_name && node?.node_type && node.node_type !== 'Standalone'
+    ? (node.hostname || node.server_name) : null;
+  const withNode = (path) => (clusterNode
+    ? `${path}?node=${encodeURIComponent(clusterNode)}` : path);
+  if (conn) return withNode(getDashboardPath(conn));
+  if (linkedInst) return withNode(getDashboardPath({ db_type: linkedInst.db_type, id: linkedInst.connection_id }));
   const db = want || node.database_services?.[0]?.toLowerCase() || 'mysql';
   return `/connections/add?type=${db}&host=${node.ip_address}`
     + `&port=${DEFAULT_PORTS[db] || 3306}`
@@ -185,20 +209,48 @@ function serverTargetLabel({ conn, linkedInst, dbUp }) {
 
 // Resolve the connection for a host, biased to a specific technology when given —
 // so a host running BOTH MySQL and PostgreSQL resolves to the right one per tab.
+//
+// `siblings` are the other nodes of this host's cluster, when it has one. A
+// shared-storage cluster — Oracle RAC above all — is ONE database served by
+// every node, registered against whichever node's address someone happened to
+// type. Matching only on the host's own address left every other node looking
+// unconnected and offering to add a connection that already exists.
 function findConn(allConnections, server, preferType = null) {
   const services = (server.database_services || []).map((d) => d.toLowerCase());
   const want = preferType ? normDb(preferType) : null;
-  const candidates = allConnections.filter((c) => {
-    const sameHost = c.host === server.ip_address;
-    const connType = normDb(c.db_type);
-    const sameType = services.some((s) => normDb(s) === connType);
-    return sameHost && sameType;
-  });
-  if (want) {
-    const exact = candidates.find((c) => normDb(c.db_type) === want);
-    if (exact) return exact;
+  const pick = (host) => {
+    const candidates = allConnections.filter((c) => {
+      const sameHost = c.host === host;
+      const connType = normDb(c.db_type);
+      const sameType = services.some((s) => normDb(s) === connType);
+      return sameHost && sameType;
+    });
+    if (want) {
+      const exact = candidates.find((c) => normDb(c.db_type) === want);
+      if (exact) return exact;
+    }
+    // Lowest id wins when a host has more than one connection of the same
+    // engine. That happens when a registration was attempted twice — a real
+    // configuration mistake, but until someone clears it up the card must at
+    // least open the SAME one every time. `candidates[0]` took whatever order
+    // the API returned, so two nodes of one cluster could open two different
+    // dashboards, and the same card could change target between refreshes.
+    return [...candidates].sort((a, b) => (a.id || 0) - (b.id || 0))[0] || null;
+  };
+
+  const own = pick(server.ip_address);
+  const siblings = server.cluster_siblings;
+  if (own || !siblings) return own;
+
+  // Deliberately only for real cluster members: a host that merely shares an
+  // address range with a database server must never inherit its dashboard.
+  if (server.node_type === 'Standalone' || !server.cluster_name) return null;
+  for (const sib of siblings) {
+    if (sib === server || sib.cluster_name !== server.cluster_name) continue;
+    const viaSibling = pick(sib.ip_address);
+    if (viaSibling) return viaSibling;
   }
-  return candidates[0] || null;
+  return null;
 }
 
 const XTerminal = lazy(() => import('../../components/terminal/XTerminal'));
@@ -211,15 +263,27 @@ const NODE_META = {
   Replica:        { label:'REPLICA',     text:'text-blue-700',   bg:'bg-blue-100',     dot:'bg-blue-500',    accent:'border-l-blue-400',    glow:'shadow-blue-100' },
   Slave:          { label:'SLAVE',       text:'text-blue-700',   bg:'bg-blue-100',     dot:'bg-blue-500',    accent:'border-l-blue-400',    glow:'shadow-blue-100' },
   'Galera Node':  { label:'GALERA',      text:'text-purple-700', bg:'bg-purple-100',   dot:'bg-purple-500',  accent:'border-l-purple-500',  glow:'shadow-purple-100' },
+  'RAC Node':     { label:'RAC NODE',    text:'text-cyan-700',   bg:'bg-cyan-100',     dot:'bg-cyan-500',    accent:'border-l-cyan-500',    glow:'shadow-cyan-100' },
+  'Cluster Node': { label:'CLUSTER',     text:'text-cyan-700',   bg:'bg-cyan-100',     dot:'bg-cyan-500',    accent:'border-l-cyan-500',    glow:'shadow-cyan-100' },
   Arbiter:        { label:'ARBITER',     text:'text-amber-700',  bg:'bg-amber-100',    dot:'bg-amber-400',   accent:'border-l-amber-400',   glow:'shadow-amber-100' },
   Standalone:     { label:'STANDALONE',  text:'text-slate-600',  bg:'bg-slate-100',    dot:'bg-slate-400',   accent:'border-l-slate-300',   glow:'shadow-slate-100' },
   'Cluster Node': { label:'NODE',        text:'text-slate-600',  bg:'bg-slate-100',    dot:'bg-slate-400',   accent:'border-l-slate-300',   glow:'shadow-slate-100' },
 };
 function nodeMeta(t) { return NODE_META[t] || NODE_META['Cluster Node']; }
 function isGalera(nodes) { return nodes.some((n) => n.node_type === 'Galera Node'); }
+/** Shared-storage cluster: every node mounts the same datafiles, so there is no
+ *  primary, no replica, and nothing replicating between them. */
+function isSharedStorage(nodes) { return nodes.some((n) => n.node_type === 'RAC Node'); }
 function sortNodes(nodes) {
-  const ord = { Primary:0, Master:1, Secondary:2, Replica:3, Slave:4, 'Galera Node':5, Arbiter:6, 'Cluster Node':7, Standalone:9 };
-  return [...nodes].sort((a,b) => (ord[a.node_type]??99)-(ord[b.node_type]??99));
+  const ord = { Primary:0, Master:1, Secondary:2, Replica:3, Slave:4, 'Galera Node':5, Arbiter:6, 'RAC Node':6.5, 'Cluster Node':7, Standalone:9 };
+  return [...nodes].sort((a, b) => {
+    const byRole = (ord[a.node_type] ?? 99) - (ord[b.node_type] ?? 99);
+    if (byRole) return byRole;
+    // Peers of the same kind need a stable tiebreak, or the cards swap places
+    // on every refresh.
+    return String(a.server_name || a.hostname || a.id)
+      .localeCompare(String(b.server_name || b.hostname || b.id));
+  });
 }
 function parsePct(v) { return v ? parseFloat(v)||0 : null; }
 function clusterAverages(nodes) {
@@ -334,7 +398,7 @@ function OnlineBadge({ connected = 0, total = 0, pct }) {
 /* ══════════════════════════════════════════════════════
    TECH SELECTOR SCREEN
 ══════════════════════════════════════════════════════ */
-function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true, cosmosCount = 0, countdown, onRefresh, refreshing }) {
+function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = TECH_CONFIG, canAdd = true, cloudConnections = {}, countdown, onRefresh, refreshing }) {
   return (
     <>
       {/* Shared app header — same on every page. The breadcrumb the old hero
@@ -463,48 +527,73 @@ function TechSelectorScreen({ onSelect, techCounts, summary, navigate, techs = T
           <span className="text-xs text-muted font-medium">{CLOUD_TECH_CONFIG.length} technologies · more coming soon</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {CLOUD_TECH_CONFIG.map((tech) => (
-            <button
-              key={tech.id}
-              type="button"
-              disabled={!tech.available}
-              onClick={() => tech.available && navigate('/cosmosdb-servers')}
-              className={`group relative bg-surface rounded-2xl border-2 p-6 text-left transition-all duration-200 ${
-                tech.available
-                  ? `border-border shadow-md hover:shadow-xl hover:-translate-y-1 ${tech.border ? `hover:${tech.border}` : ''}`
-                  : 'border-border opacity-60 cursor-not-allowed'}`}
-            >
-              <div className="flex items-start gap-4">
-                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${tech.accent || 'bg-gradient-to-br from-slate-300 to-slate-400'}`}>
-                  <span className="text-2xl select-none">{tech.emoji}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-[17px] font-black text-fg leading-tight">{tech.name}</h3>
-                  <p className="text-xs text-muted mt-0.5 font-medium">{tech.subtitle}</p>
-                  {tech.available && (
-                    <div className="flex items-center gap-3 mt-3 flex-wrap">
-                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${tech.lightBg} ${tech.border} border`}>
-                        <Database size={11} className={tech.text}/>
-                        <span className={`text-[12px] font-black ${tech.text}`}>{cosmosCount}</span>
-                        <span className={`text-[10px] ${tech.text} opacity-70`}>connections</span>
+          {CLOUD_TECH_CONFIG.map((tech) => {
+            const conns = cloudConnections[tech.id] || [];
+            const count = conns.length;
+            // Atlas reports a per-connection status; Cosmos does not, so only a count is shown for it.
+            const bad = conns.filter((c) => c.status === 'error').length;
+            const good = conns.filter((c) => c.status === 'connected').length;
+            const open = () => tech.available && navigate(tech.route);
+            return (
+              <div
+                key={tech.id}
+                role={tech.available ? 'link' : undefined}
+                tabIndex={tech.available ? 0 : undefined}
+                aria-disabled={!tech.available || undefined}
+                onClick={open}
+                onKeyDown={(e) => { if (tech.available && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } }}
+                className={`group relative bg-surface rounded-2xl border-2 p-6 text-left transition-all duration-200 ${
+                  tech.available
+                    ? `cursor-pointer border-border shadow-md hover:shadow-xl hover:-translate-y-1 ${tech.border ? `hover:${tech.border}` : ''}`
+                    : 'border-border opacity-60 cursor-not-allowed'}`}
+              >
+                {tech.popular && (
+                  <span className="absolute top-4 right-4 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700">Popular</span>
+                )}
+                <div className="flex items-start gap-4">
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${tech.accent || 'bg-gradient-to-br from-slate-300 to-slate-400'}`}>
+                    <span className="text-2xl select-none">{tech.emoji}</span>
+                  </div>
+                  <div className="flex-1 min-w-0 pr-14">
+                    <h3 className="text-[17px] font-black text-fg leading-tight">{tech.name}</h3>
+                    <p className="text-xs text-muted mt-0.5 font-medium">{tech.subtitle}</p>
+                    {tech.available && (
+                      <div className="flex items-center gap-2 mt-3 flex-wrap">
+                        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${tech.lightBg} ${tech.border} border`}>
+                          <Database size={11} className={tech.text}/>
+                          <span className={`text-[12px] font-black ${tech.text}`}>{count}</span>
+                          <span className={`text-[10px] ${tech.text} opacity-70`}>connection{count !== 1 ? 's' : ''}</span>
+                        </div>
+                        {tech.id === 'mongoatlas' && count > 0 && (
+                          <span className={`rounded-lg px-2 py-1 text-[10.5px] font-bold ${bad ? 'bg-red-50 text-red-700' : good === count ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                            {bad ? `${bad} error` : good === count ? 'Connected' : 'Disconnected'}
+                          </span>
+                        )}
                       </div>
-                    </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 mt-5 pt-4 border-t border-border">
+                  {tech.available ? (
+                    <>
+                      {canAdd ? (
+                        <button type="button" onClick={(e) => { e.stopPropagation(); navigate(tech.addRoute); }}
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-[13px] font-bold text-white shadow-sm transition hover:opacity-90">
+                          <Plus size={14}/>{tech.cta}
+                        </button>
+                      ) : <span className={`text-[12px] font-bold ${tech.text}`}>{count > 0 ? `Explore ${count} connection${count !== 1 ? 's' : ''}` : 'No connections yet'}</span>}
+                      <span className="inline-flex items-center gap-1 text-[12.5px] font-bold text-accent-text">
+                        View Details<ChevronRight size={15} className="group-hover:translate-x-1 transition-transform"/>
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[11px] font-black text-muted uppercase tracking-wide bg-sunken px-2.5 py-1 rounded-lg">Coming Soon</span>
                   )}
                 </div>
               </div>
-
-              <div className="flex items-center justify-between mt-5 pt-4 border-t border-border">
-                {tech.available ? (
-                  <span className={`text-[12px] font-bold ${tech.text}`}>
-                    {cosmosCount > 0 ? `Explore ${cosmosCount} connection${cosmosCount !== 1 ? 's' : ''}` : 'No connections yet · click to add'}
-                  </span>
-                ) : (
-                  <span className="text-[11px] font-black text-muted uppercase tracking-wide bg-sunken px-2.5 py-1 rounded-lg">Coming Soon</span>
-                )}
-                {tech.available && <ChevronRight size={15} className={`${tech.text} group-hover:translate-x-1 transition-transform`}/>}
-              </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </>
@@ -522,14 +611,32 @@ export default function DatabaseServersPage({ tech = null }) {
   const allowedTechs = TECH_CONFIG.filter((t) => can(`/${t.id}-servers`, 'view'));
   // The selected technology is driven by the ROUTE (tech prop), not internal
   // state — so /databases shows the grid and /{tech}-servers shows that tech.
-  const selectedTech = tech;
+  // /databases?status=all|online|warning|offline (the Monitoring Overview's
+  // Database Server card links here) lists every technology's servers with that
+  // status filter applied; plain /databases stays the technology chooser.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusParam = STATUS_PARAMS.includes(searchParams.get('status')) ? searchParams.get('status') : null;
+  const allMode = !tech && !!statusParam;
+  const selectedTech = tech || (allMode ? ALL_TECHS : null);
+  // The engine id handed to the node cards / connection lookups — none for the cross-tech list.
+  const cardTech = selectedTech === ALL_TECHS ? null : selectedTech;
   // Navigate to a technology's server-list route (or back to the grid for null).
   const goToTech = (id) => navigate(id ? `/${id}-servers` : '/databases');
   const [envFilter, setEnvFilter]           = useState('All');
   const [search, setSearch]                 = useState('');
   const [serverView, setServerView]         = useState('grid');   // 'grid' | 'list'
   const [terminalServer, setTerminalServer] = useState(null);
-  const [statusFilter, setStatusFilter]     = useState(null); // null | online | warning | offline | clusters (KPI card click)
+  const [statusFilter, setStatusFilterState] = useState(() => (statusParam && statusParam !== 'all' ? statusParam : null)); // null | online | warning | offline | clusters (KPI card click)
+  // In the cross-tech list the filter also lives in the URL, so a reload or a
+  // shared link keeps it.
+  const setStatusFilter = (next) => {
+    const value = typeof next === 'function' ? next(statusFilter) : next;
+    setStatusFilterState(value);
+    if (allMode) setSearchParams({ status: ['online', 'warning', 'offline', 'unknown'].includes(value) ? value : 'all' }, { replace: true });
+  };
+  useEffect(() => {
+    if (allMode) setStatusFilterState(statusParam === 'all' ? null : statusParam);
+  }, [allMode, statusParam]);
 
   const { data: summaryData } = useQuery({
     queryKey: QK.osServersSummary,
@@ -565,6 +672,11 @@ export default function DatabaseServersPage({ tech = null }) {
     queryFn: () => listConnections('cosmosdb'),
     staleTime: 60000,
   });
+  const { data: atlasConnections = [] } = useQuery({
+    queryKey: ['atlasConnections'],
+    queryFn: listAtlasConnections,
+    staleTime: 60000,
+  });
 
   // Same countdown-pill header refresh as Agents/Dashboard/Infrastructure/
   // Alerts. This page has no single polling interval (30s/60s/15s across its
@@ -590,6 +702,7 @@ export default function DatabaseServersPage({ tech = null }) {
     qc.invalidateQueries({ queryKey: ['liveStatus'] });
     qc.invalidateQueries({ queryKey: ['allConnections'] });
     qc.invalidateQueries({ queryKey: ['cosmosdbConnections'] });
+    qc.invalidateQueries({ queryKey: ['atlasConnections'] });
     setCountdown(REFRESH_SECONDS);
   };
 
@@ -608,6 +721,12 @@ export default function DatabaseServersPage({ tech = null }) {
   const mergeNode = (s) => {
     const live = liveMap[s.id];
     if (!live) return s;
+    // A 'rac-peer' host is collected by the agent on another node of its
+    // cluster, over SSH. The live poller runs from the ActMon server and has
+    // no route to it, so it reports a node offline that was read seconds ago.
+    // Its own collector maintains that status; the poller is not a second
+    // opinion here, it is an absent one.
+    if (s.collector === 'rac-peer') return s;
     const mergedInstances = (s.db_instances || []).map(inst => ({
       ...inst,
       status: live.db_services?.[inst.db_type] || inst.status,
@@ -637,6 +756,35 @@ export default function DatabaseServersPage({ tech = null }) {
     return <PageLoading title="Loading infrastructure…" illustration />;
   }
 
+  /* ── Every technology, one row per server + technology (/databases?status=…) ── */
+  if (allMode) {
+    const openInstance = (r) => {
+      const host = (serversData || []).find((h) => h.id === r.hostId);
+      const conn = (r.connectionId && allConnections.find((c) => c.id === r.connectionId))
+        || (host && findConn(allConnections, host, r.engine));
+      navigate(conn ? getDashboardPath(conn) : `/${r.engine}-servers`);
+    };
+    return (
+      <AllDbInstances
+        hosts={serversData || []}
+        liveRows={liveData?.data}
+        allowedEngines={new Set(allowedTechs.map((t) => t.id))}
+        status={statusFilter}
+        onStatus={setStatusFilter}
+        onOpen={openInstance}
+        onHost={(r) => navigate(`/infra/${r.hostId}`)}
+        onBack={() => goToTech(null)}
+        countdown={countdown}
+        onRefresh={refreshNow}
+        refreshing={!!isFetchingAny}
+      />
+    );
+  }
+
+  if (isLoading) {
+    return <PageLoading title="Loading infrastructure…" illustration />;
+  }
+
   /* ── Tech selector (default landing) ─────────────── */
   if (!selectedTech) {
     return (
@@ -647,7 +795,7 @@ export default function DatabaseServersPage({ tech = null }) {
         navigate={navigate}
         techs={allowedTechs}
         canAdd={canHere('add')}
-        cosmosCount={cosmosConnections.length}
+        cloudConnections={{ cosmosdb: cosmosConnections, mongoatlas: atlasConnections }}
         countdown={countdown}
         onRefresh={refreshNow}
         refreshing={!!isFetchingAny}
@@ -656,10 +804,12 @@ export default function DatabaseServersPage({ tech = null }) {
   }
 
   /* ── Filtered view for selected technology ────────── */
-  const techConfig = TECH_CONFIG.find(t => t.id === selectedTech) || TECH_CONFIG[0];
+  const techConfig = selectedTech === ALL_TECHS ? ALL_TECHS_CONFIG : (TECH_CONFIG.find(t => t.id === selectedTech) || TECH_CONFIG[0]);
+  const STATUS_TITLE = { online: 'Online', warning: 'Warning', offline: 'Offline', clusters: 'Clustered' };
 
   const servers = allServers
-    .filter(s => serverMatchesTech(s, selectedTech))
+    // Cross-tech list: only the technologies this role may view (same allow-list as the chooser).
+    .filter(s => (selectedTech === ALL_TECHS ? allowedTechs.some((t) => serverMatchesTech(s, t.id)) : serverMatchesTech(s, selectedTech)))
     .filter(s =>
       !search ||
       s.server_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -700,12 +850,21 @@ export default function DatabaseServersPage({ tech = null }) {
       standaloneList.push(s);
     }
   }
+  // A shared-storage cluster is ONE database served by every node, registered
+  // against whichever node's address someone happened to type. Carrying the
+  // sibling list lets a node without its own connection open the dashboard its
+  // cluster is registered under, instead of offering to add a duplicate.
+  // Attached here, where the buckets already exist, so no component signature
+  // has to change.
+  for (const members of Object.values(clusterMap)) {
+    for (const s of members) s.cluster_siblings = members;
+  }
 
 
   return (
     <>
       <PageHeader
-        title={`${techConfig.name} Servers`}
+        title={statusFilter && STATUS_TITLE[statusFilter] ? `${techConfig.name} Servers — ${STATUS_TITLE[statusFilter]}` : `${techConfig.name} Servers`}
         /* The engine's own mark, as the original hero showed — emoji on a tile
            tinted with that engine's validated slot colour. */
         leading={(
@@ -876,7 +1035,7 @@ export default function DatabaseServersPage({ tech = null }) {
                   setTerminalServer={setTerminalServer}
                   refreshMutation={refreshMutation}
                   allConnections={allConnections}
-                  tech={selectedTech}
+                  tech={cardTech}
                 />
               ))}
             </div>
@@ -902,7 +1061,7 @@ export default function DatabaseServersPage({ tech = null }) {
                 openTerminal={setTerminalServer}
                 refreshMutation={refreshMutation}
                 allConnections={allConnections}
-                tech={selectedTech}
+                tech={cardTech}
                 onDeleteServer={(server) => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
               />
             ) : (
@@ -915,7 +1074,7 @@ export default function DatabaseServersPage({ tech = null }) {
                     openTerminal={setTerminalServer}
                     refreshMutation={refreshMutation}
                     allConnections={allConnections}
-                    tech={selectedTech}
+                    tech={cardTech}
                     onDelete={() => { if (confirm(`Delete "${server.server_name}"?`)) deleteMutation.mutate(server.id); }}
                     showMetricsInline
                   />
@@ -960,6 +1119,7 @@ export default function DatabaseServersPage({ tech = null }) {
 function ClusterTopologyCard({ clusterName, rawNodes, navigate, setTerminalServer, refreshMutation, allConnections, tech }) {
   const nodes   = sortNodes(rawNodes);
   const galera  = isGalera(nodes);
+  const sharedStorage = isSharedStorage(nodes);
   const dbTypes = [...new Set(nodes.flatMap((n) => n.database_services || []))];
   const avgs    = clusterAverages(nodes);
 
@@ -1093,7 +1253,7 @@ function ClusterTopologyCard({ clusterName, rawNodes, navigate, setTerminalServe
               <h3 className="text-base font-black text-slate-900 leading-none">{clusterName}</h3>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${galera?'bg-purple-100 text-purple-700':'bg-indigo-100 text-indigo-700'}`}>
-                  {galera ? 'Galera Multi-Primary' : 'Streaming Replication'}
+                  {galera ? 'Galera Multi-Primary' : sharedStorage ? 'Shared Storage (RAC)' : 'Streaming Replication'}
                 </span>
                 <span className="text-slate-400 text-[10px]">{nodes[0]?.environment}</span>
               </div>
@@ -1166,7 +1326,9 @@ function ReplicationTopology({ nodes, navigate, openTerminal, refreshMutation, a
           <div className="flex-shrink-0 w-[296px]">
             <TopologyNodeCard node={node} navigate={navigate} openTerminal={openTerminal} refreshMutation={refreshMutation} allConnections={allConnections} tech={tech} repl={replByNodeId[node.id]} authoritativeHealth={healthByNodeId[node.id]} authoritativeRole={roleByNodeId[node.id]} fullWidth/>
           </div>
-          {idx < ordered.length-1 && <FlowConnector label="stream" />}
+          {idx < ordered.length-1 && (
+            <FlowConnector label={isSharedStorage(ordered) ? 'shared storage' : 'stream'} />
+          )}
         </React.Fragment>
       ))}
     </div>
@@ -1466,7 +1628,11 @@ function TopologyNodeCard({ node, navigate, openTerminal, refreshMutation, allCo
 
         {/* connection name (for this tech) + host/IP */}
         <div className="mb-4">
-          <h3 className="text-[17px] font-black text-slate-900 leading-tight truncate">{conn?.connection_name || node.server_name}</h3>
+          <h3 className="text-[17px] font-black text-slate-900 leading-tight truncate">
+            {(node.cluster_name && node.node_type !== 'Standalone')
+              ? (node.server_name || conn?.connection_name)
+              : (conn?.connection_name || node.server_name)}
+          </h3>
           <div className="flex items-center gap-2 mt-1">
             <span className="font-mono text-[12px] text-slate-500 font-semibold">{node.ip_address}</span>
             {node.os_type && (

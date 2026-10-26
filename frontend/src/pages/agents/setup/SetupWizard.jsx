@@ -31,12 +31,11 @@ export default function SetupWizard() {
   const catalogTo = inDb ? '/databases/add-data' : '/agents/setup';
   const doneTo = inDb ? '/databases' : '/agents';
 
-  // Deep link (?agent=<name>&token=<agent_token>) — e.g. "Monitor database
+  // Deep link (?agent=<name>) — e.g. "Monitor database
   // performance" on the deploy-wizard Summary. The agent is pre-selected and the
   // wizard opens on Credentials with the Agent step already completed.
   const [searchParams] = useSearchParams();
   const preAgent = searchParams.get('agent') || '';
-  const preToken = searchParams.get('token') || '';
 
   /* The step lives in the URL and the entries in session storage, so reloading
      the page returns to the same step with the same form instead of dropping the
@@ -53,7 +52,6 @@ export default function SetupWizard() {
   const [data, setData, clearDraft] = useWizardDraft(`setup:${techId}`, {
     agentMode: 'existing',
     agentId: preAgent,
-    agentToken: preToken || undefined,
     credentials: {
       connection_name: '', environment: 'Production', host: 'localhost',
       port: tech?.port || 3306, username: 'actmon_user', password: '', database_name: '',
@@ -100,13 +98,14 @@ export default function SetupWizard() {
     try {
       const name = c.connection_name || `My ${tech.name}`;
       // Existing agent → attach the DB to ITS token (it's already running). New agent → new token + install.
-      const useExisting = data.agentMode === 'existing' && data.agentToken;
-      const useToken = useExisting ? data.agentToken : token;
+      // Existing agent → named; its token is resolved server-side and never handled by the browser.
+      const useExisting = data.agentMode === 'existing' && !!data.agentId;
+      const useToken = useExisting ? null : token;
       if (!useExisting) {
         await createInstallToken({ token: useToken, token_name: name, os_type: 'windows' });
       }
       const saved = await saveAgentDbConfig({
-        token: useToken, db_type: tech.name, connection_name: name,
+        ...(useExisting ? { agent_name: data.agentId } : { token: useToken }), db_type: tech.name, connection_name: name,
         host: c.host || 'localhost', port: Number(c.port) || tech.port,
         username: c.username, password: c.password,
         database_name: c.database_name, environment: c.environment,

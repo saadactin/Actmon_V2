@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { fmtMB, fmtGB } from '@/config/dbCatalog';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -11,7 +12,7 @@ import {
   C, HealthChecks, KStat, RSection, RTable, ReportShell, UsageBar, fmtNum, now, statusBadge,
 } from '@/pages/_shared/reportKit';
 import { explainWait } from '@/config/oracleWaits';
-import { computeInstanceHealthScore } from '@/utils/oracleHealth';
+import { computeInstanceHealthScore, failedMetricsOf } from '@/utils/oracleHealth';
 
 /**
  * Oracle monitoring report — twenty sections over twenty-one endpoints.
@@ -135,9 +136,22 @@ export default function OracleReportsPage() {
 
   // Shared with OracleDashboard.jsx (frontend/src/utils/oracleHealth.js) so the
   // same instance can never score differently on the report vs. the dashboard.
+  //
+  // num() maps a missing value to 0, so a metric that failed to collect looks
+  // like a healthy reading and the report prints a confident "100/100" over a
+  // database it could not read. The payload names its failures; a named metric
+  // is passed as null so the score comes back Unknown instead.
+  const failedDash = failedMetricsOf(dash.data || {});
+  const unread = (...keys) => keys.some((k) => failedDash.has(k));
   const healthScore = computeInstanceHealthScore({
-    sessionPct, bufHitPct, maxTsPct, hostCpuPct,
-    rmanFailed, archiveGapCount: maxGap, invalidObjectsTotal: invalidTotal,
+    sessionPct: unread('active_sessions', 'total_sessions', 'max_sessions') ? null : sessionPct,
+    bufHitPct: unread('buffer_cache_hit') ? null : bufHitPct,
+    maxTsPct: tsRows.length && !unread('tablespaces') ? maxTsPct : null,
+    hostCpuPct: sar.data?.cpu_pct == null && unread('host_cpu_sysmetric', 'host_cpu_osstat', 'osstat')
+      ? null : hostCpuPct,
+    rmanFailed: rman.data ? rmanFailed : null,
+    archiveGapCount: archGap.data ? maxGap : null,
+    invalidObjectsTotal: invalid.data ? invalidTotal : null,
   });
 
   const connName = conn.name || inst.name || `Oracle #${id}`;
@@ -172,10 +186,10 @@ export default function OracleReportsPage() {
     >
       {/* ══ 1 · EXECUTIVE SUMMARY ══ */}
       <RSection title="Executive Summary" icon={Activity}
-        color={healthScore >= 80 ? C.green : healthScore >= 60 ? C.amber : C.red}>
+        color={healthScore == null ? C.amber : healthScore >= 80 ? C.green : healthScore >= 60 ? C.amber : C.red}>
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-          <KStat label="Health Score" value={`${healthScore}/100`}
-            color={healthScore >= 80 ? C.green : healthScore >= 60 ? C.amber : C.red} />
+          <KStat label="Health Score" value={(healthScore === null || healthScore === undefined ? 'Unknown' : `${healthScore}/100`)}
+            color={healthScore == null ? C.amber : healthScore >= 80 ? C.green : healthScore >= 60 ? C.amber : C.red} />
           <KStat label="Open Mode" value={dbSt.open_mode || hs.status || '—'}
             color={dbSt.open_mode === 'READ WRITE' || hs.status === 'OPEN' ? C.green : C.red} />
           <KStat label="Role" value={dbSt.role || '—'} color={C.blue} />
@@ -188,15 +202,15 @@ export default function OracleReportsPage() {
             color={sessionPct > 80 ? C.red : C.green} sub={`${sessionPct}% of the limit`} />
           <KStat label="Buffer Cache Hit" value={bufHitPct ? `${bufHitPct}%` : '—'}
             color={bufHitPct && bufHitPct < 90 ? C.red : C.green} />
-          <KStat label="Database Size" value={hs.db_size_gb ? `${hs.db_size_gb} GB` : '—'} color={C.blue} />
+          <KStat label="Database Size" value={hs.db_size_gb ? fmtGB(hs.db_size_gb) : '—'} color={C.blue} />
         </div>
         <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
           <KStat label="Host CPU" value={hostCpuPct ? `${hostCpuPct}%` : '—'}
             color={hostCpuPct > 85 ? C.red : C.green} />
           <KStat label="Host Memory" value={hostMemPct ? `${hostMemPct}%` : '—'}
             color={hostMemPct > 90 ? C.red : C.green} />
-          <KStat label="SGA" value={`${fmtNum(hs.sga_mb)} MB`} color={C.teal} />
-          <KStat label="PGA" value={`${fmtNum(hs.pga_mb)} MB`} color={C.indigo} />
+          <KStat label="SGA" value={fmtMB(hs.sga_mb)} color={C.teal} />
+          <KStat label="PGA" value={fmtMB(hs.pga_mb)} color={C.indigo} />
           <KStat label="Fullest Tablespace" value={maxTsPct ? `${maxTsPct}%` : '—'}
             color={maxTsPct > 90 ? C.red : maxTsPct > 80 ? C.amber : C.green}
             sub={fullestTs?.tablespace_name} />
@@ -281,15 +295,15 @@ export default function OracleReportsPage() {
           />
           {sga.data?.total_mb != null && (
             <p className="mt-2 text-[11px] text-slate-400">
-              Total allocated: <b className="text-slate-700">{fmtNum(sga.data.total_mb)} MB</b>
+              Total allocated: <b className="text-slate-700">{fmtMB(sga.data.total_mb)}</b>
             </p>
           )}
         </RSection>
 
         <RSection title="PGA" icon={Cpu} color={C.indigo} className="!mb-0">
           <div className="grid grid-cols-2 gap-3">
-            <KStat label="Allocated" value={`${fmtNum(pgaSummary.total_allocated_mb)} MB`} />
-            <KStat label="Aggregate target" value={`${fmtNum(pgaSummary.aggregate_target_mb)} MB`} />
+            <KStat label="Allocated" value={fmtMB(pgaSummary.total_allocated_mb)} />
+            <KStat label="Aggregate target" value={fmtMB(pgaSummary.aggregate_target_mb)} />
             <KStat label="Cache hit" value={pgaSummary.cache_hit_pct != null ? `${pgaSummary.cache_hit_pct}%` : '—'}
               color={num(pgaSummary.cache_hit_pct) > 0 && num(pgaSummary.cache_hit_pct) < 90 ? C.amber : C.green}
               sub="sorts done in memory" />
@@ -314,7 +328,7 @@ export default function OracleReportsPage() {
           <KStat label="Last full database backup"
             value={lastDbBackup?.end_time ? String(lastDbBackup.end_time).slice(0, 16) : '—'}
             color={lastDbBackup ? C.green : C.red}
-            sub={lastDbBackup ? `${lastDbBackup.output_gb} GB in ${lastDbBackup.hrs}h` : 'none found'} />
+            sub={lastDbBackup ? `${fmtGB(lastDbBackup.output_gb)} in ${lastDbBackup.hrs}h` : 'none found'} />
         </div>
         <RTable
           headers={['Type', 'Status', 'Started', 'Duration', 'Input', 'Output', 'Throughput', 'Device']}
@@ -323,8 +337,8 @@ export default function OracleReportsPage() {
             statusBadge(j.status),
             String(j.start_time || '').slice(0, 16),
             j.hrs != null ? `${j.hrs}h` : '—',
-            `${j.input_gb} GB`,
-            `${j.output_gb} GB`,
+            fmtGB(j.input_gb),
+            fmtGB(j.output_gb),
             j.mb_per_sec ? `${j.mb_per_sec} MB/s` : '—',
             j.output_device_type || '—',
           ])}
@@ -346,7 +360,7 @@ export default function OracleReportsPage() {
           <KStat label="Destinations" value={drGap.length} />
           <KStat label="Logs in the last 24h"
             value={fmtNum(hourlyArchive.reduce((a, h) => a + num(h.logs), 0))}
-            sub={`${fmtNum(hourlyArchive.reduce((a, h) => a + num(h.mb), 0))} MB`} />
+            sub={fmtMB(hourlyArchive.reduce((a, h) => a + num(h.mb), 0))} />
         </div>
         <RTable
           headers={['Destination', 'Target', 'Status', 'Archived', 'Applied', 'Gap', 'Standby name']}
@@ -439,8 +453,8 @@ export default function OracleReportsPage() {
             color={hostCpuPct > 85 ? C.red : C.green} />
           <KStat label="Host memory used" value={hostMemPct ? `${hostMemPct}%` : '—'}
             color={hostMemPct > 90 ? C.red : C.green} />
-          <KStat label="Physical memory" value={sar.data?.phys_gb ? `${sar.data.phys_gb} GB` : '—'}
-            sub={sar.data?.free_gb != null ? `${sar.data.free_gb} GB free` : undefined} />
+          <KStat label="Physical memory" value={sar.data?.phys_gb ? fmtGB(sar.data.phys_gb) : '—'}
+            sub={sar.data?.free_gb != null ? `${fmtGB(sar.data.free_gb)} free` : undefined} />
           <KStat label="Load average" value={sar.data?.load != null ? Number(sar.data.load).toFixed(2) : '—'} />
         </div>
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -730,9 +744,9 @@ export default function OracleReportsPage() {
         <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <KStat label="Processes" value={processes.data?.total ?? procRows.length} />
           <KStat label="PGA allocated"
-            value={processes.data?.total_pga_mb != null ? `${fmtNum(processes.data.total_pga_mb)} MB` : '—'} />
+            value={processes.data?.total_pga_mb != null ? fmtMB(processes.data.total_pga_mb) : '—'} />
           <KStat label="Largest single process"
-            value={procRows.length ? `${fmtNum(Math.max(...procRows.map((p) => num(p.pga_alloc_mb))))} MB` : '—'} />
+            value={procRows.length ? fmtMB(Math.max(...procRows.map((p) => num(p.pga_alloc_mb)))) : '—'} />
         </div>
         <RTable
           headers={['Process', 'Role', 'OS PID', 'PGA used (MB)', 'PGA allocated (MB)', 'PGA peak (MB)']}

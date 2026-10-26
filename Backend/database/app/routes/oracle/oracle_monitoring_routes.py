@@ -5,7 +5,7 @@ All business logic lives in app/services/oracle/oracle_monitoring_service.py
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -38,7 +38,6 @@ from app.services.oracle.oracle_monitoring_service import (
     oracle_parameters,
     oracle_sql_plan,
     oracle_archive_log_gap,
-    oracle_rman_backup,
     oracle_invalid_objects_detail,
     oracle_datafile_mounts,
     oracle_sar_top,
@@ -63,6 +62,12 @@ from app.services.oracle.oracle_storage_decision_service import (
     oracle_storage_findings,
     oracle_storage_precise_check,
 )
+from app.services.oracle.oracle_rac_host_service import oracle_rac_node_hosts
+from app.services.oracle.oracle_redo_service import oracle_redo_generation
+from app.services.oracle.oracle_rman_service import (
+    oracle_rman_backup,
+    oracle_rman_job_detail,
+)
 from app.services.oracle.oracle_sql_tuning_service import (
     oracle_sql_monitor_active,
     oracle_sql_monitor_detail,
@@ -82,8 +87,14 @@ def get_db():
 
 # 1
 @router.get("/{conn_id}/oracle-dashboard")
-def route_oracle_dashboard(conn_id: int, db: Session = Depends(get_db)):
-    return oracle_dashboard(conn_id, db)
+def route_oracle_dashboard(
+    conn_id: int,
+    inst_id: Optional[int] = Query(None, ge=1, le=128,
+                         description="RAC instance number (GV$INSTANCE.INSTANCE_NUMBER). "
+                                     "Omit for the instance the connection lands on."),
+    db: Session = Depends(get_db),
+):
+    return oracle_dashboard(conn_id, db, inst_id)
 
 
 # 2
@@ -235,8 +246,24 @@ def route_oracle_slow_query_by_id(conn_id: int, query_id: str, db: Session = Dep
 
 # 18
 @router.get("/{conn_id}/oracle-error-logs")
-def route_oracle_error_logs(conn_id: int, db: Session = Depends(get_db)):
-    return oracle_error_logs(conn_id, db)
+def route_oracle_error_logs(
+    conn_id: int,
+    hours: int = Query(24, ge=1, le=720, description="Look back this many hours (default 1 day)."),
+    ora_only: bool = Query(True, description="Only ORA-/TNS- errors, as the DBA alert-log query does."),
+    db: Session = Depends(get_db),
+):
+    return oracle_error_logs(conn_id, db, hours, ora_only)
+
+
+# Redo generation — log switches and redo volume per hour, from v$log_history
+# and v$archived_log. See oracle_redo_service for why not gv$log_history.
+@router.get("/{conn_id}/oracle-redo-generation")
+def route_oracle_redo_generation(
+    conn_id: int,
+    days: int = Query(14, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    return oracle_redo_generation(conn_id, db, days)
 
 
 # 19
@@ -279,6 +306,16 @@ def route_oracle_archive_log_gap(conn_id: int, db: Session = Depends(get_db)):
 @router.get("/{conn_id}/oracle-rman-backup")
 def route_oracle_rman_backup(conn_id: int, db: Session = Depends(get_db)):
     return oracle_rman_backup(conn_id, db)
+
+
+@router.get("/{conn_id}/oracle-rac-node-hosts")
+def route_oracle_rac_node_hosts(conn_id: int, db: Session = Depends(get_db)):
+    return oracle_rac_node_hosts(conn_id, db)
+
+
+@router.get("/{conn_id}/oracle-rman-job-detail")
+def route_oracle_rman_job_detail(conn_id: int, session_key: int, db: Session = Depends(get_db)):
+    return oracle_rman_job_detail(conn_id, db, session_key)
 
 
 # 26
@@ -445,3 +482,91 @@ def route_oracle_storage_ai_explain(conn_id: int, payload: oracle_ai_analysis.Or
 @router.get("/{conn_id}/oracle-table-dictionary")
 def route_oracle_table_dictionary(conn_id: int, owner: str, table_name: str, db: Session = Depends(get_db)):
     return oracle_table_dictionary(conn_id, db, owner, table_name)
+
+
+# ── Service drill-down: service → instances → instance → sessions → session → SQL.
+# Every level is addressed by ids alone so a page at any depth survives a refresh.
+from app.services.oracle.oracle_service_drill_service import (  # noqa: E402
+    oracle_service_detail,
+    oracle_service_instance,
+    oracle_service_sessions,
+    oracle_session_activity,
+    oracle_session_detail,
+    oracle_sql_detail,
+)
+
+
+@router.get("/{conn_id}/oracle-service-detail")
+def route_oracle_service_detail(conn_id: int, service: str = Query(..., min_length=1, max_length=256),
+                                db: Session = Depends(get_db)):
+    return oracle_service_detail(conn_id, db, service)
+
+
+@router.get("/{conn_id}/oracle-service-instance")
+def route_oracle_service_instance(conn_id: int, service: str = Query(..., min_length=1, max_length=256),
+                                  inst_id: int = Query(..., ge=1, le=1000), db: Session = Depends(get_db)):
+    return oracle_service_instance(conn_id, db, service, inst_id)
+
+
+@router.get("/{conn_id}/oracle-service-sessions")
+def route_oracle_service_sessions(conn_id: int, service: str = Query(..., min_length=1, max_length=256),
+                                  inst_id: int = Query(..., ge=1, le=1000), db: Session = Depends(get_db)):
+    return oracle_service_sessions(conn_id, db, service, inst_id)
+
+
+@router.get("/{conn_id}/oracle-session-detail")
+def route_oracle_session_detail(conn_id: int, inst_id: int = Query(..., ge=1, le=1000),
+                                sid: int = Query(..., ge=0), serial: int = Query(..., ge=0),
+                                db: Session = Depends(get_db)):
+    return oracle_session_detail(conn_id, db, inst_id, sid, serial)
+
+
+@router.get("/{conn_id}/oracle-sql-detail")
+def route_oracle_sql_detail(conn_id: int, sql_id: str = Query(..., pattern=r"^[0-9a-z]{13}$"),
+                            inst_id: int | None = Query(None, ge=1, le=1000), db: Session = Depends(get_db)):
+    return oracle_sql_detail(conn_id, db, sql_id, inst_id)
+
+
+# ── Performance tab: Oracle's own 1-minute metric history and the live "top now".
+from app.services.oracle.oracle_perf_service import oracle_perf_history, oracle_perf_top_at, oracle_perf_top_now  # noqa: E402
+
+
+@router.get("/{conn_id}/oracle-perf-history")
+def route_oracle_perf_history(conn_id: int, minutes: int = Query(60, ge=5, le=10080),
+                              inst_id: int | None = Query(None, ge=1, le=1000), db: Session = Depends(get_db)):
+    return oracle_perf_history(conn_id, db, minutes, inst_id)
+
+
+@router.get("/{conn_id}/oracle-perf-top-now")
+def route_oracle_perf_top_now(conn_id: int, inst_id: int | None = Query(None, ge=1, le=1000),
+                              db: Session = Depends(get_db)):
+    return oracle_perf_top_now(conn_id, db, inst_id)
+
+
+@router.get("/{conn_id}/oracle-perf-top-at")
+def route_oracle_perf_top_at(conn_id: int, at: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}"),
+                             db: Session = Depends(get_db)):
+    return oracle_perf_top_at(conn_id, db, at)
+
+
+# ── Query Analysis results (keyed by the captured SQL_ID; nothing is executed).
+from app.services.oracle.oracle_sql_analysis_service import oracle_sql_plan_stats, oracle_sql_trend  # noqa: E402
+
+
+@router.get("/{conn_id}/oracle-sql-plan-stats")
+def route_oracle_sql_plan_stats(conn_id: int, sql_id: str = Query(..., pattern=r"^[0-9a-z]{13}$"),
+                                child: int | None = Query(None, ge=0), db: Session = Depends(get_db)):
+    return oracle_sql_plan_stats(conn_id, db, sql_id, child)
+
+
+@router.get("/{conn_id}/oracle-sql-trend")
+def route_oracle_sql_trend(conn_id: int, sql_id: str = Query(..., pattern=r"^[0-9a-z]{13}$"),
+                           hours: int = Query(24, ge=1, le=720), db: Session = Depends(get_db)):
+    return oracle_sql_trend(conn_id, db, sql_id, hours)
+
+
+@router.get("/{conn_id}/oracle-session-activity")
+def route_oracle_session_activity(conn_id: int, inst_id: int = Query(..., ge=1, le=1000),
+                                  sid: int = Query(..., ge=0), serial: int = Query(..., ge=0),
+                                  db: Session = Depends(get_db)):
+    return oracle_session_activity(conn_id, db, inst_id, sid, serial)

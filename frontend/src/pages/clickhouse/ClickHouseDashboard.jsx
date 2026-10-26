@@ -548,40 +548,7 @@ export default function ClickHouseDashboard() {
               </Panel>
             </div>
 
-            {recentErrors.length > 0 && (
-              <TablePanel title={`Recent exceptions (${recentErrors.length})`} icon="alert"
-                subtitle="From system.query_log — the last 20 failures"
-                actions={<Button size="sm" variant="secondary" iconRight="chevron-right"
-                  onClick={() => navigate(`/clickhouse-dashboard/${id}/error-logs`)}>All errors</Button>}>
-                <Paged rows={recentErrors} unit="exceptions" pageSize="10">
-                  {(page, pager) => (
-                    <>
-                      <Table
-                        columns={[
-                          { key: 'when', label: 'Time' },
-                          { key: 'type', label: 'Type' },
-                          { key: 'code', label: 'Code', align: 'right' },
-                          { key: 'user', label: 'User' },
-                          { key: 'msg', label: 'Message' },
-                        ]}
-                        rows={page.map((e, i) => ({
-                          key: `err-${i}`,
-                          cells: {
-                            when: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{String(e.event_time || '').slice(0, 19)}</span>,
-                            type: <StateChip value={e.type} tones={LOG_TYPE_TONES} fallback="danger" />,
-                            code: <span className="font-mono">{e.exception_code ?? null}</span>,
-                            user: <span className="text-[11px] text-muted">{e.user}</span>,
-                            msg: <span className="block max-w-[520px] text-[12px] break-words text-fg">{e.message}</span>,
-                          },
-                        }))}
-                        empty={<EmptyState icon="check" title="No exceptions" />}
-                      />
-                      {pager}
-                    </>
-                  )}
-                </Paged>
-              </TablePanel>
-            )}
+            {/* Recent exceptions list removed from the overview — the Error Logs tab has the full list. */}
           </div>
         )}
 

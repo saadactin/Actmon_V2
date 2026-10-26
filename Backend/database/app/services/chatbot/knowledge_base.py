@@ -226,16 +226,13 @@ offline_after_sec (default 180s) of silence by a background reaper — with hyst
 flapping. The Agents page shows only the physical host agent; per-connection "agents" the
 backend auto-creates to track DB<->agent mapping are filtered out of that list."""
 
-RBAC = """### RBAC and available actions
+RBAC = """### RBAC and the assistant
 Page-scoped bitmask model: view=1, add=2, edit=4, delete=8, import=16, export=32,
 execute=64, approve=128, restart=256 (Full Access = 511, sum of all bits). A grant is
-(org_id, role_id, page_id) -> bitmask. Every action the assistant can trigger must go through
-the same backend permission check the corresponding UI button already uses — never a
-parallel/looser check. Actions ActMon supports today: start/stop/restart a service
-(execute/restart), kill a process (execute), reboot a host (restart), update an agent
-(execute), add/remove a firewall rule (add/delete), write a config file or registry value
-(edit). Killing a slow query and running arbitrary SQL against a monitored database are NOT
-supported anywhere in the app — never imply the assistant can do either."""
+(org_id, role_id, page_id) -> bitmask.
+The assistant (ActMon AI) is strictly read-only: it explains and shows monitoring data and
+never performs, proposes or offers any change — no service, process, host, agent, firewall,
+config or database operation. Never suggest the assistant can do one, and never offer one."""
 
 CONFIG = """### Configuration options
 Settings module covers: Appearance (theme, fonts, layout, breadcrumbs, rows-per-page),

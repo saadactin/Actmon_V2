@@ -1,0 +1,1 @@
+const s={aws:"AWS",azure:"Azure",oci:"OCI"},n={AWS:"aws",Azure:"azure",OCI:"oci"},o=r=>r==="Oracle"?"OCI":r||"",t=r=>r&&(s[r.toLowerCase()]||o(r))||null,a=r=>{const e=o(r);return n[e]||(e||"").toLowerCase()},O=(r,e)=>!e||o(r==null?void 0:r.provider)===e;export{O as a,t as k,o as p,a as s};

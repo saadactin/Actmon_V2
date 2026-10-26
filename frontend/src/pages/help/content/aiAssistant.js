@@ -69,27 +69,15 @@ DOCS['ai-chat-usage'] = {
 };
 
 DOCS['ai-chat-actions'] = {
-  title: 'When the Assistant Proposes an Action',
-  dek: 'The assistant can suggest a real action — but never runs one without explicit, password-confirmed approval.',
-  crumbs: ['ActMon Documentation', 'AI Assistant', 'Action Proposals'],
+  title: 'The Assistant Is Read-Only',
+  dek: 'ActMon AI explains and shows monitoring data. It never makes changes.',
+  crumbs: ['ActMon Documentation', 'AI Assistant', 'Read-Only'],
   module: 'AI Assistant', status: 'Complete',
   body: `
-    <p>When the backend decides a concrete action would help (restarting a service, killing a process, rebooting
-    a host, acknowledging alerts, and similar), the assistant renders an <b>action proposal card</b> instead of
-    just describing it in text:</p>
-    <ul>
-      <li>A plain-language summary of the proposed action, with a warning icon.</li>
-      <li><b>Cancel</b> — dismisses it, nothing happens.</li>
-      <li><b>Confirm</b> — opens a password re-authentication prompt. Only once the password is entered does the
-      action actually fire.</li>
-    </ul>
-    <div class="tip"><b>Same code path as the real buttons</b>${icon('tip', 14)}<span>The confirmed action is
-    re-verified for permission and password server-side, then calls "the exact same service function the Infra
-    page's own buttons use" — this is not a separate, less-safe execution path just because it started from a
-    chat message.</span></div>
-    <div class="imp"><b>Never autonomous</b>${icon('alerts', 14)}<span>The assistant never runs an action on its
-    own initiative — every proposal requires you to click Confirm and then enter your password. If you never
-    confirm, nothing happens.</span></div>
+    <p>The assistant cannot change anything on your servers, services, processes, agents or databases. If you ask
+    it to, it replies that it is read-only. It does not propose or offer such operations either.</p>
+    <p>Operational controls live on their own pages (for example a host's Services tab), where your permissions
+    and password are checked.</p>
   `,
 };
 

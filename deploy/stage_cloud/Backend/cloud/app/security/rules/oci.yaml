@@ -1,0 +1,118 @@
+# OCI declarative rules.
+#
+# Every rule here reads a field the OCI scanner actually writes — verified
+# against the live `oci_test` tenancy before being added, not assumed from the
+# OCI API reference. A rule whose field is never collected produces UNKNOWN for
+# every resource forever, which looks like a scanner fault rather than what it
+# is: a rule nobody checked.
+#
+# See rulepack.py for the operator vocabulary and why "absent means UNKNOWN".
+
+- rule_id: OCI_BUCKET_VERSIONING_DISABLED
+  version: "1.0"
+  provider: OCI
+  resource_types: [ObjectStorageBucket]
+  title: Object Storage bucket versioning is not enabled
+  severity: LOW
+  category: Data Protection
+  confidence: HIGH
+  description: >-
+    Versioning is Disabled or Suspended on this bucket, so an overwrite or
+    delete replaces the only copy of the object.
+  rationale: >-
+    Without versioning there is no previous object to restore. That matters
+    most in the case nobody plans for: ransomware or a mistaken sync that
+    overwrites every object in place. The bucket still exists, the objects
+    still exist, and every one of them is the attacker's copy. This is the
+    OCI counterpart of AWS_S3_VERSIONING_DISABLED and is judged the same way.
+  remediation: |
+    Enable versioning on the bucket:
+      oci os bucket update --namespace <ns> --bucket-name <name> \
+          --versioning Enabled
+    Versioning applies to objects written after it is enabled; it does not
+    retroactively protect existing objects. Pair it with a retention rule for
+    data you cannot re-derive.
+  detection:
+    all_of:
+      - path: config.versioning
+        op: not_equals
+        value: Enabled
+  evidence:
+    versioning: config.versioning
+    public_access_type: config.public_access_type
+    storage_tier: config.storage_tier
+  detail: Bucket versioning is not enabled.
+  unknown_reason: Versioning state was not collected for this bucket.
+
+- rule_id: OCI_LB_PUBLIC_ENDPOINT
+  version: "1.0"
+  provider: OCI
+  resource_types: [LoadBalancer]
+  title: Load balancer has a public endpoint
+  severity: INFO
+  category: Exposure
+  coverage: network
+  confidence: HIGH
+  description: >-
+    The load balancer is public rather than private, so it holds an
+    internet-routable address.
+  rationale: >-
+    This is attack surface, not a defect — a public load balancer is usually
+    exactly what was intended. It is recorded at INFO so the estate's
+    internet-facing entry points can be enumerated and reviewed, and because
+    the attack-path engine starts its walks at confirmed-reachable resources
+    like this one. Whether anything is actually reachable through it is
+    decided by the listener and security rules, which the exposure analyser
+    evaluates separately.
+  remediation: |
+    If this balancer should not face the internet, recreate it as private —
+    `is_private` is fixed at creation and cannot be changed afterwards:
+      oci lb load-balancer create --is-private true ...
+    Otherwise confirm the listeners terminate TLS, that the backend security
+    lists admit traffic only from the balancer's subnet, and that a WAF policy
+    is attached if it serves an application.
+  detection:
+    all_of:
+      - path: config.is_private
+        op: is_false
+  evidence:
+    is_private: config.is_private
+    lb_type: config.lb_type
+    shape_name: config.shape_name
+  detail: The load balancer is public.
+  unknown_reason: Whether this load balancer is private was not collected.
+
+- rule_id: OCI_DBSYSTEM_DISK_NOT_REDUNDANT
+  version: "1.0"
+  provider: OCI
+  resource_types: [DbSystem]
+  title: Database system storage is not configured for high redundancy
+  severity: LOW
+  category: Resilience
+  confidence: HIGH
+  description: >-
+    The DB system's disk redundancy is NORMAL rather than HIGH, so storage is
+    not mirrored across failure domains.
+  rationale: >-
+    NORMAL redundancy keeps a single copy of the data files. A storage failure
+    then becomes a restore-from-backup event with whatever data loss the last
+    backup implies, instead of a transparent recovery. Redundancy is fixed at
+    provisioning time, so this is a finding to act on when the system is next
+    rebuilt rather than a setting to flip.
+  remediation: |
+    Disk redundancy cannot be changed on a running DB system. Plan the change
+    for the next rebuild or migration and provision with HIGH redundancy:
+      oci db system launch --disk-redundancy HIGH ...
+    Until then, confirm automatic backups are enabled and that the retention
+    window matches the recovery point this database is expected to meet.
+  detection:
+    all_of:
+      - path: config.disk_redundancy
+        op: not_equals
+        value: HIGH
+  evidence:
+    disk_redundancy: config.disk_redundancy
+    database_edition: config.database_edition
+    node_count: config.node_count
+  detail: Disk redundancy is not HIGH.
+  unknown_reason: Disk redundancy was not collected for this DB system.

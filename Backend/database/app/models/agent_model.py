@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, BigInteger
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, Text, BigInteger, Index
 from sqlalchemy.sql import func
 from app.database.base import Base
 from app.models._encrypted_type import EncryptedString
@@ -120,6 +120,9 @@ class AgentSession(Base):
 
 class AgentMetric(Base):
     __tablename__ = "agent_metrics"
+    # "latest row for this agent" (agent list fallback when Redis has no sample) — without it each lookup
+    # walked the timestamp index (~4.7 s on 850k rows) and the agent list took over a minute.
+    __table_args__ = (Index("ix_agent_metrics_name_ts", "agent_name", "timestamp"),)
 
     id = Column(Integer, primary_key=True, index=True)
     agent_name = Column(String(255), index=True, nullable=False)

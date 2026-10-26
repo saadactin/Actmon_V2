@@ -22,14 +22,14 @@ export default function StepCredentials({ data, setData, tech }) {
   // localhost on its own host, which the backend can never reach. Otherwise (a brand-new
   // agent not yet installed) the test happens after install; fall back to the server test
   // only for a genuinely remote DB.
-  const viaAgent = data.agentMode === 'existing' && !!data.agentToken;
+  const viaAgent = data.agentMode === 'existing' && !!data.agentId;
 
   const runTest = async () => {
     setTesting(true); setResult(null);
     try {
       if (viaAgent) {
         const r = await testDbViaAgent({
-          token: data.agentToken, db_type: tech.name,
+          agent_name: data.agentId, db_type: tech.name,
           host: c.host || 'localhost', port: Number(c.port) || tech.port,
           username: c.username, password: c.password, database_name: c.database_name,
         });

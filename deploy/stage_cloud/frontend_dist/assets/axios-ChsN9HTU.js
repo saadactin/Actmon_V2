@@ -1,0 +1,1 @@
+import{b2 as s}from"./index-BExsi85l.js";const o={},a=o!=null&&o.VITE_CLOUD_API?"undefined/api/v1/cloud":"/api/v1/cloud",n=s.create({baseURL:a,headers:{"Content-Type":"application/json"}});export{n as c};

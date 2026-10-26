@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.connection_model import ConnectionMaster
 from app.models.os_server_model import DatabaseInstance, OsServer
+from app.services.common.time_utils import iso_utc
+from app.services.common.cpu_cmd import LINUX_CPU_BUSY_PCT
 
 DEFAULT_PORTS = {
     "MySQL": 3306,
@@ -213,16 +215,25 @@ def svc_get_live_status(db: Session, org_id: Optional[int] = None):
             "db_services": db_results,
         }
 
+    # A host this server has no route to is not worth probing: the result is
+    # discarded above, and the probe is two TCP connects per host per cycle.
+    pollable = [s for s in all_servers if (s.collector or "ssh") in ("ssh", "agent")]
     with concurrent.futures.ThreadPoolExecutor(max_workers=30) as ex:
-        results = list(ex.map(check_one, all_servers))
+        results = list(ex.map(check_one, pollable))
 
     status_map = {r["id"]: r for r in results}
     for s in all_servers:
         r = status_map.get(s.id)
         if r:
-            # Persist OS status only for SSH hosts — agent-host OS status is owned by
-            # the ingest/reaper path and must not be clobbered here.
-            if (s.collector or "ssh") != "agent":
+            # Persist OS status only for the hosts this poller actually polls.
+            #
+            # Deliberately an allow-list. It used to read `!= "agent"`, which
+            # opted every other collector in by default — so a RAC peer, which
+            # is reached by the agent on a sibling node and is unreachable from
+            # this server, had "Disconnected" written over a status its own
+            # collector had just set from a successful read. Only the collector
+            # that can actually see a host may say whether it is up.
+            if (s.collector or "ssh") == "ssh":
                 s.status = r["os_status"]
             for inst in s.db_instances:
                 if inst.db_type in r["db_services"]:
@@ -320,6 +331,9 @@ def svc_list_os_servers(db: Session, environment: Optional[str] = None, os_type:
             "monitoring_enabled": s.monitoring_enabled,
             "auto_discovery": s.auto_discovery,
             "created_at": s.created_at.isoformat() if s.created_at else None,
+            # When the host's collector last wrote it — the Agents page shows this for RAC peers, which have no
+            # agent heartbeat of their own.
+            "updated_at": iso_utc(s.updated_at),
             "db_instances_count": len(s.db_instances),
         })
 
@@ -650,13 +664,16 @@ def svc_refresh_server(server_id: int, db: Session):
             except Exception:
                 return "N/A"
 
-        cpu_raw = run("top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}'")
+        cpu_raw = run(LINUX_CPU_BUSY_PCT)
         metrics["cpu_usage"] = f"{cpu_raw}%" if cpu_raw not in ("N/A", "") else "N/A"
 
         ram_raw = run("free -m | awk 'NR==2{printf \"%.0f\", $3*100/$2}'")
         metrics["ram_usage"] = f"{ram_raw}%" if ram_raw not in ("N/A", "") else "N/A"
 
-        disk_raw = run("df -h / | awk 'NR==2{print $5}'")
+        # Fullest filesystem, the same figure the agent/infra-detail collector stores
+        # (_live_cols_from_snapshot: max use_pct over `df -hP`), so SSH and agent
+        # hosts rank on one definition of "disk usage" instead of root-only vs worst.
+        disk_raw = run("df -P 2>/dev/null | awk 'BEGIN{m=-1} NR>1{u=$5+0; if(u>m)m=u} END{if(m>=0)print m\"%\"}'")
         metrics["disk_usage"] = disk_raw if disk_raw not in ("N/A", "") else "N/A"
 
         uptime_raw = run("uptime -p 2>/dev/null || uptime")

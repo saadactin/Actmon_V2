@@ -765,8 +765,38 @@ ORACLE_STORAGE_COLUMNS = ["ts", "agent", "conn_id", "metric_type", "object_name"
                           "tablespace_name", "segment_type", "size_mb", "total_mb", "used_pct"]
 ORACLE_RAC_EVICTION_COLUMNS = ["ts", "agent", "conn_id", "instance_number", "host_name",
                                "previous_status", "new_status", "event_type"]
+# Oracle's own 60-second system metrics (GV$SYSMETRIC), one row per instance
+# per collector cycle — what the Performance tab trends beyond CPU/sessions.
+ORACLE_SYSMETRIC_FIELDS = ["aas", "cpu_pct", "wait_ratio", "logical_blocks_s", "physical_blocks_s",
+                           "read_iops", "write_iops", "read_bytes_s", "write_bytes_s",
+                           "redo_bytes_s", "pga_alloc_bytes", "pga_used_bytes",
+                           "iops_total", "io_mb_s", "sga_bytes"]
+ORACLE_SYSMETRIC_COLUMNS = ["ts", "agent", "conn_id", "inst_id", "block_size"] + ORACLE_SYSMETRIC_FIELDS
+# The top sessions by CPU each collector cycle — so "Top 5 at a past moment"
+# can show sessions from ACTMON's own store, without Active Session History.
+ORACLE_TOP_SESSION_COLUMNS = ["ts", "agent", "conn_id", "inst_id", "sid", "serial", "username",
+                              "program", "sql_id", "status", "cpu_pct"]
 
 _ORACLE_EXTRA_DDL = {
+    "actmon_oracle_top_sessions": """
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_top_sessions (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32, inst_id UInt16,
+            sid UInt32, serial UInt32, username String, program String, sql_id String,
+            status LowCardinality(String), cpu_pct Nullable(Float64)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, ts) TTL ts + INTERVAL %(days)s DAY""",
+    "actmon_oracle_sysmetric": """
+        CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_sysmetric (
+            ts DateTime, agent LowCardinality(String), conn_id UInt32, inst_id UInt16,
+            block_size Nullable(Int32),
+            aas Nullable(Float64), cpu_pct Nullable(Float64), wait_ratio Nullable(Float64),
+            logical_blocks_s Nullable(Float64), physical_blocks_s Nullable(Float64),
+            read_iops Nullable(Float64), write_iops Nullable(Float64),
+            read_bytes_s Nullable(Float64), write_bytes_s Nullable(Float64),
+            redo_bytes_s Nullable(Float64), pga_alloc_bytes Nullable(Float64), pga_used_bytes Nullable(Float64),
+            iops_total Nullable(Float64), io_mb_s Nullable(Float64), sga_bytes Nullable(Float64)
+        ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts)
+          ORDER BY (conn_id, inst_id, ts) TTL ts + INTERVAL %(days)s DAY""",
     "actmon_oracle_rac_nodes": """
         CREATE TABLE IF NOT EXISTS %(db)s.actmon_oracle_rac_nodes (
             ts DateTime, agent LowCardinality(String), conn_id UInt32,
@@ -868,6 +898,57 @@ def flush_oracle_rac_nodes(rows):
         cli.insert(f"{CH_DB}.actmon_oracle_rac_nodes", data, column_names=ORACLE_RAC_NODE_COLUMNS)
     except Exception as e:  # noqa: BLE001
         logger.debug("[metrics_history] flush_oracle_rac_nodes: %s", e)
+
+
+def flush_oracle_top_sessions(rows):
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_top_sessions"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_TOP_SESSION_COLUMNS[1:]] for r in rows]
+        cli.insert(f"{CH_DB}.actmon_oracle_top_sessions", data, column_names=ORACLE_TOP_SESSION_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_top_sessions: %s", e)
+
+
+def flush_oracle_sysmetric(rows):
+    if not rows:
+        return
+    cli = get_client()
+    if cli is None or not _ensure_oracle_table(cli, "actmon_oracle_sysmetric"):
+        return
+    try:
+        import datetime
+        data = [[r.get("ts") or datetime.datetime.now()] + [r.get(c) for c in ORACLE_SYSMETRIC_COLUMNS[1:]] for r in rows]
+        cli.insert(f"{CH_DB}.actmon_oracle_sysmetric", data, column_names=ORACLE_SYSMETRIC_COLUMNS)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] flush_oracle_sysmetric: %s", e)
+
+
+def query_oracle_sysmetric(conn_id, minutes, bucket_seconds, inst_id=None):
+    """Per-bucket, per-instance averages, oldest first; ts rendered in UTC.
+    Combining instances is the caller's choice (rates sum, ratios average)."""
+    cli = get_client()
+    if cli is None:
+        return None
+    try:
+        where = ["conn_id = %(c)s", "ts > now() - INTERVAL %(m)s MINUTE"]
+        params = {"c": int(conn_id), "m": int(minutes), "b": int(bucket_seconds)}
+        if inst_id:
+            where.append("inst_id = %(i)s"); params["i"] = int(inst_id)
+        cols = ", ".join("avg(%s) AS %s" % (f, f) for f in ORACLE_SYSMETRIC_FIELDS)
+        res = cli.query(
+            "SELECT toTimeZone(toStartOfInterval(ts, INTERVAL %(b)s SECOND), 'UTC') AS bucket, inst_id, "
+            "max(block_size), " + cols + f" FROM {CH_DB}.actmon_oracle_sysmetric WHERE " + " AND ".join(where)
+            + " GROUP BY bucket, inst_id ORDER BY bucket LIMIT 20000", parameters=params)
+        return [{"ts": str(r[0]), "inst_id": r[1], "block_size": r[2], **dict(zip(ORACLE_SYSMETRIC_FIELDS, r[3:]))}
+                for r in res.result_rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[metrics_history] query_oracle_sysmetric: %s", e)
+        return None
 
 
 def flush_oracle_services(rows):

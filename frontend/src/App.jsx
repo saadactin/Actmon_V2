@@ -1,4 +1,4 @@
-import { lazy, useEffect } from 'react';
+import { lazy } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import AppShell from '@/components/layout/AppShell';
 import { AUTH_DISABLED } from '@/auth/devAuthBypass';
@@ -9,6 +9,7 @@ import { APP } from '@/config/app.config';
 import { useAuthStore } from '@/store/authStore';
 import { getMe } from '@/api/auth';
 import Login from '@/pages/Login';
+import BootGate from '@/components/loader/BootGate';
 import FirstRunSetup from '@/pages/auth/FirstRunSetup';
 
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -20,6 +21,10 @@ const AgentsPage = lazy(() => import('@/pages/agents/AgentsPage'));
 // as DatabaseServersPage's `tech` prop.
 const SlowQueriesPage = lazy(() => import('@/pages/_shared/SlowQueriesPage'));
 const SlowQueryDetailPage = lazy(() => import('@/pages/_shared/SlowQueryDetailPage'));
+// The execution plan is its own page, not a step inside Query Analysis: a
+// fourteen-row plan with a diagram, a table and a details panel needs the
+// width, and the two pages answer different questions.
+const ExecutionPlanPage = lazy(() => import('@/pages/_shared/ExecutionPlanPage'));
 
 // Agent setup / deploy — ported verbatim from the existing module.
 const AgentSetupPage = lazy(() => import('@/pages/agents/setup/AgentSetupPage'));
@@ -55,6 +60,10 @@ const CloudResourcesPage = lazy(() => import('@/features/cloud/pages/ResourcesPa
 const InfraPage = lazy(() => import('@/pages/infra/InfraPage'));
 const InfraHostDetail = lazy(() => import('@/pages/infra/InfraHostDetail'));
 const InfraFileExplorer = lazy(() => import('@/pages/infra/InfraFileExplorer'));
+const CpuPerformance = lazy(() => import('@/pages/cpu/CpuPerformance'));
+const MemoryPage = lazy(() => import('@/pages/memory/MemoryPage'));
+const DiskPage = lazy(() => import('@/pages/disk/DiskPage'));
+const HostRankingPage = lazy(() => import('@/pages/hosts/HostRankingPage'));
 
 // Databases — ported verbatim. One component serves the technology grid and each
 // per-technology server list; the technology comes in as a prop, not from state.
@@ -91,7 +100,14 @@ const PgReportsPage = lazy(() => import('@/pages/postgresql/PostgreSQLReportsPag
 // fetching all sixteen on every load would load the instance for nothing.
 const OracleDashboard = lazy(() => import('@/pages/oracle/OracleDashboard'));
 const OracleLiveQueries = lazy(() => import('@/pages/oracle/LiveQueries'));
-const OracleSessionDetailPage = lazy(() => import('@/pages/oracle/SessionDetailPage'));
+const OracleSessionDetailPage = lazy(() => import('@/pages/oracle/OracleSessionDetails'));
+// Service drill-down: service → instances → instance → sessions → session → SQL.
+const OracleServiceDetailPage = lazy(() => import('@/pages/oracle/serviceDrill/ServiceDrillPages').then((m) => ({ default: m.OracleServiceDetailPage })));
+const OracleServiceInstancesPage = lazy(() => import('@/pages/oracle/serviceDrill/ServiceDrillPages').then((m) => ({ default: m.OracleServiceInstancesPage })));
+const OracleServiceInstancePage = lazy(() => import('@/pages/oracle/serviceDrill/ServiceDrillPages').then((m) => ({ default: m.OracleServiceInstancePage })));
+const OracleServiceSessionsPage = lazy(() => import('@/pages/oracle/serviceDrill/ServiceDrillPages').then((m) => ({ default: m.OracleServiceSessionsPage })));
+const OracleServiceSessionPage = lazy(() => import('@/pages/oracle/serviceDrill/ServiceDrillPages').then((m) => ({ default: m.OracleServiceSessionPage })));
+const OracleServiceSqlPage = lazy(() => import('@/pages/oracle/serviceDrill/ServiceDrillPages').then((m) => ({ default: m.OracleServiceSqlPage })));
 const OracleUserDetailPage = lazy(() => import('@/pages/oracle/UserDetailPage'));
 const OracleErrorLogs = lazy(() => import('@/pages/oracle/ErrorLogs'));
 const OracleIndexAnalysis = lazy(() => import('@/pages/oracle/IndexAnalysis'));
@@ -128,6 +144,9 @@ const ChTableAnalysis = lazy(() => import('@/pages/clickhouse/TableAnalysis'));
 const CosmosDBConnectionsPage = lazy(() => import('@/pages/cosmosdb/CosmosDBConnectionsPage'));
 const CosmosDBDashboard = lazy(() => import('@/pages/cosmosdb/CosmosDBDashboard'));
 const CosmosDBEditConnectionPage = lazy(() => import('@/pages/cosmosdb/CosmosDBEditConnectionPage'));
+const AtlasConnectionsPage = lazy(() => import('@/pages/mongoatlas/AtlasConnectionsPage'));
+const AtlasConnectionForm = lazy(() => import('@/pages/mongoatlas/AtlasConnectionForm'));
+const AtlasDashboard = lazy(() => import('@/pages/mongoatlas/AtlasDashboard'));
 
 // Administration — one generic config-driven CRUD engine serves every
 // sub-page (see src/config/adminResources.js); only the hub and the bespoke
@@ -170,13 +189,14 @@ export default function App() {
      the shell with a "Signed out" placeholder for someone who is, in fact,
      signed in, resolve the real identity from the token. If the token itself
      no longer holds up, GET /auth/me 401s and that's a real invalid session —
-     drop it and go to the login page, per RequireAuth below. */
-  useEffect(() => {
-    if (!token || user) return;
-    getMe()
-      .then((me) => setUser(me))
-      .catch(() => { clearToken(); navigate(APP.loginRoute, { replace: true }); });
-  }, [token, user]);
+     drop it and go to the login page, per RequireAuth below.
+
+     This used to run as a bare effect while the shell rendered underneath,
+     so every page inside it mounted and fetched for an identity that was not
+     established yet. BootGate holds the screen until the call answers — the
+     one wait in the app that genuinely blocks everything — and the loader it
+     shows reports that call's real outcome rather than a timer. */
+  const resolvingIdentity = Boolean(token) && !user && !AUTH_DISABLED;
 
   // Routes we define explicitly must not be shadowed by generated ones.
   const explicit = new Set(['/dashboard', '/alerts', '/agents', '/databases', '/settings', '/infra', '/administration', '/help-center', '/cloud', '/logs']);
@@ -195,7 +215,16 @@ export default function App() {
           a signed-out visit to any app route rendered the full shell (nav, "Signed
           out" account menu, pages that would all 401) instead of going straight to
           the login page. */}
-      <Route element={(token || AUTH_DISABLED) ? <AppShell user={user} onSignOut={onSignOut} /> : <Navigate to={APP.loginRoute} replace />}>
+      <Route element={(token || AUTH_DISABLED) ? (
+        <BootGate
+          active={resolvingIdentity}
+          resolve={getMe}
+          onResolved={(me) => setUser(me)}
+          onFailed={() => { clearToken(); navigate(APP.loginRoute, { replace: true }); }}
+        >
+          <AppShell user={user} onSignOut={onSignOut} />
+        </BootGate>
+      ) : <Navigate to={APP.loginRoute} replace />}>
         <Route index element={<Navigate to={APP.defaultRoute} replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
         {/* Child of the main Dashboard, not the Cloud module — its own
@@ -310,11 +339,15 @@ export default function App() {
         {/* Cosmos gets its own list: the shared page is built around host and port,
             which a cloud account does not have. */}
         <Route path="/cosmosdb-servers" element={<CosmosDBConnectionsPage />} />
+        <Route path="/mongoatlas-servers" element={<AtlasConnectionsPage />} />
+        <Route path="/mongodb-atlas-servers" element={<AtlasConnectionsPage />} />
+        <Route path="/mongoatlas/new" element={<AtlasConnectionForm />} />
 
         {/* MySQL. The named pages are declared BEFORE :tab so they win — the
             dashboard would otherwise swallow them as a tab id. */}
         <Route path="/mysql-dashboard/:id" element={<MySQLDashboard />} />
         <Route path="/mysql-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="mysql" />} />
+        <Route path="/mysql-dashboard/:id/slow-queries/plan" element={<ExecutionPlanPage tech="mysql" />} />
         <Route path="/mysql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="mysql" />} />
         <Route path="/mysql-dashboard/:id/error-logs" element={<MySQLErrorLogs />} />
         <Route path="/mysql-dashboard/:id/error-analysis" element={<MySQLErrorAnalysis />} />
@@ -330,6 +363,7 @@ export default function App() {
             slow-query detail page before its own parent for the same reason. */}
         <Route path="/postgresql-dashboard/:id" element={<PostgreSQLDashboard />} />
         <Route path="/postgresql-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="postgresql" />} />
+        <Route path="/postgresql-dashboard/:id/slow-queries/plan" element={<ExecutionPlanPage tech="postgresql" />} />
         <Route path="/postgresql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="postgresql" />} />
         <Route path="/postgresql-dashboard/:id/error-logs" element={<PgErrorLogs />} />
         <Route path="/postgresql-dashboard/:id/index-analysis" element={<PgIndexAnalysis />} />
@@ -342,9 +376,16 @@ export default function App() {
             with `embedded` deciding whether it draws a page header. */}
         <Route path="/oracle-dashboard/:id" element={<OracleDashboard />} />
         <Route path="/oracle-dashboard/:id/live-queries/session" element={<OracleSessionDetailPage />} />
+        <Route path="/oracle-dashboard/:id/services/:service" element={<OracleServiceDetailPage />} />
+        <Route path="/oracle-dashboard/:id/services/:service/instances" element={<OracleServiceInstancesPage />} />
+        <Route path="/oracle-dashboard/:id/services/:service/instances/:inst" element={<OracleServiceInstancePage />} />
+        <Route path="/oracle-dashboard/:id/services/:service/instances/:inst/sessions" element={<OracleServiceSessionsPage />} />
+        <Route path="/oracle-dashboard/:id/services/:service/instances/:inst/sessions/:sid/:serial" element={<OracleServiceSessionPage />} />
+        <Route path="/oracle-dashboard/:id/services/:service/instances/:inst/sessions/:sid/:serial/sql/:sqlId" element={<OracleServiceSqlPage />} />
         <Route path="/oracle-dashboard/:id/users/:username" element={<OracleUserDetailPage />} />
         <Route path="/oracle-dashboard/:id/live-queries" element={<OracleLiveQueries />} />
         <Route path="/oracle-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="oracle" />} />
+        <Route path="/oracle-dashboard/:id/slow-queries/plan" element={<ExecutionPlanPage tech="oracle" />} />
         <Route path="/oracle-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="oracle" />} />
         <Route path="/oracle-dashboard/:id/error-logs" element={<OracleErrorLogs />} />
         <Route path="/oracle-dashboard/:id/index-analysis" element={<OracleIndexAnalysis />} />
@@ -362,6 +403,7 @@ export default function App() {
             before its own parent, for the same reason as the other engines. */}
         <Route path="/mssql-dashboard/:id" element={<MSSQLDashboard />} />
         <Route path="/mssql-dashboard/:id/slow-queries/detail" element={<SlowQueryDetailPage tech="mssql" />} />
+        <Route path="/mssql-dashboard/:id/slow-queries/plan" element={<ExecutionPlanPage tech="mssql" />} />
         <Route path="/mssql-dashboard/:id/slow-queries" element={<SlowQueriesPage tech="mssql" />} />
         <Route path="/mssql-dashboard/:id/error-logs" element={<MssqlErrorLogs />} />
         <Route path="/mssql-dashboard/:id/index-analysis" element={<MssqlIndexAnalysis />} />
@@ -392,6 +434,9 @@ export default function App() {
         <Route path="/cosmosdb-edit/:id" element={<CosmosDBEditConnectionPage />} />
         <Route path="/cosmosdb-dashboard/:id" element={<CosmosDBDashboard />} />
         <Route path="/cosmosdb-dashboard/:id/:tab" element={<CosmosDBDashboard />} />
+        <Route path="/mongoatlas-edit/:id" element={<AtlasConnectionForm />} />
+        <Route path="/mongoatlas-dashboard/:id" element={<AtlasDashboard />} />
+        <Route path="/mongoatlas-dashboard/:id/:tab" element={<AtlasDashboard />} />
 
         {/* Declared last of the /agents routes so the literal paths above win. */}
         <Route path="/agents/:name" element={<AgentDetailPage />} />
@@ -401,6 +446,11 @@ export default function App() {
             routes (network/ip-configuration/config-files) are declared before
             the single-segment /:tab catch-all for the same reason the MySQL
             dashboard declares its named routes before its own /:tab. */}
+        {/* CPU drill-down from Dashboard → Top CPU Hosts (a host's own CPU page, not the host overview). */}
+        <Route path="/cpu-performance/:hostId" element={<CpuPerformance />} />
+        <Route path="/memory/:hostId/:tab?" element={<MemoryPage />} />
+        <Route path="/disk/:hostId" element={<DiskPage />} />
+        <Route path="/hosts/top/:metric" element={<HostRankingPage />} />
         <Route path="/infra" element={<InfraPage />} />
         <Route path="/infra/hosts" element={<InfraPage />} />
         <Route path="/infra/:id/files" element={<InfraFileExplorer />} />

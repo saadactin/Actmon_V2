@@ -1,0 +1,53 @@
+# Azure declarative rules.
+#
+# Verified against the live TOR subscription before being added. Azure's
+# resource-type set is open (the scanner derives types from ARM ids), so the
+# registry self-check cannot catch a typo'd type here the way it can for AWS
+# and OCI — the type string below must match what `azure_scanner.py` writes.
+
+- rule_id: AZURE_SUBNET_NO_NSG
+  version: "1.0"
+  provider: AZURE
+  resource_types: [Subnet]
+  title: Subnet has no network security group
+  severity: MEDIUM
+  category: Networking
+  coverage: network
+  confidence: HIGH
+  description: >-
+    No network security group is associated with this subnet, so no
+    subnet-level filtering is applied to traffic entering or leaving it.
+  rationale: >-
+    Azure evaluates NSGs at both subnet and NIC level, and a subnet without one
+    is not necessarily unfiltered — a NIC-level NSG may still apply. What it
+    does remove is the layer that holds when a NIC is misconfigured, a new VM
+    is attached without one, or a rule is relaxed for a single host. The
+    subnet NSG is the control that applies to everything in the subnet by
+    default, including resources nobody has reviewed yet. This rule reports
+    the missing layer; it does not assert that traffic is currently unfiltered,
+    which is a question the exposure analyser answers per resource.
+  remediation: |
+    Associate a network security group with the subnet:
+      az network vnet subnet update --name <subnet> --vnet-name <vnet> \
+          --resource-group <rg> --network-security-group <nsg>
+    Build the rule set from the traffic the subnet's workloads actually need.
+    Check the NIC-level NSGs first — where both exist, inbound traffic must be
+    permitted by BOTH, so a restrictive subnet NSG can silently break a
+    working application.
+  detection:
+    all_of:
+      # `is_null`, not `absent`: the scanner writes this key with a null value
+      # when no NSG is attached, and that is the finding. If the key were
+      # missing entirely the answer is UNKNOWN — "nobody asked" is not
+      # "no NSG". `absent` would conflate the two and report a control gap
+      # the day the scanner stopped collecting the field.
+      - path: config.network_security_group_id
+        op: is_null
+  evidence:
+    network_security_group_id: config.network_security_group_id
+    address_prefix: config.address_prefix
+    virtual_network_id: config.virtual_network_id
+    route_table_id: config.route_table_id
+  detail: No network security group is associated with this subnet.
+  unknown_reason: >-
+    Subnet network-security-group association was not collected.

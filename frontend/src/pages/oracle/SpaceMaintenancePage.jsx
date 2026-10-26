@@ -11,7 +11,9 @@ import Notice from '@/components/ui/Notice';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { InlineLoading, PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import { CategorySummaryBar, OperationConfirmDialog, RefreshBar, useDirectMaintenance } from './maintenanceShared';
 import { fmtIST } from './storageHealthConstants';
 
@@ -36,7 +38,7 @@ function AnalysisDialog({ tablespaceName, connId, onClose }) {
           <div className="grid grid-cols-3 gap-gutter-sm">
             <div className="rounded-card bg-sunken p-3">
               <p className="text-[10px] font-bold uppercase text-subtle">Size</p>
-              <p className="text-[15px] font-bold text-fg">{fmtNumber(round2(d.size_bytes / 1024 / 1024))} MB</p>
+              <p className="text-[15px] font-bold text-fg">{fmtMB(round2(d.size_bytes / 1024 / 1024))}</p>
             </div>
             <div className="rounded-card bg-sunken p-3">
               <p className="text-[10px] font-bold uppercase text-subtle">Used</p>
@@ -44,7 +46,7 @@ function AnalysisDialog({ tablespaceName, connId, onClose }) {
             </div>
             <div className="rounded-card bg-sunken p-3">
               <p className="text-[10px] font-bold uppercase text-subtle">Free</p>
-              <p className="text-[15px] font-bold text-fg">{fmtNumber(round2(d.free_bytes / 1024 / 1024))} MB</p>
+              <p className="text-[15px] font-bold text-fg">{fmtMB(round2(d.free_bytes / 1024 / 1024))}</p>
             </div>
           </div>
           <div className="rounded-card border border-border p-3">
@@ -64,7 +66,7 @@ function AnalysisDialog({ tablespaceName, connId, onClose }) {
               {(d.datafiles || []).map((df) => (
                 <div key={df.file_id} className="flex items-center justify-between border-b border-border px-3 py-1.5 text-[11px] last:border-b-0">
                   <span className="truncate font-mono text-fg" title={df.file_name}>{df.file_name}</span>
-                  <span className="shrink-0 font-mono text-muted">{fmtNumber(round2(df.size_bytes / 1024 / 1024))} MB</span>
+                  <span className="shrink-0 font-mono text-muted">{fmtMB(round2(df.size_bytes / 1024 / 1024))}</span>
                 </div>
               ))}
             </div>
@@ -110,8 +112,8 @@ function ResizeDialog({ target, connId, directMut, onClose }) {
         {info.isLoading ? <InlineLoading label="Calculating minimum safe size…" /> : (
           <>
             <p className="text-[12px] text-muted">
-              Current: <span className="font-semibold text-fg">{fmtNumber(info.data?.current_mb)} MB</span> ·
-              {' '}Minimum safe size: <span className="font-semibold text-fg">{fmtNumber(minSafe)} MB</span> (below this fails or corrupts the datafile)
+              Current: <span className="font-semibold text-fg">{fmtMB(info.data?.current_mb)}</span> ·
+              {' '}Minimum safe size: <span className="font-semibold text-fg">{fmtMB(minSafe)}</span> (below this fails or corrupts the datafile)
             </p>
             <Input
               type="number" value={targetMb} onChange={(e) => setTargetMb(e.target.value)}
@@ -169,7 +171,7 @@ export default function SpaceMaintenancePage({ connId }) {
         { label: 'Tablespaces', value: fmtNumber(s.total_tablespaces) },
         { label: 'Requiring Attention', value: fmtNumber(s.requiring_attention), tone: s.requiring_attention ? 'warn' : 'good' },
         { label: 'Datafiles', value: fmtNumber(s.total_datafiles) },
-        { label: 'Recycle Bin', value: `${fmtNumber(s.reclaimable_mb)} MB` },
+        { label: 'Recycle Bin', value: fmtMB(s.reclaimable_mb) },
         { label: 'Running', value: s.running, tone: s.running ? 'warn' : 'good' },
         { label: 'Failed', value: s.failed, tone: s.failed ? 'bad' : 'good' },
       ]}
@@ -180,6 +182,9 @@ export default function SpaceMaintenancePage({ connId }) {
           <p className="text-[13px] font-bold text-fg">Tablespaces</p>
         </div>
         <Table
+          rowHeight={64}
+          darkHeader
+          cellText
           columns={[
             { key: 'name', label: 'Tablespace' },
             { key: 'total', label: 'Total', align: 'right' },
@@ -192,10 +197,10 @@ export default function SpaceMaintenancePage({ connId }) {
           rows={tablespaces.map((t) => ({
             key: t.tablespace_name,
             cells: {
-              name: <span className="font-mono text-[12px] font-semibold text-fg">{t.tablespace_name}</span>,
-              total: <span className="font-mono text-[12px]">{fmtNumber(t.total_mb)} MB</span>,
-              used: <span className="font-mono text-[12px]">{fmtNumber(t.used_mb)} MB</span>,
-              free: <span className="font-mono text-[12px]">{fmtNumber(t.free_mb)} MB</span>,
+              name: <span className="font-mono font-semibold text-fg">{t.tablespace_name}</span>,
+              total: <span className="font-mono">{fmtMB(t.total_mb)}</span>,
+              used: <span className="font-mono">{fmtMB(t.used_mb)}</span>,
+              free: <span className="font-mono">{fmtMB(t.free_mb)}</span>,
               pct: <span className={t.used_pct >= 85 ? 'font-mono text-[12px] font-bold text-danger-fg' : 'font-mono text-[12px]'}>{t.used_pct}%</span>,
               status: <Badge tone={t.requires_attention ? 'warning' : 'success'} size="xs">{t.requires_attention ? 'Attention' : 'Healthy'}</Badge>,
               ops: (
@@ -215,6 +220,9 @@ export default function SpaceMaintenancePage({ connId }) {
           {(page, pager) => (
             <>
               <Table
+                rowHeight={64}
+                darkHeader
+                cellText
                 columns={[
                   { key: 'name', label: 'File' },
                   { key: 'ts', label: 'Tablespace' },
@@ -225,9 +233,9 @@ export default function SpaceMaintenancePage({ connId }) {
                 rows={page.map((df) => ({
                   key: df.file_name,
                   cells: {
-                    name: <span className="max-w-[280px] truncate font-mono text-[11px] text-fg" title={df.file_name}>{df.file_name}</span>,
-                    ts: <span className="text-[12px]">{df.tablespace_name}</span>,
-                    size: <span className="font-mono text-[12px]">{fmtNumber(df.size_mb)} MB</span>,
+                    name: <span className="max-w-[280px] truncate font-mono text-fg" title={df.file_name}>{df.file_name}</span>,
+                    ts: <span>{df.tablespace_name}</span>,
+                    size: <span className="font-mono">{fmtMB(df.size_mb)}</span>,
                     autoextend: <Badge tone={df.autoextensible === 'YES' ? 'success' : 'neutral'} size="xs">{df.autoextensible === 'YES' ? 'ON' : 'OFF'}</Badge>,
                     ops: (
                       <Button size="sm" variant="secondary" onClick={() => setResizeTarget(df)}>
@@ -246,7 +254,7 @@ export default function SpaceMaintenancePage({ connId }) {
 
       <div className="card p-card">
         <div className="mb-3 flex items-center justify-between">
-          <p className="text-[13px] font-bold text-fg">Recycle Bin — {fmtNumber(recyclebin.total_mb)} MB across {Object.keys(recyclebin.by_owner).length} schema(s)</p>
+          <p className="text-[13px] font-bold text-fg">Recycle Bin — {fmtMB(recyclebin.total_mb)} across {Object.keys(recyclebin.by_owner).length} schema(s)</p>
           <Button size="sm" variant="secondary" icon="trash" onClick={() => setPurgeConfirm(true)} disabled={!recyclebin.total_mb}>
             Purge Recycle Bin
           </Button>
@@ -258,7 +266,7 @@ export default function SpaceMaintenancePage({ connId }) {
             {Object.entries(recyclebin.by_owner).map(([owner, info]) => (
               <span key={owner} className="rounded-control border border-border bg-surface px-2.5 py-1 text-[11px]">
                 <span className="font-semibold text-fg">{owner}</span>
-                <span className="ml-1.5 text-subtle">{info.object_count} objects, {fmtNumber(info.size_mb)} MB</span>
+                <span className="ml-1.5 text-subtle">{info.object_count} objects, {fmtMB(info.size_mb)}</span>
               </span>
             ))}
           </div>

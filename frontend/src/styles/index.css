@@ -441,3 +441,27 @@
   table  { font-size: 9px !important; }
   th, td { padding: 3px 6px !important; }
 }
+
+
+/* ── the product mark ─────────────────────────────────────────────────────
+   The supplied logo is a render on a black field. `screen` compositing drops
+   black to nothing, so the asset can be used whole — icon, wordmark and
+   tagline — on the navy top bar, on the loader and on a dark panel alike,
+   with no cut-out version to keep in step with it.
+
+   The brightness lift is not decoration: in that master the wordmark peaks at
+   198 of 255 and the tagline at 166, which reads as grey-on-black. This is
+   what makes the name under the icon legible. */
+.brand-asset {
+  /* The 2026 logo ships with its navy field already knocked out to real
+     transparency (see the asset notes), so it composites normally on the
+     navy bar, the dark loader and a light surface alike — no blend mode to
+     wash it out on white. */
+  mix-blend-mode: normal;
+}
+
+/* On a light surface `screen` would wash the artwork out, so there it is
+   composited normally and the black field is simply the logo's own backdrop. */
+@media (prefers-color-scheme: light) {
+  :root[data-theme='light'] .brand-asset--on-light { mix-blend-mode: normal; filter: none; }
+}

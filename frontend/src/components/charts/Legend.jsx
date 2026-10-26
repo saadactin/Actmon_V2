@@ -15,11 +15,17 @@ export default function Legend({ items, showValues = true, className, format = (
   return (
     <div className={cn('flex flex-wrap items-center gap-x-3.5 gap-y-1', className)}>
       {items.map((item) => (item.status ? (
-        <StatusKey
-          key={item.key ?? item.label}
-          status={{ ...item.status, label: item.label }}
-          count={showValues ? format(item.value) : undefined}
-        />
+        item.onClick ? (
+          <button type="button" key={item.key ?? item.label} onClick={item.onClick} className="rounded-sm hover:underline">
+            <StatusKey status={{ ...item.status, label: item.label }} count={showValues ? format(item.value) : undefined} />
+          </button>
+        ) : (
+          <StatusKey
+            key={item.key ?? item.label}
+            status={{ ...item.status, label: item.label }}
+            count={showValues ? format(item.value) : undefined}
+          />
+        )
       ) : (
         <span
           key={item.key ?? item.label}

@@ -296,6 +296,9 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
             {(page, pager) => (
               <>
                 <Table
+                  rowHeight={64}
+                  darkHeader
+                  cellText
                   columns={[
                     { key: 'sid', label: 'SID' },
                     { key: 'user', label: 'User' },
@@ -316,14 +319,14 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                         sid: (
                           <span className="flex items-center gap-1.5">
                             <Icon name="chevron-right" size={12} className="text-subtle" />
-                            <span className="font-mono text-[12px] font-semibold">
+                            <span className="font-mono font-semibold">
                               {r.sid}<span className="text-subtle">,{r.serial_number}</span>
                             </span>
                           </span>
                         ),
                         user: (
-                          <span className="block text-[11px] leading-tight">
-                            <span className="truncate-safe block max-w-[110px] text-[12px] font-semibold text-accent-text">
+                          <span className="block leading-tight">
+                            <span className="truncate-safe block max-w-[110px] font-semibold text-accent-text">
                               {r.username}
                             </span>
                             {r.osuser && <span className="truncate-safe block max-w-[110px] text-subtle">{r.osuser}</span>}
@@ -331,7 +334,7 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                         ),
                         status: <StateChip value={r.status} tones={SESSION_TONES} />,
                         client: (
-                          <span className="block text-[11px] leading-tight">
+                          <span className="block leading-tight">
                             <span className="truncate-safe block max-w-[130px] font-mono text-muted">{r.machine || '—'}</span>
                             <span className="truncate-safe block max-w-[130px] text-subtle">{r.module || r.program || ''}</span>
                           </span>
@@ -340,8 +343,8 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                           <span className="block">
                             <span className="flex items-center gap-1.5">
                               {r.wait_event
-                                ? <span className="truncate-safe max-w-[180px] font-mono text-[11px] text-fg">{r.wait_event}</span>
-                                : <span className="text-[11px] text-success-fg">On CPU</span>}
+                                ? <span className="truncate-safe max-w-[180px] font-mono text-fg">{r.wait_event}</span>
+                                : <span className="text-success-fg">On CPU</span>}
                               {r.wait_class && (
                                 <Badge tone={WAIT_CLASS_TONES[r.wait_class] || 'neutral'} size="xs">{r.wait_class}</Badge>
                               )}
@@ -360,11 +363,11 @@ export default function OracleLiveQueries({ connId, embedded = false }) {
                               style={{ background: band.status.color }} title={`Waiting ${band.label}`} />
                           </span>
                         ),
-                        idle: <span className="font-mono text-[11px] text-muted">{fmtIdle(r.last_call_et)}</span>,
+                        idle: <span className="font-mono text-muted">{fmtIdle(r.last_call_et)}</span>,
                         sql: (
                           <span className="block">
                             <SqlCell sql={r.sql_text} max={90} />
-                            {r.sql_id && <span className="mt-0.5 block font-mono text-[10px] text-subtle">{r.sql_id}</span>}
+                            {r.sql_id && <span className="mt-0.5 block font-mono text-subtle">{r.sql_id}</span>}
                           </span>
                         ),
                       },

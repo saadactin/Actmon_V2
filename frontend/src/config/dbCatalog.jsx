@@ -27,6 +27,41 @@ export function fmtBytes(b) {
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
+/**
+ * A size the backend reports in MEGABYTES, in the unit a reader expects.
+ *
+ * Sizes used to be printed as `${fmtNumber(mb)} MB`, and fmtNumber abbreviates
+ * thousands — so 32,900 MB came out as "32.9K MB", a unit nobody reads, and
+ * 13,590 GB as "13590.572 GB". This picks MB, GB, TB or PB by magnitude
+ * (1024-based, the way Oracle and every OS report storage) so the same value
+ * reads as "32.1 GB" or "13.3 TB".
+ *
+ * Precision follows the magnitude: two decimals under 10, one under 100, none
+ * above — enough to tell 9.75 GB from 9.5 GB without printing 13.27186 TB.
+ *
+ * null/undefined is "not reported" and renders as an em dash, never as 0 MB.
+ */
+export function fmtMB(mb) {
+  if (mb === null || mb === undefined || mb === '') return '—';
+  const n = Number(mb);
+  if (!Number.isFinite(n)) return '—';
+  if (n === 0) return '0 MB';
+  const units = ['MB', 'GB', 'TB', 'PB'];
+  let v = Math.abs(n);
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  const digits = v < 10 ? 2 : v < 100 ? 1 : 0;
+  const shown = Number(v.toFixed(digits)).toLocaleString(undefined, { maximumFractionDigits: digits });
+  return `${n < 0 ? '-' : ''}${shown} ${units[i]}`;
+}
+
+/** The same, for values the backend reports in GIGABYTES. */
+export function fmtGB(gb) {
+  if (gb === null || gb === undefined || gb === '') return '—';
+  const n = Number(gb);
+  return Number.isFinite(n) ? fmtMB(n * 1024) : '—';
+}
+
 export function fmtNumber(n) {
   const v = Number(n || 0);
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;

@@ -137,7 +137,8 @@ export default function ColumnChart({
                             .map((s) => (
                               <span
                                 key={s.key}
-                                className="w-full"
+                                onClick={s.onClick ? (e) => { e.stopPropagation(); s.onClick(); } : undefined}
+                                className={cn('w-full', s.onClick && 'cursor-pointer hover:brightness-110')}
                                 style={{
                                   flexGrow: s.value,
                                   flexBasis: 0,

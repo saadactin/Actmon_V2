@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense } from 'react';
 import cn from '@/lib/cn';
@@ -26,6 +26,7 @@ import { listOsServers, getServerSummary, getLiveStatus, refreshServerStatus } f
 import { QK } from '@/api/queryKeys';
 import { usePermissions } from '@/hooks/usePermissions';
 import InfraHostCard, { hostLevel, hostStatus, osLabel, pctOf } from './InfraHostCard';
+import InfraFleetOverview from './InfraFleetOverview';
 
 const XTerminal = lazy(() => import('@/components/terminal/XTerminal'));
 
@@ -82,8 +83,26 @@ export default function InfraPage() {
   const [search, setSearch] = useState('');
   const [envFilter, setEnvFilter] = useState('all');
   const [osFilter, setOsFilter] = useState('all');
+  const [collectorFilter, setCollectorFilter] = useState('all');
   const [overviewServer, setOverviewServer] = useState('all');
-  const [statCard, setStatCard] = useState('all');
+  // ?status=online|warning|offline — the Monitoring Overview's Infra Hosts card
+  // links here with it, and the KPI cards below keep it in the URL so a reload
+  // or a shared link shows the same filtered list.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const statusParam = ['online', 'warning', 'offline'].includes(searchParams.get('status')) ? searchParams.get('status') : 'all';
+  const [statCard, setStatCardState] = useState(statusParam);
+  const setStatCard = (next) => {
+    setStatCardState(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'all') params.delete('status'); else params.set('status', next);
+    setSearchParams(params, { replace: true });
+  };
+  useEffect(() => { setStatCardState(statusParam); }, [statusParam]);
+  // ?env= / ?os= (an OS label, e.g. Windows) / ?collector=agent|ssh|rac-peer — the Overview donuts link here with them
+  const envParam = searchParams.get('env'); const osParam = searchParams.get('os'); const colParam = searchParams.get('collector');
+  useEffect(() => { setEnvFilter(envParam || 'all'); }, [envParam]);
+  useEffect(() => { setOsFilter(osParam ? `label:${osParam}` : 'all'); }, [osParam]);
+  useEffect(() => { setCollectorFilter(colParam || 'all'); }, [colParam]);
   const [sortKey, setSortKey] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
   const [terminalServer, setTerminalServer] = useState(null);
@@ -123,7 +142,11 @@ export default function InfraPage() {
   /* ── merge live status onto the last full snapshot ─────────────────────── */
   const liveMap = {};
   for (const r of (liveData?.data || [])) liveMap[r.id] = r;
-  const hosts = (serversData || []).map((s) => (liveMap[s.id] ? { ...s, status: liveMap[s.id].os_status } : s));
+  // A 'rac-peer' is read by the agent on a sibling node; the live poller has no
+  // route to it, so its "offline" is an absent opinion, not a reading — its own
+  // collector's status stands (the same rule DatabaseServersPage and the
+  // dashboard apply, so all three count the same hosts as online).
+  const hosts = (serversData || []).map((s) => (liveMap[s.id] && s.collector !== 'rac-peer' ? { ...s, status: liveMap[s.id].os_status } : s));
 
   const counts = {
     total: hosts.length,
@@ -147,8 +170,9 @@ export default function InfraPage() {
 
   const onStatClick = (card) => {
     const next = statCard === card.key && card.key !== 'all' ? 'all' : card.key;
-    setStatCard(next);
-    setTab('hosts');
+    setStatCardState(next);
+    // One navigation carrying the filter (switching tab separately would drop ?status).
+    navigate(`/infra/hosts${next !== 'all' ? `?status=${next}` : ''}`, { replace: tab === 'hosts' });
   };
 
   const openHost = (h) => navigate(`/infra/${h.id}`);
@@ -156,8 +180,9 @@ export default function InfraPage() {
   /* ── Hosts tab: filter + sort ────────────────────────────────────────────── */
   const filtered = hosts
     .filter((h) => statCard === 'all' || hostLevel(h) === statCard)
-    .filter((h) => envFilter === 'all' || h.environment === envFilter)
-    .filter((h) => osFilter === 'all' || h.os_type === osFilter)
+    .filter((h) => envFilter === 'all' || h.environment === envFilter || (envFilter === 'Unassigned' && !h.environment))
+    .filter((h) => osFilter === 'all' || (osFilter.startsWith('label:') ? (osLabel(h.os_type) === osFilter.slice(6) || h.os_type === osFilter.slice(6)) : h.os_type === osFilter))
+    .filter((h) => collectorFilter === 'all' || (collectorFilter === 'agent' ? h.collector === 'agent' : collectorFilter === 'rac-peer' ? h.collector === 'rac-peer' : !['agent', 'rac-peer'].includes(h.collector)))
     .filter((h) => {
       if (!search.trim()) return true;
       const q = search.toLowerCase();
@@ -166,8 +191,11 @@ export default function InfraPage() {
         || (h.ip_address || '').includes(search);
     });
 
-  const hasFilters = search || envFilter !== 'all' || osFilter !== 'all' || statCard !== 'all';
-  const clearFilters = () => { setSearch(''); setEnvFilter('all'); setOsFilter('all'); setStatCard('all'); };
+  const hasFilters = search || envFilter !== 'all' || osFilter !== 'all' || collectorFilter !== 'all' || statCard !== 'all';
+  const clearFilters = () => {
+    setSearch(''); setEnvFilter('all'); setOsFilter('all'); setCollectorFilter('all'); setStatCardState('all');
+    const params = new URLSearchParams(searchParams); ['status', 'env', 'os', 'collector'].forEach((k) => params.delete(k)); setSearchParams(params, { replace: true });
+  };
 
   const columns = [
     { key: 'host', label: 'Host', sortable: true, sortKey: 'name', width: 280 },
@@ -304,7 +332,7 @@ export default function InfraPage() {
       {isLoading ? (
         <PageLoading illustration />
       ) : tab === 'overview' ? (
-        <InfraOverview
+        <InfraFleetOverview
           hosts={overviewHosts}
           counts={overviewServer === 'all' ? counts : {
             total: overviewHosts.length,
@@ -312,8 +340,7 @@ export default function InfraPage() {
             warning: overviewHosts.filter((h) => hostLevel(h) === 'warning').length,
             offline: overviewHosts.filter((h) => hostLevel(h) === 'offline').length,
           }}
-          onOpen={openHost}
-          onDrill={onStatClick}
+          serverId={overviewServer === 'all' ? null : Number(overviewServer)}
           loading={isFetching && !isLoading}
         />
       ) : (
@@ -343,7 +370,7 @@ export default function InfraPage() {
                     <Icon name={card.icon} size={17} />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-[22px] leading-none font-bold text-fg">{counts[card.key]}</span>
+                    <span className="block text-[22px] leading-none font-bold text-fg">{card.key === 'all' ? counts.total : counts[card.key]}</span>
                     <span className="truncate-safe mt-1 block text-[11px] font-semibold text-muted">{card.label}</span>
                   </span>
                 </button>
@@ -363,12 +390,22 @@ export default function InfraPage() {
             />
             <Select
               width="auto" value={envFilter} onChange={setEnvFilter}
-              options={[{ id: 'all', label: 'All environments' }, ...environments.map((e) => ({ id: e, label: e }))]}
+              options={[{ id: 'all', label: 'All environments' }, ...environments.map((e) => ({ id: e, label: e })), ...(hosts.some((h) => !h.environment) ? [{ id: 'Unassigned', label: 'Unassigned' }] : [])]}
             />
             <Select
               width="auto" value={osFilter} onChange={setOsFilter}
-              options={[{ id: 'all', label: 'All OS' }, ...osTypes.map((o) => ({ id: o, label: o }))]}
+              options={[{ id: 'all', label: 'All OS' }, ...osTypes.map((o) => ({ id: o, label: o })),
+                ...Array.from(new Set(hosts.map((h) => osLabel(h.os_type)).filter(Boolean))).map((l) => ({ id: `label:${l}`, label: `${l} (all versions)` }))]}
             />
+            <Select
+              width="auto" value={collectorFilter} onChange={setCollectorFilter} aria-label="Collector"
+              options={[{ id: 'all', label: 'All collectors' }, { id: 'agent', label: 'ActMon Agent' }, { id: 'ssh', label: 'SSH (poll)' }, { id: 'rac-peer', label: 'RAC peer' }]}
+            />
+            {statCard !== 'all' && (
+              <Badge tone={statCard === 'online' ? 'success' : statCard === 'offline' ? 'danger' : 'warning'}>
+                Status: {statCard === 'online' ? 'Online' : statCard === 'offline' ? 'Offline' : 'Warning'} · {filtered.length} of {hosts.length}
+              </Badge>
+            )}
             {hasFilters && <Button variant="ghost" size="sm" icon="close" onClick={clearFilters}>Clear</Button>}
 
             <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -475,301 +512,6 @@ export default function InfraPage() {
 /* ────────────────────────────────────────────────────────────────────────────
    Overview
 ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Same colour per metric as Dashboard's "Average Resource Usage" card — one
- * host's CPU should read the same hue whether you're looking at the module
- * overview or this fleet-wide one.
- */
-const RESOURCE_COLORS = { cpu: 'var(--chart-2)', ram: 'var(--chart-5)', disk: 'var(--chart-1)' };
-
-/** Grey section band ("Health & Availability", "Resource Utilization", …) — same
-    token-based pattern InfraHostDetail.jsx uses for its own overview groups, so
-    the fleet-wide page reads as the same document family as the per-host one. */
-function InfraOverview({ hosts, counts, onOpen, onDrill, loading }) {
-  const avg = (key) => (hosts.length ? Math.round(hosts.reduce((s, h) => s + pctOf(h[key]), 0) / hosts.length) : 0);
-  const avgCpu = avg('cpu_usage'), avgRam = avg('ram_usage'), avgDisk = avg('disk_usage');
-  const availability = counts.total ? (counts.online / counts.total) * 100 : 0;
-  const availabilityColor = availability >= 99 ? STATUS.good.color : availability >= 90 ? STATUS.warning.color : STATUS.critical.color;
-
-  const statusItems = [
-    { key: 'online', label: 'Online', value: counts.online, status: STATUS.good },
-    { key: 'warning', label: 'Warning', value: counts.warning, status: STATUS.warning },
-    { key: 'offline', label: 'Offline', value: counts.offline, status: STATUS.critical },
-  ];
-
-  const osGroups = hosts.reduce((m, h) => { const k = osLabel(h.os_type); m[k] = (m[k] || 0) + 1; return m; }, {});
-  const winCount = osGroups.Windows || 0, linCount = osGroups.Linux || 0;
-
-  const agentCount = hosts.filter((h) => h.collector === 'agent').length;
-  const collectorItems = [
-    { key: 'agent', label: 'ActMon Agent', value: agentCount },
-    { key: 'ssh', label: 'SSH (poll)', value: counts.total - agentCount },
-  ];
-
-  const envGroups = hosts.reduce((m, h) => { const k = h.environment || 'Unassigned'; m[k] = (m[k] || 0) + 1; return m; }, {});
-  const envItems = Object.entries(envGroups).map(([key, value]) => ({ key, label: key, value }));
-
-  const svcCounts = {};
-  hosts.forEach((h) => (Array.isArray(h.database_services) ? h.database_services : [])
-    .forEach((s) => { svcCounts[s] = (svcCounts[s] || 0) + 1; }));
-  const svcItems = Object.entries(svcCounts)
-    .map(([label, value]) => ({ key: label, label, value, color: engineColor(label) }))
-    .sort((a, b) => b.value - a.value);
-
-  const resourceItems = [
-    { key: 'cpu', label: 'CPU', value: avgCpu, color: RESOURCE_COLORS.cpu },
-    { key: 'ram', label: 'Memory', value: avgRam, color: RESOURCE_COLORS.ram },
-    { key: 'disk', label: 'Disk', value: avgDisk, color: RESOURCE_COLORS.disk },
-  ];
-
-  // Clickable rows: BarList already renders any item carrying onClick as a
-  // real <button> (see BarList.jsx) — wiring this through is all a "Top Hosts"
-  // bar needs to become a link to that host's own page.
-  //
-  // Offline hosts are excluded, not just dimmed: their cpu/ram/disk fields are
-  // whatever was last reported before the host stopped reporting — frozen, not
-  // live — so ranking them against currently-reporting hosts would compare a
-  // real-time reading against a stale one that happens to still be a number.
-  // "Warning" hosts stay in — a warning still means it's live and reporting,
-  // just past a threshold.
-  const rank = (key) => hosts
-    .filter((h) => hostLevel(h) !== 'offline')
-    .map((h) => ({ key: h.id, label: h.server_name || h.hostname || `Host #${h.id}`, value: pctOf(h[key]), onClick: () => onOpen(h) }))
-    .sort((a, b) => b.value - a.value).slice(0, TOP_N)
-    .map((h) => ({ ...h, status: bandFor(h.value) }));
-  const topCpu = rank('cpu_usage'), topRam = rank('ram_usage'), topDisk = rank('disk_usage');
-
-  // Same shape RecentAlertsPanel already renders — so "Needs Attention" reads
-  // as literally the same component/format as Dashboard's alert feed, not a
-  // lookalike copy that could drift out of sync with it.
-  const attention = hosts.filter((h) => hostLevel(h) !== 'online');
-  const attentionAlerts = attention.map((h) => ({
-    id: h.id,
-    source: h.server_name || h.hostname || `Host #${h.id}`,
-    severity: hostLevel(h) === 'offline' ? 'critical' : 'warning',
-    rule_name: h.ip_address || h.hostname,
-    message: `${hostStatus(h).label} — ${h.ip_address || h.hostname || ''}`,
-  }));
-  const attentionCounts = {
-    total: attention.length,
-    critical: attention.filter((h) => hostLevel(h) === 'offline').length,
-    warning: attention.filter((h) => hostLevel(h) === 'warning').length,
-    info: 0,
-  };
-
-  // CPU vs memory across the fleet — bubble size is disk usage. Colour follows
-  // the same STATUS scale as everywhere else, not a fourth chart-slot hue,
-  // since what a reader needs from this dot is the SAME "online/warning/
-  // offline" read as the rest of the page, not a new colour to learn.
-  const scatterPoints = hosts.map((h) => ({
-    x: pctOf(h.cpu_usage), y: pctOf(h.ram_usage), z: pctOf(h.disk_usage),
-    label: h.server_name || h.hostname || `Host #${h.id}`,
-    color: hostStatus(h).color,
-    onClick: () => onOpen(h),
-  }));
-
-  // Same two heights Dashboard.jsx's own donut row / rank-and-gauge row use — an
-  // explicit cap, not a stretch guess, so a card's size stays the SAME whichever
-  // page it's read from rather than ballooning to match its tallest grid sibling.
-  const DONUT_MIN_H = 'lg:min-h-[260px]';
-  const RANK_MIN_H = 'lg:min-h-[316px]';
-
-  const rankCard = (id, title, items, empty) => (
-    <ChartCard
-      cardId={id} family="flat" defaultKind="bar" items={items}
-      chartProps={{ max: 100, unit: '%', format: (v) => Math.round(v), emptyLabel: empty }}
-      title={title} titleNote={`(Top ${TOP_N})`}
-      className={RANK_MIN_H}
-      loading={loading}
-      tableColumns={[
-        { key: 'host', label: 'Host' },
-        { key: 'value', label: 'Usage', align: 'right' },
-        { key: 'band', label: 'Band', align: 'right' },
-      ]}
-      tableRows={items.map((h) => ({
-        key: h.key,
-        cells: {
-          host: <button type="button" onClick={h.onClick} className="font-semibold text-accent-text hover:underline">{h.label}</button>,
-          value: `${h.value}%`, band: h.status.label,
-        },
-      }))}
-    />
-  );
-
-  const healthPct = counts.total ? Math.round((counts.online / counts.total) * 100) : 0;
-  const healthTone = !counts.total ? 'neutral' : healthPct >= 90 ? 'good' : healthPct >= 60 ? 'warning' : 'danger';
-  const osItems = [
-    { key: 'windows', label: 'Windows', value: winCount },
-    { key: 'linux', label: 'Linux', value: linCount },
-  ];
-
-  return (
-    <div className="flex flex-col gap-gutter-lg">
-      {/* headline counts — same shape/sizing as Dashboard.jsx's own KPI row */}
-      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 lg:grid-cols-5">
-        <StatTile
-          label="Total Hosts" value={counts.total} icon="server" tone="neutral"
-          sub={<b className="font-semibold text-success-fg">{healthPct}% Healthy</b>}
-          onClick={() => onDrill?.({ key: 'all' })}
-        />
-        <StatTile
-          label="Online" value={counts.online} icon="check" tone="good" valueTone="good"
-          onClick={() => onDrill?.({ key: 'online' })}
-        />
-        <StatTile
-          label="Warning" value={counts.warning} icon="alert" tone="warning" valueTone="warning"
-          onClick={() => onDrill?.({ key: 'warning' })}
-        />
-        <StatTile
-          label="Offline" value={counts.offline} icon="close" tone="danger" valueTone="danger"
-          onClick={() => onDrill?.({ key: 'offline' })}
-        />
-        <StatTile
-          label="Avg Resource Usage" value={`${Math.round((avgCpu + avgRam + avgDisk) / 3)}%`}
-          icon="gauge" tone={healthTone} valueTone={healthTone}
-          sub={`CPU ${avgCpu}% · RAM ${avgRam}% · Disk ${avgDisk}%`}
-        />
-      </div>
-
-      {/* charts, with the alert feed running down the right — same shape as Dashboard.jsx */}
-      <div className="grid gap-gutter-lg xl:grid-cols-4">
-        <div className="flex flex-col gap-gutter-lg xl:col-span-3">
-          {/* shape of the fleet: health, OS, environment, collector */}
-          <div className="grid gap-gutter-lg lg:grid-cols-4">
-            <ChartCard
-              cardId="infra-host-status" family="flat" defaultKind="donut" items={statusItems}
-              chartProps={{
-                legend: 'below', size: 146, centerLabel: `${counts.total} Hosts`,
-                emptyLabel: 'No hosts registered yet', labelWidth: 64,
-              }}
-              title="Host Status"
-              className={DONUT_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'status', label: 'Status' }, { key: 'hosts', label: 'Hosts', align: 'right' }]}
-              tableRows={statusItems.map((s) => ({ key: s.key, cells: { status: s.label, hosts: s.value } }))}
-              footer={
-                <button type="button" onClick={() => onDrill?.({ key: 'warning' })} className="text-[12px] font-semibold text-accent-text hover:underline">
-                  View hosts needing attention
-                </button>
-              }
-            />
-
-            <ChartCard
-              cardId="infra-os-platform" family="flat" defaultKind="donut" items={osItems}
-              chartProps={{
-                legend: 'below', size: 146, centerLabel: `${counts.total} Hosts`,
-                emptyLabel: 'No hosts registered yet', labelWidth: 64,
-              }}
-              title="OS Platform"
-              className={DONUT_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'os', label: 'OS' }, { key: 'hosts', label: 'Hosts', align: 'right' }]}
-              tableRows={osItems.map((o) => ({ key: o.key, cells: { os: o.label, hosts: o.value } }))}
-            />
-
-            <ChartCard
-              cardId="infra-environments" family="flat" defaultKind="donut" items={envItems}
-              chartProps={{
-                legend: 'below', size: 146, centerLabel: `${counts.total} Hosts`,
-                emptyLabel: 'No hosts registered yet', labelWidth: 64,
-              }}
-              title="Environments"
-              className={DONUT_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'environment', label: 'Environment' }, { key: 'hosts', label: 'Hosts', align: 'right' }]}
-              tableRows={envItems.map((e) => ({ key: e.key, cells: { environment: e.label, hosts: e.value } }))}
-            />
-
-            <ChartCard
-              cardId="infra-collector" family="flat" defaultKind="donut" items={collectorItems}
-              chartProps={{
-                legend: 'below', size: 146, centerLabel: `${counts.total} Hosts`,
-                emptyLabel: 'No hosts registered yet', labelWidth: 64,
-              }}
-              title="Collector"
-              className={DONUT_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'collector', label: 'Collector' }, { key: 'hosts', label: 'Hosts', align: 'right' }]}
-              tableRows={collectorItems.map((c) => ({ key: c.key, cells: { collector: c.label, hosts: c.value } }))}
-            />
-          </div>
-
-          {/* how hard it is working */}
-          <div className="grid gap-gutter-lg lg:grid-cols-2">
-            {rankCard('infra-top-cpu', 'Top Hosts By CPU', topCpu, 'No host is reporting CPU yet')}
-            <ChartCard
-              cardId="infra-resource-usage" family="ratio" defaultKind="gauge" items={resourceItems}
-              title="Average Resource Usage"
-              className={RANK_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'resource', label: 'Resource' }, { key: 'used', label: 'Avg used', align: 'right' }, { key: 'band', label: 'Band', align: 'right' }]}
-              tableRows={resourceItems.map((r) => ({ key: r.key, cells: { resource: r.label, used: `${r.value}%`, band: bandFor(r.value).label } }))}
-            />
-          </div>
-
-          <div className="grid gap-gutter-lg lg:grid-cols-2">
-            {rankCard('infra-top-ram', 'Top Hosts By Memory', topRam, 'No host is reporting memory yet')}
-            {rankCard('infra-top-disk', 'Top Hosts By Disk', topDisk, 'No host is reporting disk yet')}
-          </div>
-
-          {/* availability and what's actually running */}
-          <div className="grid gap-gutter-lg lg:grid-cols-2">
-            <ChartCard
-              cardId="infra-availability" family="ratio" defaultKind="gauge"
-              items={[{ key: 'availability', label: 'Availability', value: availability, color: availabilityColor }]}
-              chartProps={{ hint: `${counts.online} of ${counts.total} online` }}
-              title="Availability"
-              className={DONUT_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'metric', label: 'Metric' }, { key: 'value', label: 'Value', align: 'right' }]}
-              tableRows={[{ key: 'availability', cells: { metric: 'Availability', value: `${availability.toFixed(1)}%` } }]}
-            />
-            <ChartCard
-              cardId="infra-db-services" family="flat" defaultKind="bar" items={svcItems}
-              chartProps={{ unit: '', format: (v) => v, emptyLabel: 'No database services on any host' }}
-              title="Database Services"
-              className={DONUT_MIN_H}
-              loading={loading}
-              tableColumns={[{ key: 'engine', label: 'Engine' }, { key: 'hosts', label: 'Hosts', align: 'right' }]}
-              tableRows={svcItems.map((s) => ({ key: s.key, cells: { engine: s.label, hosts: s.value } }))}
-            />
-          </div>
-
-          <section className="card flex flex-col">
-            <header className="px-card pt-card pb-3">
-              <h2 className="text-[17px] font-bold text-fg">CPU vs Memory — all hosts</h2>
-              <p className="mt-0.5 text-[11px] text-subtle">Bubble size = disk usage</p>
-            </header>
-            <div className="px-card pb-card">
-              <ScatterChart
-                points={scatterPoints}
-                xLabel="CPU" yLabel="Memory" height={220}
-                emptyLabel="No hosts to plot yet"
-              />
-              <div className="mt-3 flex flex-wrap items-center gap-3">
-                {[STATUS.good, STATUS.warning, STATUS.critical].map((s) => (
-                  <span key={s.id} className="inline-flex items-center gap-1.5 text-[10px] font-medium text-subtle">
-                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} aria-hidden="true" />
-                    {s.label}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <RecentAlertsPanel
-          title="Needs Attention"
-          actionLabel="View Hosts"
-          alerts={attentionAlerts}
-          counts={attentionCounts}
-          onOpenAll={() => onDrill?.({ key: 'warning' })}
-        />
-      </div>
-    </div>
-  );
-}
 
 /**
  * Utilisation read-out for a table cell — identical to AgentsPage.jsx's own

@@ -107,6 +107,9 @@ export default function StatisticsMaintenancePage({ connId }) {
         {(page, pager) => (
           <>
             <Table
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'object', label: 'Owner.Table' },
                 { key: 'rows', label: 'Rows', align: 'right' },
@@ -118,12 +121,12 @@ export default function StatisticsMaintenancePage({ connId }) {
               rows={page.map((t) => ({
                 key: t.object_name,
                 cells: {
-                  object: <span className="font-mono text-[12px] font-semibold text-accent-text">{t.object_name}</span>,
-                  rows: <span className="font-mono text-[12px]">{t.num_rows != null ? fmtNumber(t.num_rows) : '—'}</span>,
+                  object: <span className="font-mono font-semibold text-accent-text">{t.object_name}</span>,
+                  rows: <span className="font-mono">{t.num_rows != null ? fmtNumber(t.num_rows) : '—'}</span>,
                   analyzed: <span className={t.stale ? 'text-[11px] text-warning-fg' : 'text-[11px] text-muted'}>{t.last_analyzed ? fmtIST(t.last_analyzed) : 'Never'}</span>,
                   status: <Badge tone={t.stale ? 'warning' : 'success'} size="xs">{t.stale ? 'Stale' : 'Fresh'}</Badge>,
                   mods: t.modifications != null ? (
-                    <span className="font-mono text-[11px]">{fmtNumber(t.inserts)} / {fmtNumber(t.updates)} / {fmtNumber(t.deletes)}</span>
+                    <span className="font-mono">{fmtNumber(t.inserts)} / {fmtNumber(t.updates)} / {fmtNumber(t.deletes)}</span>
                   ) : <span className="text-subtle">—</span>,
                   ops: (
                     <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>

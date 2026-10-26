@@ -14,7 +14,9 @@ import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
 import Toasts, { useToasts } from '@/components/ui/Toast';
 import { MetricTile, SqlBlock, TablePanel } from '@/pages/_shared/enginePanels';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB, fmtGB,
+} from '@/config/dbCatalog';
 import { STATUS_TONES, ACTION_LABELS, JOB_STATUS_TONES, fmtIST } from './storageHealthConstants';
 
 /**
@@ -229,6 +231,9 @@ export default function OracleStorageHealth() {
             {(page, pager) => (
               <>
                 <Table
+                  rowHeight={64}
+                  darkHeader
+                  cellText
                   columns={[
                     { key: 'object', label: 'Object' },
                     { key: 'status', label: 'Status' },
@@ -243,15 +248,15 @@ export default function OracleStorageHealth() {
                       cells: {
                         object: (
                           <span className="block">
-                            <span className="font-mono text-[12px] font-semibold text-accent-text">{f.object_name}</span>
-                            <span className="mt-0.5 block text-[10px] text-subtle capitalize">
+                            <span className="font-mono font-semibold text-accent-text">{f.object_name}</span>
+                            <span className="mt-0.5 block text-subtle capitalize">
                               {f.object_type}{f.tablespace_name ? ` · ${f.tablespace_name}` : ''}
                             </span>
                           </span>
                         ),
                         status: <Badge tone={STATUS_TONES[f.status] || 'neutral'} size="xs">{f.status}</Badge>,
-                        problem: <span className="text-[12px] text-fg">{f.problem}</span>,
-                        action: <span className="text-[12px] text-muted">{ACTION_LABELS[f.recommended_action] || f.recommended_action}</span>,
+                        problem: <span className="text-fg">{f.problem}</span>,
+                        action: <span className="text-muted">{ACTION_LABELS[f.recommended_action] || f.recommended_action}</span>,
                       },
                     };
                   })}
@@ -288,6 +293,9 @@ export default function OracleStorageHealth() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'tablespace', label: 'Tablespace' },
                       { key: 'file', label: 'File' },
@@ -300,15 +308,15 @@ export default function OracleStorageHealth() {
                       key: `${d.file_id}-${i}`,
                       onClick: () => openDetail({ object_type: 'datafile', file_id: d.file_id, label: d.file_name }),
                       cells: {
-                        tablespace: <span className="font-mono text-[12px] font-semibold text-accent-text">{d.tablespace}</span>,
-                        file: <span className="text-[11px] text-muted" title={d.file_name}>{d.file_name}</span>,
-                        size: <span className="font-mono text-[12px]">{fmtNumber(d.size_gb)} GB</span>,
+                        tablespace: <span className="font-mono font-semibold text-accent-text">{d.tablespace}</span>,
+                        file: <span className="text-muted" title={d.file_name}>{d.file_name}</span>,
+                        size: <span className="font-mono">{fmtGB(d.size_gb)}</span>,
                         autoextend: (
                           <Badge tone={d.autoextend === 'YES' ? 'success' : 'neutral'} size="xs">
                             {d.autoextend === 'YES' ? 'On' : 'Off'}
                           </Badge>
                         ),
-                        max: <span className="font-mono text-[12px] text-muted">{d.max_gb ? `${fmtNumber(d.max_gb)} GB` : '—'}</span>,
+                        max: <span className="font-mono text-muted">{d.max_gb ? fmtGB(d.max_gb) : '—'}</span>,
                         status: <Badge tone={d.status === 'AVAILABLE' ? 'success' : 'warning'} size="xs">{d.status}</Badge>,
                       },
                     }))}
@@ -342,6 +350,9 @@ export default function OracleStorageHealth() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'name', label: 'Segment' },
                       { key: 'type', label: 'Type' },
@@ -353,11 +364,11 @@ export default function OracleStorageHealth() {
                       key: `${s.owner}.${s.segment_name}-${i}`,
                       onClick: () => openDetail({ object_type: 'segment', owner: s.owner, segment_name: s.segment_name, label: `${s.owner}.${s.segment_name}` }),
                       cells: {
-                        name: <span className="font-mono text-[12px] font-semibold text-accent-text">{s.owner}.{s.segment_name}</span>,
-                        type: <span className="text-[11px] text-muted capitalize">{s.segment_type?.toLowerCase()}</span>,
-                        tablespace: <span className="text-[12px]">{s.tablespace_name}</span>,
-                        size: <span className="font-mono text-[12px]">{fmtNumber(s.size_mb)} MB</span>,
-                        rows: <span className="font-mono text-[12px] text-muted">{s.num_rows != null ? fmtNumber(s.num_rows) : '—'}</span>,
+                        name: <span className="font-mono font-semibold text-accent-text">{s.owner}.{s.segment_name}</span>,
+                        type: <span className="text-muted capitalize">{s.segment_type?.toLowerCase()}</span>,
+                        tablespace: <span>{s.tablespace_name}</span>,
+                        size: <span className="font-mono">{fmtMB(s.size_mb)}</span>,
+                        rows: <span className="font-mono text-muted">{s.num_rows != null ? fmtNumber(s.num_rows) : '—'}</span>,
                       },
                     }))}
                     empty={(
@@ -390,6 +401,9 @@ export default function OracleStorageHealth() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'name', label: 'Index' },
                       { key: 'table', label: 'Table' },
@@ -401,11 +415,11 @@ export default function OracleStorageHealth() {
                       key: `${x.owner}.${x.index_name}-${i}`,
                       onClick: () => openDetail({ object_type: 'index', label: `${x.owner}.${x.index_name}`, raw: x }),
                       cells: {
-                        name: <span className="font-mono text-[12px] font-semibold text-accent-text">{x.owner}.{x.index_name}</span>,
-                        table: <span className="text-[12px] text-muted">{x.table_name}</span>,
-                        type: <span className="text-[11px] text-muted">{x.index_type}{x.uniqueness === 'UNIQUE' ? ' · unique' : ''}</span>,
+                        name: <span className="font-mono font-semibold text-accent-text">{x.owner}.{x.index_name}</span>,
+                        table: <span className="text-muted">{x.table_name}</span>,
+                        type: <span className="text-muted">{x.index_type}{x.uniqueness === 'UNIQUE' ? ' · unique' : ''}</span>,
                         status: <Badge tone={x.status === 'VALID' ? 'success' : 'warning'} size="xs">{x.status}</Badge>,
-                        leaf: <span className="font-mono text-[12px]">{fmtNumber(x.leaf_blocks)}</span>,
+                        leaf: <span className="font-mono">{fmtNumber(x.leaf_blocks)}</span>,
                       },
                     }))}
                     empty={(
@@ -438,6 +452,9 @@ export default function OracleStorageHealth() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'name', label: 'Partition' },
                       { key: 'table', label: 'Table' },
@@ -449,11 +466,11 @@ export default function OracleStorageHealth() {
                       key: `${p.owner}.${p.table_name}.${p.partition_name}-${i}`,
                       onClick: () => openDetail({ object_type: 'partition', label: `${p.owner}.${p.table_name}.${p.partition_name}`, raw: p }),
                       cells: {
-                        name: <span className="font-mono text-[12px] font-semibold text-accent-text">{p.partition_name}</span>,
-                        table: <span className="text-[12px] text-muted">{p.owner}.{p.table_name}</span>,
-                        size: <span className="font-mono text-[12px]">{p.size_mb != null ? `${fmtNumber(p.size_mb)} MB` : '—'}</span>,
-                        rows: <span className="font-mono text-[12px] text-muted">{p.num_rows != null ? fmtNumber(p.num_rows) : '—'}</span>,
-                        analyzed: <span className="text-[11px] text-muted">{p.last_analyzed || '—'}</span>,
+                        name: <span className="font-mono font-semibold text-accent-text">{p.partition_name}</span>,
+                        table: <span className="text-muted">{p.owner}.{p.table_name}</span>,
+                        size: <span className="font-mono">{p.size_mb != null ? fmtMB(p.size_mb) : '—'}</span>,
+                        rows: <span className="font-mono text-muted">{p.num_rows != null ? fmtNumber(p.num_rows) : '—'}</span>,
+                        analyzed: <span className="text-muted">{p.last_analyzed || '—'}</span>,
                       },
                     }))}
                     empty={(
@@ -499,6 +516,9 @@ export default function OracleStorageHealth() {
             {(page, pager) => (
               <>
                 <Table
+                  rowHeight={64}
+                  darkHeader
+                  cellText
                   columns={[
                     { key: 'object', label: 'Object' },
                     { key: 'action', label: 'Action' },
@@ -513,23 +533,23 @@ export default function OracleStorageHealth() {
                     cells: {
                       object: (
                         <span className="block">
-                          <span className="font-mono text-[12px] font-semibold text-fg">{j.object_name}</span>
-                          <span className="mt-0.5 block text-[10px] text-subtle capitalize">{j.object_type}</span>
+                          <span className="font-mono font-semibold text-fg">{j.object_name}</span>
+                          <span className="mt-0.5 block text-subtle capitalize">{j.object_type}</span>
                         </span>
                       ),
-                      action: <span className="text-[12px]">{ACTION_LABELS[j.recommended_action] || j.recommended_action}</span>,
+                      action: <span>{ACTION_LABELS[j.recommended_action] || j.recommended_action}</span>,
                       status: <Badge tone={JOB_STATUS_TONES[j.status] || 'neutral'} size="xs">{String(j.status).replace('_', ' ')}</Badge>,
                       requested: (
-                        <span className="text-[11px] text-muted">
+                        <span className="text-muted">
                           {fmtIST(j.requested_at)}
                         </span>
                       ),
                       result: j.status === 'succeeded'
-                        ? <span className="text-[12px] text-success-fg">Reclaimed {fmtNumber(j.reclaimed_mb)} MB</span>
+                        ? <span className="text-success-fg">Reclaimed {fmtMB(j.reclaimed_mb)}</span>
                         : j.status === 'failed'
-                          ? <span className="text-[11px] text-danger-fg" title={j.error_details}>{(j.error_details || '').slice(0, 60)}</span>
+                          ? <span className="text-danger-fg" title={j.error_details}>{(j.error_details || '').slice(0, 60)}</span>
                           : j.status === 'rejected'
-                            ? <span className="text-[11px] text-muted" title={j.rejection_reason}>{j.rejection_reason || '—'}</span>
+                            ? <span className="text-muted" title={j.rejection_reason}>{j.rejection_reason || '—'}</span>
                             : <span className="text-subtle">—</span>,
                       ops: j.status === 'pending_approval' ? (
                         <span className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>

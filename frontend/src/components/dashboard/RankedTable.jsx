@@ -7,7 +7,7 @@ import useCountUp from '@/hooks/useCountUp';
  * alerting hosts) instead of the mockup's installed-software placeholder,
  * since we monitor databases/infra, not endpoint software inventory.
  */
-export default function RankedTable({ title, titleNote, countLabel = 'Count', rows = [], onMore, className }) {
+export default function RankedTable({ title, titleNote, countLabel = 'Count', rows = [], onMore, onRowClick, className }) {
   return (
     <section className={cn('card flex flex-col gap-2 px-card py-card', className)}>
       <h2 className="flex items-baseline gap-2 text-[17px] font-bold text-fg">
@@ -25,7 +25,8 @@ export default function RankedTable({ title, titleNote, countLabel = 'Count', ro
         ) : rows.map((r) => (
           <div
             key={r.key}
-            className="flex items-center justify-between rounded-control bg-surface px-3 py-2 text-[13px] shadow-xs transition-transform hover:translate-x-1"
+            {...(onRowClick ? { role: 'button', tabIndex: 0, onClick: () => onRowClick(r), onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(r); } } } : {})}
+            className={cn('flex items-center justify-between rounded-control bg-surface px-3 py-2 text-[13px] shadow-xs transition-transform hover:translate-x-1', onRowClick && 'cursor-pointer hover:bg-raised')}
           >
             <span className="truncate-safe min-w-0 flex-1 font-medium text-muted">{r.label}</span>
             <Count value={r.value} />

@@ -55,3 +55,33 @@ export const drillContext = (source, metric = '') =>
 /** ActMon AI: explain the alert and suggest fixes. */
 export const analyzeAlert = (payload) =>
   client.post('/alerts/analyze', payload).then((r) => r.data);
+
+/* ── alert details (Alerts → click an alert) ─────────────────────────────── */
+
+/** One active alert resolved to its connection / host, thresholds, history, recent events and related alerts. */
+export const getAlertDetail = (id) =>
+  client.get('/alerts/detail', { params: { id } }).then((r) => r.data);
+
+/** Oracle tablespace trend + largest objects, from the collector's stored storage history. */
+export const getAlertStorage = ({ connId, tablespace, hours = 24 }) =>
+  client.get('/alerts/detail/storage', { params: { conn_id: connId, tablespace, hours } }).then((r) => r.data);
+
+export const listAlertComments = (key) =>
+  client.get('/alerts/detail/comments', { params: { key } }).then((r) => r.data);
+
+export const addAlertComment = (alertKey, body) =>
+  client.post('/alerts/detail/comments', { alert_key: alertKey, body }).then((r) => r.data);
+
+/** Acknowledge exactly ONE stored alert. Never sends an empty list (which the API treats as "acknowledge all"). */
+export const acknowledgeOneAlert = (alert) => {
+  if (!isAckable(alert)) return Promise.reject(new Error('This alert reflects live state and cannot be acknowledged.'));
+  return acknowledgeAlerts([ackIdOf(alert)]);
+};
+
+/** Datafiles of an Oracle connection (live, existing Storage endpoint) — used for the tablespace's file location. */
+export const getOracleDatafiles = (connId) =>
+  client.get(`/connections/oracle/${connId}/oracle-datafile-mounts`).then((r) => r.data);
+
+/** Alerts page cards + trend: collector alerts raised per hour by severity, previous-window totals, acknowledged count. */
+export const getAlertStats = (hours = 24) =>
+  client.get('/alerts/detail/stats', { params: { hours } }).then((r) => r.data);

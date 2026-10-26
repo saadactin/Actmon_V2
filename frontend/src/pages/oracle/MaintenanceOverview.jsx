@@ -5,7 +5,9 @@ import Badge from '@/components/ui/Badge';
 import Icon from '@/components/ui/Icon';
 import { PageLoading } from '@/components/ui/Loading';
 import Notice from '@/components/ui/Notice';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import { RefreshBar } from './maintenanceShared';
 import { fmtIST } from './storageHealthConstants';
 
@@ -65,7 +67,7 @@ function CategoryCard({ id, cat, onOpen }) {
         {cat.reclaimable_mb != null && (
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wide text-subtle">Reclaimable</p>
-            <p className="text-[15px] font-bold text-fg">{fmtNumber(cat.reclaimable_mb)} MB</p>
+            <p className="text-[15px] font-bold text-fg">{fmtMB(cat.reclaimable_mb)}</p>
           </div>
         )}
         <div>

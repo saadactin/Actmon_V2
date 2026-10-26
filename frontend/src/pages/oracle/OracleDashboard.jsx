@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, Cpu, Database, HardDrive, Key, Lock, MemoryStick, Server, Table, Users } from 'lucide-react';
 import client from '@/api/client';
@@ -12,15 +12,16 @@ import FlowDiagram from '@/components/diagram/FlowDiagram';
 import useConnectionAlerts from '@/hooks/useConnectionAlerts';
 import ChartCard from '@/components/charts/ChartCard';
 import { STATUS, bandFor } from '@/components/charts/status';
-import { computeInstanceHealthScore } from '@/utils/oracleHealth';
+import { computeInstanceHealthScore, failedMetricsOf, healthInputsFromPayload } from '@/utils/oracleHealth';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
 import Input from '@/components/ui/Input';
 import Notice from '@/components/ui/Notice';
+import { cn } from '@/lib/cn';
 import Select from '@/components/ui/Select';
 import Table2, { EmptyState } from '@/components/ui/Table';
-import { InlineLoading, PageLoading } from '@/components/ui/Loading';
+import { InlineLoading, PageLoading, useLoaderReveal } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
 import { DashboardScopeProvider } from '@/context/DashboardAppearanceContext';
 
@@ -28,13 +29,16 @@ import ObjectTable from '@/pages/_shared/ObjectTable';
 import TableDetailsDialog from '@/pages/_shared/TableDetails';
 import { adaptOracleTableDetails } from '@/pages/_shared/tableDetailsAdapters';
 import OracleMaintenanceModule from './OracleMaintenanceModule';
+import RmanBackups from './RmanBackups';
+import RacTopology from './RacTopology';
+import RedoGeneration from './RedoGeneration';
+import OraclePerformance from './OraclePerformance';
 import {
-  DefRow, MetricTile, Panel, SqlCell, StatCell, StateChip, StatusPill, TablePanel, UsageBar,
+  DefRow, IdCell, MetricTile, Panel, SqlCell, StatCell, StateChip, StatusPill, TablePanel, UsageBar,
 } from '@/pages/_shared/enginePanels';
 import KpiTile from '@/pages/_shared/engineKpi';
 import {
-  ORACLE_TABLE_HINTS, TABLESPACE_COLUMNS, TABLE_COLUMNS,
-  fmtBytes, fmtNumber, oracleTableRow, orderColumns, withHints,
+  ORACLE_TABLE_HINTS, TABLESPACE_COLUMNS, TABLE_COLUMNS, fmtBytes, fmtNumber, oracleTableRow, orderColumns, withHints, fmtMB, fmtGB,
 } from '@/config/dbCatalog';
 import { WAIT_CLASS_TONES, explainWait, isIdleWait } from '@/config/oracleWaits';
 import { tabsForTopology, oracleTabRoute } from '@/config/oracleDashboardNav';
@@ -96,7 +100,73 @@ const ACCOUNT_TONES = {
 };
 const REDO_TONES = { CURRENT: 'success', ACTIVE: 'warning', INACTIVE: 'neutral', UNUSED: 'neutral' };
 
+/**
+ * Which instance of a RAC cluster this page is describing, and a way to the
+ * others.
+ *
+ * Shown only for a real cluster. Every instance-local figure on the page —
+ * sessions, SGA, PGA, host CPU, waits — belongs to ONE instance, and until this
+ * existed the page never said which, so both nodes' Dashboard buttons opened
+ * the same numbers under the same name.
+ */
+function InstanceSwitcher({ instances, current, onSelect }) {
+  if (!instances || instances.length < 2) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-sunken px-gutter py-2">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-muted">
+        Instance
+      </span>
+      {instances.map((inst) => {
+        const num_ = Number(inst.instance_number);
+        const active = num_ === current;
+        // GV$INSTANCE's STATUS, published as `instance_status` by the RAC
+        // endpoint — `status` on that payload is the request's own result.
+        const open = String(inst.instance_status || '').toUpperCase() === 'OPEN';
+        return (
+          <button
+            key={num_}
+            type="button"
+            onClick={() => onSelect(num_)}
+            title={`${inst.instance_name || `Instance ${num_}`} on ${inst.host_name || 'unknown host'} — ${inst.instance_status || 'status unknown'}`}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-[12px] font-semibold transition-colors',
+              active
+                ? 'border-accent bg-accent-soft text-accent-text'
+                : 'border-border bg-surface text-fg hover:bg-raised',
+            )}
+          >
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ background: open ? '#22C55E' : '#F97316' }}
+            />
+            {inst.instance_name || `Instance ${num_}`}
+            <span className="font-normal text-muted">{inst.host_name || ''}</span>
+          </button>
+        );
+      })}
+      <span className="ml-auto text-[11px] text-muted">
+        Sessions, memory, CPU and waits below are this instance's. Storage and
+        tablespaces are shared by the whole cluster.
+      </span>
+    </div>
+  );
+}
+
 function HealthBadge({ score }) {
+  // null means not one input could be read — most often because the instance
+  // did not answer at all. Saying "Health 100" there is the worst available
+  // answer: confident, prominent, and wrong.
+  if (score === null || score === undefined) {
+    return (
+      <span
+        className="flex h-control shrink-0 items-center gap-1.5 rounded-control border border-border px-2.5 text-[12px] font-bold text-muted"
+        title="No health input could be read from this instance — the score is unknown, not perfect. See the collection errors above."
+      >
+        <Icon name="alert" size={13} />
+        Health unknown
+      </span>
+    );
+  }
   const band = score >= 80 ? STATUS.good : score >= 60 ? STATUS.warning : STATUS.critical;
   return (
     <span
@@ -385,14 +455,17 @@ export default function OracleDashboard() {
   const [openMonitor, setOpenMonitor] = useState(null); // { sql_id, sql_exec_id }
   const countRef = useRef(null);
 
-  const on = (t) => activeTab === t;
+  /* ── which RAC instance this page is about ─────────────────────────────
+     A V$ view only describes the instance the connection landed on, so every
+     node of a cluster used to open this page and read the same instance name.
+     The URL now carries the subject: ?inst=2 names an instance number
+     directly, and ?node=<hostname> names a host — which is what the servers
+     page has to hand, and is resolved below against GV$INSTANCE. */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const instParam = Number(searchParams.get('inst')) || null;
+  const nodeParam = searchParams.get('node') || null;
 
-  const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery({
-    queryKey: ['oracleDashboard', id],
-    queryFn: () => get(id, 'oracle-dashboard'),
-    retry: false,
-    refetchInterval: REFRESH_INTERVAL * 1000,
-  });
+  const on = (t) => activeTab === t;
 
   /* Per-tab, so only what is on screen queries the instance. `useTabQuery` is a
      custom hook (see below) — every call below is unconditional and in the same
@@ -464,11 +537,59 @@ export default function OracleDashboard() {
   });
   const topology = topologyQ.data || {};
 
-  const racNodes = q('oracleRacNodes', 'oracle-rac-nodes', { refetchInterval: 15000, enabled: on('rac') });
+  /* The cluster's instance list. Needed on the RAC tab, and on EVERY tab when
+     the page is scoped to an instance — the switcher and the ?node= lookup
+     both read it. */
+  const racNodes = q('oracleRacNodes', 'oracle-rac-nodes', {
+    refetchInterval: 15000,
+    enabled: on('rac') || on('topology') || Boolean(instParam || nodeParam)
+      || Boolean(topology.is_rac),
+  });
   const racEvents = q('oracleRacEvents', 'oracle-rac-eviction-events', { refetchInterval: 30000, enabled: on('rac') });
+  const racHosts = q('oracleRacHosts', 'oracle-rac-node-hosts', {
+    refetchInterval: 60000, enabled: on('rac') || on('topology'),
+  });
   const services = q('oracleServices', 'oracle-services', { refetchInterval: 30000, enabled: on('services') });
-  const asm = q('oracleAsm', 'oracle-asm', { refetchInterval: 60000, enabled: on('asm') });
+  const asm = q('oracleAsm', 'oracle-asm', {
+    refetchInterval: 60000, enabled: on('asm') || on('topology'),
+  });
   const cdbPdb = q('oracleCdbPdb', 'oracle-cdb-pdb', { refetchInterval: 60000, enabled: on('multitenant') });
+
+  /* A hostname is what the servers page knows about a node; an instance number
+     is what GV$ queries need. GV$INSTANCE already carries both, so the
+     translation happens here rather than being stored on the host record. */
+  const clusterInstances = racNodes.data?.nodes || [];
+  const nodeMatch = nodeParam
+    ? clusterInstances.find((n) => {
+        const host = String(n.host_name || '').toLowerCase();
+        const want = String(nodeParam).toLowerCase();
+        // GV$INSTANCE may report a short name or an FQDN; the servers page may
+        // hold either. Match on the short name both ways.
+        return host === want || host.split('.')[0] === want.split('.')[0];
+      })
+    : null;
+  const instId = instParam || (nodeMatch ? Number(nodeMatch.instance_number) : null);
+  // ?node= named a host the cluster does not report. Saying nothing would show
+  // the wrong node's numbers under the right node's name.
+  const nodeUnresolved = Boolean(nodeParam) && !nodeMatch && !racNodes.isLoading
+    && clusterInstances.length > 0;
+
+  /* The overview payload, for the instance this page is about.
+     Declared here rather than at the top of the component because the instance
+     has to be resolved first — ?node= arrives as a hostname and only
+     GV$INSTANCE can say which instance number that is. `instId` is part of the
+     cache key: node 1's payload is not an answer to a question about node 2. */
+  const { data, isLoading, error, refetch, isFetching, dataUpdatedAt } = useQuery({
+    queryKey: ['oracleDashboard', id, instId || null],
+    queryFn: () => get(id, 'oracle-dashboard', instId ? { inst_id: instId } : undefined),
+    retry: false,
+    refetchInterval: REFRESH_INTERVAL * 1000,
+    // Waiting for the cluster list avoids one request for the wrong instance
+    // before the right one is known.
+    enabled: !nodeParam || Boolean(instId) || nodeUnresolved,
+  });
+
+  const reveal = useLoaderReveal(isLoading, { ok: !error && data?.status !== 'error' });
 
   const schema = useQuery({
     queryKey: ['oracleSchemaTables', id, schemaOwner],
@@ -522,6 +643,12 @@ export default function OracleDashboard() {
     const bufHitPct = num(hs.buffer_cache_hit_pct);
     const hostCpuPct = num(hs.host_cpu_pct);
 
+    // Which metrics the collector could not read. Every numeric field in the
+    // payload is initialised to 0 server-side and only overwritten on success,
+    // so a failed query arrives looking exactly like a genuine zero — which is
+    // how an instance that answered nothing was shown as "Health 100".
+    const failed = failedMetricsOf(p);
+
     return {
       connection: p.connection || {},
       hs,
@@ -539,13 +666,26 @@ export default function OracleDashboard() {
       maxTsPct,
       fullestTs: tsList.find((t) => num(t.used_pct) === maxTsPct) || null,
       criticalTs: tsList.filter((t) => num(t.used_pct) > 85),
-      healthScore: computeInstanceHealthScore({
-        sessionPct, bufHitPct, maxTsPct, waitCount: waitList.length, hostCpuPct,
-      }),
+      // Pass a signal ONLY when it was genuinely read. num() maps a missing
+      // value to 0, and a 0 is indistinguishable from a real zero reading — so
+      // the raw payload field decides, not the coerced number.
+      healthScore: computeInstanceHealthScore(healthInputsFromPayload(p)),
+      failedMetrics: failed,
     };
   }, [data]);
 
-  if (isLoading) return <PageLoading title="Connecting to Oracle…" />;
+  if (reveal.show) {
+    return (
+      <PageLoading
+        title="Connecting to Oracle…"
+        variant="oracleRac"
+        done={reveal.done}
+        // GV$INSTANCE, when it has arrived — the RAC nodes in the scene are
+        // the real instances with their real status, never invented ones.
+        nodes={racNodes.data?.nodes}
+      />
+    );
+  }
 
   if (error || data?.status === 'error') {
     return (
@@ -561,8 +701,27 @@ export default function OracleDashboard() {
   const {
     connection, hs, tsList, waitList, collectorErrors, sessionPct, bufHitPct,
     libHitPct, hostCpuPct, dbCpuPct, sgaUsedPct, pgaUsedPct, maxTsPct, fullestTs,
-    criticalTs, healthScore,
+    criticalTs, healthScore, failedMetrics,
   } = d;
+
+  /* Which instance the connection itself lands on — the page's default, and
+     the one the switcher marks when the URL names none. Taken from the payload
+     rather than assumed to be instance 1: a cluster's connection can land on
+     any node, and after a failover it often does. */
+  const connectedInstanceNumber = instId || Number(
+    clusterInstances.find((n) => (n.instance_name || '') === hs.instance_name)?.instance_number,
+  ) || null;
+
+  /* True when the collector could not read a metric. A failed read arrives as
+     0 (every numeric payload field is initialised to zero server-side), so
+     without this a database that answered nothing shows a row of green ticks
+     reading "Sessions 0%" and "Host CPU 0%". */
+  const unread = (...keys) => keys.some((k) => failedMetrics.has(k));
+  const sessionsUnread = unread('active_sessions', 'total_sessions', 'max_sessions');
+  const cpuUnread = unread('host_cpu_sysmetric', 'host_cpu_osstat', 'osstat');
+  const bufUnread = unread('buffer_cache_hit');
+  const libUnread = unread('library_cache_hit');
+  const tsUnread = unread('tablespaces');
 
   /* Live wait events are richer than the overview payload's copy — prefer them
      when the Performance tab has fetched them. */
@@ -593,6 +752,27 @@ export default function OracleDashboard() {
           countdown={countdown}
         />
 
+        <InstanceSwitcher
+          instances={clusterInstances}
+          current={instId || connectedInstanceNumber}
+          onSelect={(num_) => {
+            const next = new URLSearchParams(searchParams);
+            // The connected instance is the page's default, and carries no
+            // parameter — so a shared link without one still works.
+            if (num_ === connectedInstanceNumber) { next.delete('inst'); } else { next.set('inst', String(num_)); }
+            next.delete('node');
+            setSearchParams(next, { replace: true });
+          }}
+        />
+
+        {nodeUnresolved && (
+          <Notice tone="warning" title="That node is not in this cluster.">
+            No instance in GV$INSTANCE reports the host <strong>{nodeParam}</strong>, so
+            this page is showing the instance the connection landed on instead. Pick a
+            node above to switch.
+          </Notice>
+        )}
+
         {collectorErrors.length > 0 && (
           <Notice tone="warning" title="Some metrics could not be collected.">
             {collectorErrors.join(' · ')}
@@ -616,42 +796,50 @@ export default function OracleDashboard() {
                 accent={hs.status === 'OPEN' ? '#22C55E' : hs.status ? '#F97316' : '#64748B'}
                 sub={hs.log_mode || undefined} />
               <KpiTile icon={Users} title="Sessions"
-                value={`${num(hs.total_sessions)}/${num(hs.max_sessions)}`}
-                accent={sessionPct > 90 ? '#EF4444' : sessionPct > 75 ? '#F97316' : '#22C55E'}
-                sub={`${sessionPct}% of the limit`}
+                value={sessionsUnread ? '—' : `${num(hs.total_sessions)}/${num(hs.max_sessions)}`}
+                accent={sessionsUnread ? '#64748B'
+                  : sessionPct > 90 ? '#EF4444' : sessionPct > 75 ? '#F97316' : '#22C55E'}
+                sub={sessionsUnread ? 'not collected' : `${sessionPct}% of the limit`}
                 onClick={() => setActiveTab('sessions')} />
-              <KpiTile icon={Cpu} title="Host CPU" value={`${hostCpuPct}%`}
-                accent={hostCpuPct > 85 ? '#EF4444' : hostCpuPct > 65 ? '#F97316' : '#22C55E'}
-                sub={hs.cpu_count ? `${hs.cpu_count} CPUs` : undefined}
+              <KpiTile icon={Cpu} title="Host CPU" value={cpuUnread ? '—' : `${hostCpuPct}%`}
+                accent={cpuUnread ? '#64748B'
+                  : hostCpuPct > 85 ? '#EF4444' : hostCpuPct > 65 ? '#F97316' : '#22C55E'}
+                sub={cpuUnread ? 'not collected' : hs.cpu_count ? `${hs.cpu_count} CPUs` : undefined}
                 onClick={() => setActiveTab('performance')} />
-              <KpiTile icon={MemoryStick} title="SGA" accent="#8B5CF6" value={`${fmtNumber(hs.sga_mb)} MB`}
-                sub={hs.sga_target_mb ? `target ${fmtNumber(hs.sga_target_mb)} MB` : undefined}
+              <KpiTile icon={MemoryStick} title="SGA" accent="#8B5CF6" value={fmtMB(hs.sga_mb)}
+                sub={hs.sga_target_mb ? `target ${fmtMB(hs.sga_target_mb)}` : undefined}
                 onClick={() => setActiveTab('performance')} />
-              <KpiTile icon={MemoryStick} title="PGA" accent="#8B5CF6" value={`${fmtNumber(hs.pga_mb)} MB`}
-                sub={hs.pga_target_mb ? `target ${fmtNumber(hs.pga_target_mb)} MB` : undefined}
+              <KpiTile icon={MemoryStick} title="PGA" accent="#8B5CF6" value={fmtMB(hs.pga_mb)}
+                sub={hs.pga_target_mb ? `target ${fmtMB(hs.pga_target_mb)}` : undefined}
                 onClick={() => setActiveTab('performance')} />
               <KpiTile icon={HardDrive} title="Database size" accent="#F97316"
-                value={hs.db_size_gb ? `${hs.db_size_gb} GB` : '—'}
+                value={hs.db_size_gb ? fmtGB(hs.db_size_gb) : '—'}
                 sub={tsRows.length ? `${tsRows.length} tablespaces` : undefined}
                 onClick={() => setActiveTab('tablespaces')} />
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <StatusPill ok={hs.status === 'OPEN'} label={`Instance ${hs.status || 'unknown'}`} />
-              <StatusPill ok={sessionPct < 80} label={`Sessions ${sessionPct}%`}
+              <StatusPill ok={hs.status ? hs.status === 'OPEN' : null}
+                label={`Instance ${hs.status || 'not collected'}`} />
+              <StatusPill ok={sessionsUnread ? null : sessionPct < 80}
+                label={sessionsUnread ? 'Sessions not collected' : `Sessions ${sessionPct}%`}
                 onClick={() => setActiveTab('sessions')} />
-              <StatusPill ok={bufHitPct >= 90} label={`Buffer cache ${bufHitPct}%`}
+              <StatusPill ok={bufUnread ? null : bufHitPct >= 90}
+                label={bufUnread ? 'Buffer cache not collected' : `Buffer cache ${bufHitPct}%`}
                 hint="Below 90% means logical reads are going to disk more often than they should."
                 onClick={() => setActiveTab('performance')} />
-              <StatusPill ok={libHitPct >= 95} label={`Library cache ${libHitPct}%`}
+              <StatusPill ok={libUnread ? null : libHitPct >= 95}
+                label={libUnread ? 'Library cache not collected' : `Library cache ${libHitPct}%`}
                 hint="A low library-cache hit rate usually means SQL is not using bind variables."
                 onClick={() => setActiveTab('performance')} />
-              <StatusPill ok={hostCpuPct < 85} label={`Host CPU ${hostCpuPct}%`} />
-              <StatusPill ok={maxTsPct <= 85}
-                label={fullestTs ? `Fullest tablespace: ${fullestTs.tablespace_name} ${maxTsPct}%` : 'No tablespace data'}
+              <StatusPill ok={cpuUnread ? null : hostCpuPct < 85}
+                label={cpuUnread ? 'Host CPU not collected' : `Host CPU ${hostCpuPct}%`} />
+              <StatusPill ok={tsUnread || !fullestTs ? null : maxTsPct <= 85}
+                label={tsUnread ? 'Tablespaces not collected'
+                  : fullestTs ? `Fullest tablespace: ${fullestTs.tablespace_name} ${maxTsPct}%` : 'No tablespace data'}
                 onClick={() => setActiveTab('tablespaces')} />
-              <StatusPill ok={hs.log_mode === 'ARCHIVELOG'}
-                label={`Log mode: ${hs.log_mode || 'unknown'}`}
+              <StatusPill ok={hs.log_mode ? hs.log_mode === 'ARCHIVELOG' : null}
+                label={`Log mode: ${hs.log_mode || 'not collected'}`}
                 hint="NOARCHIVELOG means no point-in-time recovery and no Data Guard." />
             </div>
 
@@ -679,9 +867,9 @@ export default function OracleDashboard() {
                   { key: 'cpu', label: 'Host CPU', value: hostCpuPct, icon: 'cpu',
                     hint: `Database's share of it: ${dbCpuPct}%` },
                   { key: 'sga', label: 'SGA', value: sgaUsedPct, icon: 'memory',
-                    hint: `${fmtNumber(hs.sga_mb)} MB against a ${fmtNumber(hs.sga_target_mb)} MB target` },
+                    hint: `${fmtMB(hs.sga_mb)} against a ${fmtMB(hs.sga_target_mb)} target` },
                   { key: 'pga', label: 'PGA', value: pgaUsedPct, icon: 'memory',
-                    hint: `${fmtNumber(hs.pga_mb)} MB against a ${fmtNumber(hs.pga_target_mb)} MB target` },
+                    hint: `${fmtMB(hs.pga_mb)} against a ${fmtMB(hs.pga_target_mb)} target` },
                   { key: 'ts', label: 'Fullest tablespace', value: maxTsPct, icon: 'desktop',
                     hint: fullestTs ? fullestTs.tablespace_name : 'No tablespace data' },
                 ]}
@@ -793,7 +981,7 @@ export default function OracleDashboard() {
                 <DefRow label="Log mode" value={hs.log_mode}
                   tone={hs.log_mode === 'ARCHIVELOG' ? 'good' : 'warn'}
                   hint="ARCHIVELOG is required for point-in-time recovery and for Data Guard." />
-                <DefRow label="Size" value={hs.db_size_gb ? `${hs.db_size_gb} GB` : null} />
+                <DefRow label="Size" value={hs.db_size_gb ? fmtGB(hs.db_size_gb) : null} />
                 <DefRow label="Tablespaces" value={tsRows.length || null} />
                 <DefRow label="Buffer cache hit" value={bufHitPct ? `${bufHitPct}%` : null}
                   tone={bufHitPct > 0 && bufHitPct < 90 ? 'warn' : undefined} />
@@ -803,9 +991,9 @@ export default function OracleDashboard() {
 
               <Panel title="Memory" icon="memory">
                 <UsageBar label="SGA against target" pct={sgaUsedPct}
-                  sub={`${fmtNumber(hs.sga_mb)} MB of ${fmtNumber(hs.sga_target_mb)} MB`} className="mb-3" />
+                  sub={`${fmtMB(hs.sga_mb)} of ${fmtMB(hs.sga_target_mb)}`} className="mb-3" />
                 <UsageBar label="PGA against target" pct={pgaUsedPct}
-                  sub={`${fmtNumber(hs.pga_mb)} MB of ${fmtNumber(hs.pga_target_mb)} MB`} className="mb-3" />
+                  sub={`${fmtMB(hs.pga_mb)} of ${fmtMB(hs.pga_target_mb)}`} className="mb-3" />
                 <DefRow label="Sessions (active)" value={num(hs.active_sessions)} />
                 <DefRow label="Sessions (total)" value={num(hs.total_sessions)} />
                 <DefRow label="Session limit" value={num(hs.max_sessions)} />
@@ -819,17 +1007,19 @@ export default function OracleDashboard() {
         {/* ══ PERFORMANCE ═══════════════════════════════════════════════════ */}
         {on('performance') && (
           <div className="space-y-gutter">
+            <OraclePerformance id={id} instId={instId} />
+            <h3 className="pt-2 text-[15px] font-bold text-fg">Memory &amp; wait details</h3>
             <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
               <MetricTile label="Buffer cache hit" value={bufHitPct ? `${bufHitPct}%` : '—'} icon="memory"
                 tone={bufHitPct === 0 ? 'neutral' : bufHitPct < 90 ? 'bad' : 'good'} />
               <MetricTile label="Library cache hit" value={libHitPct ? `${libHitPct}%` : '—'} icon="layers"
                 tone={libHitPct === 0 ? 'neutral' : libHitPct < 95 ? 'warn' : 'good'} />
-              <MetricTile label="SGA total" value={sga.data?.total_mb ? `${fmtNumber(sga.data.total_mb)} MB` : `${fmtNumber(hs.sga_mb)} MB`}
+              <MetricTile label="SGA total" value={sga.data?.total_mb ? fmtMB(sga.data.total_mb) : fmtMB(hs.sga_mb)}
                 icon="memory" />
               <MetricTile label="PGA allocated"
                 value={pga.data?.summary?.total_allocated_mb != null
-                  ? `${fmtNumber(pga.data.summary.total_allocated_mb)} MB`
-                  : `${fmtNumber(hs.pga_mb)} MB`}
+                  ? fmtMB(pga.data.summary.total_allocated_mb)
+                  : fmtMB(hs.pga_mb)}
                 icon="memory" />
             </div>
 
@@ -840,7 +1030,7 @@ export default function OracleDashboard() {
                 items={(sga.data?.pools || []).slice(0, 8).map((p) => ({
                   key: p.pool, label: p.pool, value: num(p.mb),
                 }))}
-                chartProps={{ unit: ' MB', format: (v) => fmtNumber(Math.round(v)), labelWidth: 140,
+                chartProps={{ unit: '', format: (v) => fmtMB(v), labelWidth: 140,
                   emptyLabel: 'v$sgastat could not be read' }}
                 title="SGA by pool"
                 icon="memory"
@@ -859,9 +1049,9 @@ export default function OracleDashboard() {
                 {pga.isLoading ? <InlineLoading label="Reading v$pgastat…" /> : (
                   <div className="grid gap-gutter-sm sm:grid-cols-2">
                     <StatCell label="Allocated"
-                      value={pga.data?.summary?.total_allocated_mb != null ? `${fmtNumber(pga.data.summary.total_allocated_mb)} MB` : '—'} />
+                      value={pga.data?.summary?.total_allocated_mb != null ? fmtMB(pga.data.summary.total_allocated_mb) : '—'} />
                     <StatCell label="Aggregate target"
-                      value={pga.data?.summary?.aggregate_target_mb != null ? `${fmtNumber(pga.data.summary.aggregate_target_mb)} MB` : '—'} />
+                      value={pga.data?.summary?.aggregate_target_mb != null ? fmtMB(pga.data.summary.aggregate_target_mb) : '—'} />
                     <StatCell label="Cache hit"
                       value={pga.data?.summary?.cache_hit_pct != null ? `${pga.data.summary.cache_hit_pct}%` : '—'}
                       tone={num(pga.data?.summary?.cache_hit_pct) > 0 && num(pga.data.summary.cache_hit_pct) < 90 ? 'warn' : 'neutral'}
@@ -869,7 +1059,7 @@ export default function OracleDashboard() {
                     <StatCell label="Work areas active"
                       value={pga.data?.summary?.work_areas_active ?? '—'} />
                     <StatCell label="Used for manual areas"
-                      value={pga.data?.summary?.total_used_mb != null ? `${fmtNumber(pga.data.summary.total_used_mb)} MB` : '—'} />
+                      value={pga.data?.summary?.total_used_mb != null ? fmtMB(pga.data.summary.total_used_mb) : '—'} />
                   </div>
                 )}
               </Panel>
@@ -882,6 +1072,9 @@ export default function OracleDashboard() {
                   {(page, pager) => (
                     <>
                       <Table2
+                        rowHeight={64}
+                        darkHeader
+                        cellText
                         columns={[
                           { key: 'name', label: 'Component' },
                           { key: 'mb', label: 'Size', align: 'right' },
@@ -890,8 +1083,8 @@ export default function OracleDashboard() {
                         rows={page.map((s, i) => ({
                           key: `${s.name}-${i}`,
                           cells: {
-                            name: <span className="text-[12px] text-fg">{s.name}</span>,
-                            mb: <span className="font-mono text-[12px]">{fmtBytes(mb(s.mb))}</span>,
+                            name: <span className="text-fg">{s.name}</span>,
+                            mb: <span className="font-mono">{fmtBytes(mb(s.mb))}</span>,
                             resizeable: s.resizeable
                               ? <Badge tone={s.resizeable === 'Yes' ? 'success' : 'neutral'} size="xs">{s.resizeable}</Badge>
                               : null,
@@ -913,6 +1106,9 @@ export default function OracleDashboard() {
                   {(page, pager) => (
                     <>
                       <Table2
+                        rowHeight={64}
+                        darkHeader
+                        cellText
                         columns={[
                           { key: 'event', label: 'Event and what it means' },
                           { key: 'waits', label: 'Waits', align: 'right' },
@@ -931,7 +1127,7 @@ export default function OracleDashboard() {
                               timeouts: <span className="font-mono">{fmtNumber(w.total_timeouts)}</span>,
                               sec: <span className="font-mono font-semibold">{fmtNumber(Math.round(num(w.time_waited_seconds)))}s</span>,
                               avg: <span className="font-mono">{w.avg_wait_ms} ms</span>,
-                              action: <span className="block max-w-[280px] text-[11px] leading-snug text-muted">{k.action}</span>,
+                              action: <span className="block max-w-[280px] leading-snug text-muted">{k.action}</span>,
                             },
                           };
                         })}
@@ -1009,8 +1205,13 @@ export default function OracleDashboard() {
                     subtitle="Statements currently holding more than one distinct execution plan in the shared pool — Oracle is flip-flopping plans for the same SQL right now"
                   >
                     <Table2
+                      rowHeight={64}
+                      darkHeader
+                      cellText
                       columns={[
                         { key: 'sql', label: 'SQL' },
+                        { key: 'sqlid', label: 'SQL ID' },
+                        { key: 'hashes', label: 'Plan hash values' },
                         { key: 'plans', label: 'Distinct plans', align: 'right' },
                         { key: 'cursors', label: 'Child cursors', align: 'right' },
                         { key: 'exec', label: 'Total executions', align: 'right' },
@@ -1018,7 +1219,9 @@ export default function OracleDashboard() {
                       rows={(planInstability.data?.unstable || []).map((u, i) => ({
                         key: `${u.sql_id}-${i}`,
                         cells: {
-                          sql: <SqlCell sql={u.sql_text} max={90} />,
+                          sql: <SqlCell sql={u.sql_text} max={70} />,
+                          sqlid: <IdCell value={u.sql_id} />,
+                          hashes: <PlanHashes plans={u.plans} />,
                           plans: <span className="font-mono font-bold text-warning-fg">{u.plan_count}</span>,
                           cursors: <span className="font-mono">{fmtNumber(u.child_cursors)}</span>,
                           exec: <span className="font-mono text-muted">{fmtNumber(u.total_executions)}</span>,
@@ -1253,6 +1456,9 @@ export default function OracleDashboard() {
                   <TablePanel title="Archive destinations" icon="branch"
                     subtitle="v$archive_dest_status — where redo is shipped">
                     <Table2
+                      rowHeight={64}
+                      darkHeader
+                      cellText
                       columns={[
                         { key: 'dest', label: 'Destination' },
                         { key: 'target', label: 'Target' },
@@ -1267,19 +1473,19 @@ export default function OracleDashboard() {
                         cells: {
                           dest: (
                             <span className="flex flex-col">
-                              <span className="font-mono text-[12px] font-semibold">{a.dest_name}</span>
-                              {a.db_unique_name && <span className="text-[10px] text-subtle">{a.db_unique_name}</span>}
+                              <span className="font-mono font-semibold">{a.dest_name}</span>
+                              {a.db_unique_name && <span className="text-subtle">{a.db_unique_name}</span>}
                             </span>
                           ),
                           target: <StateChip value={a.target} tones={{ STANDBY: 'accent', PRIMARY: 'info' }} />,
                           status: <StateChip value={a.status} tones={{ VALID: 'success', ERROR: 'danger', DEFERRED: 'warning' }} />,
                           sync: <StateChip value={a.synchronization_status}
                             tones={{ OK: 'success', 'CHECK CONFIGURATION': 'danger' }} />,
-                          archiver: <span className="text-[11px] text-muted">{a.archiver}</span>,
-                          scn: <span className="font-mono text-[11px]">{idNum(a.applied_scn)}</span>,
+                          archiver: <span className="text-muted">{a.archiver}</span>,
+                          scn: <span className="font-mono">{idNum(a.applied_scn)}</span>,
                           path: (
                             <span title={a.destination}
-                              className="truncate-safe block max-w-[200px] font-mono text-[11px] text-subtle">
+                              className="truncate-safe block max-w-[200px] font-mono text-subtle">
                               {a.destination}
                             </span>
                           ),
@@ -1297,6 +1503,9 @@ export default function OracleDashboard() {
                       {(page, pager) => (
                         <>
                           <Table2
+                            rowHeight={64}
+                            darkHeader
+                            cellText
                             columns={[
                               { key: 'when', label: 'Time' },
                               { key: 'sev', label: 'Severity' },
@@ -1306,11 +1515,11 @@ export default function OracleDashboard() {
                             rows={page.map((s, i) => ({
                               key: `dg-${i}`,
                               cells: {
-                                when: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{s.timestamp}</span>,
+                                when: <span className="font-mono whitespace-nowrap text-muted">{s.timestamp}</span>,
                                 sev: <StateChip value={s.severity}
                                   tones={{ Error: 'danger', Fatal: 'danger', Warning: 'warning', Informational: 'neutral' }} />,
                                 dest: <span className="font-mono">{s.dest_id || null}</span>,
-                                msg: <span className="text-[12px] break-words text-fg">{s.message}</span>,
+                                msg: <span className="break-words text-fg">{s.message}</span>,
                               },
                             }))}
                             empty={<EmptyState icon="logs" title="No messages" />}
@@ -1346,6 +1555,9 @@ export default function OracleDashboard() {
                 </Panel>
                 <TablePanel title="Nodes / Instances" icon="server" subtitle="GV$INSTANCE — one row per RAC instance">
                   <Table2
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'inst', label: 'Instance #', align: 'right' },
                       { key: 'name', label: 'Instance Name' },
@@ -1371,9 +1583,14 @@ export default function OracleDashboard() {
                   />
                 </TablePanel>
 
+                <RacNodeHosts data={racHosts.data} loading={racHosts.isLoading} />
+
                 <TablePanel title="Recent cluster events" icon="alert"
                   subtitle="Real eviction/rejoin transitions only — not a re-alert on every cycle a node stays down">
                   <Table2
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'when', label: 'When' },
                       { key: 'inst', label: 'Instance', align: 'right' },
@@ -1384,7 +1601,7 @@ export default function OracleDashboard() {
                     rows={(racEvents.data?.events || []).map((e, i) => ({
                       key: `${e.ts}-${e.instance_number}-${i}`,
                       cells: {
-                        when: <span className="font-mono text-[11px] text-muted">{e.ts}</span>,
+                        when: <span className="font-mono text-muted">{e.ts}</span>,
                         inst: <span className="font-mono">{e.instance_number}</span>,
                         host: e.host_name,
                         event: (
@@ -1392,7 +1609,7 @@ export default function OracleDashboard() {
                             {e.event_type}
                           </Badge>
                         ),
-                        change: <span className="font-mono text-[11px]">{e.previous_status} → {e.new_status}</span>,
+                        change: <span className="font-mono">{e.previous_status} → {e.new_status}</span>,
                       },
                     }))}
                     empty={<EmptyState icon="check" title="No eviction or rejoin events recorded"
@@ -1408,32 +1625,32 @@ export default function OracleDashboard() {
         {on('services') && (
           <div className="space-y-gutter">
             {services.isLoading ? <PageLoading title="Reading Oracle Services…" illustration /> : (
-              <TablePanel title="Oracle Services" icon="branch" subtitle="DBA_SERVICES / GV$ACTIVE_SERVICES — per-instance availability, independent of overall database health">
-                <Table2
-                  columns={[
-                    { key: 'name', label: 'Service' },
-                    { key: 'status', label: 'Overall Status' },
-                    { key: 'instances', label: 'Per-Instance' },
-                  ]}
-                  rows={(services.data?.services || []).map((s) => ({
-                    key: s.service_name,
-                    cells: {
-                      name: <span className="font-semibold">{s.service_name}</span>,
-                      status: <StateChip value={s.status} tones={{ online: 'success', partial: 'warning', offline: 'danger' }} />,
-                      instances: (
-                        <span className="flex flex-wrap gap-1">
-                          {(s.instances || []).map((i, idx) => (
-                            <Badge key={idx} tone={i.status === 'online' ? 'success' : 'danger'} size="xs">
-                              #{i.instance_number ?? '—'} {i.status}
-                            </Badge>
-                          ))}
-                        </span>
-                      ),
-                    },
-                  }))}
-                  empty={<EmptyState icon="branch" title="No services found" />}
+              <>
+                {services.data?.active_read === false && (
+                  <Notice tone="warning" title="Service availability could not be read.">
+                    <p className="text-[12px]">
+                      Neither GV$ACTIVE_SERVICES nor V$ACTIVE_SERVICES answered, so this page cannot
+                      tell which services are running. They are shown as <b>unknown</b> rather than
+                      offline — a failed read is not evidence that a service is down.
+                    </p>
+                    {(services.data?.errors || []).length > 0 && (
+                      <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px]">
+                        {services.data.errors.map((e, i) => <li key={i} className="font-mono break-all">{e}</li>)}
+                      </ul>
+                    )}
+                    <p className="mt-2 text-[11px]">
+                      Usually the monitoring user is missing SELECT on those views. Granting
+                      SELECT_CATALOG_ROLE, or SELECT on GV$ACTIVE_SERVICES specifically, fixes it.
+                    </p>
+                  </Notice>
+                )}
+                <TablePanel title="Oracle Services" icon="branch" subtitle="DBA_SERVICES / GV$ACTIVE_SERVICES — per-instance availability, independent of overall database health">
+                <ServicesTable
+                  services={services.data?.services || []}
+                  onOpen={(name) => navigate(`/oracle-dashboard/${id}/services/${encodeURIComponent(name)}`, { state: { drillFrom: `/oracle-dashboard/${id}/services` } })}
                 />
-              </TablePanel>
+                </TablePanel>
+              </>
             )}
           </div>
         )}
@@ -1447,6 +1664,9 @@ export default function OracleDashboard() {
               ) : (
                 <TablePanel title="ASM Disk Groups" icon="disk" subtitle="V$ASM_DISKGROUP">
                   <Table2
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'name', label: 'Disk Group' },
                       { key: 'state', label: 'State' },
@@ -1485,6 +1705,9 @@ export default function OracleDashboard() {
               ) : (
                 <TablePanel title="Pluggable Databases" icon="boxes" subtitle={`V$PDBS — ${cdbPdb.data?.pdb_count ?? 0} PDB(s)`}>
                   <Table2
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'conid', label: 'CON_ID', align: 'right' },
                       { key: 'name', label: 'Name' },
@@ -1511,15 +1734,49 @@ export default function OracleDashboard() {
         {/* ══ TOPOLOGY ══════════════════════════════════════════════════════ */}
         {on('topology') && (
           <div className="space-y-gutter">
-            <Panel title="Topology" icon="branch" subtitle="Auto-discovered from Oracle metadata — not the registration-time selection">
-              <OracleTopologyDiagram topology={topology} racNodes={racNodes.data} dataGuard={dataGuard.data} />
-            </Panel>
+            {/* A cluster gets the cluster drawing; a standalone instance or a
+                Data Guard pair keeps the flow diagram, which is the right
+                shape for redo moving in one direction. */}
+            {topology.is_rac ? (
+              <RacTopology
+                racNodes={racNodes.data}
+                racHosts={racHosts.data}
+                asm={asm.data}
+                loading={racNodes.isLoading}
+                error={racNodes.data?.error || racNodes.error?.message}
+                lastUpdated={racNodes.dataUpdatedAt}
+                onRefresh={() => { racNodes.refetch(); racHosts.refetch(); asm.refetch(); }}
+                selectedInstance={instId || connectedInstanceNumber}
+                onSelectInstance={(num_) => {
+                  const next = new URLSearchParams(searchParams);
+                  if (num_ === connectedInstanceNumber) { next.delete('inst'); } else { next.set('inst', String(num_)); }
+                  next.delete('node');
+                  setSearchParams(next, { replace: true });
+                }}
+              />
+            ) : (
+              <Panel title="Topology" icon="branch" subtitle="Auto-discovered from Oracle metadata — not the registration-time selection">
+                <OracleTopologyDiagram topology={topology} racNodes={racNodes.data} dataGuard={dataGuard.data} />
+              </Panel>
+            )}
+
+            {/* Data Guard sits alongside RAC rather than replacing it — a
+                RAC primary can also ship redo to a standby. */}
+            {topology.is_rac && topology.is_dataguard && (
+              <Panel title="Data Guard" icon="shield" subtitle="Redo transport out of this cluster">
+                <OracleTopologyDiagram topology={topology} racNodes={racNodes.data} dataGuard={dataGuard.data} />
+              </Panel>
+            )}
           </div>
         )}
 
         {/* ══ REDO LOGS ═════════════════════════════════════════════════════ */}
         {on('redologs') && (
           <div className="space-y-gutter">
+            {/* How much redo, and when — the question the log-group table below
+                cannot answer. Loads independently so a slow archived-log read
+                never holds up the groups. */}
+            <RedoGeneration connId={id} />
             {redo.isLoading ? <PageLoading title="Reading redo log groups…" illustration /> : (
               <>
                 <div className="grid grid-cols-2 gap-gutter-sm md:grid-cols-4">
@@ -1540,6 +1797,9 @@ export default function OracleDashboard() {
 
                 <TablePanel title="Redo log groups" icon="refresh" subtitle="v$log">
                   <Table2
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'group', label: 'Group', align: 'right' },
                       { key: 'thread', label: 'Thread', align: 'right' },
@@ -1557,16 +1817,16 @@ export default function OracleDashboard() {
                         group: <span className="font-mono font-semibold">{g.group}</span>,
                         thread: <span className="font-mono">{g.thread}</span>,
                         seq: <span className="font-mono font-semibold">{idNum(g.sequence)}</span>,
-                        scn: <span className="font-mono text-[11px] text-muted">{idNum(g.first_change)}</span>,
+                        scn: <span className="font-mono text-muted">{idNum(g.first_change)}</span>,
                         members: (
                           <span className={num(g.members) < 2 ? 'font-mono font-bold text-warning-fg' : 'font-mono'}>
                             {g.members}
                           </span>
                         ),
-                        size: <span className="font-mono text-[12px]">{fmtBytes(mb(g.size_mb))}</span>,
+                        size: <span className="font-mono">{fmtBytes(mb(g.size_mb))}</span>,
                         status: <StateChip value={g.status} tones={REDO_TONES} />,
                         archived: <StateChip value={g.archived} tones={{ YES: 'success', NO: 'warning' }} />,
-                        first: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{g.first_time}</span>,
+                        first: <span className="font-mono whitespace-nowrap text-muted">{g.first_time}</span>,
                       },
                     }))}
                     empty={<EmptyState icon="refresh" title="No redo log groups"
@@ -1579,6 +1839,9 @@ export default function OracleDashboard() {
                     {(page, pager) => (
                       <>
                         <Table2
+                          rowHeight={64}
+                          darkHeader
+                          cellText
                           columns={[
                             { key: 'group', label: 'Group', align: 'right' },
                             { key: 'type', label: 'Type' },
@@ -1589,12 +1852,12 @@ export default function OracleDashboard() {
                             key: `${f.group}-${i}`,
                             cells: {
                               group: <span className="font-mono font-semibold">{f.group}</span>,
-                              type: <span className="text-[11px] text-muted">{f.type}</span>,
+                              type: <span className="text-muted">{f.type}</span>,
                               status: f.file_status
                                 ? <StateChip value={f.file_status} tones={{ INVALID: 'danger', STALE: 'warning', DELETED: 'neutral' }} />
                                 : <Badge tone="success" size="xs">In use</Badge>,
                               member: (
-                                <span title={f.member} className="truncate-safe block max-w-[420px] font-mono text-[11px] text-fg">
+                                <span title={f.member} className="truncate-safe block max-w-[420px] font-mono text-fg">
                                   {f.member}
                                 </span>
                               ),
@@ -1634,6 +1897,9 @@ export default function OracleDashboard() {
                     {(page, pager) => (
                       <>
                         <Table2
+                          rowHeight={64}
+                          darkHeader
+                          cellText
                           columns={[
                             { key: 'name', label: 'Process' },
                             { key: 'desc', label: 'Role' },
@@ -1646,13 +1912,13 @@ export default function OracleDashboard() {
                           rows={page.map((p, i) => ({
                             key: `${p.pname}-${i}`,
                             cells: {
-                              name: <span className="font-mono text-[12px] font-semibold text-accent-text">{p.pname}</span>,
-                              desc: <span className="truncate-safe block max-w-[280px] text-[11px] text-muted">{p.description}</span>,
+                              name: <span className="font-mono font-semibold text-accent-text">{p.pname}</span>,
+                              desc: <span className="truncate-safe block max-w-[280px] text-muted">{p.description}</span>,
                               pid: <span className="font-mono">{p.pid}</span>,
-                              spid: <span className="font-mono text-[11px]">{p.spid}</span>,
-                              used: <span className="font-mono text-[12px]">{fmtBytes(mb(p.pga_used_mb))}</span>,
-                              alloc: <span className="font-mono text-[12px] font-semibold">{fmtBytes(mb(p.pga_alloc_mb))}</span>,
-                              max: <span className="font-mono text-[12px] text-muted">{fmtBytes(mb(p.pga_max_mb))}</span>,
+                              spid: <span className="font-mono">{p.spid}</span>,
+                              used: <span className="font-mono">{fmtBytes(mb(p.pga_used_mb))}</span>,
+                              alloc: <span className="font-mono font-semibold">{fmtBytes(mb(p.pga_alloc_mb))}</span>,
+                              max: <span className="font-mono text-muted">{fmtBytes(mb(p.pga_max_mb))}</span>,
                             },
                           }))}
                           empty={<EmptyState icon="cpu" title="No processes"
@@ -1747,6 +2013,9 @@ export default function OracleDashboard() {
                     {(page, pager) => (
                       <>
                         <Table2
+                          rowHeight={64}
+                          darkHeader
+                          cellText
                           columns={[
                             { key: 'name', label: 'Statistic' },
                             { key: 'class', label: 'Class' },
@@ -1755,7 +2024,7 @@ export default function OracleDashboard() {
                           rows={page.map((s, i) => ({
                             key: `${s.name}-${i}`,
                             cells: {
-                              name: <span className="text-[12px] text-fg">{s.name}</span>,
+                              name: <span className="text-fg">{s.name}</span>,
                               class: <Badge tone="neutral" size="xs">{STAT_CLASSES[s.class] || `Class ${s.class}`}</Badge>,
                               value: <span className="font-mono">{fmtNumber(s.value)}</span>,
                             },
@@ -1807,6 +2076,9 @@ export default function OracleDashboard() {
         {/* ══ MAINTENANCE ═══════════════════════════════════════════════════ */}
         {on('maintenance') && <OracleMaintenanceModule connId={id} />}
 
+        {/* ══ RMAN BACKUPS ═════════════════════════════════════ */}
+        {on('backups') && <RmanBackups connId={id} />}
+
         {/* ══ LIVE QUERIES ══════════════════════════════════════════════════ */}
         {on('live') && <OracleLiveQueries connId={id} embedded />}
 
@@ -1839,6 +2111,9 @@ export default function OracleDashboard() {
                     {(page, pager) => (
                       <>
                         <Table2
+                          rowHeight={64}
+                          darkHeader
+                          cellText
                           columns={[
                             { key: 'waiter', label: 'Waiting session' },
                             { key: 'holder', label: 'Held by' },
@@ -1852,14 +2127,14 @@ export default function OracleDashboard() {
                             cells: {
                               waiter: (
                                 <span className="flex flex-col">
-                                  <span className="font-mono text-[12px] font-semibold">SID {l.waiter_sid}</span>
-                                  <span className="text-[10px] text-subtle">{l.waiter_user} · {l.waiter_machine}</span>
+                                  <span className="font-mono font-semibold">SID {l.waiter_sid}</span>
+                                  <span className="text-subtle">{l.waiter_user} · {l.waiter_machine}</span>
                                 </span>
                               ),
                               holder: (
                                 <span className="flex flex-col">
                                   <Badge tone="danger" size="xs">SID {l.holder_sid}</Badge>
-                                  <span className="mt-0.5 text-[10px] text-subtle">{l.holder_user} · {l.holder_machine}</span>
+                                  <span className="mt-0.5 text-subtle">{l.holder_user} · {l.holder_machine}</span>
                                 </span>
                               ),
                               secs: <span className="font-mono font-bold text-danger-fg">{fmtNumber(l.seconds_in_wait)}s</span>,
@@ -1883,6 +2158,9 @@ export default function OracleDashboard() {
                     {(page, pager) => (
                       <>
                         <Table2
+                          rowHeight={64}
+                          darkHeader
+                          cellText
                           columns={[
                             { key: 'type', label: 'Enqueue type' },
                             { key: 'req', label: 'Requests', align: 'right' },
@@ -1893,7 +2171,7 @@ export default function OracleDashboard() {
                           rows={page.map((e, i) => ({
                             key: `${e.eq_type}-${i}`,
                             cells: {
-                              type: <span className="font-mono text-[12px] font-semibold">{e.eq_type}</span>,
+                              type: <span className="font-mono font-semibold">{e.eq_type}</span>,
                               req: <span className="font-mono">{fmtNumber(e.total_req)}</span>,
                               waits: <span className="font-mono">{fmtNumber(e.total_wait)}</span>,
                               failed: (
@@ -1958,6 +2236,9 @@ export default function OracleDashboard() {
                         {(page, pager) => (
                           <>
                             <Table2
+                              rowHeight={64}
+                              darkHeader
+                              cellText
                               columns={[
                                 { key: 'sql', label: 'SQL' },
                                 { key: 'status', label: 'Status' },
@@ -1986,7 +2267,7 @@ export default function OracleDashboard() {
                                     px: num(e.px_allocated) > 0
                                       ? <Badge tone="info" size="xs">{e.px_allocated}/{e.px_requested} PX</Badge>
                                       : <span className="text-subtle">—</span>,
-                                    user: <span className="font-mono text-[11px]">{e.username}</span>,
+                                    user: <span className="font-mono">{e.username}</span>,
                                   },
                                 };
                               })}
@@ -1997,6 +2278,9 @@ export default function OracleDashboard() {
                               <div className="border-t border-border bg-sunken px-card py-3">
                                 {monitorDetail.isLoading ? <InlineLoading label="Reading v$sql_plan_monitor…" /> : (
                                   <Table2
+                                    rowHeight={64}
+                                    darkHeader
+                                    cellText
                                     columns={[
                                       { key: 'op', label: 'Operation' },
                                       { key: 'status', label: 'Status' },
@@ -2007,7 +2291,7 @@ export default function OracleDashboard() {
                                       key: `${s.plan_line_id}-${i}`,
                                       cells: {
                                         op: (
-                                          <span className="font-mono text-[11px]">
+                                          <span className="font-mono">
                                             {s.operation} {s.options || ''}
                                             {s.object_name && <span className="ml-1 text-subtle">{s.object_name}</span>}
                                           </span>
@@ -2074,6 +2358,9 @@ export default function OracleDashboard() {
                   {(page, pager) => (
                     <>
                       <Table2
+                        rowHeight={64}
+                        darkHeader
+                        cellText
                         columns={[
                           { key: 'name', label: 'Parameter' },
                           { key: 'value', label: 'Value' },
@@ -2084,10 +2371,10 @@ export default function OracleDashboard() {
                         rows={page.map((p, i) => ({
                           key: `${p.name}-${i}`,
                           cells: {
-                            name: <span className="font-mono text-[12px] font-semibold text-accent-text">{p.name}</span>,
+                            name: <span className="font-mono font-semibold text-accent-text">{p.name}</span>,
                             value: (
                               <span title={p.value}
-                                className="truncate-safe block max-w-[220px] font-mono text-[12px] text-fg">
+                                className="truncate-safe block max-w-[220px] font-mono text-fg">
                                 {p.value || <span className="text-subtle">(empty)</span>}
                               </span>
                             ),
@@ -2096,7 +2383,7 @@ export default function OracleDashboard() {
                               : <Badge tone="accent" size="xs">Changed</Badge>,
                             modifiable: <StateChip value={p.modifiable}
                               tones={{ IMMEDIATE: 'success', DEFERRED: 'warning', FALSE: 'neutral' }} />,
-                            desc: <span className="block max-w-[300px] text-[11px] leading-snug text-muted">{p.description}</span>,
+                            desc: <span className="block max-w-[300px] leading-snug text-muted">{p.description}</span>,
                           },
                         }))}
                         empty={<EmptyState icon="settings" title="No parameters"
@@ -2175,6 +2462,147 @@ const USER_COLUMNS = [
   },
 ];
 
+/**
+ * The distinct plan hashes one statement is flip-flopping between, ordered by
+ * how much work each plan has actually done — so the first chip is the plan
+ * Oracle has run most, and the rest are what it keeps switching to.
+ *
+ * A count of "5 distinct plans" tells a DBA there is a problem; these are the
+ * values they take to v$sql_plan, DBMS_XPLAN.DISPLAY_CURSOR or a SQL plan
+ * baseline, which is why they get a column rather than a tooltip.
+ */
+function PlanHashes({ plans }) {
+  const list = Array.isArray(plans) ? plans : [];
+  if (!list.length) return <span className="text-subtle">—</span>;
+
+  const SHOWN = 4;
+  const shown = list.slice(0, SHOWN);
+  const plural = (n, word) => `${fmtNumber(n)} ${word}${num(n) === 1 ? '' : 's'}`;
+
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {shown.map((p, i) => (
+        <Badge
+          key={`${p.plan_hash_value}-${i}`}
+          tone={i === 0 ? 'warning' : 'neutral'}
+          size="xs"
+          className="font-mono"
+          title={`Plan ${p.plan_hash_value} — ${plural(p.executions, 'execution')} across ${plural(p.child_cursors, 'child cursor')}`}
+        >
+          {p.plan_hash_value}
+        </Badge>
+      ))}
+      {list.length > SHOWN && (
+        <span className="text-[10px] text-subtle">+{list.length - SHOWN} more</span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * Per-node host metrics for a RAC cluster.
+ *
+ * One agent is installed, on one node. That node is collected directly; the
+ * others are collected by having the same agent run the identical collector
+ * over SSH, so every node parses into the same shape and the numbers are
+ * comparable. The source badge says which is which, because "this came over
+ * SSH" changes how you read a gap in the data.
+ *
+ * A node whose host cannot be reached still shows its Oracle status: the
+ * instance can be perfectly healthy while SSH is not set up, and conflating
+ * the two would be its own kind of wrong answer.
+ */
+function RacNodeHosts({ data, loading }) {
+  if (loading) return <InlineLoading label="Collecting host metrics from the cluster nodes…" />;
+  const d = data || {};
+  const nodes = d.nodes || [];
+  if (!nodes.length) return null;
+
+  const unreachable = nodes.filter((x) => !x.host_reachable);
+
+  return (
+    <TablePanel
+      title="Node hosts"
+      icon="cpu"
+      subtitle={
+        d.agent_present
+          ? `CPU, memory, disk and uptime per node — ${d.hosts_reachable ?? 0} of ${nodes.length} collected${d.ssh_user ? ` · SSH as ${d.ssh_user}` : ''}`
+          : 'Oracle-side status only — no agent is attached to this connection'
+      }
+    >
+      {unreachable.length > 0 && (
+        <Notice tone="warning" title={`Host metrics unavailable for ${unreachable.length} node(s).`}>
+          <ul className="mt-1 space-y-1.5 text-[12px]">
+            {unreachable.map((x) => (
+              <li key={x.instance_number}>
+                <b>{x.host_name}</b> — {x.failure_detail}
+                {x.remedy && <div className="mt-0.5 text-[11px] opacity-85">{x.remedy}</div>}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px]">
+            Their Oracle status below is unaffected — an instance can be healthy while its host
+            is unreachable. ActMon never supplies a password and never disables host-key checking,
+            so SSH must already be set up for the agent's user.
+          </p>
+        </Notice>
+      )}
+      <Table2
+        rowHeight={64}
+        darkHeader
+        cellText
+        columns={[
+          { key: 'node', label: 'Node' },
+          { key: 'source', label: 'Collected via' },
+          { key: 'os', label: 'Operating system' },
+          { key: 'uptime', label: 'Uptime' },
+          { key: 'cpu', label: 'CPU', align: 'right' },
+          { key: 'ram', label: 'Memory', align: 'right' },
+          { key: 'disk', label: 'Disk (busiest)', align: 'right' },
+          { key: 'sessions', label: 'Active sessions', align: 'right' },
+        ]}
+        rows={nodes.map((x) => ({
+          key: x.instance_number,
+          cells: {
+            node: (
+              <span className="block">
+                <span className="font-semibold">{x.instance_name}</span>
+                <span className="mt-0.5 block font-mono text-subtle">{x.host_name}</span>
+              </span>
+            ),
+            source: x.host_reachable
+              ? (
+                <Badge tone={x.is_agent_host ? 'success' : 'info'} size="xs">
+                  {x.is_agent_host ? 'agent (local)' : 'SSH via agent'}
+                </Badge>
+              )
+              : <Badge tone="warning" size="xs">unreachable</Badge>,
+            os: x.os
+              ? (
+                <span className="block">
+                  <span>{x.os}</span>
+                  {x.kernel && <span className="mt-0.5 block font-mono text-subtle">{x.kernel}</span>}
+                </span>
+              )
+              : <span className="text-subtle">—</span>,
+            uptime: <span className="text-muted">{x.uptime || '—'}</span>,
+            cpu: x.cpu_pct == null
+              ? <span className="text-subtle">—</span>
+              : <span className={num(x.cpu_pct) >= 90 ? 'font-mono font-bold text-danger-fg' : 'font-mono'}>{Math.round(num(x.cpu_pct))}%</span>,
+            ram: x.ram_usage
+              ? <span className={num(String(x.ram_usage).replace('%', '')) >= 90 ? 'font-mono font-bold text-danger-fg' : 'font-mono'}>{x.ram_usage}</span>
+              : <span className="text-subtle">—</span>,
+            disk: x.disk_usage
+              ? <span className={num(String(x.disk_usage).replace('%', '')) >= 90 ? 'font-mono font-bold text-danger-fg' : 'font-mono'}>{x.disk_usage}</span>
+              : <span className="text-subtle">—</span>,
+            sessions: <span className="font-mono text-muted">{x.active_sessions ?? 'N/A'}</span>,
+          },
+        }))}
+      />
+    </TablePanel>
+  );
+}
+
 function TopSqlPanel({ rows, title, actions, full = false }) {
   return (
     <TablePanel title={title} icon="zap"
@@ -2184,8 +2612,13 @@ function TopSqlPanel({ rows, title, actions, full = false }) {
         {(page, pager) => (
           <>
             <Table2
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'sql', label: 'Statement' },
+                { key: 'sqlid', label: 'SQL ID' },
+                { key: 'plan', label: 'Plan hash' },
                 { key: 'schema', label: 'Schema' },
                 { key: 'execs', label: 'Executions', align: 'right' },
                 { key: 'avg', label: 'Avg elapsed', align: 'right' },
@@ -2195,14 +2628,14 @@ function TopSqlPanel({ rows, title, actions, full = false }) {
                 { key: 'reads', label: 'Disk reads', align: 'right' },
               ]}
               rows={page.map((s, i) => ({
-                key: `${s.sql_id}-${i}`,
+                // v$sql is one row per child cursor, so the same sql_id can
+                // appear more than once here with a different plan — the child
+                // number keeps those rows distinct.
+                key: `${s.sql_id}-${s.child_number ?? i}-${i}`,
                 cells: {
-                  sql: (
-                    <span className="block">
-                      <SqlCell sql={s.sql_text} max={110} />
-                      {s.sql_id && <span className="mt-0.5 block font-mono text-[10px] text-subtle">{s.sql_id}</span>}
-                    </span>
-                  ),
+                  sql: <SqlCell sql={s.sql_text} max={110} />,
+                  sqlid: <IdCell value={s.sql_id} />,
+                  plan: <IdCell value={s.plan_hash_value} />,
                   schema: s.parsing_schema_name
                     ? <Badge tone="accent" size="xs">{s.parsing_schema_name}</Badge> : null,
                   execs: <span className="font-mono">{fmtNumber(s.executions)}</span>,
@@ -2239,6 +2672,9 @@ function SlowSqlPanel({ rows, onOpen, onRowOpen }) {
         {(page, pager) => (
           <>
             <Table2
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'sql', label: 'Statement' },
                 { key: 'schema', label: 'Schema' },
@@ -2258,7 +2694,7 @@ function SlowSqlPanel({ rows, onOpen, onRowOpen }) {
                     sql: (
                       <span className="block">
                         <SqlCell sql={s.sql_text} max={100} />
-                        {s.sql_id && <span className="mt-0.5 block font-mono text-[10px] text-subtle">{s.sql_id}</span>}
+                        {s.sql_id && <span className="mt-0.5 block font-mono text-subtle">{s.sql_id}</span>}
                       </span>
                     ),
                     schema: s.parsing_schema_name
@@ -2273,7 +2709,7 @@ function SlowSqlPanel({ rows, onOpen, onRowOpen }) {
                     execs: <span className="font-mono">{fmtNumber(s.executions)}</span>,
                     reads: <span className="font-mono">{fmtNumber(s.avg_disk_reads)}</span>,
                     gets: <span className="font-mono">{fmtNumber(s.avg_buffer_gets)}</span>,
-                    last: <span className="font-mono text-[11px] whitespace-nowrap text-muted">{s.last_active_time}</span>,
+                    last: <span className="font-mono whitespace-nowrap text-muted">{s.last_active_time}</span>,
                   },
                 };
               })}
@@ -2296,6 +2732,9 @@ function SessionsPanel({ rows, loading }) {
           {(page, pager) => (
             <>
               <Table2
+                rowHeight={64}
+                darkHeader
+                cellText
                 columns={[
                   { key: 'sid', label: 'SID' },
                   { key: 'user', label: 'User' },
@@ -2311,7 +2750,7 @@ function SessionsPanel({ rows, loading }) {
                   key: `${s.sid}-${s.serial_number}-${i}`,
                   cells: {
                     sid: (
-                      <span className="font-mono text-[12px] font-semibold">
+                      <span className="font-mono font-semibold">
                         {s.sid}
                         <span className="text-subtle">,{s.serial_number}</span>
                       </span>
@@ -2323,7 +2762,7 @@ function SessionsPanel({ rows, loading }) {
                       /* module before program: "BillingBatch" identifies the code
                          that is running, "JDBC Thin Client" identifies every Java
                          app on the estate. */
-                      <span className="block text-[11px] leading-tight">
+                      <span className="block leading-tight">
                         <span className="truncate-safe block max-w-[130px] font-mono text-muted">{s.machine || '—'}</span>
                         <span className="truncate-safe block max-w-[130px] text-subtle">
                           {s.module || s.program || ''}
@@ -2345,5 +2784,72 @@ function SessionsPanel({ rows, loading }) {
         </Paged>
       )}
     </TablePanel>
+  );
+}
+
+
+/* ── Oracle Services table ────────────────────────────────────────────────
+   Same rows, statuses and click-through as before; laid out as wide pill rows
+   under a navy header. Status colours: online green, partial blue-grey,
+   offline red, unknown neutral — the backend's status, never re-derived. */
+const SVC_TONE = {
+  online: { pill: 'bg-success-soft text-success-fg', dot: 'bg-success', icon: 'text-accent-text' },
+  partial: { pill: 'bg-sunken text-muted', dot: 'bg-subtle', icon: 'text-success-fg' },
+  offline: { pill: 'bg-danger-soft text-danger-fg', dot: 'bg-danger', icon: 'text-warning-fg' },
+  unknown: { pill: 'bg-sunken text-subtle', dot: 'bg-subtle', icon: 'text-subtle' },
+};
+const svcTone = (s) => SVC_TONE[s] || SVC_TONE.unknown;
+const SVC_COLS = 'grid grid-cols-[minmax(280px,42%)_minmax(180px,24%)_minmax(260px,1fr)]';
+
+function ServicesTable({ services, onOpen }) {
+  if (!services.length) return <EmptyState icon="branch" title="No services found" />;
+  return (
+    <div className="overflow-x-auto p-3">
+      <div className="min-w-[760px]">
+        <div role="row" className={cn(SVC_COLS, 'rounded-xl bg-[var(--agent-slate-900)] text-white')}>
+          {[['server', 'Service'], ['activity', 'Overall Status'], ['database', 'Per-Instance']].map(([ic, label], i) => (
+            <div key={label} role="columnheader"
+              className={cn('flex items-center gap-3 px-6 py-4 text-[17px] font-bold', i > 0 && 'justify-center border-l border-white/15')}>
+              <Icon name={ic} size={22} className="shrink-0" />
+              {label}
+            </div>
+          ))}
+        </div>
+        <ul className="mt-3 space-y-3">
+          {services.map((s) => {
+            const t = svcTone(s.status);
+            return (
+              <li key={s.service_name}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(s.service_name)}
+                  className={cn(SVC_COLS, 'group w-full items-center rounded-xl border border-border bg-surface text-left shadow-sm transition hover:border-strong hover:shadow-md focus-visible:outline-2 focus-visible:outline-accent')}
+                >
+                  <span className="flex min-w-0 items-center gap-4 px-6 py-4">
+                    <Icon name="database" size={26} className={cn('shrink-0', t.icon)} />
+                    <span className="min-w-0 break-all text-[17px] font-bold text-accent-text group-hover:underline">{s.service_name}</span>
+                    <Icon name="chevron-right" size={18} className="shrink-0 text-subtle transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                  <span className="flex items-center justify-center self-stretch border-l border-border px-4 py-4">
+                    <span className={cn('inline-flex items-center gap-2 rounded-full px-5 py-1.5 text-[15px] font-semibold', t.pill)}>
+                      <span className={cn('h-2.5 w-2.5 rounded-full', t.dot)} />
+                      {s.status}
+                    </span>
+                  </span>
+                  <span className="flex flex-wrap items-center justify-center gap-3 self-stretch border-l border-border px-4 py-4">
+                    {(s.instances || []).map((inst, idx) => (
+                      <span key={idx} className={cn('rounded-full px-4 py-1.5 text-[14px] font-bold',
+                        svcTone(inst.status === 'online' ? 'online' : inst.status === 'unknown' ? 'unknown' : 'offline').pill)}>
+                        #{inst.instance_number ?? '—'} {inst.status}
+                      </span>
+                    ))}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
   );
 }

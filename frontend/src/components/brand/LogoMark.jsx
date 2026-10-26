@@ -20,7 +20,7 @@ export default function LogoMark({ size = 48, className, title = APP.name }) {
   // it inside a square box.
   return asset ? (
     <span className={cn('inline-grid shrink-0 place-items-center', className)} style={{ height: size, width: 'auto' }}>
-      <img src={asset} alt={title} style={{ height: size, width: 'auto' }} className="object-contain" />
+      <img src={asset} alt={title} style={{ height: size, width: 'auto' }} className="brand-asset object-contain" />
     </span>
   ) : (
     <span className={cn('inline-grid shrink-0 place-items-center', className)} style={{ width: size, height: size }}>

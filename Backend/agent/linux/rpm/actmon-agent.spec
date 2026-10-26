@@ -2,7 +2,7 @@
 # Build:  rpmbuild -bb --define "_topdir <builddir>" actmon-agent.spec
 # (see linux/rpm/build.sh — it stages sources and invokes rpmbuild)
 Name:           actmon-agent
-Version:        1.1.0
+Version:        1.1.3
 Release:        1%{?dist}
 Summary:        ActMon Host Monitoring Agent
 License:        Proprietary
@@ -45,6 +45,29 @@ python3 -c 'import pymssql' 2>/dev/null || pip3 install --quiet pymssql 2>/dev/n
 python3 -c 'import pymongo' 2>/dev/null || pip3 install --quiet pymongo 2>/dev/null || true
 python3 -c 'import oracledb' 2>/dev/null || pip3 install --quiet oracledb 2>/dev/null || true
 python3 -c 'import clickhouse_driver' 2>/dev/null || pip3 install --quiet clickhouse-driver 2>/dev/null || true
+
+# Report what is actually importable afterwards. The pip above is allowed to
+# fail (no internet on a DB host is normal) and the install must still succeed,
+# but a silent failure here is what produces "No module named 'oracledb'" in a
+# connection test weeks later, with nothing pointing back to this moment.
+missing=""
+for m in oracledb clickhouse_driver; do
+  python3 -c "import $m" 2>/dev/null || missing="$missing $m"
+done
+if [ -n "$missing" ]; then
+  echo "**********************************************************************" >&2
+  echo " ActMon Agent: optional database drivers are NOT installed:$missing" >&2
+  echo "" >&2
+  echo " Everything else works. Those engines cannot be monitored from this" >&2
+  echo " host until the driver is present — a connection test will fail with" >&2
+  echo " \"No module named ...\"." >&2
+  echo "" >&2
+  echo " To fix (needs network or a local wheel):" >&2
+  echo "   pip3 install$missing" >&2
+  echo "   # on Debian 12+ / Ubuntu 24.04+ add: --break-system-packages" >&2
+  echo "   systemctl restart actmon-agent" >&2
+  echo "**********************************************************************" >&2
+fi
 
 # Remove any stale hand-made unit in /etc that would shadow this package's unit.
 [ -f /etc/systemd/system/actmon-agent.service ] && rm -f /etc/systemd/system/actmon-agent.service || true

@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import cn from '@/lib/cn';
 import Icon from '@/components/ui/Icon';
@@ -42,6 +43,7 @@ export default function RecentAlertsPanel({
   title = 'Recent Alerts', actionLabel = 'More Alerts',
 }) {
   const [filter, setFilter] = useState('all');
+  const navigate = useNavigate();
 
   // Info only earns a tab when something informational is actually firing —
   // otherwise the strip is the three the design calls for.
@@ -56,7 +58,27 @@ export default function RecentAlertsPanel({
     () => (filter === 'all' ? alerts : alerts.filter((a) => severityOf(a.severity).id === filter)),
     [alerts, filter],
   );
-  const visible = matching.slice(0, MAX_ROWS);
+  // One row per host + category + severity (e.g. "Dev Db · Disk · Critical" for 16 tablespaces) — the newest
+  // alert's message is shown and the rest are counted, so a busy database doesn't fill the panel with
+  // look-alike rows. The full list stays on the Alerts page.
+  const groups = useMemo(() => {
+    const m = new Map();
+    const ts = (a) => Date.parse(a.created_at) || 0;
+    for (const a of matching) {
+      const key = [a.source || a.agent_name || a.server_name || '', a.metric || a.rule_name || '', severityOf(a.severity).id].join('|');
+      const g = m.get(key);
+      if (!g) m.set(key, { ...a, count: 1, latest: ts(a) });
+      else {
+        g.count += 1;
+        if (ts(a) > g.latest) Object.assign(g, { ...a, count: g.count, latest: ts(a) });
+      }
+    }
+    // Keep the caller's ordering (each group sits where its first alert was); only the row's content is
+    // the newest alert of the group. Rule alerts carry their evaluation time, so re-sorting by time here
+    // would always float them to the top.
+    return [...m.values()];
+  }, [matching]);
+  const visible = groups.slice(0, MAX_ROWS);
 
   return (
     <section className={cn('card flex min-h-0 flex-col overflow-hidden', className)}>
@@ -102,7 +124,7 @@ export default function RecentAlertsPanel({
           <Empty filtered={filter !== 'all' && counts.total > 0} />
         ) : (
           <ul className="flex flex-col gap-2">
-            {visible.map((alert, i) => <AlertRow key={alert.id ?? i} alert={alert} />)}
+            {visible.map((alert, i) => <AlertRow key={alert.id ?? i} alert={alert} onOpen={alert.id != null ? () => navigate(`/alerts?alert=${encodeURIComponent(alert.id)}`) : undefined} />)}
           </ul>
         )}
       </div>
@@ -117,7 +139,7 @@ export default function RecentAlertsPanel({
  * rather than signal, so the severity word does the work — spelled out, in its own
  * colour, and never the colour alone.
  */
-function AlertRow({ alert }) {
+function AlertRow({ alert, onOpen }) {
   const sev = severityOf(alert.severity);
   const host = alert.source || alert.agent_name || alert.server_name || 'Unknown host';
   const what = alert.metric ? metricShort(alert.metric) : alert.rule_name;
@@ -125,13 +147,23 @@ function AlertRow({ alert }) {
   return (
     <li
       className={cn(
-        'flex items-center gap-2 rounded-control border px-3 py-3 transition-transform duration-150 hover:translate-x-[3px]',
+        'flex items-center gap-2 rounded-control border px-3 py-2.5 transition-transform duration-150 hover:translate-x-[3px]',
         SEVERITY_ROW[sev.id] || SEVERITY_ROW.info,
+        onOpen && 'cursor-pointer',
       )}
+      {...(onOpen ? { role: 'button', tabIndex: 0, onClick: onOpen, onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } } } : {})}
       title={alert.message || undefined}
     >
-      <span className="truncate-safe min-w-0 flex-1 text-[13px] font-bold text-fg">{host}</span>
+      <span className="min-w-0 flex-1">
+        <span className="truncate-safe block text-[13px] font-bold text-fg">{host}</span>
+        {alert.message && <span className="truncate-safe block text-[11.5px] text-muted">{alert.message}</span>}
+      </span>
       {what && <span className="truncate-safe max-w-[34%] shrink-0 text-[12px] text-muted">{what}</span>}
+      {alert.count > 1 && (
+        <span className="shrink-0 rounded-full bg-surface px-1.5 text-[11px] font-bold text-fg" title={`${alert.count} active ${what || ''} alerts on ${host} — newest shown`}>
+          ×{alert.count}
+        </span>
+      )}
       <span className={cn('shrink-0 text-[12px] font-bold', SEVERITY_TEXT[sev.id] || SEVERITY_TEXT.info)}>
         {sev.label}
       </span>

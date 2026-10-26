@@ -1,0 +1,1 @@
+const r={Intro:"intro","Digital Experience":"digital-experience",APM:"apm",Databases:"databases",Infrastructure:"infrastructure",Network:"network",Logs:"logs",Integrations:"integrations"},a=Object.fromEntries(Object.entries(r).map(([t,e])=>[e,t]));export{a as S,r as T};

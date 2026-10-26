@@ -13,7 +13,7 @@ import { ago, num } from '@/lib/format';
  * level; the badge carries the precise state with an icon and label, so colour is
  * never the only signal.
  */
-export default function AgentCard({ agent, onOpen }) {
+export default function AgentCard({ agent, onOpen, onRemove }) {
   const state = agentState(agent);
   const engine = engineOf(agent.db_type);
   const cluster = clusterBadge(agent);
@@ -22,13 +22,15 @@ export default function AgentCard({ agent, onOpen }) {
   const cpu = Number(agent.agent_host_cpu) || 0;
   const memory = Number(agent.agent_host_memory) || 0;
 
+  // The card is a <button>; the Remove control sits beside it (a sibling), never nested inside it.
   return (
+    <div className="relative h-full">
     <button
       type="button"
       onClick={() => onOpen(agent)}
       title={state.tip}
       className={cn(
-        'card group relative flex flex-col gap-3 overflow-hidden p-card text-left',
+        'card group relative flex h-full w-full flex-col gap-3 overflow-hidden p-card text-left',
         'transition-colors hover:border-strong hover:bg-raised',
       )}
     >
@@ -103,5 +105,12 @@ export default function AgentCard({ agent, onOpen }) {
         </span>
       </div>
     </button>
+    {onRemove && (
+      <button type="button" aria-label={`Remove agent ${agent.name}`} title="Remove agent" onClick={onRemove}
+        className="absolute bottom-2 right-2 grid h-7 w-7 place-items-center rounded-md text-subtle hover:bg-danger-soft hover:text-danger-fg">
+        <Icon name="trash" size={14} />
+      </button>
+    )}
+    </div>
   );
 }

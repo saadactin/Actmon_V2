@@ -1,0 +1,496 @@
+/**
+ * The full-screen ACTMON loader.
+ *
+ * Deliberately NOT theme-token driven. Every other surface in the app follows
+ * the operator's light/dark choice; this one is a fixed cinematic composition
+ * that exists for a few seconds before the themed application appears, and the
+ * reference specifies a dark navy stage. Nothing here leaks out of
+ * `.actmon-loader`.
+ *
+ * The composition is built in CSS first and is complete on its own: the WebGL
+ * canvas layers over it when `three` has loaded, and its absence (no WebGL, a
+ * failed import, reduced motion) costs the layout nothing.
+ */
+
+.actmon-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 700px at 50% 42%, #0b2545 0%, transparent 62%),
+    radial-gradient(900px 600px at 12% 18%, #0a1e3a 0%, transparent 60%),
+    radial-gradient(900px 600px at 88% 78%, #141a3d 0%, transparent 58%),
+    #040915;
+  color: #e6f4ff;
+  font-family: inherit;
+}
+
+/* Faint circuitry, so the stage is not a flat wash behind the 3D. */
+.actmon-loader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.055) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: radial-gradient(ellipse at 50% 45%, #000 20%, transparent 78%);
+  pointer-events: none;
+}
+
+/* The canvas fades in over the CSS composition once the scene has rendered,
+   so there is no hard swap from the fallback to the 3D. */
+.actmon-loader .actmon-canvas { opacity: 0; transition: opacity 500ms ease; }
+.actmon-loader[data-webgl='true'] .actmon-canvas { opacity: 1; }
+
+/* ── overlays: real node labels, the stage caption, the logo reveal ── */
+.actmon-labels { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.actmon-node-label {
+  position: absolute; left: 0; top: 0;
+  padding: 3px 9px; border-radius: 8px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+  color: #e6f4ff; background: rgba(8, 20, 44, 0.78);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  transition: opacity 300ms ease;
+}
+.actmon-node-label[data-state='connecting'] { border-color: rgba(245, 158, 11, 0.7); }
+.actmon-node-label[data-state='failed'] { border-color: rgba(239, 68, 68, 0.75); color: #fecaca; }
+.actmon-node-label[data-state='unknown'] { border-color: rgba(148, 163, 184, 0.5); color: #cbd5e1; }
+
+.actmon-stage-caption {
+  position: absolute; left: 50%; bottom: 112px; z-index: 2;
+  transform: translateX(-50%);
+  margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+  color: #7dd3fc; white-space: nowrap; pointer-events: none;
+  text-shadow: 0 1px 6px rgba(4, 9, 21, 0.95), 0 0 2px rgba(4, 9, 21, 1);
+  animation: actmon-caption 700ms ease both;
+}
+@keyframes actmon-caption { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 0.9; transform: translate(-50%, 0); } }
+
+/* Stage 1: the logo arrives — a scale-in with a restrained glow. */
+.actmon-brand-logo { filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.35)); }
+/* Step 3 of the build (cinematicScene TIMELINE.logo = 1.2 s). */
+.actmon-loader[data-stage='1'] .actmon-brand-logo { animation: actmon-logo-in 1100ms cubic-bezier(.2,.8,.2,1) 1.2s both; }
+/* Status panels slide in once the core is up. They carry real task state, so
+   they arrive early rather than waiting for the whole build. */
+.actmon-loader--panel .actmon-panel { animation: actmon-panel-in 600ms ease 2.4s both; }
+.actmon-loader--panel .actmon-col--right .actmon-panel { animation-name: actmon-panel-in-r; }
+@keyframes actmon-panel-in { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+@keyframes actmon-panel-in-r { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes actmon-logo-in {
+  from { opacity: 0; transform: scale(0.82); filter: drop-shadow(0 0 0 rgba(34, 211, 238, 0)); }
+  to { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 10px rgba(34, 211, 238, 0.35)); }
+}
+
+/* Stage 10: the whole panel fades and scales away as the dashboard arrives. */
+.actmon-loader[data-stage='10'] { animation: actmon-reveal 520ms ease forwards; }
+.actmon-loader[data-stage='10'] .actmon-foot,
+.actmon-loader[data-stage='10'] .actmon-stage { opacity: 0; transition: opacity 250ms ease; }
+@keyframes actmon-reveal { to { opacity: 0; transform: scale(1.03); } }
+
+.actmon-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── brand ────────────────────────────────────────────────────────────── */
+
+.actmon-brand {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: clamp(14px, 3vh, 34px) 16px 0;
+  text-align: center;
+}
+
+/* The whole lockup — icon, ACTMON and the tagline — so it needs real height.
+   Capped by width as well, so a narrow window shrinks it rather than letting
+   it run past the edges. */
+.actmon-brand-logo {
+  height: clamp(110px, 22vh, 240px);
+  max-width: min(520px, 62vw);
+  width: auto;
+  object-fit: contain;
+}
+
+.actmon-brand-name {
+  margin: 0;
+  /* The configured app name is "ActMon"; the composition wants the wordmark. */
+  text-transform: uppercase;
+  font-size: clamp(26px, 4.2vw, 46px);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: #22d3ee;
+  text-shadow: 0 0 22px rgba(34, 211, 238, 0.45);
+}
+
+.actmon-brand-sub {
+  margin: 0;
+  font-size: clamp(9px, 1.1vw, 13px);
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: #cfe9ff;
+  opacity: 0.86;
+}
+
+/* ── the stage, and the panels around it ──────────────────────────────── */
+
+.actmon-stage {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(8px, 2vw, 28px);
+  padding: 0 clamp(10px, 3vw, 40px);
+  pointer-events: none;
+}
+
+/* Each column is placed EXPLICITLY. Auto-placement depends on the siblings
+   actually being there, and hiding the centre element with `display: none`
+   removes it from the grid entirely — which slid the right-hand column into
+   the middle track and put its panels over the artwork's centre. */
+.actmon-stage > .actmon-col:not(.actmon-col--right) { grid-column: 1; }
+.actmon-stage > .actmon-core { grid-column: 2; }
+.actmon-stage > .actmon-col--right { grid-column: 3; }
+
+.actmon-col {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 3.2vh, 30px);
+  min-width: 0;
+}
+
+.actmon-col--right { align-items: flex-end; }
+
+/* A glass status panel. */
+.actmon-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 262px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  background: linear-gradient(135deg, rgba(12, 34, 64, 0.82), rgba(8, 20, 44, 0.66));
+  box-shadow: 0 0 0 1px rgba(8, 18, 38, 0.6), 0 8px 26px rgba(2, 10, 26, 0.55);
+  backdrop-filter: blur(7px);
+  min-width: 0;
+}
+
+.actmon-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  background: rgba(34, 211, 238, 0.14);
+  color: #67e8f9;
+}
+
+.actmon-panel-text { min-width: 0; }
+
+.actmon-panel-title {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  color: #f0f9ff;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actmon-panel-status {
+  display: block;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #9fd4f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status is the task's real state, never a decoration. */
+.actmon-panel[data-state='done']   { border-color: rgba(34, 197, 94, 0.5); }
+.actmon-panel[data-state='done']   .actmon-panel-status { color: #86efac; }
+.actmon-panel[data-state='failed'] { border-color: rgba(248, 113, 113, 0.6); }
+.actmon-panel[data-state='failed'] .actmon-panel-status { color: #fca5a5; }
+.actmon-panel[data-state='active'] .actmon-panel-icon { animation: actmon-panel-pulse 1.6s ease-in-out infinite; }
+
+@keyframes actmon-panel-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.42); }
+  50%      { box-shadow: 0 0 0 7px rgba(34, 211, 238, 0); }
+}
+
+/* The CSS composition under the canvas: rings and a disc stack, so the stage
+   is never empty while three is still arriving or cannot run at all. */
+.actmon-core {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  width: min(100%, 360px);
+  margin: 0 auto;
+}
+
+.actmon-core-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(34, 211, 238, 0.42);
+  animation: actmon-spin 14s linear infinite;
+}
+
+.actmon-core-ring:nth-child(1) { inset: 4%;  border-top-color: rgba(34, 211, 238, 0.95); }
+.actmon-core-ring:nth-child(2) { inset: 16%; border-right-color: rgba(59, 130, 246, 0.95); animation-duration: 20s; animation-direction: reverse; }
+.actmon-core-ring:nth-child(3) { inset: 28%; border-bottom-color: rgba(139, 92, 246, 0.9); animation-duration: 28s; }
+
+.actmon-core-disc {
+  position: relative;
+  width: 44%;
+  height: 44%;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #1d4ed8, #0e7490);
+  box-shadow: 0 0 44px rgba(34, 211, 238, 0.5), inset 0 0 22px rgba(125, 211, 252, 0.35);
+  animation: actmon-float 3.4s ease-in-out infinite;
+}
+
+@keyframes actmon-spin { to { transform: rotate(360deg); } }
+@keyframes actmon-float {
+  0%, 100% { transform: translateY(-3px); }
+  50%      { transform: translateY(3px); }
+}
+
+/* With the canvas up, the CSS core is redundant — it stays in the DOM so a
+   lost context can fall back to it instantly, but it gets out of the way. */
+.actmon-loader[data-webgl='true'] .actmon-core { opacity: 0; transition: opacity 400ms ease; }
+
+/* ── bottom: progress ─────────────────────────────────────────────────── */
+
+.actmon-foot {
+  position: relative;
+  z-index: 3;
+  /* The artwork behind this is bright in the middle; without its own ground
+     the percentage and the message sat on a glow and could not be read. */
+  background: linear-gradient(to top, rgba(4, 9, 21, 0.96) 55%, transparent);
+  padding-top: 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px clamp(18px, 4vh, 44px);
+  text-align: center;
+}
+
+.actmon-bar {
+  position: relative;
+  width: min(620px, 80vw);
+  height: 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  background: rgba(8, 20, 44, 0.75);
+  overflow: hidden;
+}
+
+.actmon-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0ea5e9, #22d3ee 60%, #a5f3fc);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.75);
+  transition: width 340ms ease;
+}
+
+/* No measurable progress: a travelling sweep, and NO number — rather than a
+   percentage nothing is counting. */
+.actmon-bar[data-indeterminate='true'] .actmon-bar-fill {
+  width: 34%;
+  animation: actmon-sweep 1.5s ease-in-out infinite;
+  transition: none;
+}
+
+@keyframes actmon-sweep {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(330%); }
+}
+
+.actmon-percent {
+  font-size: clamp(15px, 2vw, 19px);
+  font-weight: 900;
+  color: #a5f3fc;
+  font-variant-numeric: tabular-nums;
+}
+
+.actmon-message {
+  margin: 0;
+  font-size: clamp(13px, 1.6vw, 16px);
+  font-weight: 700;
+  color: #eaf6ff;
+}
+
+.actmon-categories {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #7cc4ee;
+  text-transform: uppercase;
+}
+
+.actmon-categories span[data-state='done'] { color: #86efac; }
+.actmon-categories span[data-state='failed'] { color: #fca5a5; }
+.actmon-categories i { font-style: normal; color: #2b6a93; }
+
+.actmon-error {
+  max-width: min(640px, 86vw);
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  background: rgba(60, 12, 20, 0.6);
+  color: #fecaca;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.actmon-retry {
+  margin-top: 8px;
+  padding: 7px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  background: rgba(34, 211, 238, 0.14);
+  color: #e0f7ff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.actmon-retry:hover { background: rgba(34, 211, 238, 0.24); }
+
+/* ── panel mode ───────────────────────────────────────────────────────────
+   The same composition inside a page's content area, for the waits that do not
+   warrant covering the whole application. */
+.actmon-loader--panel {
+  position: relative;
+  inset: auto;
+  z-index: 0;
+  /* Fills the content area under the page header and tabs (about 290px of
+     chrome above it) rather than a fixed band with blank space beneath. */
+  height: clamp(440px, calc(100vh - 290px), 720px);
+  min-height: 0;
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+}
+
+.actmon-loader--panel .actmon-brand { padding-top: 18px; gap: 0; }
+.actmon-loader--panel .actmon-brand-logo { height: clamp(56px, 9vh, 84px); }
+.actmon-loader--panel .actmon-brand-name { font-size: clamp(20px, 2.4vw, 30px); }
+.actmon-loader--panel .actmon-brand-sub { font-size: 10px; letter-spacing: 0.3em; text-indent: 0.3em; }
+.actmon-loader--panel .actmon-stage { padding: 0 14px; }
+.actmon-loader--panel .actmon-core { width: min(100%, 210px); }
+.actmon-loader--panel .actmon-foot { padding-bottom: 18px; }
+.actmon-loader--panel .actmon-bar { width: min(460px, 76%); height: 10px; }
+
+/* ── narrow screens ───────────────────────────────────────────────────── */
+
+/* The three-column stage cannot hold two columns of panels beside the core on
+   a phone without them overlapping it. Below this width the panels move under
+   the core and the core keeps the full width. */
+@media (max-width: 900px) {
+  /* One column, so the explicit placement above has to be released or every
+     item would be fighting for a track that no longer exists. */
+  .actmon-stage > .actmon-col:not(.actmon-col--right),
+  .actmon-stage > .actmon-core,
+  .actmon-stage > .actmon-col--right { grid-column: auto; }
+
+  .actmon-stage {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: min-content;
+    align-content: center;
+    gap: 14px;
+    overflow-y: auto;
+  }
+  .actmon-col { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+  .actmon-col--right { align-items: center; }
+  .actmon-panel { max-width: 270px; }
+  .actmon-core { width: min(100%, 230px); }
+  .actmon-brand-sub { letter-spacing: 0.26em; text-indent: 0.26em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .actmon-loader[data-stage='1'] .actmon-brand-logo,
+  .actmon-loader--panel .actmon-panel,
+  .actmon-loader[data-stage='10'] { animation: none; }
+  .actmon-core-ring,
+  .actmon-core-disc,
+  .actmon-panel[data-state='active'] .actmon-panel-icon { animation: none; }
+  .actmon-bar[data-indeterminate='true'] .actmon-bar-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.55;
+  }
+  .actmon-bar-fill { transition: none; }
+}
+
+/* ── Theme-matched surface ────────────────────────────────────────────────
+   The loader sits inside the app, so it takes the app's own background and text colours (light theme: white /
+   cool grey, dark theme: unchanged navy) instead of a fixed space-navy panel. The 3D scene keeps its colours. */
+:is([data-theme='light'], [data-theme='paper']) .actmon-loader {
+  background:
+    radial-gradient(1100px 650px at 50% 42%, color-mix(in srgb, #3b82f6 9%, transparent) 0%, transparent 62%),
+    radial-gradient(800px 520px at 12% 18%, color-mix(in srgb, #22d3ee 7%, transparent) 0%, transparent 60%),
+    radial-gradient(800px 520px at 88% 78%, color-mix(in srgb, #8b5cf6 7%, transparent) 0%, transparent 58%),
+    var(--bg, #f4f6fa);
+  color: var(--fg, #0f172a);
+}
+:is([data-theme='light'], [data-theme='paper']) .actmon-loader::before {
+  background-image:
+    linear-gradient(rgba(37, 99, 235, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.06) 1px, transparent 1px);
+}
+:is([data-theme='light'], [data-theme='paper']) .actmon-node-label { color: #0f172a; background: rgba(255, 255, 255, 0.9); border-color: rgba(37, 99, 235, 0.35); }
+:is([data-theme='light'], [data-theme='paper']) .actmon-node-label[data-state='failed'] { color: #b91c1c; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-node-label[data-state='unknown'] { color: #475569; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-stage-caption { color: #1d4ed8; text-shadow: none; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-brand-name { color: #1d4ed8; text-shadow: none; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-brand-sub { color: #475569; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-panel {
+  border-color: var(--border, #e2e8f0);
+  background: var(--surface, #fff);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.08), 0 8px 24px rgba(16, 24, 40, 0.06);
+}
+:is([data-theme='light'], [data-theme='paper']) .actmon-panel-icon { border-color: rgba(37, 99, 235, 0.3); background: #e8f0fe; color: #2563eb; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-panel-title { color: #0f172a; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-panel-status { color: #475569; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-panel[data-state='done'] .actmon-panel-status { color: #15803d; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-panel[data-state='failed'] .actmon-panel-status { color: #b91c1c; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-foot { background: linear-gradient(to top, var(--bg, #f4f6fa) 55%, transparent); }
+:is([data-theme='light'], [data-theme='paper']) .actmon-bar { border-color: rgba(37, 99, 235, 0.25); background: #e2e8f0; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-percent { color: #0f172a; }
+:is([data-theme='light'], [data-theme='paper']) .actmon-message { color: #1d4ed8; }
+/* the logo artwork is made for the navy bar — on a light page it sits on the same navy, as a badge */
+:is([data-theme='light'], [data-theme='paper']) .actmon-brand-logo {
+  background: #0b1530; border-radius: 18px; padding: 10px 18px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+}

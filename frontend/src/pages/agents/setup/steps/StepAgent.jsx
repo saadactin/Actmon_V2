@@ -18,25 +18,9 @@ export default function StepAgent({ data, setData }) {
   const navigate = useNavigate();
   const { data: agents = [], isLoading, refetch, isFetching } = useQuery({ queryKey: ['agents'], queryFn: listAgents });
   const [k8sOnly, setK8sOnly] = useState(false);
-  // Only host agents carry a token and can host a DB plugin — hide token-less rows
-  // (those are DB connections, not agents, and can't be attached to).
-  const selectable = (agents || []).filter((a) => a.agent_token);
-
-  // useWizardDraft deliberately strips `agentToken` before writing the draft to
-  // sessionStorage (it's a bearer credential, same as a password) — so a page
-  // reload mid-wizard restores `agentMode`/`agentId` but drops the token. Left
-  // alone, StepCredentials silently falls back to testing/saving directly from
-  // the backend instead of through the agent, with no visible sign anything
-  // changed. Re-resolve it here from the (always freshly-fetched) agents list
-  // the moment it's missing, so a genuinely-selected agent never silently stops
-  // being used just because the page was reloaded.
-  useEffect(() => {
-    if (data.agentMode === 'existing' && data.agentId && !data.agentToken) {
-      const match = selectable.find((a) => a.name === data.agentId);
-      if (match) setData({ agentToken: match.agent_token });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.agentMode, data.agentId, data.agentToken, agents]);
+  // Only enrolled host agents can host a DB plugin — the list says whether one has a token (has_agent_token),
+  // never the token itself; the backend resolves it from the agent's name when the wizard saves or tests.
+  const selectable = (agents || []).filter((a) => a.has_agent_token);
 
   return (
     <div className="space-y-8 max-w-3xl">
@@ -63,7 +47,7 @@ export default function StepAgent({ data, setData }) {
                 </thead>
                 <tbody>
                   {selectable.map((a) => (
-                    <tr key={a.name} onClick={() => setData({ agentMode: 'existing', agentId: a.name, agentToken: a.agent_token })}
+                    <tr key={a.name} onClick={() => setData({ agentMode: 'existing', agentId: a.name })}
                       className={`border-t border-slate-100 cursor-pointer ${data.agentMode === 'existing' && data.agentId === a.name ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
                       <td className="px-4 py-3"><input type="radio" readOnly checked={data.agentMode === 'existing' && data.agentId === a.name} /></td>
                       <td className="px-4 py-3 font-bold text-slate-800">{a.name}</td>

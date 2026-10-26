@@ -8,7 +8,9 @@ import Notice from '@/components/ui/Notice';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import {
   ActionsMenu, CategorySummaryBar, OperationConfirmDialog, RefreshBar, useDirectMaintenance,
 } from './maintenanceShared';
@@ -117,6 +119,9 @@ export default function IndexMaintenancePage({ connId }) {
         {(page, pager) => (
           <>
             <Table
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'object', label: 'Owner.Index' },
                 { key: 'table', label: 'Table' },
@@ -136,20 +141,20 @@ export default function IndexMaintenancePage({ connId }) {
               rows={page.map((i) => ({
                 key: i.object_name,
                 cells: {
-                  object: <span className="font-mono text-[12px] font-semibold text-accent-text">{i.object_name}</span>,
-                  table: <span className="text-[12px]">{i.table_name}</span>,
-                  tablespace: <span className="text-[12px]">{i.tablespace_name || '—'}</span>,
-                  type: <span className="text-[11px] text-muted">{i.index_type}</span>,
+                  object: <span className="font-mono font-semibold text-accent-text">{i.object_name}</span>,
+                  table: <span>{i.table_name}</span>,
+                  tablespace: <span>{i.tablespace_name || '—'}</span>,
+                  type: <span className="text-muted">{i.index_type}</span>,
                   status: <Badge tone={i.status === 'UNUSABLE' ? 'danger' : 'success'} size="xs">{i.status}</Badge>,
-                  size: <span className="font-mono text-[12px]">{i.size_mb != null ? `${fmtNumber(i.size_mb)} MB` : '—'}</span>,
+                  size: <span className="font-mono">{i.size_mb != null ? fmtMB(i.size_mb) : '—'}</span>,
                   blevel: <span className={i.blevel >= 3 ? 'font-mono text-[12px] text-warning-fg' : 'font-mono text-[12px]'}>{i.blevel ?? '—'}</span>,
-                  leaf: <span className="font-mono text-[12px]">{i.leaf_blocks != null ? fmtNumber(i.leaf_blocks) : '—'}</span>,
-                  distinct: <span className="font-mono text-[12px]">{i.distinct_keys != null ? fmtNumber(i.distinct_keys) : '—'}</span>,
-                  clustering: <span className="font-mono text-[12px]">{i.clustering_factor != null ? fmtNumber(i.clustering_factor) : '—'}</span>,
+                  leaf: <span className="font-mono">{i.leaf_blocks != null ? fmtNumber(i.leaf_blocks) : '—'}</span>,
+                  distinct: <span className="font-mono">{i.distinct_keys != null ? fmtNumber(i.distinct_keys) : '—'}</span>,
+                  clustering: <span className="font-mono">{i.clustering_factor != null ? fmtNumber(i.clustering_factor) : '—'}</span>,
                   analyzed: <span className={i.stats_stale ? 'text-[11px] text-warning-fg' : 'text-[11px] text-muted'}>{i.last_analyzed ? fmtIST(i.last_analyzed) : 'Never'}</span>,
                   lastop: i.last_operation ? (
                     <span className="flex flex-col gap-0.5">
-                      <span className="text-[11px] text-fg">{ACTION_LABELS[i.last_operation] || i.last_operation}</span>
+                      <span className="text-fg">{ACTION_LABELS[i.last_operation] || i.last_operation}</span>
                       <Badge tone={i.last_status === 'succeeded' ? 'success' : i.last_status === 'failed' ? 'danger' : 'info'} size="xs">{i.last_status}</Badge>
                     </span>
                   ) : <span className="text-subtle">—</span>,

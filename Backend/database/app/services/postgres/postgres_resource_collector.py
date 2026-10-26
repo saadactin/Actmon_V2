@@ -15,6 +15,7 @@ from sqlalchemy import text
 from app.database.connection import SessionLocal, engine
 from app.models.connection_model import ConnectionMaster
 from app.services import drilldown_service as dd
+from app.services.common.cpu_cmd import LINUX_CPU_BUSY_PCT
 
 INTERVAL_SECONDS = 60
 CPU_EVENT_PCT = 70.0
@@ -104,7 +105,7 @@ def _sample_one(db, conn):
     cpu = ram = disk = None
     evidence = None
     try:
-        cpu = dd._num(dd._run(ssh, "top -bn1 | grep -i 'Cpu(s)' | awk '{print $2+$4}'"))
+        cpu = dd._num(dd._run(ssh, LINUX_CPU_BUSY_PCT))
         ram = dd._num(dd._run(ssh, "free -m | awk 'NR==2{printf \"%.1f\", $3*100/$2}'"))
         disk = dd._num(dd._run(ssh, "df -h / | awk 'NR==2{print $5}'"))
         is_event = (cpu is not None and cpu >= CPU_EVENT_PCT) or (ram is not None and ram >= RAM_EVENT_PCT)

@@ -4,7 +4,10 @@ import {
   getServerSummary, listActiveAlerts, listAgents, listCloudAccounts, listOsServers,
 } from '@/api/dashboard';
 import { QK } from '@/api/queryKeys';
+import { getLiveStatus } from '@/api/servers';
 import { severityOf, STATUS, statusOf } from '@/components/charts/status';
+import { hostLevel } from '@/pages/infra/InfraHostCard';
+import { buildDbInstances, tallyInstances } from '@/utils/dbInstances';
 
 /** Database engines we roll hosts up by, in a fixed display order. */
 export const DB_TECHS = [
@@ -55,6 +58,43 @@ const REFRESH = { servers: 60_000, summary: 30_000, agents: 30_000, alerts: 15_0
 
 /** How many hosts the "busiest by CPU" card ranks. */
 export const TOP_CPU_HOSTS = 5;
+/** How many hosts each Top CPU / Memory / Disk Hosts card ranks. */
+export const TOP_HOSTS = 5;
+
+/** A host's stored percentage ("52%", "52", 52) as a number; "N/A", "", null → null.
+ * Unlike num(), a missing reading stays missing instead of becoming 0. */
+export function readingOf(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseFloat(String(v).replace('%', ''));
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
+
+/**
+ * Top hosts by one stored utilisation column (cpu_usage / ram_usage / disk_usage —
+ * the host's latest reading, written by the agent push or the SSH refresh).
+ * Offline hosts are left out: their value is whatever they last sent before they
+ * stopped reporting, frozen rather than current. Hosts with no reading ("N/A")
+ * are left out instead of being ranked as 0%. Both are counted so the card can
+ * say so.
+ */
+function topBy(hosts, field) {
+  const live = hosts.filter((h) => { const s = statusOf(h.status); return s === STATUS.good || s === STATUS.warning; });
+  const rows = live
+    .map((h) => ({
+      id: h.id ?? h.server_id,
+      name: h.server_name || h.hostname || h.ip_address || '—',
+      ip: h.ip_address && h.server_name ? h.ip_address : undefined,
+      os: h.os_type || null,
+      value: readingOf(h[field]),
+    }))
+    .filter((r) => r.value !== null);
+  return {
+    rows: [...rows].sort((a, b) => b.value - a.value).slice(0, TOP_HOSTS),
+    noReading: live.length - rows.length,
+    offline: hosts.length - live.length,
+    total: hosts.length,
+  };
+}
 /** How many hosts the "top alerting hosts" card ranks. */
 export const TOP_ALERT_HOSTS = 5;
 
@@ -79,10 +119,12 @@ export default function useDashboardData() {
       { queryKey: QK.agents, queryFn: listAgents, refetchInterval: REFRESH.agents, retry: false },
       { queryKey: ['dash', 'alerts'], queryFn: listActiveAlerts, refetchInterval: REFRESH.alerts, retry: false },
       { queryKey: ['dash', 'cloud'], queryFn: listCloudAccounts, refetchInterval: REFRESH.cloud, retry: false },
+      // Same key/interval as InfraPage and DatabaseServersPage, so all three read one entry.
+      { queryKey: ['liveStatus'], queryFn: getLiveStatus, refetchInterval: 15_000, staleTime: 10_000, retry: false },
     ],
   });
 
-  const [serversQ, summaryQ, agentsQ, alertsQ, cloudQ] = results;
+  const [serversQ, summaryQ, agentsQ, alertsQ, cloudQ, liveQ] = results;
 
   // Array.isArray, not just `|| []`: the ['os-servers'] query-cache entry is
   // shared with pages that (previously) wrote the raw {status,data:[...]}
@@ -91,7 +133,8 @@ export default function useDashboardData() {
   // tallyBy(). The root cause (two listOsServers() with different unwrap
   // conventions racing for the same cache key) is fixed at the source in
   // api/servers.js now, but this stays as a cheap defensive guard.
-  const hosts = Array.isArray(serversQ.data) ? serversQ.data : [];
+  const storedHosts = Array.isArray(serversQ.data) ? serversQ.data : [];
+  const liveRows = liveQ.data?.data;
   const alerts = alertsQ.data || [];
   const cloud = cloudQ.data || [];
   const summary = summaryQ.data || {};
@@ -104,17 +147,32 @@ export default function useDashboardData() {
   // to recompute (and, since ChartCard/StatTile read these values straight
   // through, re-render) infra/resources/topCpu/perTech too, even though none
   // of them actually changed. Now an alerts refetch only touches `alertData`.
+  // The live poller's status merged onto the stored list — the merge InfraPage and
+  // DatabaseServersPage both apply — so the dashboard counts the same status
+  // those pages show. A 'rac-peer' is read by a sibling node's agent and the
+  // poller cannot reach it, so its own collector's status stands (DatabaseServersPage rule).
+  const hosts = useMemo(() => {
+    const live = {};
+    for (const r of (Array.isArray(liveRows) ? liveRows : [])) live[r.id] = r;
+    return storedHosts.map((h) => {
+      const l = live[h.id];
+      if (!l || h.collector === 'rac-peer') return h;
+      return { ...h, status: l.os_status ?? h.status, db_status: l.db_status ?? h.db_status };
+    });
+  }, [storedHosts, liveRows]);
+
   const hostDerived = useMemo(() => {
-    /* ── infrastructure ── */
-    const local = tally(hosts);
-    // The summary endpoint is authoritative when present; the host list is the
-    // fallback so the tiles still populate if only one of the two answers.
-    const infra = {
-      total: summary.total ?? local.total,
-      good: summary.connected ?? local.good,
-      warning: summary.warning ?? local.warning,
-      critical: summary.disconnected ?? (local.critical + local.unknown),
-    };
+    /* ── infrastructure ──
+       One row per os_servers record (a host is counted once however many DB
+       instances, services or agents it has), classified by InfraPage's own
+       hostLevel(): connected/online/up → online, warning/degraded → warning,
+       anything else — including an unknown or missing status — offline, the
+       same rule the Infra page's Online/Warning/Offline cards and filter use. */
+    const infra = { total: hosts.length, good: 0, warning: 0, critical: 0 };
+    for (const h of hosts) {
+      const level = hostLevel(h);
+      infra[level === 'online' ? 'good' : level === 'warning' ? 'warning' : 'critical'] += 1;
+    }
     infra.health = infra.total ? Math.round((infra.good / infra.total) * 100) : 0;
 
     /* ── databases, per engine ──
@@ -129,12 +187,13 @@ export default function useDashboardData() {
         (h) => instanceFor(h, tech.id)?.status,
       ),
     }));
-    const dbHosts = hosts.filter((h) => DB_TECHS.some((t) => hostRunsTech(h, t.id)));
-    // db_status is the host's own worst/blended instance status (backend's
-    // _db_status_summary: Running / Degraded / Stopped / Unknown) — the same
-    // "is the database service actually up" signal, just rolled up per host
-    // instead of per engine.
-    const databases = tallyBy(dbHosts, (h) => h.db_status);
+    /* ── database servers ──
+       One per host + database technology (utils/dbInstances — the same rows the
+       Database Servers page lists at /databases?status=…), by that engine's own
+       status: Running → online, Degraded → warning, Stopped → offline, anything
+       else → unknown, counted separately rather than guessed. */
+    const inst = tallyInstances(buildDbInstances(storedHosts, liveRows));
+    const databases = { total: inst.total, good: inst.online, warning: inst.warning, critical: inst.offline, unknown: inst.unknown };
 
     /* ── resource averages (hosts that actually reported) ── */
     const resources = {
@@ -186,10 +245,11 @@ export default function useDashboardData() {
 
     return {
       infra, databases, perTech, resources, topCpu,
+      topHosts: { cpu: topBy(hosts, 'cpu_usage'), memory: topBy(hosts, 'ram_usage'), disk: topBy(hosts, 'disk_usage') },
       byEnvironment: toList(environments),
       byOsType: toList(osTypes),
     };
-  }, [hosts, summary]);
+  }, [hosts, storedHosts, liveRows]);
 
   // "Agents" means an actual installed host-agent process, not every saved DB
   // connection — the /agents/ endpoint has one row per connection regardless of
@@ -214,12 +274,14 @@ export default function useDashboardData() {
     // fallback chain RecentAlertsPanel's AlertRow already uses, so the two
     // never disagree on what a given alert's host is called.
     const byHost = {};
-    for (const a of alerts) {
+    const newestId = {};   // the host's newest alert — clicking the host opens its details
+    for (const a of sortedAlerts) {
       const host = a.source || a.agent_name || a.server_name || 'Unknown host';
       byHost[host] = (byHost[host] || 0) + 1;
+      if (newestId[host] == null && a.id != null) newestId[host] = a.id;
     }
     const topAlertHosts = Object.entries(byHost)
-      .map(([label, value]) => ({ key: label, label, value }))
+      .map(([label, value]) => ({ key: label, label, value, alertId: newestId[label] }))
       .sort((a, b) => b.value - a.value)
       .slice(0, TOP_ALERT_HOSTS);
 
@@ -258,6 +320,10 @@ export default function useDashboardData() {
     isFetching: results.some((r) => r.isFetching),
     /** Cloud runs as its own service, so its absence isn't a dashboard failure. */
     hasCoreData: !serversQ.isError || !agentsQ.isError,
+    /** The host list (source of the Top Hosts cards) failed to load. */
+    hostsError: serversQ.isError,
+    /** When the host list was last fetched — the API carries no per-host reading time. */
+    hostsFetchedAt: serversQ.dataUpdatedAt || null,
     /** The cloud microservice failing (proxied 500, connection refused, etc.)
      * must never render identically to "genuinely zero cloud accounts" — the
      * Cloud Accounts tile checks this to show "Cloud service unavailable"
@@ -275,6 +341,7 @@ export default function useDashboardData() {
       qc.invalidateQueries({ queryKey: QK.agents });
       qc.invalidateQueries({ queryKey: ['dash', 'alerts'] });
       qc.invalidateQueries({ queryKey: ['dash', 'cloud'] });
+      qc.invalidateQueries({ queryKey: ['liveStatus'] });
     },
   };
 }

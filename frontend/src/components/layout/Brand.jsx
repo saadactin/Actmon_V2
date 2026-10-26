@@ -19,7 +19,7 @@ export default function Brand({ collapsed = false, className, tone = 'sidebar' }
         style={{ background: 'var(--gradient-accent)' }}
       >
         {APP.logoUrl
-          ? <img src={APP.logoUrl} alt="" className="h-4 w-4 object-contain" />
+          ? <img src={APP.logoUrl} alt="" className="brand-asset h-6 w-6 object-contain" />
           : <Icon name={APP.logoIcon} size={17} strokeWidth={2.4} />}
       </span>
 

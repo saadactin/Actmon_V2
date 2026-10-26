@@ -155,8 +155,10 @@ class EnrollRequest(BaseModel):
 
 class DbConfigRequest(BaseModel):
     """DB credentials captured in the Add-Database wizard, handed to the agent
-    (by token) so it collects the DB locally."""
-    token: str
+    (by token) so it collects the DB locally. The browser names an existing agent
+    (agent_name) instead — its token is resolved server-side, never sent to the client."""
+    token: Optional[str] = None
+    agent_name: Optional[str] = None
     db_type: str = "MySQL"
     connection_name: Optional[str] = None
     host: Optional[str] = "localhost"

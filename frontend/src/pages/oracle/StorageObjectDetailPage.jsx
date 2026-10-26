@@ -13,7 +13,9 @@ import { PageLoading } from '@/components/ui/Loading';
 import Stepper from '@/components/ui/Stepper';
 import Toasts, { useToasts } from '@/components/ui/Toast';
 import Meter from '@/components/charts/Meter';
-import { fmtBytes, fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtBytes, fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import { STATUS_TONES, EXECUTABLE_ACTIONS, ACTION_LABELS, JOB_STATUS_TONES, fmtIST } from './storageHealthConstants';
 
 /**
@@ -93,7 +95,7 @@ function plainEnglishSummary(target, data) {
   }
   if (target.object_type === 'partition' && target.raw) {
     const r = target.raw;
-    return `This is one partition of ${r.owner}.${r.table_name}, holding ${r.num_rows != null ? `${fmtNumber(r.num_rows)} rows` : 'an unknown number of rows'} and taking up ${r.size_mb != null ? `${fmtNumber(r.size_mb)} MB` : 'an unmeasured amount of space'}.`;
+    return `This is one partition of ${r.owner}.${r.table_name}, holding ${r.num_rows != null ? `${fmtNumber(r.num_rows)} rows` : 'an unknown number of rows'} and taking up ${r.size_mb != null ? fmtMB(r.size_mb) : 'an unmeasured amount of space'}.`;
   }
   return null;
 }
@@ -361,7 +363,7 @@ export default function StorageObjectDetailPage() {
                     <span className="text-[12px] font-semibold text-fg">{ACTION_LABELS[j.recommended_action] || j.recommended_action}</span>
                   </span>
                   <span className="text-[11px] text-muted">
-                    {j.status === 'succeeded' && j.reclaimed_mb != null ? `Reclaimed ${fmtNumber(j.reclaimed_mb)} MB · ` : ''}
+                    {j.status === 'succeeded' && j.reclaimed_mb != null ? `Reclaimed ${fmtMB(j.reclaimed_mb)} · ` : ''}
                     {fmtIST(j.requested_at)}
                     <Icon name="chevron-right" size={12} className="ml-1 inline text-subtle" />
                   </span>
@@ -467,14 +469,14 @@ export default function StorageObjectDetailPage() {
                   )}
                   {precise?.ok === true && (
                     <div className="grid grid-cols-3 gap-gutter-sm sm:grid-cols-6">
-                      <StatCell label="Unformatted" value={`${fmtNumber(precise.data.unformatted_mb)} MB`} />
-                      <StatCell label="0–25% full" value={`${fmtNumber(precise.data.fs1_mb)} MB`} />
-                      <StatCell label="25–50% full" value={`${fmtNumber(precise.data.fs2_mb)} MB`} />
-                      <StatCell label="50–75% full" value={`${fmtNumber(precise.data.fs3_mb)} MB`} />
-                      <StatCell label="75–100% full" value={`${fmtNumber(precise.data.fs4_mb)} MB`} />
-                      <StatCell label="Fully used" value={`${fmtNumber(precise.data.full_mb)} MB`} />
+                      <StatCell label="Unformatted" value={fmtMB(precise.data.unformatted_mb)} />
+                      <StatCell label="0–25% full" value={fmtMB(precise.data.fs1_mb)} />
+                      <StatCell label="25–50% full" value={fmtMB(precise.data.fs2_mb)} />
+                      <StatCell label="50–75% full" value={fmtMB(precise.data.fs3_mb)} />
+                      <StatCell label="75–100% full" value={fmtMB(precise.data.fs4_mb)} />
+                      <StatCell label="Fully used" value={fmtMB(precise.data.full_mb)} />
                       <div className="col-span-3 sm:col-span-6">
-                        <StatCell label="Measured reclaimable" value={`${fmtNumber(precise.data.reclaimable_mb)} MB (${precise.data.reclaimable_pct}%)`} accent />
+                        <StatCell label="Measured reclaimable" value={`${fmtMB(precise.data.reclaimable_mb)} (${precise.data.reclaimable_pct}%)`} accent />
                       </div>
                     </div>
                   )}
@@ -530,7 +532,7 @@ export default function StorageObjectDetailPage() {
           <Section icon="layers" title="Partition Detail">
             <div className="grid gap-gutter-sm sm:grid-cols-3">
               <StatCell label="Table" value={`${target.raw.owner}.${target.raw.table_name}`} />
-              {target.raw.size_mb != null && <StatCell label="Size" value={`${fmtNumber(target.raw.size_mb)} MB`} />}
+              {target.raw.size_mb != null && <StatCell label="Size" value={fmtMB(target.raw.size_mb)} />}
               {target.raw.num_rows != null && <StatCell label="Rows" value={fmtNumber(target.raw.num_rows)} />}
               {target.raw.last_analyzed && <StatCell label="Last Analyzed" value={target.raw.last_analyzed} />}
               {target.raw.high_value && <StatCell label="High Value" value={<span className="break-all text-[11px] font-normal">{target.raw.high_value}</span>} className="sm:col-span-3" />}

@@ -373,8 +373,10 @@ def svc_list_agents(db: Session):
         latest = _latest_for(a.agent_name)
         host_metrics = _host_metrics_for(a)
         result.append({
+            "id": a.id,
             "name": a.agent_name,
-            "agent_token": token_map.get(a.agent_name),
+            # never the token itself (agents authenticate with it) — only whether this host agent has one
+            "has_agent_token": bool(token_map.get(a.agent_name)),
             "db_type": a.db_type or "MySQL",
             "hostname": a.hostname or "",
             "ip_address": a.ip_address or "",

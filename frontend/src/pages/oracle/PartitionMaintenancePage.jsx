@@ -8,7 +8,9 @@ import Notice from '@/components/ui/Notice';
 import Table, { EmptyState } from '@/components/ui/Table';
 import { PageLoading } from '@/components/ui/Loading';
 import { Paged } from '@/components/ui/Pagination';
-import { fmtNumber } from '@/config/dbCatalog';
+import {
+  fmtNumber, fmtMB,
+} from '@/config/dbCatalog';
 import {
   ActionsMenu, CategorySummaryBar, OperationConfirmDialog, RefreshBar, useDirectMaintenance,
 } from './maintenanceShared';
@@ -169,6 +171,9 @@ export default function PartitionMaintenancePage({ connId }) {
         {(page, pager) => (
           <>
             <Table
+              rowHeight={64}
+              darkHeader
+              cellText
               columns={[
                 { key: 'object', label: 'Owner.Table.Partition' },
                 { key: 'position', label: 'Pos', align: 'right' },
@@ -183,13 +188,13 @@ export default function PartitionMaintenancePage({ connId }) {
               rows={page.map((p) => ({
                 key: p.object_name,
                 cells: {
-                  object: <span className="font-mono text-[12px] font-semibold text-accent-text">{p.object_name}</span>,
-                  position: <span className="font-mono text-[12px]">{p.partition_position ?? '—'}</span>,
-                  tablespace: <span className="text-[12px]">{p.tablespace_name || '—'}</span>,
-                  size: <span className="font-mono text-[12px]">{p.size_mb != null ? `${fmtNumber(p.size_mb)} MB` : '—'}</span>,
-                  highvalue: <span className="max-w-[220px] truncate font-mono text-[11px] text-muted" title={p.high_value}>{p.high_value || '—'}</span>,
-                  rows: <span className="font-mono text-[12px]">{p.num_rows != null ? fmtNumber(p.num_rows) : '—'}</span>,
-                  analyzed: <span className="text-[11px] text-muted">{p.last_analyzed ? fmtIST(p.last_analyzed) : 'Never'}</span>,
+                  object: <span className="font-mono font-semibold text-accent-text">{p.object_name}</span>,
+                  position: <span className="font-mono">{p.partition_position ?? '—'}</span>,
+                  tablespace: <span>{p.tablespace_name || '—'}</span>,
+                  size: <span className="font-mono">{p.size_mb != null ? fmtMB(p.size_mb) : '—'}</span>,
+                  highvalue: <span className="max-w-[220px] truncate font-mono text-muted" title={p.high_value}>{p.high_value || '—'}</span>,
+                  rows: <span className="font-mono">{p.num_rows != null ? fmtNumber(p.num_rows) : '—'}</span>,
+                  analyzed: <span className="text-muted">{p.last_analyzed ? fmtIST(p.last_analyzed) : 'Never'}</span>,
                   reco: p.recommendation
                     ? <Badge tone="warning" size="xs">{ACTION_LABELS[p.recommendation] || p.recommendation}</Badge>
                     : <span className="text-subtle">—</span>,

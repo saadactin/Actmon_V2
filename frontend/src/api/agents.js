@@ -131,3 +131,11 @@ export const getDbAgentCheckHistory = (connId, checkId) =>
 /** GET /agents/db-agent/{connId}/timeline → { events: [{label,timestamp,detail}] } — real events only */
 export const getDbAgentTimeline = (connId) =>
   client.get(`/agents/db-agent/${connId}/timeline`).then((r) => r.data);
+
+/** Dry run: exactly what removing this agent would delete (host, token, DB targets, connection, data rows). */
+export const getAgentRemovalPlan = (id) =>
+  client.get(`/agents/by-id/${id}/removal-plan`).then((r) => r.data);
+
+/** Remove an agent from monitoring. Host agents: token revoked, so a still-installed agent cannot re-register. */
+export const removeAgent = (id) =>
+  client.delete(`/agents/by-id/${id}`).then((r) => r.data);

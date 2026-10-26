@@ -66,6 +66,7 @@ from app.routes.mongo.mongo_routes import router as mongo_router
 from app.routes.clickhouse.clickhouse_routes import router as clickhouse_router
 from app.routes.mssql.mssql_routes import router as mssql_router
 from app.routes.cosmosdb.cosmosdb_routes import router as cosmosdb_router
+from app.routes.mongoatlas.atlas_routes import router as mongoatlas_router
 
 from app.routes.postgres.postgres_error_analysis_routes import router as postgres_error_router
 from app.routes.postgres.postgres_monitoring_routes import router as postgres_monitoring_router
@@ -107,6 +108,8 @@ from app.routes.common.db_diagnose_routes import router as db_diagnose_router
 from app.routes.common.report_pdf_routes import router as report_pdf_router
 
 from app.routes.os_server.os_server_routes import router as os_server_router
+from app.routes.os_server.memory_routes import router as memory_router, disk_router, fleet_router
+from app.routes.os_server.cpu_routes import router as cpu_router
 from app.routes.os_server.terminal_routes import router as terminal_router
 from app.routes.os_server.test_connection_routes import router as test_connection_router
 from app.routes.digital_experience.external_check_routes import router as external_check_router
@@ -255,6 +258,7 @@ app.include_router(mongo_router)
 app.include_router(clickhouse_router)
 app.include_router(mssql_router)
 app.include_router(cosmosdb_router)
+app.include_router(mongoatlas_router)
 app.include_router(server_router)
 
 # Error analysis routes
@@ -300,6 +304,13 @@ app.include_router(mongo_monitoring_router)
 
 # New OS server + terminal routes
 app.include_router(os_server_router)
+app.include_router(memory_router)
+app.include_router(cpu_router)
+app.include_router(disk_router)
+app.include_router(fleet_router)
+from app.routes.alerts.alert_detail_routes import router as alert_detail_router
+from app.models.alert_comment_model import AlertComment  # noqa: F401,E402 — registers alert_comments for create_all
+app.include_router(alert_detail_router)
 app.include_router(terminal_router)
 app.include_router(test_connection_router)
 app.include_router(external_check_router)

@@ -7,6 +7,7 @@ import PageHeader from '@/components/layout/PageHeader';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import Icon from '@/components/ui/Icon';
+import Select from '@/components/ui/Select';
 import Input from '@/components/ui/Input';
 import Notice from '@/components/ui/Notice';
 import Table, { EmptyState } from '@/components/ui/Table';
@@ -58,16 +59,32 @@ export default function OracleErrorLogs() {
   const { id } = useParams();
   const [level, setLevel] = useState('ALL');
   const [search, setSearch] = useState('');
+  /* The DBA query reads the last day of ORA- errors; that is the default.
+     The window and the filter are applied by the database, not after the
+     fetch — the view parses XML and a bound is what keeps it fast. */
+  const [hours, setHours] = useState('24');
+  const [oraOnly, setOraOnly] = useState(true);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['oracleErrorLogs', id],
-    queryFn: () => client.get(`/connections/oracle/${id}/oracle-error-logs`).then((r) => r.data),
+    queryKey: ['oracleErrorLogs', id, hours, oraOnly],
+    queryFn: () => client.get(`/connections/oracle/${id}/oracle-error-logs`, {
+      params: { hours, ora_only: oraOnly },
+      // The alert log is parsed from XML on each instance; the server allows it
+      // up to 90s per read, so the browser must not give up at the usual 30s.
+      timeout: 200000,
+    }).then((r) => r.data),
     retry: false,
     refetchInterval: 30000,
   });
 
-  const isFallback = data?.source === 'v$log';
+  // The old v$log fallback is gone from the backend; a 'none' source now means
+  // the alert log genuinely could not be read.
+  const isFallback = false;
   const noSource = data?.source === 'none';
+  const instances = useMemo(
+    () => [...new Set((data?.alert_logs || []).map((e) => e.instance_name).filter(Boolean))],
+    [data],
+  );
 
   const entries = useMemo(() => {
     if (isFallback || noSource) return [];
@@ -106,7 +123,9 @@ export default function OracleErrorLogs() {
   const header = (
     <PageHeader
       title="Oracle Alert Log"
-      description="v$diag_alert_ext, newest first, with the sessions that look stuck"
+      description={data?.alert_logs?.[0]?.database_name
+        ? `${data.alert_logs[0].database_name} · ${data.source || 'v$diag_alert_ext'} · newest first`
+        : 'v$diag_alert_ext, newest first, with the sessions that look stuck'}
       icon="logs"
       backTo={`/oracle-dashboard/${id}`}
       actions={(
@@ -151,9 +170,28 @@ export default function OracleErrorLogs() {
         </Notice>
       )}
 
+      {/* The database's own words, not a paraphrase. A generic "could not be
+          read" hid whether this was a missing grant, a timeout or a SQL error —
+          three problems with three different fixes. */}
       {noSource && (
-        <Notice tone="danger" title="No alert source could be read.">
-          {data?.note || 'Both v$diag_alert_ext and v$log failed.'}
+        <Notice tone="danger" title="The alert log could not be read.">
+          <span className="block">{data?.note}</span>
+          {(data?.errors || []).length > 0 && (
+            <span className="mt-2 block space-y-1">
+              {data.errors.map((e, i) => (
+                <code key={i} className="block break-words rounded bg-surface/60 px-2 py-1 font-mono text-[12px]">{e}</code>
+              ))}
+            </span>
+          )}
+          {(data?.errors || []).some((e) => /ORA-00942|ORA-01031|insufficient privileges|does not exist/i.test(e)) && (
+            <span className="mt-2 block">
+              The monitoring user is missing access to the alert-log views. As SYS, run:
+              <code className="mt-1 block whitespace-pre rounded bg-surface/60 px-2 py-1 font-mono text-[12px]">
+{`GRANT SELECT ON sys.v_$diag_alert_ext  TO ${data?.db_user || '<monitoring_user>'};
+GRANT SELECT ON sys.gv_$diag_alert_ext TO ${data?.db_user || '<monitoring_user>'};`}
+              </code>
+            </span>
+          )}
         </Notice>
       )}
 
@@ -206,9 +244,27 @@ export default function OracleErrorLogs() {
           <TablePanel
             title="Alert log"
             icon="logs"
-            subtitle={`${data?.total ?? 0} most recent entries`}
+            subtitle={`${data?.total ?? 0} entr${data?.total === 1 ? 'y' : 'ies'} in the last ${hours} hour${hours === '1' ? '' : 's'}`
+              + `${oraOnly ? ', ORA-/TNS- only' : ''}`
+              + `${instances.length ? ` · ${instances.join(', ')}` : ''}`
+              + `${data?.truncated ? ` — first ${data.row_cap} shown` : ''}`}
             actions={(
               <>
+                {/* The window and the ORA filter go to the database. */}
+                <Select size="sm" width="auto" value={hours} onChange={setHours}
+                  options={[
+                    { id: '1', label: 'Last hour' },
+                    { id: '6', label: 'Last 6 hours' },
+                    { id: '24', label: 'Last 24 hours' },
+                    { id: '72', label: 'Last 3 days' },
+                    { id: '168', label: 'Last 7 days' },
+                    { id: '720', label: 'Last 30 days' },
+                  ]} />
+                <button type="button" onClick={() => setOraOnly((v) => !v)} aria-pressed={oraOnly}
+                  className={cn('h-7 rounded-control border px-2.5 text-[11px] font-bold transition-colors',
+                    oraOnly ? 'border-accent bg-accent text-accent-fg' : 'border-border text-muted hover:bg-sunken')}>
+                  ORA- only
+                </button>
                 <span className="flex items-center gap-0.5 rounded-control border border-border p-0.5">
                   {['ALL', ...ALERT_LEVELS.map((l) => l.id)].map((k) => (
                     <button
@@ -241,8 +297,12 @@ export default function OracleErrorLogs() {
               {(page, pager) => (
                 <>
                   <Table
+                    rowHeight={64}
+                    darkHeader
+                    cellText
                     columns={[
                       { key: 'when', label: 'Logged' },
+                      { key: 'inst', label: 'Instance' },
                       { key: 'level', label: 'Level' },
                       { key: 'code', label: 'Code' },
                       { key: 'component', label: 'Component' },
@@ -252,10 +312,13 @@ export default function OracleErrorLogs() {
                       key: `alert-${e._i}`,
                       cells: {
                         when: (
-                          <span className="font-mono text-[11px] whitespace-nowrap text-muted">
+                          <span className="font-mono whitespace-nowrap text-muted">
                             {String(e.originating_timestamp || '').slice(0, 19) || null}
                           </span>
                         ),
+                        inst: e.instance_name
+                          ? <span className="whitespace-nowrap font-mono font-semibold text-fg">{e.instance_name}</span>
+                          : null,
                         level: (
                           <Badge tone={e._level.tone} size="xs">
                             <Icon name={e._level.icon} size={9} />
@@ -267,12 +330,12 @@ export default function OracleErrorLogs() {
                           ? <Badge tone="danger" size="xs" className="font-mono">{e._code}</Badge>
                           : null,
                         component: (
-                          <span className="truncate-safe block max-w-[110px] font-mono text-[11px] text-muted">
+                          <span className="truncate-safe block max-w-[110px] font-mono text-muted">
                             {e.component_id}
                           </span>
                         ),
                         msg: (
-                          <span className="block max-w-[620px] text-[12px] break-words text-fg">
+                          <span className="block max-w-[620px] break-words text-fg">
                             {e.message_text}
                           </span>
                         ),
@@ -282,8 +345,9 @@ export default function OracleErrorLogs() {
                       <EmptyState icon="filter" title="No matches"
                         body="No entry matches the current level and search." />
                     ) : (
-                      <EmptyState icon="check" title="No alert entries"
-                        body="v$diag_alert_ext returned nothing with a message type — on a healthy instance that is normal." />
+                      <EmptyState icon="check"
+                        title={oraOnly ? 'No ORA- errors in this window' : 'No alert entries in this window'}
+                        body={`Nothing in the alert log in the last ${hours} hour${hours === '1' ? '' : 's'}${oraOnly ? ' matched ORA- or TNS-' : ''}. On a healthy instance that is normal.`} />
                     )}
                   />
                   {pager}
@@ -303,6 +367,9 @@ export default function OracleErrorLogs() {
             {(page, pager) => (
               <>
                 <Table
+                  rowHeight={64}
+                  darkHeader
+                  cellText
                   columns={[
                     { key: 'sid', label: 'SID' },
                     { key: 'user', label: 'User' },
@@ -319,13 +386,13 @@ export default function OracleErrorLogs() {
                       key: `stuck-${s.sid}-${i}`,
                       cells: {
                         sid: (
-                          <span className="font-mono text-[12px] font-semibold">
+                          <span className="font-mono font-semibold">
                             {s.sid}<span className="text-subtle">,{s.serial}</span>
                           </span>
                         ),
                         user: <span className="truncate-safe block max-w-[110px] font-semibold text-accent-text">{s.username}</span>,
                         status: <StateChip value={s.status} tones={{ ACTIVE: 'success', INACTIVE: 'neutral' }} />,
-                        machine: <span className="truncate-safe block max-w-[130px] font-mono text-[11px] text-muted">{s.machine}</span>,
+                        machine: <span className="truncate-safe block max-w-[130px] font-mono text-muted">{s.machine}</span>,
                         event: <SqlCell sql={s.event} max={60} />,
                         class: s.wait_class
                           ? <Badge tone={WAIT_CLASS_TONES[s.wait_class] || 'neutral'} size="xs">{s.wait_class}</Badge>
@@ -336,7 +403,7 @@ export default function OracleErrorLogs() {
                           </span>
                         ),
                         action: (
-                          <span className="block max-w-[280px] text-[11px] leading-snug text-muted">
+                          <span className="block max-w-[280px] leading-snug text-muted">
                             {k.why || k.action}
                           </span>
                         ),

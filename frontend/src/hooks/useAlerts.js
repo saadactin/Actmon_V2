@@ -64,6 +64,7 @@ export function useActiveAlerts() {
     summary,
     isLoading: query.isLoading,
     isFetching: query.isFetching,
+    dataUpdatedAt: query.dataUpdatedAt,
     error: query.error,
     refresh: () => qc.invalidateQueries({ queryKey: ACTIVE_KEY }),
     acknowledge: ack.mutateAsync,

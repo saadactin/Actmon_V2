@@ -10,7 +10,7 @@
  * clutter it can't use.
  */
 import {
-  Activity, BarChart2, Boxes, Clock, Cpu, FileText, Gauge, HardDrive, Key, Layers, Lock,
+  Activity, Archive, BarChart2, Boxes, Clock, Cpu, FileText, Gauge, HardDrive, Key, Layers, Lock,
   Network, RotateCcw, Server, Settings, ShieldCheck, Stethoscope, Table, TrendingUp, Users, Wrench, Zap,
 } from 'lucide-react';
 
@@ -21,6 +21,7 @@ export const BASE_TABS = [
   { id: 'sql', label: 'Top SQL', icon: Zap },
   { id: 'tablespaces', label: 'Tablespaces', icon: HardDrive },
   { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+  { id: 'backups', label: 'RMAN Backups', icon: Archive },
   { id: 'objects', label: 'Objects', icon: Boxes },
   { id: 'tables', label: 'Tables', icon: Table },
   { id: 'dataguard', label: 'Data Guard', icon: ShieldCheck },

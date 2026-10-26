@@ -96,6 +96,7 @@ function BreakdownBody({ kind, rows, unit = '', format = (v) => v, emptyLabel, l
     label: s.label,
     status: s.status,
     color: s.color,
+    onClick: s.onLegendClick,
     value: rows.reduce((sum, r) => sum + (r.segments.find((x) => x.key === s.key)?.value || 0), 0),
   }));
 

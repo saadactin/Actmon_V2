@@ -22,6 +22,7 @@ const ROUTE_PREFIX = {
   mongodb: 'mongodb-dashboard',
   clickhouse: 'clickhouse-dashboard',
   cosmosdb: 'cosmosdb-dashboard',
+  mongoatlas: 'mongoatlas-dashboard',
 };
 
 /**
@@ -41,6 +42,14 @@ const EXTRA_ENGINES = [
     emoji: '🌌',
     port: 443,
     /** Cloud-managed: no host, no agent, no service to start or stop. */
+    cloud: true,
+  },
+  {
+    id: 'mongoatlas',
+    name: 'MongoDB Atlas',
+    subtitle: 'Managed MongoDB',
+    emoji: '🍃',
+    port: 27017,
     cloud: true,
   },
 ];
@@ -104,6 +113,7 @@ const QUICK_LINKS = {
   /* Cosmos DB's equivalents are tabs on its own dashboard, not separate routes, so
      it advertises none — a header full of links back to itself would be noise. */
   cosmosdb: [],
+  mongoatlas: [],
 };
 
 const FALLBACK = { id: 'unknown', name: 'Database', subtitle: '', emoji: '🗄️', port: null };

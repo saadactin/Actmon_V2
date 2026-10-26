@@ -1,0 +1,123 @@
+/* The drill-down loader: an animated database in the content area.
+   Sized to its content (no fixed tall band), centred, theme tokens only. */
+
+.drill-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px 36px;
+  min-height: 380px;
+  text-align: center;
+}
+
+.drill-loader__art {
+  position: relative;
+  width: 220px;
+  height: 170px;
+}
+
+.drill-loader__halo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 190px;
+  height: 190px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--accent) 22%, transparent) 0%, transparent 68%);
+  animation: drill-breathe 2.8s ease-in-out infinite;
+}
+
+/* Dots orbiting the database. */
+.drill-loader__orbit {
+  position: absolute;
+  inset: 8px 18px;
+  border: 1px dashed color-mix(in oklab, var(--accent) 35%, transparent);
+  border-radius: 50%;
+  animation: drill-spin 9s linear infinite;
+}
+.drill-loader__orbit i {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+.drill-loader__orbit i:nth-child(1) { top: -4px; left: 50%; }
+.drill-loader__orbit i:nth-child(2) { bottom: 18%; left: 4%; opacity: 0.7; }
+.drill-loader__orbit i:nth-child(3) { bottom: 22%; right: 3%; opacity: 0.5; }
+
+/* The stacked-disc database; each disc pulses in turn. */
+.drill-loader__db {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 92px;
+  transform: translate(-50%, -46%);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  animation: drill-float 3.2s ease-in-out infinite;
+}
+.drill-loader__db b {
+  display: block;
+  height: 26px;
+  border-radius: 46px / 13px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 70%, white) 0%, var(--accent) 100%);
+  box-shadow: inset 0 -4px 0 color-mix(in oklab, var(--accent) 70%, black), 0 4px 14px color-mix(in oklab, var(--accent) 35%, transparent);
+  animation: drill-disc 1.8s ease-in-out infinite;
+}
+.drill-loader__db b:nth-child(2) { animation-delay: 0.25s; }
+.drill-loader__db b:nth-child(3) { animation-delay: 0.5s; }
+
+.drill-loader__node {
+  position: absolute;
+  top: 34%;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--accent-fg, #fff);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--accent) 18%, transparent);
+  animation: drill-float 3.6s ease-in-out infinite;
+}
+.drill-loader__node--l { left: 0; animation-delay: 0.6s; }
+.drill-loader__node--r { right: 0; animation-delay: 1.2s; }
+
+/* Indeterminate: a sweep, never a percentage. */
+.drill-loader__bar {
+  position: relative;
+  overflow: hidden;
+  width: min(360px, 80%);
+  height: 6px;
+  margin-top: 18px;
+  border-radius: 999px;
+  background: var(--sunken);
+}
+.drill-loader__bar span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: drill-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes drill-spin { to { transform: rotate(360deg); } }
+@keyframes drill-breathe { 50% { opacity: 0.55; transform: translate(-50%, -50%) scale(0.92); } }
+@keyframes drill-float { 50% { transform: translate(-50%, -52%); } }
+@keyframes drill-disc { 50% { filter: brightness(1.25); } }
+@keyframes drill-sweep { from { left: -35%; } to { left: 100%; } }
+
+.drill-loader__node--l, .drill-loader__node--r { animation-name: drill-bob; }
+@keyframes drill-bob { 50% { transform: translateY(-5px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .drill-loader *, .drill-loader__halo { animation: none !important; }
+  .drill-loader__bar span { left: 32%; }
+}

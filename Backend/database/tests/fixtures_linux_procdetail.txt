@@ -1,0 +1,60 @@
+@@STAT@@
+3486623 (clickhouse-serv) S 3486616 3486616 3486616 0 -1 4194624 3464789249 0 209991 0 18961157 6303648 0 0 20 0 858 0 538527310 18470744064 498571 18446744073709551615 148595904 592539776 140733536438448 0 0 0 4096 4096 1074351871 0 0 0 17 1 0 0 0 0 0 596291648 596660536 1049477120 140733536439662 140733536439788 140733536439788 140733536440285 0
+@@STATUS@@
+Name:	clickhouse-serv
+State:	S (sleeping)
+PPid:	3486616
+VmRSS:	 1994212 kB
+Threads:	858
+voluntary_ctxt_switches:	101
+nonvoluntary_ctxt_switches:	364
+@@EXE@@
+/usr/bin/clickhouse
+@@CWD@@
+/
+@@CMD@@
+/usr/bin/clickhouse-server --config=/etc/clickhouse-server/config.xml --pid-file=/run/clickhouse-server/clickhouse-server.pid 
+@@FDN@@
+119
+@@FD@@
+     75 socket
+      6 pipe
+      4 /dev/urandom
+      2 /sys/fs/cgroup/system.slice/clickhouse-server.service/memory.stat
+      1 /var/log/clickhouse-server/clickhouse-server.log
+      1 /var/log/clickhouse-server/clickhouse-server.err.log
+      1 /usr/lib/x86_64-linux-gnu/librt.so.1
+      1 /usr/lib/x86_64-linux-gnu/libpthread.so.0
+      1 /usr/lib/x86_64-linux-gnu/libm.so.6
+      1 /usr/lib/x86_64-linux-gnu/libdl.so.2
+      1 /usr/lib/x86_64-linux-gnu/libc.so.6
+      1 /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+      1 /usr/bin/clickhouse
+      1 /u01/clickhouse/store/4e4/4e4bcebe-785e-4f30-8a27-a90d66642870/deduplication_logs/deduplication_log_4.txt
+      1 /u01/clickhouse/store/350/35042f74-7977-4391-a177-fa4894b3bc39/deduplication_logs/deduplication_log_1.txt
+      1 /u01/clickhouse/status
+      1 /sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00/f8b3781b-1e82-4818-a1c3-63d806ec15bb/host1/target1:0:0/1:0:0:0/block/sda/stat
+      1 /sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/MSFT1000:00/f8b3781a-1e82-4818-a1c3-63d806ec15bb/host0/target0:0:0/0:0:0:0/block/sdb/stat
+      1 /run/clickhouse-server/clickhouse-server.pid
+      1 /proc/uptime
+      1 /proc/sys/vm/max_map_count
+      1 /proc/sys/fs/file-nr
+      1 /proc/stat
+      1 /proc/pressure/memory
+      1 /proc/pressure/io
+      1 /proc/pressure/cpu
+      1 /proc/meminfo
+      1 /proc/loadavg
+      1 /proc/cpuinfo
+      1 /proc/3486623/status
+      1 /proc/3486623/statm
+      1 /proc/3486623/net/tcp6 (deleted)
+      1 /proc/3486623/net/tcp (deleted)
+      1 /proc/3486623/net/dev (deleted)
+      1 /proc/3486623/maps
+      1 /dev/null
+@@SYS@@
+100
+1784759761
+2
+

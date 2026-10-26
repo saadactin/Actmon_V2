@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
+from app.routes.auth.auth_routes import bearer_scheme
 from app.services.agent.agent_install_service import (
     DEB_PATH,
     EXE_PATH,
@@ -112,8 +113,29 @@ def route_startup_ping(req: StartupPing, db: Session = Depends(get_db)):
             "update": ledger.status_for(db, name)}
 
 
-@router.post("/db-config", summary="Save a DB for the agent to monitor (by token)")
-def route_save_db_config(req: DbConfigRequest, db: Session = Depends(get_db)):
+def _token_for_agent_name(agent_name, credentials, db):
+    """Browser flows name an EXISTING host agent instead of sending its token (tokens are never sent to the
+    browser). Requires a logged-in user; the token is looked up server-side, scoped to the caller's org."""
+    from app.models.os_server_model import OsServer
+    from app.routes.auth.auth_routes import current_claims
+    from app.services.auth.tenant_context import scope_org_id
+    claims = current_claims(credentials)          # 401 when not logged in
+    q = db.query(OsServer).filter(OsServer.server_name == agent_name, OsServer.collector == "agent")
+    org = scope_org_id({"org_id": claims.get("org_id"), "is_super": claims.get("role_id") == 1 and claims.get("org_id") == 1})
+    if org is not None:
+        q = q.filter(OsServer.org_id == org)
+    server = q.first()
+    if not server or not server.agent_token:
+        raise HTTPException(status_code=404, detail=f"No enrolled host agent named '{agent_name}'.")
+    return server.agent_token
+
+
+@router.post("/db-config", summary="Save a DB for the agent to monitor (by token, or by agent_name when logged in)")
+def route_save_db_config(req: DbConfigRequest, db: Session = Depends(get_db), credentials=Depends(bearer_scheme)):
+    if not req.token:
+        if not req.agent_name:
+            raise HTTPException(status_code=422, detail="token or agent_name is required")
+        req.token = _token_for_agent_name(req.agent_name, credentials, db)
     return svc_save_db_target(req, db)
 
 
@@ -123,7 +145,8 @@ def route_get_db_config(token: str = Query(...), db: Session = Depends(get_db)):
 
 
 class DbTestRequest(BaseModel):
-    token: str
+    token: Optional[str] = None
+    agent_name: Optional[str] = None   # browser: name an existing host agent instead of sending its token
     db_type: str
     host: Optional[str] = None
     port: Optional[int] = None
@@ -133,7 +156,7 @@ class DbTestRequest(BaseModel):
 
 
 @router.post("/db-test", summary="Test a DB connection THROUGH the agent (connects locally on the agent host)")
-def route_db_test(req: DbTestRequest):
+def route_db_test(req: DbTestRequest, db: Session = Depends(get_db), credentials=Depends(bearer_scheme)):
     """The agent runs where the DB lives, so it can validate 'localhost' — which the
     backend never can. Enqueue a SELECT 1 as a dbquery job on the agent's token and
     return its verdict. Requires the agent to be installed + online on the DB host."""
@@ -154,8 +177,13 @@ def route_db_test(req: DbTestRequest):
         "user": req.username or "", "password": req.password or "",
         "database": req.database_name or "", "sql": probe_sql,
     })
+    token = req.token
+    if not token:
+        if not req.agent_name:
+            raise HTTPException(status_code=422, detail="token or agent_name is required")
+        token = _token_for_agent_name(req.agent_name, credentials, db)
     try:
-        raw = agent_fs_service.request(req.token, "dbquery", payload, timeout=20)
+        raw = agent_fs_service.request(token, "dbquery", payload, timeout=20)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
     if raw is None:

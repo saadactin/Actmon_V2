@@ -31,7 +31,7 @@ from app.services.chatbot.ai_engine import (
     generate_connections_csv,
     generate_health_summary_csv,
 )
-from app.services.chatbot import intent_service, knowledge_base, resource_resolver, tools, action_rbac
+from app.services.chatbot import intent_service, knowledge_base, resource_resolver, tools, action_rbac, intent_shadow, answer_shadow
 
 router = APIRouter(prefix="/api/v1/chatbot", tags=["ActMon AI Chatbot"])
 
@@ -123,7 +123,9 @@ def _sse_stream(*events) -> StreamingResponse:
     })
 
 
-_TOOL_TIMEOUT = 20   # seconds — a live dashboard fetch for an agent-proxied connection
+READ_ONLY_REPLY = ("ActMon AI is read-only: I can explain concepts and show monitoring data, but I can't make "
+                   "changes to your servers, services, processes or databases.")
+_TOOL_TIMEOUT = 20  # seconds — a live dashboard fetch for an agent-proxied connection
                      # can chain many sequential queries, each with its own long
                      # per-query timeout on the agent-proxy path; without a ceiling
                      # here a single unreachable/slow connection can hang an entire
@@ -154,9 +156,24 @@ async def _with_timeout(fn, *args, timeout: float, unavailable_reason: str = Non
         raise
 
 
-def _llm_stream(messages: list) -> StreamingResponse:
+def _llm_stream(messages: list, shadow: tuple = None) -> StreamingResponse:
+    """shadow = (message, route, tool_result): when the answer shadow log is on, the streamed
+    text is collected as it passes through (unchanged) and logged next to the code-rendered answer."""
     def generate():
-        yield from stream_chat(messages)
+        if shadow is None or not answer_shadow.enabled():
+            yield from stream_chat(messages)
+            return
+        parts = []
+        try:
+            for line in stream_chat(messages):
+                yield line
+                if '"type": "token"' in line:
+                    try:
+                        parts.append(json.loads(line[len("data: "):]).get("text", ""))
+                    except Exception:  # noqa: BLE001
+                        pass
+        finally:
+            answer_shadow.record(shadow[0], shadow[1], shadow[2], "".join(parts))
     return StreamingResponse(generate(), media_type="text/event-stream", headers={
         "Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Access-Control-Allow-Origin": "*",
     })
@@ -334,11 +351,16 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
     """
     org_id = scope_org_id(ctx)
     connections = _conn_list(db, org_id)
+    import time as _time
+    _t0, _timed_out = _time.perf_counter(), False
     try:
         intent = await _with_timeout(intent_service.classify, payload.message, payload.history,
                                       payload.context or {}, timeout=_INTENT_TIMEOUT)
     except asyncio.TimeoutError:
         intent = dict(intent_service._FALLBACK)  # a hung classifier call must still resolve to "ask, don't guess"
+        _timed_out = True
+    _classify_ms = (_time.perf_counter() - _t0) * 1000
+    _groq_intent = dict(intent)
 
     # The classifier is a hosted model and, confirmed by direct repeated testing,
     # occasionally returns "ambiguous" for the exact same input it correctly
@@ -352,6 +374,11 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
         if fallback:
             intent = fallback
 
+    # Off unless ACTMON_INTENT_SHADOW is set: one log line for offline comparison with a
+    # local classifier. Never changes `intent`, never raises.
+    intent_shadow.record(payload.message, payload.history, payload.context, _groq_intent, dict(intent),
+                         _classify_ms, _timed_out)
+
     category, module = intent["category"], intent["module"]
 
     # ── Ambiguous: ask, don't guess. No LLM call, no tool call. ──
@@ -359,8 +386,7 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
         return _sse_stream({
             "type": "clarify",
             "text": "Could you tell me a bit more — are you asking about a concept, a specific "
-                     "server/connection's current status, its history, or do you want me to do "
-                     "something (like restart a service)?",
+                     "server/connection's current status, or its history?",
             "suggestions": [],
         })
 
@@ -378,46 +404,9 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
         messages = _build_messages(system, payload.history, payload.message)
         return _llm_stream(messages)
 
-    # ── Action requests: resolve target, RBAC-gate, propose — never execute here. ──
+    # ── Action requests: the assistant is read-only — it never runs or proposes a change. ──
     if category == "action":
-        action = intent.get("action_hint")
-        if not action or action not in action_rbac.ACTIONS:
-            return _sse_stream({
-                "type": "clarify",
-                "text": "I can restart a service, kill a process, reboot a host, trigger an "
-                         "agent update, or acknowledge alerts — which one did you want, and on "
-                         "which host?",
-                "suggestions": [],
-            })
-        target_module = action_rbac.ACTIONS[action]["module"]
-        resolved = resource_resolver.resolve(db, org_id, intent.get("resource_hint"), target_module,
-                                              intent.get("engine"), payload.context)
-        if resolved["outcome"] != "resolved":
-            return _sse_stream(_clarify_resource(resolved, target_module, intent.get("resource_hint")))
-
-        ok, reason = action_rbac.allowed(ctx, db, action)
-        if not ok:
-            return _sse_stream({"type": "clarify", "text": f"I can't do that: {reason}", "suggestions": []})
-
-        params = _extract_action_params(action, payload.message)
-        missing = action_rbac.missing_params(action, params)
-        if missing:
-            return _sse_stream({
-                "type": "clarify",
-                "text": f"Which {', '.join(missing)} did you mean for that action?",
-                "suggestions": [],
-            })
-
-        resource = resolved["resource"]
-        summary = action_rbac.describe(action, resource.get("name"), params)
-        return _sse_stream({
-            "type": "action_proposal",
-            "action": action,
-            "module": target_module,
-            "resource": resource,
-            "params": params,
-            "summary": summary + " This requires your password to confirm and cannot be undone automatically.",
-        })
+        return _sse_stream({"type": "clarify", "text": READ_ONLY_REPLY, "suggestions": []})
 
     # ── Comparison: resolve to possibly-multiple resources, snapshot each. ──
     if category == "comparison":
@@ -434,7 +423,7 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
                 _base_system(connections, payload.context) + "\n\n" + grounding,
                 payload.history, payload.message,
             )
-            return _llm_stream(messages)
+            return _llm_stream(messages, (payload.message, "fleet", result))
 
         resolver_module = _resolver_module(module)
         resolved = resource_resolver.resolve(db, org_id, intent.get("resource_hint"), resolver_module,
@@ -504,7 +493,7 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
         grounding = _grounding_block(category, module, result)
         system = _base_system(connections, payload.context) + "\n\n" + grounding
         messages = _build_messages(system, payload.history, payload.message)
-        return _llm_stream(messages)
+        return _llm_stream(messages, (payload.message, "fleet", result))
 
     resolved = resource_resolver.resolve(db, org_id, resource_hint, resolver_module, intent.get("engine"), payload.context)
     if resolved["outcome"] != "resolved":
@@ -519,7 +508,11 @@ async def chat_stream(payload: ChatRequest, db: Session = Depends(get_db), ctx: 
     grounding = _grounding_block(category, module, result)
     system = _base_system(connections, payload.context) + "\n\n" + grounding
     messages = _build_messages(system, payload.history, payload.message)
-    return _llm_stream(messages)
+    if resolver_module == "alerts":
+        _route = "alert_history" if category == "historical" else "active_alerts"
+    else:
+        _route = "history" if category == "historical" else "snapshot"
+    return _llm_stream(messages, (payload.message, _route, result))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -531,7 +524,10 @@ def confirm_action(payload: ActionConfirmRequest, db: Session = Depends(get_db),
                     claims: dict = Depends(current_claims)):
     """Re-verifies RBAC + password server-side (never trusts the client-echoed
     proposal alone) and calls the exact same service function the Infra page's
-    own action buttons use — no parallel execution path."""
+    own action buttons use — no parallel execution path.
+
+    Disabled: ActMon AI is read-only, so nothing reaches action_rbac.execute from chat."""
+    raise HTTPException(status_code=403, detail=READ_ONLY_REPLY)
     ok, reason = action_rbac.allowed(claims, db, payload.action)
     if not ok:
         raise HTTPException(status_code=403, detail=reason)

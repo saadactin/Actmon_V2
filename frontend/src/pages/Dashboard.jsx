@@ -7,12 +7,10 @@ import Icon from '@/components/ui/Icon';
 import IconButton from '@/components/ui/IconButton';
 import ChartCard from '@/components/charts/ChartCard';
 import StatTile from '@/components/charts/StatTile';
-import Gauge from '@/components/charts/Gauge';
 import RecentAlertsPanel from '@/components/dashboard/RecentAlertsPanel';
-import RankedTable from '@/components/dashboard/RankedTable';
-import RankedBarChart from '@/components/dashboard/RankedBarChart';
-import { bandFor, severityOf, STATUS } from '@/components/charts/status';
-import useDashboardData, { TOP_CPU_HOSTS, TOP_ALERT_HOSTS } from '@/hooks/useDashboardData';
+import TopHostsCard from '@/components/dashboard/TopHostsCard';
+import { severityOf, STATUS } from '@/components/charts/status';
+import useDashboardData from '@/hooks/useDashboardData';
 
 // ApexCharts is a large dependency used by exactly one card on this page —
 // lazy-loaded so its ~250KB (gzipped) doesn't ship inside the Dashboard
@@ -38,13 +36,15 @@ const FLEET_HEALTH_COLUMNS = [
   { key: 'hosts', label: 'Hosts', align: 'right' },
   { key: 'share', label: 'Share', align: 'right' },
 ];
-const ENGINE_DIST_COLUMNS = [
-  { key: 'engine', label: 'Engine' },
-  { key: 'hosts', label: 'Hosts', align: 'right' },
-];
 const SEVERITY_COLUMNS = [
   { key: 'severity', label: 'Severity' },
   { key: 'count', label: 'Alerts', align: 'right' },
+];
+// The three resource rankings, in display order. `key` matches useDashboardData's topHosts.
+const TOP_HOST_CARDS = [
+  { key: 'cpu', title: 'Top CPU Hosts', metricLabel: 'CPU Usage', icon: 'cpu' },
+  { key: 'memory', title: 'Top Memory Hosts', metricLabel: 'Memory Usage', icon: 'memory' },
+  { key: 'disk', title: 'Top Disk Hosts', metricLabel: 'Disk Usage', icon: 'archive' },
 ];
 const ENGINE_TABLE_COLUMNS = [
   { key: 'engine', label: 'Engine' },
@@ -98,42 +98,42 @@ export default function Dashboard() {
   /* ── datasets, each memoized on only the slice of `d` it actually reads ── */
 
   const healthItems = useMemo(() => [
-    { key: 'good', label: 'Online', value: d.infra.good, status: STATUS.good },
-    { key: 'warning', label: 'Warning', value: d.infra.warning, status: STATUS.warning },
-    { key: 'critical', label: 'Offline', value: d.infra.critical, status: STATUS.critical },
-  ], [d.infra.good, d.infra.warning, d.infra.critical]);
+    { key: 'good', label: 'Online', value: d.infra.good, status: STATUS.good, onClick: () => navigate('/infra/hosts?status=online') },
+    { key: 'warning', label: 'Warning', value: d.infra.warning, status: STATUS.warning, onClick: () => navigate('/infra/hosts?status=warning') },
+    { key: 'critical', label: 'Offline', value: d.infra.critical, status: STATUS.critical, onClick: () => navigate('/infra/hosts?status=offline') },
+  ], [d.infra.good, d.infra.warning, d.infra.critical, navigate]);
 
   const severityItems = useMemo(() => [
-    { key: 'critical', label: 'Critical', value: d.alerts.critical, status: STATUS.critical },
-    { key: 'warning', label: 'Warning', value: d.alerts.warning, status: STATUS.warning },
-    { key: 'info', label: 'Info', value: d.alerts.info, status: severityOf('info') },
-  ], [d.alerts.critical, d.alerts.warning, d.alerts.info]);
+    { key: 'critical', label: 'Critical', value: d.alerts.critical, status: STATUS.critical, onClick: () => navigate('/alerts?sev=critical') },
+    { key: 'warning', label: 'Warning', value: d.alerts.warning, status: STATUS.warning, onClick: () => navigate('/alerts?sev=warning') },
+    { key: 'info', label: 'Info', value: d.alerts.info, status: severityOf('info'), onClick: () => navigate('/alerts?sev=info') },
+  ], [d.alerts.critical, d.alerts.warning, d.alerts.info, navigate]);
 
   const engineRows = useMemo(() => d.perTech.map((t) => ({
     key: t.id,
     label: t.label,
     total: t.total,
     onClick: () => navigate(t.route),
+    // a segment opens that technology filtered to the status; the legend opens every technology at that status
     segments: [
-      { key: 'good', label: 'Online', value: t.good, status: STATUS.good },
-      { key: 'warning', label: 'Warning', value: t.warning, status: STATUS.warning },
-      { key: 'critical', label: 'Offline', value: t.critical + t.unknown, status: STATUS.critical },
+      { key: 'good', label: 'Online', value: t.good, status: STATUS.good, onClick: () => navigate(`${t.route}?status=online`), onLegendClick: () => navigate('/databases?status=online') },
+      { key: 'warning', label: 'Warning', value: t.warning, status: STATUS.warning, onClick: () => navigate(`${t.route}?status=warning`), onLegendClick: () => navigate('/databases?status=warning') },
+      { key: 'critical', label: 'Offline', value: t.critical + t.unknown, status: STATUS.critical, onClick: () => navigate(`${t.route}?status=offline`), onLegendClick: () => navigate('/databases?status=offline') },
     ],
   })), [d.perTech, navigate]);
 
-  // Share of hosts per engine — engines with nothing deployed would only add
-  // zero-width slices, so they sit this card out and stay in the one beside it.
-  const engineShare = useMemo(() => d.perTech
-    .filter((t) => t.total > 0)
-    .map((t) => ({ key: t.id, label: t.label, value: t.total, onClick: () => navigate(t.route) })),
-  [d.perTech, navigate]);
 
   // CPU means good→bad, so these wear utilisation bands rather than series slots.
-  const cpuItems = useMemo(() => d.topCpu.map((h) => ({ ...h, status: bandFor(h.value) })), [d.topCpu]);
 
   const showCloud = d.cloud.total > 0;
-  const distribution = useMemo(() => (showCloud ? d.cloud.byProvider : d.byEnvironment),
-    [showCloud, d.cloud.byProvider, d.byEnvironment]);
+  const CLOUD_ROUTE = { AWS: '/cloud/aws-accounts', AZURE: '/cloud/azure-accounts', OCI: '/cloud/oci-accounts' };
+  const distribution = useMemo(() => (showCloud
+    ? d.cloud.byProvider.map((p) => ({ ...p, onClick: () => navigate(CLOUD_ROUTE[String(p.key).toUpperCase()] || '/cloud') }))
+    : d.byEnvironment.map((e) => ({ ...e, onClick: () => navigate(`/infra/hosts?env=${encodeURIComponent(e.key)}`) }))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showCloud, d.cloud.byProvider, d.byEnvironment, navigate]);
+  const osItems = useMemo(() => d.byOsType.map((o) => ({ ...o, onClick: () => navigate(`/infra/hosts?os=${encodeURIComponent(o.label)}`) })),
+    [d.byOsType, navigate]);
 
   /* ── table-view rows, each memoized off the (already memoized) items above ── */
 
@@ -146,8 +146,6 @@ export default function Dashboard() {
     },
   })), [healthItems, d.infra.total]);
 
-  const engineShareRows = useMemo(() => engineShare.map((e) => ({ key: e.key, cells: { engine: e.label, hosts: e.value } })),
-    [engineShare]);
 
   const distributionRows = useMemo(() => distribution.map((x) => ({ key: x.key, cells: { name: x.label, count: x.value } })),
     [distribution]);
@@ -175,11 +173,6 @@ export default function Dashboard() {
     emptyLabel: 'No hosts registered yet', labelWidth: 64,
   }), [d.infra.total]);
 
-  const engineDistTotal = useMemo(() => engineShare.reduce((s, e) => s + e.value, 0), [engineShare]);
-  const engineDistChartProps = useMemo(() => ({
-    legend: 'below', size: 146, centerLabel: `${engineDistTotal} Hosts`,
-    emptyLabel: 'No database hosts discovered yet', labelWidth: 84,
-  }), [engineDistTotal]);
 
   const distributionChartProps = useMemo(() => ({
     legend: 'below', size: 146, labelWidth: 92,
@@ -195,7 +188,6 @@ export default function Dashboard() {
   /* ── tones: colour a count only where the colour means something ─────── */
   const healthTone = !d.infra.total ? 'neutral'
     : d.infra.health >= 90 ? 'good' : d.infra.health >= 60 ? 'warning' : 'danger';
-  const agentTone = !d.agents.total ? 'neutral' : d.agents.critical ? 'warning' : 'good';
   const sshTone = !d.ssh.total ? 'neutral' : d.ssh.critical ? 'warning' : 'good';
   const alertTone = d.alerts.critical ? 'danger' : d.alerts.warning ? 'warning' : 'good';
   const cloudTone = d.cloudError ? 'warning' : d.cloud.total ? 'danger' : 'neutral';
@@ -222,26 +214,30 @@ export default function Dashboard() {
       )}
 
       {/* ── headline counts ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 lg:grid-cols-6">
-        <StatTile
-          label="Database Server" value={d.databases.total} icon="database" tone="neutral"
-          sub={<><b className="font-semibold text-success-fg">{d.databases.good} Online</b>{'   '}{d.databases.critical} Offline</>}
-          loading={d.isLoading} onClick={() => navigate('/databases')}
+      <div className="grid grid-cols-2 gap-gutter-lg sm:grid-cols-3 lg:grid-cols-5">
+        <StatusTile
+          label="Database Server" icon="database" tone="neutral" loading={d.isLoading} error={d.hostsError}
+          total={d.databases.total} onTotal={() => navigate('/databases?status=all')}
+          parts={[
+            { key: 'online', label: 'Online', value: d.databases.good, tone: 'good', onClick: () => navigate('/databases?status=online') },
+            { key: 'warning', label: 'Warning', value: d.databases.warning, tone: 'warning', optional: true, onClick: () => navigate('/databases?status=warning') },
+            { key: 'offline', label: 'Offline', value: d.databases.critical, tone: 'danger', onClick: () => navigate('/databases?status=offline') },
+            { key: 'unknown', label: 'Unknown', value: d.databases.unknown, tone: 'muted', optional: true, onClick: () => navigate('/databases?status=unknown') },
+          ]}
         />
-        <StatTile
-          label="Infra Hosts" value={d.infra.total} icon="server" tone={healthTone} valueTone={healthTone}
-          sub={<b className="font-semibold text-success-fg">{d.infra.health}% Healthy</b>}
-          loading={d.isLoading} onClick={() => navigate('/infra')}
+        <StatusTile
+          label="Infra Hosts" icon="server" tone={healthTone} loading={d.isLoading} error={d.hostsError}
+          total={d.infra.total} onTotal={() => navigate('/infra/hosts')}
+          parts={[
+            { key: 'online', label: 'Online', value: d.infra.good, tone: 'good', onClick: () => navigate('/infra/hosts?status=online') },
+            { key: 'warning', label: 'Warning', value: d.infra.warning, tone: 'warning', optional: true, onClick: () => navigate('/infra/hosts?status=warning') },
+            { key: 'offline', label: 'Offline', value: d.infra.critical, tone: 'danger', onClick: () => navigate('/infra/hosts?status=offline') },
+          ]}
         />
         <StatTile
           label="Cloud Accounts" value={d.cloudError ? '—' : d.cloud.total} icon="cloud" tone={cloudTone} valueTone={cloudTone}
           sub={d.cloudError ? 'Cloud service unavailable' : (d.cloud.byProvider.map((p) => p.label).join(' ') || 'None connected')}
           loading={d.isLoading} onClick={() => navigate('/cloud')}
-        />
-        <StatTile
-          label="Agents" value={d.agents.total} icon="agent" tone={agentTone} valueTone={agentTone}
-          sub={`${d.agents.good} Online`}
-          loading={d.isLoading} onClick={() => navigate('/agents')}
         />
         <StatTile
           label="SSH Hosts" value={d.ssh.total} icon="terminal" tone={sshTone} valueTone={sshTone}
@@ -260,15 +256,30 @@ export default function Dashboard() {
       {/* ── charts, with the alert feed running down the right ────────────── */}
       <div className="mt-gutter-lg grid gap-gutter-lg xl:grid-cols-4">
         <div className="flex flex-col gap-gutter-lg xl:col-span-3">
-          {/* how hard the fleet is working, at a glance */}
-          <div className="grid gap-gutter-lg lg:grid-cols-3">
-            <GaugeCard label="Avg. CPU Usage" value={d.resources.cpu} loading={busy} />
-            <GaugeCard label="Avg. Memory Usage" value={d.resources.ram} loading={busy} />
-            <GaugeCard label="Avg. Disk Usage" value={d.resources.disk} loading={busy} />
+          {/* which hosts are working hardest: one ranking per resource */}
+          <div className="grid gap-gutter-lg md:grid-cols-2 xl:grid-cols-3">
+            {TOP_HOST_CARDS.map((c) => (
+              <TopHostsCard
+                key={c.key}
+                title={c.title}
+                metricLabel={c.metricLabel}
+                icon={c.icon}
+                data={d.topHosts[c.key]}
+                loading={d.isLoading || busy}
+                error={d.hostsError}
+                fetchedAt={d.hostsFetchedAt}
+                // each ranking drills into that host's CPU / Memory / Disk consumption page; the arrow opens the full ranking
+                onHost={(h) => navigate(c.key === 'cpu' ? `/cpu-performance/${h.id}` : c.key === 'memory' ? `/memory/${h.id}` : `/disk/${h.id}`)}
+                onMore={() => navigate(`/hosts/top/${c.key}`)}
+                className={CARD_HOVER}
+              />
+            ))}
           </div>
 
-          {/* shape of the estate: health, engines, where it runs */}
-          <div className="grid gap-gutter-lg lg:grid-cols-4">
+          {/* shape of the estate: health, operating systems, where it runs —
+              three equal columns (Engine Distribution was removed; the
+              per-engine breakdown stays in "Servers By Database Technologies") */}
+          <div className="grid gap-gutter-lg md:grid-cols-2 xl:grid-cols-3">
             <ChartCard
               cardId="fleet-health"
               family="flat"
@@ -283,24 +294,11 @@ export default function Dashboard() {
             />
 
             <section className={cn('card flex flex-col px-card py-card lg:min-h-[260px]', CARD_HOVER, busy && 'opacity-70')}>
-              <h2 className="mb-2 text-center text-[17px] font-bold text-fg">Hosts by OS</h2>
+              <h2 className="mb-2 text-[17px] font-bold text-fg">Hosts by OS</h2>
               <Suspense fallback={<div className="grid flex-1 place-items-center text-[12px] text-subtle">Loading chart…</div>}>
-                <ApexDonut items={d.byOsType} centerLabel="Hosts" height={230} />
+                <ApexDonut items={osItems} centerLabel="Hosts" height={230} />
               </Suspense>
             </section>
-
-            <ChartCard
-              cardId="engine-distribution"
-              family="flat"
-              defaultKind="donut"
-              items={engineShare}
-              chartProps={engineDistChartProps}
-              title="Engine Distribution"
-              className={cn('lg:min-h-[260px]', CARD_HOVER)}
-              loading={busy}
-              tableColumns={ENGINE_DIST_COLUMNS}
-              tableRows={engineShareRows}
-            />
 
             <ChartCard
               cardId="distribution"
@@ -346,26 +344,6 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* who is loudest right now: busiest hosts, most-alerting hosts */}
-          <div className="grid gap-gutter-lg lg:grid-cols-2">
-            <RankedTable
-              title="Top Alerting Hosts"
-              titleNote={`(Top ${TOP_ALERT_HOSTS})`}
-              countLabel="Alerts"
-              rows={d.alerts.topHosts}
-              className={cn('lg:min-h-[316px]', CARD_HOVER)}
-              onMore={() => navigate('/alerts')}
-            />
-
-            <RankedBarChart
-              title="Top Hosts By CPU"
-              titleNote={`(Top ${TOP_CPU_HOSTS})`}
-              unit="%"
-              max={100}
-              rows={cpuItems}
-              className={cn('lg:min-h-[316px]', CARD_HOVER)}
-            />
-          </div>
         </div>
 
         <RecentAlertsPanel
@@ -378,7 +356,7 @@ export default function Dashboard() {
           }}
           loading={busy}
           onOpenAll={() => navigate('/alerts')}
-          className={CARD_HOVER}
+          className={cn('xl:self-start', CARD_HOVER)}
         />
       </div>
     </>
@@ -387,14 +365,50 @@ export default function Dashboard() {
 
 /* ── small pieces ───────────────────────────────────────────────────────── */
 
-/** Speedometer-style resource gauge, one per card — the open half-ring form
- * of the shared Gauge component (`sweep={180}`), animated in on mount. */
-function GaugeCard({ label, value, loading }) {
+const TILE_ICON = {
+  neutral: 'bg-sunken text-muted', good: 'bg-success-soft text-success-fg',
+  warning: 'bg-warning-soft text-warning-fg', danger: 'bg-danger-soft text-danger-fg',
+};
+const PART_TEXT = { good: 'text-success-fg', warning: 'text-warning-fg', danger: 'text-danger-fg', muted: 'text-muted' };
+const PART_DOT = { good: 'bg-success', warning: 'bg-warning', danger: 'bg-danger', muted: 'bg-[var(--status-unknown)]' };
+const FOCUS_RING = 'rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1';
+
+/**
+ * StatTile's look (same card, icon disc, 30px count, 12px status line), but with
+ * the title/total and each status as its own button, so "Online" and "Offline"
+ * can each open their filtered list. (StatTile itself is one button; buttons
+ * cannot nest.) Optional parts (Warning) appear only when non-zero, so the parts
+ * shown always add up to the total.
+ */
+function StatusTile({ label, icon, tone = 'neutral', total, onTotal, parts, loading, error }) {
+  const text = error ? '—' : (typeof total === 'number' && total < 10 ? `0${total}` : String(total ?? '—'));
   return (
-    <section className={cn('card flex flex-col items-center px-card py-card', CARD_HOVER, loading && 'opacity-70')}>
-      <h2 className="mb-1 text-[17px] font-bold text-fg">{label}</h2>
-      <Gauge label={label} value={value} size={220} thickness={20} sweep={180} showValue showLabel={false} animate />
-    </section>
+    <div className={cn('card group flex flex-col gap-3.5 px-card py-card transition-colors hover:border-strong', loading && 'opacity-55')}>
+      <button type="button" onClick={onTotal} className={cn('flex items-center gap-3 text-left', FOCUS_RING)} aria-label={`${label}: ${error ? 'unavailable' : total} — open the full list`}>
+        <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6', TILE_ICON[tone] || TILE_ICON.neutral)}>
+          <Icon name={icon} size={18} />
+        </span>
+        <span className="truncate-safe min-w-0 flex-1 text-[15px] font-medium text-fg">{label}</span>
+        <Icon name="arrow-right" size={14} className="shrink-0 text-subtle opacity-0 transition-opacity group-hover:opacity-100" />
+      </button>
+      <span className="min-w-0">
+        <button type="button" onClick={onTotal} tabIndex={-1} className="block text-[30px] leading-none font-bold text-fg tabular-nums hover:text-accent-text">
+          {text}
+        </button>
+        <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+          {error ? <span className="text-subtle">Host list unavailable</span> : parts.filter((p) => !p.optional || p.value > 0).map((p) => (
+            <button
+              key={p.key} type="button" onClick={p.onClick}
+              aria-label={`${p.value} ${p.label} — show only ${p.label.toLowerCase()} ones`}
+              className={cn('inline-flex items-center gap-1 font-semibold tabular-nums underline-offset-2 hover:underline', PART_TEXT[p.tone], FOCUS_RING)}
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full', PART_DOT[p.tone])} aria-hidden="true" />
+              {p.value} {p.label}
+            </button>
+          ))}
+        </span>
+      </span>
+    </div>
   );
 }
 

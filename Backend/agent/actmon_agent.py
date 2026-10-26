@@ -39,7 +39,7 @@ if sys.version_info < (3, 5):
 # is actually running (and confirm an update really landed) instead of assuming.
 # BUMP THIS whenever agent behaviour changes — the update ledger compares it to
 # the version it expected to see after an upgrade.
-AGENT_VERSION = "1.1.2"
+AGENT_VERSION = "1.1.3"
 
 # Python's default urllib User-Agent ("Python-urllib/3.x") is a well-known
 # scripting-library signature that Cloudflare's Bot Fight Mode (and similar
@@ -584,24 +584,49 @@ _DBQ_LOCK = threading.Lock()
 _DBQ_IDLE = 300                 # close a connection left unused this many seconds
 
 
+# Driver packages that are NOT guaranteed to be on a host. The .deb Depends on
+# what Debian/Ubuntu actually package; oracledb and clickhouse-driver are not in
+# those repos, so both installers pip them best-effort and let that fail quietly
+# (a DB host with no internet is normal). When it has failed, "No module named
+# 'oracledb'" is a true but useless thing to show someone adding a connection —
+# it names the symptom and not one thing they can do. These say what to run.
+_DRIVER_PKG = {
+    "pymysql": "pymysql", "psycopg2": "psycopg2-binary", "pymssql": "pymssql",
+    "oracledb": "oracledb", "pymongo": "pymongo", "clickhouse_driver": "clickhouse-driver",
+}
+
+
+def _driver(mod):
+    """Import a DB driver, or raise something the reader can act on."""
+    try:
+        return __import__(mod)
+    except ImportError:
+        raise RuntimeError(
+            "the %s driver is not installed on this agent host. Install it and restart "
+            "the agent:  pip3 install %s   (add --break-system-packages on Debian 12+ / "
+            "Ubuntu 24.04+), then:  systemctl restart actmon-agent"
+            % (mod, _DRIVER_PKG.get(mod, mod))
+        )
+
+
 def _dbq_open(dbtype, host, port, user, pw, dbname):
     """Open a new DB connection for the engine. Lenient db_type — accepts canonical
     ids AND display names ('SQL Server', 'Oracle DB', 'MariaDB', 'Postgres', …).
     Raises on failure (message preserved so the server can decide on a fallback)."""
     if "mysql" in dbtype or "maria" in dbtype:
-        import pymysql
+        pymysql = _driver("pymysql")
         return pymysql.connect(host=host, port=port or 3306, user=user, password=pw,
                                database=dbname, connect_timeout=10, read_timeout=25)
     if "postgre" in dbtype or "postgres" in dbtype or dbtype == "pg":
-        import psycopg2
+        psycopg2 = _driver("psycopg2")
         return psycopg2.connect(host=host, port=port or 5432, user=user, password=pw,
                                 dbname=dbname or "postgres", connect_timeout=10)
     if "mssql" in dbtype or "sql server" in dbtype or "sqlserver" in dbtype:
-        import pymssql
+        pymssql = _driver("pymssql")
         return pymssql.connect(server=host, port=str(port or 1433), user=user, password=pw,
                                database=dbname or "master", login_timeout=10, timeout=25)
     if "oracle" in dbtype:
-        import oracledb
+        oracledb = _driver("oracledb")
         _ora_init_thick(oracledb)
         svc = dbname or "XE"
         # Every other engine branch below sets a connect timeout; this one didn't,
@@ -618,6 +643,7 @@ def _dbq_open(dbtype, host, port, user, pw, dbname):
         # generic SQL path below (execute/description/fetchall). The DBAPI connect is
         # LAZY, so probe now: a bad host/port/credential must fail HERE (clean
         # "connect failed: …"), not on the first real query.
+        _driver("clickhouse_driver")          # actionable message if it is absent
         from clickhouse_driver import dbapi as _chdbapi
         cn = _chdbapi.connect(host=host, port=port or 9000, user=user or "default",
                               password=pw, database=dbname or "default",
@@ -625,9 +651,10 @@ def _dbq_open(dbtype, host, port, user, pw, dbname):
         probe = cn.cursor()
         probe.execute("SELECT 1")
         probe.fetchall()
+        _close_cursor(cn, probe)
         return cn
     if "mongo" in dbtype:
-        import pymongo
+        pymongo = _driver("pymongo")
         auth = ""
         if user:
             try:
@@ -647,33 +674,127 @@ def _dbq_open(dbtype, host, port, user, pw, dbname):
 # locally. DB servers always carry the real Oracle client libraries, and THICK mode
 # negotiates the hand-off natively. Auto-detect the libs once and switch; if none are
 # found (plain hosts, XE, laptops), thin mode stays — no behaviour change there.
-_ORA_THICK = None   # None = not tried | str = lib dir in use | False = staying thin
+_ORA_THICK = None    # None = undecided | str = lib dir in use | False = staying thin
+_ORA_READY = False   # True once the decision above is final
+_ORA_LOCK = threading.Lock()
 
 
-def _ora_init_thick(oracledb):
-    global _ORA_THICK
-    if _ORA_THICK is not None:
-        return
+def _ora_client_dir():
+    """The ONE directory to try, or None. Pure lookup — no side effects, so it
+    is safe to run before deciding whether to initialise anything.
+
+    ORACLE_HOME is preferred over the globs because it is the home the instance
+    on this host actually runs from; a glob over /u01 on an EBS box can just as
+    easily turn up a grid home or a second, older DB home.
+    """
     import glob
     cands = []
     env_dir = os.environ.get("ACTMON_ORACLE_LIB")   # explicit override, wins
     if env_dir:
         cands.append(env_dir)
+    ora_home = os.environ.get("ORACLE_HOME")
+    if ora_home:
+        cands.append(os.path.join(ora_home, "lib"))
     for pat in ("/u01/app/oracle/product/*/db*/lib", "/u01/app/*/grid/lib",
                 "/opt/oracle/product/*/db*/lib", "/opt/oracle/instantclient*",
                 "/usr/lib/oracle/*/client*/lib"):
         cands.extend(sorted(glob.glob(pat), reverse=True))
     for d in cands:
-        if not d or not os.path.isdir(d) or not glob.glob(os.path.join(d, "libclntsh.so*")):
-            continue
-        try:
-            oracledb.init_oracle_client(lib_dir=d)
-            _ORA_THICK = d
-            _log("oracledb: thick mode enabled (client libs: %s)" % d)
+        if d and os.path.isdir(d) and glob.glob(os.path.join(d, "libclntsh.so*")):
+            return d
+    return None
+
+
+def _ora_thick_probe(lib_dir, timeout=25):
+    """(ok, detail): can THIS interpreter load the Oracle client libs at lib_dir? Runs
+    init_oracle_client() in a short-lived child so a failure cannot poison our own process."""
+    import subprocess
+    code = ("import sys, oracledb\n"
+            "oracledb.init_oracle_client(lib_dir=sys.argv[1])\n"
+            "print('OK', oracledb.clientversion())\n")
+    try:
+        p = subprocess.run([sys.executable, "-c", code, lib_dir], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           universal_newlines=True, timeout=timeout)   # 3.6-compatible (EBS hosts)
+    except Exception as e:  # noqa: BLE001 — a probe that cannot even run means "do not risk it"
+        return False, "probe could not run: %s" % e
+    out = (p.stdout or "").strip()
+    if p.returncode == 0 and out.startswith("OK"):
+        return True, out
+    err = [ln.strip() for ln in (p.stderr or out or "").splitlines() if ln.strip()]
+    real = [ln for ln in err if "DPI-" in ln or "ORA-" in ln or "Error" in ln]   # not the trailing "Help:" link
+    return False, ((real or err or ["exit %s" % p.returncode])[-1])
+
+
+def _ora_init_thick(oracledb):
+    """Switch python-oracledb to THICK mode if this host has Oracle client libs.
+
+    Three properties, each of which this did not have and needed:
+
+    ONCE PER PROCESS, EVEN ON FAILURE. init_oracle_client() initialises a
+    single global ODPI-C context. A failed call leaves that context invalid,
+    and every later connect — including one that would have worked — dies with
+    "DPI-1002: invalid dpiContext handle". `_ORA_READY` is set in a `finally`
+    so a thrown attempt still counts as the attempt.
+
+    SERIALISED. dbquery jobs run on _JOB_POOL and the collectors on their own
+    pool, so two threads can reach this cold at the same moment. Two concurrent
+    init_oracle_client() calls corrupt the same context, with the same DPI-1002
+    as the symptom. The fast path checks `_ORA_READY`, which is only set after
+    the decision is final — so a thread arriving mid-attempt blocks on the lock
+    instead of racing ahead and connecting against a half-built context.
+
+    ONE CANDIDATE, NOT A LOOP. The first failure has already poisoned the
+    context, so trying the next directory cannot succeed; it only buries the
+    real error under a pile of DPI-1002s in the log.
+    """
+    global _ORA_THICK, _ORA_READY
+    if _ORA_READY:
+        return
+    with _ORA_LOCK:
+        if _ORA_READY:
             return
-        except Exception as e:  # noqa: BLE001 — try the next candidate
-            _log("oracledb: thick init via %s failed: %s" % (d, str(e)[:120]))
-    _ORA_THICK = False
+        try:
+            _ORA_THICK = False
+            d = _ora_client_dir()
+            if not d:
+                _log("oracledb: no Oracle client libraries found — staying in thin mode")
+                return
+            # PROBE IN A CHILD PROCESS FIRST. A failed in-process init_oracle_client() poisons this
+            # process's ODPI-C context for good: thin mode is then unavailable too and EVERY connect
+            # dies with DPI-1002 until the agent restarts (seen on an EBS host whose client libs are
+            # present but not loadable). A throwaway child can fail freely; only a proven-good
+            # directory is ever initialised here.
+            ok, why = _ora_thick_probe(d)
+            if not ok:
+                _log("oracledb: client libs at %s cannot be loaded (%s) — using thin mode" % (d, why[:200]))
+                return
+            try:
+                oracledb.init_oracle_client(lib_dir=d)
+                _ORA_THICK = d
+                _log("oracledb: thick mode enabled (client libs: %s)" % d)
+            except Exception as e:  # noqa: BLE001
+                # Deliberately NOT retried with another directory: see above.
+                _log("oracledb: thick init via %s failed, staying in thin mode for the life "
+                     "of this process: %s" % (d, str(e)[:160]))
+        finally:
+            _ORA_READY = True
+
+
+def _close_cursor(cn, cur):
+    """Close a cursor and forget it. clickhouse_driver's DBAPI gives EVERY cursor its own Client and TCP socket,
+    and the connection keeps a list of every cursor it ever made until the connection itself closes. Pooled
+    connections live for hours, so an unclosed cursor per query leaked one socket and one result set per query
+    (seen: 1,200 sockets and 3.4 GB on the ActMon server). Harmless for drivers whose cursors are cheap."""
+    try:
+        cur.close()
+    except Exception:  # noqa: BLE001
+        pass
+    lst = getattr(cn, "cursors", None)
+    if isinstance(lst, list):
+        try:
+            lst.remove(cur)
+        except ValueError:
+            pass
 
 
 def _dbq_get_conn(key, dbtype, host, port, user, pw, dbname):
@@ -756,14 +877,17 @@ def _dbquery(arg):
         if "mongo" in dbtype:
             return _run_mongo(cn)
         cur = cn.cursor()
-        cur.execute(sql)
-        cols = [d[0] for d in cur.description] if cur.description else []
-        rows = cur.fetchall() if cur.description else []
         try:
-            cn.commit()   # persist writes/DDL (e.g. CREATE EXTENSION); harmless for reads
-        except Exception:  # noqa: BLE001
-            pass
-        return json.dumps({"columns": list(cols), "rows": [list(r) for r in rows]}, default=str)
+            cur.execute(sql)
+            cols = [d[0] for d in cur.description] if cur.description else []
+            rows = cur.fetchall() if cur.description else []
+            try:
+                cn.commit()   # persist writes/DDL (e.g. CREATE EXTENSION); harmless for reads
+            except Exception:  # noqa: BLE001
+                pass
+            return json.dumps({"columns": list(cols), "rows": [list(r) for r in rows]}, default=str)
+        finally:
+            _close_cursor(cn, cur)
 
     try:
         cn, reused = _dbq_get_conn(key, dbtype, host, port, user, pw, dbname)

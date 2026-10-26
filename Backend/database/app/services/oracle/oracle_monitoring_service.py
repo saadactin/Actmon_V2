@@ -43,6 +43,23 @@ def _rows(engine, sql, params=None):
         return [{k.upper(): v for k, v in row.items()} for row in r.mappings().all()]
 
 
+def _rows_long(engine, sql, params=None, timeout=90):
+    """_rows for a read that can outlast the agent's 25-second interactive cap.
+
+    v$diag_alert_ext parses the ADR's XML alert log on every query, and on a
+    long-lived instance that can take longer than the cap — at which point the
+    agent path reports "did not answer" for a query that was still running.
+    The agent connection accepts a per-call timeout; a direct connection
+    ignores the argument and behaves exactly like _rows.
+    """
+    with engine.connect() as c:
+        try:
+            r = c.execute(text(sql), params or {}, timeout=timeout)
+        except TypeError:
+            r = c.execute(text(sql), params or {})
+        return [{k.upper(): v for k, v in row.items()} for row in r.mappings().all()]
+
+
 def _safe_float(val, default=0.0):
     try:
         return float(val) if val is not None else default
@@ -169,18 +186,50 @@ def _obj_query_with_fallback(engine, dba_sql, all_sql, params=None):
 #  1. MAIN DASHBOARD
 # ──────────────────────────────────────────────────────────────
 
-def oracle_dashboard(conn_id: int, db: Session):
+def oracle_dashboard(conn_id: int, db: Session, inst_id: int = None):
+    """Overview payload for a connection, optionally scoped to one RAC instance.
+
+    `inst_id` is an instance number from GV$INSTANCE. Without it the payload
+    describes whichever instance the connection happened to land on — which is
+    all a V$ view can describe, and is why both nodes of a RAC cluster used to
+    open the same dashboard reading the same instance name.
+    """
     from app.utils.agent_cache import get_snapshot as _get_snap
-    _cached = _get_snap(conn_id, "oracle_dashboard", db)
-    if _cached is not None:
-        return _cached
+    # The cached snapshot is the agent's, and the agent sits on one node.
+    # Serving it for a request about a different instance would answer the
+    # wrong question with great confidence.
+    if not inst_id:
+        _cached = _get_snap(conn_id, "oracle_dashboard", db)
+        if _cached is not None:
+            return _cached
     return _run_with_timeout(
-        _oracle_dashboard_inner, conn_id, db,
+        _oracle_dashboard_inner, conn_id, db, inst_id,
         default=_timeout_error(), label="oracle_dashboard",
     )
 
 
-def _oracle_dashboard_inner(conn_id: int, db: Session):
+def _failed_metric_keys(errors):
+    """The metric names behind a dashboard collection's errors.
+
+    Every numeric field in the dashboard payload is initialised to 0 and only
+    overwritten when its query succeeds, so a failed read reaches the client
+    looking exactly like a genuine zero — which is how an instance that
+    answered nothing came to be displayed as "Health 100", with green ticks
+    reading "Sessions 0%" and "Host CPU 0%".
+
+    Each entry in `errors` is already "<metric>: <message>"; this publishes the
+    metric half as data, so a caller can tell "0" from "not read" without
+    parsing prose. An entry with no colon carries no metric name and is
+    skipped rather than guessed at.
+    """
+    return sorted({
+        e.split(":", 1)[0].strip()
+        for e in (errors or [])
+        if isinstance(e, str) and ":" in e and e.split(":", 1)[0].strip()
+    })
+
+
+def _oracle_dashboard_inner(conn_id: int, db: Session, inst_id: int = None):
     """~20 sequential Oracle round-trips (version/instance/db info, session
     counts, SGA/PGA, storage, cache-hit ratios, CPU, top waits, tablespaces,
     redo logs) for the Overview tab's KPI strip — this is the landing tab
@@ -194,16 +243,38 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
     engine = _get_engine(conn)
     errors = []
 
+    # ── RAC instance scoping ──────────────────────────────────────────────
+    # A V$ view only ever describes the instance this session is connected to,
+    # so every node of a cluster opened the same dashboard and read the same
+    # instance name. When a specific instance is asked for, the instance-LOCAL
+    # metrics come from the cluster-wide GV$ twin filtered to it — the one
+    # connection already sees every node, so this needs no second connection
+    # and no second agent.
+    #
+    # Database-WIDE facts stay on V$/DBA_: in RAC every instance mounts the
+    # same datafiles, so V$DATABASE, dba_data_files and the tablespace metrics
+    # are properties of the cluster, not of a node. Filtering those per
+    # instance would invent a difference that does not exist.
+    inst = _safe_int(inst_id) if inst_id else 0
+    P = {"inst": inst} if inst else {}
+
+    def V(view, where=""):
+        """`view`, scoped to the requested instance, with its WHERE clause."""
+        if not inst:
+            return "v$" + view + (" WHERE " + where if where else "")
+        return "gv$" + view + " WHERE inst_id = :inst" + (" AND " + where if where else "")
+
     version = ""
     try:
-        rows = _rows(engine, "SELECT banner FROM v$version WHERE rownum=1")
+        rows = _rows(engine, "SELECT banner FROM " + V("version", "rownum=1"), P)
         version = rows[0].get("BANNER", "") if rows else ""
     except Exception as exc:
         errors.append(f"version: {exc}")
 
     instance_info = {}
     try:
-        rows = _rows(engine, "SELECT instance_name, host_name, version, status, startup_time FROM v$instance")
+        rows = _rows(engine, "SELECT instance_name, host_name, version, status, startup_time "
+                             "FROM " + V("instance"), P)
         if rows:
             instance_info = {k: _safe_str(v) for k, v in rows[0].items()}
     except Exception as exc:
@@ -221,19 +292,20 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
     total_sessions  = 0
     max_sessions    = 0
     try:
-        rows = _rows(engine, "SELECT count(*) AS cnt FROM v$session WHERE status='ACTIVE' AND type='USER'")
+        rows = _rows(engine, "SELECT count(*) AS cnt FROM "
+                     + V("session", "status='ACTIVE' AND type='USER'"), P)
         active_sessions = _safe_int(rows[0].get("CNT", 0)) if rows else 0
     except Exception as exc:
         errors.append(f"active_sessions: {exc}")
 
     try:
-        rows = _rows(engine, "SELECT count(*) AS cnt FROM v$session WHERE type='USER'")
+        rows = _rows(engine, "SELECT count(*) AS cnt FROM " + V("session", "type='USER'"), P)
         total_sessions = _safe_int(rows[0].get("CNT", 0)) if rows else 0
     except Exception as exc:
         errors.append(f"total_sessions: {exc}")
 
     try:
-        rows = _rows(engine, "SELECT value FROM v$parameter WHERE name='sessions'")
+        rows = _rows(engine, "SELECT value FROM " + V("parameter", "name='sessions'"), P)
         max_sessions = _safe_int(rows[0].get("VALUE", 0)) if rows else 0
     except Exception as exc:
         errors.append(f"max_sessions: {exc}")
@@ -243,13 +315,14 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
     sga_total_mb = 0.0
     sga_target_mb = 0.0
     try:
-        rows = _rows(engine, "SELECT sum(bytes)/1024/1024 AS mb FROM v$sgainfo")
+        rows = _rows(engine, "SELECT sum(bytes)/1024/1024 AS mb FROM " + V("sgainfo"), P)
         sga_total_mb = round(_safe_float(rows[0].get("MB", 0.0)), 2) if rows else 0.0
     except Exception as exc:
         errors.append(f"sga_total: {exc}")
 
     try:
-        rows = _rows(engine, "SELECT value/1024/1024 AS mb FROM v$parameter WHERE name='sga_target'")
+        rows = _rows(engine, "SELECT value/1024/1024 AS mb FROM "
+                     + V("parameter", "name='sga_target'"), P)
         sga_target_mb = round(_safe_float(rows[0].get("MB", 0.0)), 2) if rows else 0.0
     except Exception:
         pass
@@ -260,13 +333,14 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
     pga_target_mb = 0.0
     pga_used_pct = 0.0
     try:
-        rows = _rows(engine, "SELECT sum(pga_alloc_mem)/1024/1024 AS mb FROM v$process")
+        rows = _rows(engine, "SELECT sum(pga_alloc_mem)/1024/1024 AS mb FROM " + V("process"), P)
         pga_mb = round(_safe_float(rows[0].get("MB", 0.0)), 2) if rows else 0.0
     except Exception as exc:
         errors.append(f"pga: {exc}")
 
     try:
-        rows = _rows(engine, "SELECT value/1024/1024 AS mb FROM v$parameter WHERE name='pga_aggregate_target'")
+        rows = _rows(engine, "SELECT value/1024/1024 AS mb FROM "
+                     + V("parameter", "name='pga_aggregate_target'"), P)
         pga_target_mb = round(_safe_float(rows[0].get("MB", 0.0)), 2) if rows else 0.0
         if pga_target_mb > 0:
             pga_used_pct = round(pga_mb / pga_target_mb * 100, 1)
@@ -289,8 +363,9 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
                    SELECT sum(physical_reads) phyrds,
                           sum(db_block_gets)   dbgets,
                           sum(consistent_gets) consists
-                   FROM v$buffer_pool_statistics
-               )"""
+                   FROM """ + V("buffer_pool_statistics") + """
+               )""",
+            P,
         )
         buffer_cache_hit_pct = round(_safe_float(rows[0].get("PCT", 0.0)), 2) if rows else 0.0
     except Exception as exc:
@@ -298,7 +373,8 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
 
     library_cache_hit_pct = 0.0
     try:
-        rows = _rows(engine, "SELECT ROUND(sum(pinhits) / NULLIF(sum(pins), 0) * 100, 2) AS pct FROM v$librarycache")
+        rows = _rows(engine, "SELECT ROUND(sum(pinhits) / NULLIF(sum(pins), 0) * 100, 2) AS pct "
+                             "FROM " + V("librarycache"), P)
         library_cache_hit_pct = round(_safe_float(rows[0].get("PCT", 0.0)), 2) if rows else 0.0
     except Exception as exc:
         errors.append(f"library_cache_hit: {exc}")
@@ -310,14 +386,17 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
     db_cpu_pct = 0.0
     physical_mem_mb = 0.0
     try:
-        rows = _rows(engine, "SELECT value FROM v$parameter WHERE name='cpu_count'")
+        rows = _rows(engine, "SELECT value FROM " + V("parameter", "name='cpu_count'"), P)
         cpu_count = _safe_int(rows[0].get("VALUE", 0)) if rows else 0
     except Exception as exc:
         errors.append(f"cpu_count: {exc}")
     try:
         rows = _rows(engine,
-            "SELECT metric_name, ROUND(value,2) AS val FROM v$sysmetric "
-            "WHERE metric_name IN ('Host CPU Utilization (%)','Database CPU Time Ratio') AND group_id=2")
+            "SELECT metric_name, ROUND(value,2) AS val FROM "
+            + V("sysmetric",
+                "metric_name IN ('Host CPU Utilization (%)','Database CPU Time Ratio') "
+                "AND group_id=2"),
+            P)
         for r in rows:
             nm = _safe_str(r.get("METRIC_NAME"))
             if nm == "Host CPU Utilization (%)":
@@ -333,7 +412,8 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
     # drill-down call — keeping it off the dashboard's critical path.
     if not host_cpu_pct:
         try:
-            rs = _rows(engine, "SELECT stat_name, value FROM v$osstat WHERE stat_name IN ('BUSY_TIME','IDLE_TIME')")
+            rs = _rows(engine, "SELECT stat_name, value FROM "
+                       + V("osstat", "stat_name IN ('BUSY_TIME','IDLE_TIME')"), P)
             m = {_safe_str(x.get("STAT_NAME")): _safe_float(x.get("VALUE", 0.0)) for x in rs}
             busy, idle = m.get("BUSY_TIME", 0.0), m.get("IDLE_TIME", 0.0)
             if (busy + idle) > 0:
@@ -342,8 +422,8 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
             errors.append(f"host_cpu_osstat: {exc}")
     try:
         rows = _rows(engine,
-            "SELECT stat_name, value FROM v$osstat "
-            "WHERE stat_name IN ('NUM_CPUS','NUM_CPU_CORES','PHYSICAL_MEMORY_BYTES')")
+            "SELECT stat_name, value FROM "
+            + V("osstat", "stat_name IN ('NUM_CPUS','NUM_CPU_CORES','PHYSICAL_MEMORY_BYTES')"), P)
         os_map = {_safe_str(r.get("STAT_NAME")): _safe_float(r.get("VALUE", 0.0)) for r in rows}
         cpu_cores = int(os_map.get("NUM_CPU_CORES") or os_map.get("NUM_CPUS") or 0)
         physical_mem_mb = round((os_map.get("PHYSICAL_MEMORY_BYTES") or 0.0) / 1048576.0, 1)
@@ -360,10 +440,10 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
                       total_waits,
                       ROUND(time_waited / 100, 2) AS time_waited_seconds,
                       ROUND(average_wait / 100 * 1000, 2) AS avg_wait_ms
-               FROM v$system_event
-               WHERE wait_class != 'Idle'
+               FROM """ + V("system_event", "wait_class != 'Idle'") + """
                ORDER BY time_waited DESC
-               FETCH FIRST 10 ROWS ONLY"""
+               FETCH FIRST 10 ROWS ONLY""",
+            P,
         )
         top_waits = [
             {
@@ -404,10 +484,16 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
 
     redo_logs = []
     try:
-        rows = _rows(engine, "SELECT group#, members, bytes/1024/1024 AS size_mb, status, archived FROM v$log ORDER BY group#")
+        # Redo groups live on shared storage, so every instance sees all of
+        # them; THREAD# says which instance owns each one. No inst_id filter —
+        # a node does not have "its own" v$log to read.
+        rows = _rows(engine,
+            "SELECT group#, thread#, members, bytes/1024/1024 AS size_mb, status, archived "
+            "FROM v$log ORDER BY thread#, group#")
         redo_logs = [
             {
                 "group":    _safe_int(r.get("GROUP#")),
+                "thread":   _safe_int(r.get("THREAD#")),
                 "members":  _safe_int(r.get("MEMBERS")),
                 "size_mb":  round(_safe_float(r.get("SIZE_MB")), 2),
                 "status":   _safe_str(r.get("STATUS")),
@@ -484,6 +570,7 @@ def _oracle_dashboard_inner(conn_id: int, db: Session):
         "wait_events": top_waits,
         "redo_logs":   redo_logs,
         "errors":      errors,
+        "failed_metrics": _failed_metric_keys(errors),
     }
     try:
         from app.utils.agent_cache import store_snapshot_for_conn
@@ -703,7 +790,7 @@ def _oracle_top_sql_inner(conn_id: int, db: Session):
     try:
         raw = _rows(
             engine,
-            f"""SELECT sql_id, executions,
+            f"""SELECT sql_id, plan_hash_value, child_number, executions,
                       ROUND(elapsed_time / 1000, 2)                         AS elapsed_ms,
                       ROUND(cpu_time / 1000, 2)                             AS cpu_ms,
                       buffer_gets, disk_reads, rows_processed,
@@ -722,6 +809,12 @@ def _oracle_top_sql_inner(conn_id: int, db: Session):
         sql_list = [
             {
                 "sql_id":              _safe_str(r.get("SQL_ID")),
+                # v$sql holds one row per child cursor, so this row's plan hash
+                # is exact — not an aggregate over the statement's children.
+                # Kept as an int: _safe_str would render it "2847193056.0" when
+                # the driver hands the NUMBER back as a float.
+                "plan_hash_value":     _safe_int(r.get("PLAN_HASH_VALUE")),
+                "child_number":        _safe_int(r.get("CHILD_NUMBER")),
                 "executions":          _safe_int(r.get("EXECUTIONS")),
                 "elapsed_ms":          round(_safe_float(r.get("ELAPSED_MS")), 2),
                 "cpu_ms":              round(_safe_float(r.get("CPU_MS")), 2),
@@ -2371,69 +2464,111 @@ def oracle_slow_queries_filtered(
 #  18. ERROR LOGS
 # ──────────────────────────────────────────────────────────────
 
-def oracle_error_logs(conn_id: int, db: Session):
+ALERT_LOG_DEFAULT_HOURS = 24
+ALERT_LOG_MAX_HOURS = 24 * 30
+ALERT_LOG_ROW_CAP = 1000
+
+
+def _alert_row(r):
+    return {
+        "inst_id":               _safe_int(r.get("INST_ID")),
+        "instance_name":         _safe_str(r.get("INSTANCE_NAME")),
+        "database_name":         _safe_str(r.get("DATABASE_NAME")),
+        "originating_timestamp": _safe_str(r.get("ORIGINATING_TIMESTAMP")),
+        "organization_id":       _safe_str(r.get("ORGANIZATION_ID")),
+        "component_id":          _safe_str(r.get("COMPONENT_ID")),
+        # The XML alert log keeps a trailing newline on most messages.
+        "message_text":          _safe_str(r.get("MESSAGE_TEXT")).strip(),
+        "message_level":         _safe_int(r.get("MESSAGE_LEVEL")),
+        "message_type":          _safe_int(r.get("MESSAGE_TYPE")),
+    }
+
+
+def oracle_error_logs(conn_id: int, db: Session, hours: int = ALERT_LOG_DEFAULT_HOURS,
+                      ora_only: bool = True):
+    """Alert-log entries in the last `hours`, ORA-/TNS- errors only by default.
+
+    Mirrors the DBA query — v$diag_alert_ext, `message_text LIKE '%ORA-%'`,
+    `originating_timestamp > SYSTIMESTAMP - INTERVAL '1' DAY`, joined to the
+    database and instance names — and reads every instance on RAC.
+    """
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
+    hours = max(1, min(ALERT_LOG_MAX_HOURS, int(hours or ALERT_LOG_DEFAULT_HOURS)))
+    errors = []
     alert_logs = []
     source = ""
-    note   = ""
+    note = ""
 
+    # The filter goes in the WHERE clause, not after the fetch: the view parses
+    # XML, and a bound is what keeps it from reading the whole file.
+    text_filter = ("AND (a.message_text LIKE '%ORA-%' OR a.message_text LIKE '%TNS-%')"
+                   if ora_only else "")
+    common = f"""
+            TO_CHAR(a.originating_timestamp, 'YYYY-MM-DD HH24:MI:SS') AS originating_timestamp,
+            a.organization_id, a.component_id, a.message_text, a.message_level, a.message_type
+        WHERE a.originating_timestamp > SYSTIMESTAMP - NUMTODSINTERVAL(:hours, 'HOUR')
+          {text_filter}
+        ORDER BY a.originating_timestamp DESC
+        FETCH FIRST {int(ALERT_LOG_ROW_CAP)} ROWS ONLY"""
+
+    # Every instance's alert log (12.2+), each row labelled with its instance.
     try:
-        raw = _rows(
-            engine,
-            """SELECT originating_timestamp, organization_id, component_id,
-                      message_text, message_level
-               FROM v$diag_alert_ext
-               WHERE message_type != 0
-               ORDER BY originating_timestamp DESC
-               FETCH FIRST 200 ROWS ONLY"""
-        )
-        alert_logs = [
-            {
-                "originating_timestamp": _safe_str(r.get("ORIGINATING_TIMESTAMP")),
-                "organization_id":       _safe_str(r.get("ORGANIZATION_ID")),
-                "component_id":          _safe_str(r.get("COMPONENT_ID")),
-                "message_text":          _safe_str(r.get("MESSAGE_TEXT")),
-                "message_level":         _safe_int(r.get("MESSAGE_LEVEL")),
-            }
-            for r in raw
-        ]
-        source = "v$diag_alert_ext"
-    except Exception:
+        raw = _rows_long(engine, """
+            SELECT a.inst_id, i.instance_name, d.name AS database_name,""" + common.replace(
+                "WHERE a.originating", """FROM   gv$diag_alert_ext a
+        JOIN   gv$instance i ON i.inst_id = a.inst_id
+        CROSS JOIN v$database d
+        WHERE a.originating"""), {"hours": hours})
+        alert_logs = [_alert_row(r) for r in raw]
+        source = "gv$diag_alert_ext"
+    except Exception as exc:
+        errors.append(f"gv$diag_alert_ext: {exc}")
+        # The local instance only — the DBA query exactly.
         try:
-            raw = _rows(
-                engine,
-                """SELECT instance_number, thread#, sequence#, first_change#,
-                          first_time, next_time, status
-                   FROM v$log ORDER BY first_time DESC FETCH FIRST 20 ROWS ONLY"""
-            )
-            alert_logs = [
-                {
-                    "instance_number": _safe_int(r.get("INSTANCE_NUMBER")),
-                    "thread":          _safe_int(r.get("THREAD#")),
-                    "sequence":        _safe_int(r.get("SEQUENCE#")),
-                    "first_change":    _safe_int(r.get("FIRST_CHANGE#")),
-                    "first_time":      _safe_str(r.get("FIRST_TIME")),
-                    "next_time":       _safe_str(r.get("NEXT_TIME")),
-                    "status":          _safe_str(r.get("STATUS")),
-                }
-                for r in raw
-            ]
-            source = "v$log"
-            note = "v$diag_alert_ext not accessible; showing redo log info from v$log instead."
-        except Exception as exc:
+            raw = _rows_long(engine, """
+                SELECT i.instance_number AS inst_id, i.instance_name, d.name AS database_name,""" + common.replace(
+                    "WHERE a.originating", """FROM   v$diag_alert_ext a
+            CROSS JOIN v$instance i
+            CROSS JOIN v$database d
+            WHERE a.originating"""), {"hours": hours})
+            alert_logs = [_alert_row(r) for r in raw]
+            source = "v$diag_alert_ext"
+            note = ("This release has no gv$diag_alert_ext, so these are the alert-log entries of "
+                    "the instance this connection reached. On RAC, the other instances keep their "
+                    "own alert logs and are not in this list.")
+        except Exception as exc2:
+            # Deliberately NO fallback to another view: anything else shown
+            # under "alert log" would be something that is not the alert log.
+            errors.append(f"v$diag_alert_ext: {exc2}")
             source = "none"
-            note   = f"Both queries failed: {exc}"
+            note = ("The alert log could not be read. v$diag_alert_ext needs SELECT on the view "
+                    "(SELECT_CATALOG_ROLE or a direct grant) and an ADR the instance can reach.")
+
+    # ORA-/TNS- code counts, so the page can lead with what recurs.
+    import re as _re
+    code_counts = {}
+    for e in alert_logs:
+        for code in set(_re.findall(r"\b(?:ORA|TNS)-\d{4,5}\b", e["message_text"])):
+            code_counts[code] = code_counts.get(code, 0) + 1
 
     blocking_sessions = []
     try:
         raw = _rows(
             engine,
+            # USER sessions in a NON-IDLE wait only. The old filter took any
+            # ACTIVE session waiting over a minute — and Oracle's background
+            # processes (VKRM, GCR, LGWR workers, rdbms ipc message) are always
+            # ACTIVE and always waiting, on Idle events, for days. The page
+            # filled with them, each row captioned "idle waits are not a
+            # problem", under a heading that said they looked stuck.
             """SELECT sid, serial#, username, status, state, event, wait_class, seconds_in_wait, machine
                FROM v$session
-               WHERE wait_class='Application' OR wait_class='Concurrency'
-                  OR (status='ACTIVE' AND seconds_in_wait > 60)
+               WHERE type = 'USER'
+                 AND wait_class <> 'Idle'
+                 AND (wait_class IN ('Application', 'Concurrency')
+                      OR (status = 'ACTIVE' AND seconds_in_wait > 60))
                ORDER BY seconds_in_wait DESC FETCH FIRST 50 ROWS ONLY"""
         )
         blocking_sessions = [
@@ -2460,6 +2595,14 @@ def oracle_error_logs(conn_id: int, db: Session):
         "alert_logs":        alert_logs,
         "blocking_sessions": blocking_sessions,
         "note":              note,
+        "window_hours":   hours,
+        # The account the connection uses, so a missing-grant message can name it.
+        "db_user":        getattr(conn, "username", "") or "",
+        "ora_only":       bool(ora_only),
+        "code_counts":    dict(sorted(code_counts.items(), key=lambda kv: -kv[1])),
+        "row_cap":        ALERT_LOG_ROW_CAP,
+        "truncated":      len(alert_logs) >= ALERT_LOG_ROW_CAP,
+        "errors":         errors,
     }
 
 
@@ -3064,55 +3207,10 @@ def oracle_archive_log_gap(conn_id: int, db: Session):
 #  25. RMAN BACKUP
 # ──────────────────────────────────────────────────────────────
 
-def oracle_rman_backup(conn_id: int, db: Session):
-    conn   = _get_conn_or_404(conn_id, db)
-    engine = _get_engine(conn)
-    jobs, last_db_backup, errors = [], None, []
-
-    try:
-        raw = _rows(engine, """
-            SELECT session_key, input_type, status,
-                   TO_CHAR(start_time, 'YYYY-MM-DD HH24:MI:SS') AS start_time,
-                   TO_CHAR(end_time,   'YYYY-MM-DD HH24:MI:SS') AS end_time,
-                   ROUND((end_time - start_time) * 24, 4)        AS hrs,
-                   ROUND(input_bytes  / 1073741824, 3)           AS input_gb,
-                   ROUND(output_bytes / 1073741824, 3)           AS output_gb,
-                   ROUND(output_bytes_per_sec / 1048576, 2)      AS mb_per_sec,
-                   output_device_type,
-                   ROUND(compression_ratio, 2)                   AS compression_ratio,
-                   elapsed_seconds, incremental_level
-            FROM   v$rman_backup_job_details
-            ORDER  BY start_time DESC FETCH FIRST 30 ROWS ONLY""")
-        jobs = [
-            {
-                "session_key":        _safe_int(r.get("SESSION_KEY")),
-                "input_type":         _safe_str(r.get("INPUT_TYPE")),
-                "status":             _safe_str(r.get("STATUS")),
-                "start_time":         _safe_str(r.get("START_TIME")),
-                "end_time":           _safe_str(r.get("END_TIME")),
-                "hrs":                round(_safe_float(r.get("HRS")), 4),
-                "input_gb":           round(_safe_float(r.get("INPUT_GB")), 3),
-                "output_gb":          round(_safe_float(r.get("OUTPUT_GB")), 3),
-                "mb_per_sec":         round(_safe_float(r.get("MB_PER_SEC")), 2),
-                "output_device_type": _safe_str(r.get("OUTPUT_DEVICE_TYPE")),
-                "compression_ratio":  round(_safe_float(r.get("COMPRESSION_RATIO")), 2),
-                "elapsed_seconds":    _safe_int(r.get("ELAPSED_SECONDS")),
-                "incremental_level":  _safe_int(r.get("INCREMENTAL_LEVEL")),
-            }
-            for r in raw
-        ]
-    except Exception as exc:
-        errors.append(f"rman_jobs: {exc}")
-
-    db_jobs = [j for j in jobs if "DB" in j["input_type"].upper()]
-    if db_jobs:
-        last_db_backup = db_jobs[0]
-
-    running = [j for j in jobs if j["status"] == "RUNNING"]
-    failed  = [j for j in jobs if j["status"] in ("FAILED", "COMPLETED WITH WARNINGS")]
-
-    return {"status": "success", "jobs": jobs, "last_db_backup": last_db_backup,
-            "running": running, "failed": failed, "total": len(jobs), "errors": errors}
+# RMAN backup monitoring moved to oracle_rman_service.py, which reads the
+# recovery-exposure views (FRA, hot backup mode, datafile coverage,
+# unbacked archivelogs) alongside the job history. Kept out of this module
+# so there is exactly one implementation of it.
 
 
 # ──────────────────────────────────────────────────────────────
@@ -3693,6 +3791,33 @@ def oracle_rac_nodes(conn_id: int, db: Session):
 #      the database itself is fully healthy.
 # ──────────────────────────────────────────────────────────────
 
+def _service_keys(name, db_domain=""):
+    """Every form one service name can legitimately appear in, upper-cased.
+
+    DBA_SERVICES and the active-services views do not agree on spelling:
+
+      * EBS AQ/Workflow services are registered as SYS$<name>.<db_domain>
+        while DBA_SERVICES holds the bare <name>;
+      * a service can be created lower-case and registered as typed.
+
+    Comparing the key SETS means a match on any form counts, and the domain is
+    only stripped when it really is this database's domain — so a service that
+    genuinely contains dots, like KCPRD_KIRAN.paas.oracle.com, is left alone.
+    """
+    out = set()
+    n = (name or "").strip().upper()
+    if not n:
+        return out
+    out.add(n)
+    dom = (db_domain or "").strip().upper().lstrip(".")
+    if dom and n.endswith("." + dom):
+        n = n[: -(len(dom) + 1)]
+        out.add(n)
+    if n.startswith("SYS$"):
+        out.add(n[4:])
+    return out
+
+
 def oracle_services(conn_id: int, db: Session):
     from app.utils.agent_cache import get_snapshot as _get_snap
     _cached = _get_snap(conn_id, "oracle_services", db)
@@ -3701,39 +3826,81 @@ def oracle_services(conn_id: int, db: Session):
     conn   = _get_conn_or_404(conn_id, db)
     engine = _get_engine(conn)
 
+    errors = []
+
     try:
-        svc_rows = _rows(engine, "SELECT name FROM dba_services "
+        # NETWORK_NAME is what a client actually connects with and is what the
+        # active-services views report, so it is carried alongside NAME and
+        # either may match.
+        svc_rows = _rows(engine, "SELECT name, network_name FROM dba_services "
                                  "WHERE name NOT LIKE 'SYS%' AND UPPER(name) NOT LIKE '%XDB%'")
     except Exception as e:
         return {"status": "error", "error": str(e), "services": []}
 
+    # inst_id -> instance_number. GV$ views are keyed by INST_ID; V$INSTANCE
+    # reports INSTANCE_NUMBER. They usually agree and are not required to, so
+    # read both and translate rather than assuming.
+    inst_by_id, all_instances = {}, []
     try:
-        active_rows = _rows(engine, "SELECT inst_id, service_name FROM gv$active_services")
-    except Exception:
-        active_rows = []
-    # Service names can differ in case between DBA_SERVICES and
-    # GV$ACTIVE_SERVICES depending on how the service was created (quoted
-    # identifiers, PDB default services, etc.) — match case-insensitively so a
-    # genuinely-running service never misreports as offline over a casing
-    # difference alone.
+        inst_rows = _rows(engine, "SELECT inst_id, instance_number FROM gv$instance")
+        for r in inst_rows:
+            inst_by_id[_safe_int(r.get("INST_ID"))] = _safe_int(r.get("INSTANCE_NUMBER"))
+        all_instances = sorted(set(inst_by_id.values()))
+    except Exception as e:
+        errors.append(f"instances: {e}")
+
+    # The database's own domain, used to undo the suffix the listener appends
+    # to AQ/Workflow service names. Absent is fine — nothing is stripped then.
+    db_domain = ""
+    try:
+        dom_rows = _rows(engine, "SELECT value FROM v$parameter WHERE name = 'db_domain'")
+        db_domain = _safe_str(dom_rows[0].get("VALUE")) if dom_rows else ""
+    except Exception as e:
+        errors.append(f"db_domain: {e}")
+
+    # The column here is NAME, not SERVICE_NAME — getting that wrong is what
+    # reported every service offline. Single-instance deployments may not have
+    # the GV$ view, so fall back to V$ before giving up.
+    active_rows, active_read = [], False
+    for view, has_inst in (("gv$active_services", True), ("v$active_services", False)):
+        try:
+            cols = "inst_id, name, network_name" if has_inst else "name, network_name"
+            active_rows = _rows(engine, f"SELECT {cols} FROM {view}")
+            active_read = True
+            break
+        except Exception as e:
+            errors.append(f"{view}: {e}")
+
+    # Service names can differ in case between DBA_SERVICES and the active
+    # views depending on how the service was created (quoted identifiers, PDB
+    # default services), so match case-insensitively — a running service must
+    # never misreport as offline over casing alone.
     active_by_service = {}
     for r in active_rows:
-        active_by_service.setdefault(_safe_str(r.get("SERVICE_NAME")).upper(), set()).add(_safe_int(r.get("INST_ID")))
-
-    try:
-        inst_rows = _rows(engine, "SELECT instance_number FROM gv$instance")
-        all_instances = sorted({_safe_int(r.get("INSTANCE_NUMBER")) for r in inst_rows})
-    except Exception:
-        all_instances = []
+        inst = inst_by_id.get(_safe_int(r.get("INST_ID")), _safe_int(r.get("INST_ID")))
+        for raw in (_safe_str(r.get("NAME")), _safe_str(r.get("NETWORK_NAME"))):
+            for key in _service_keys(raw, db_domain):
+                active_by_service.setdefault(key, set()).add(inst)
 
     services = []
     for r in svc_rows:
         name = _safe_str(r.get("NAME"))
-        active_on = active_by_service.get(name.upper(), set())
-        if all_instances:
+        network = _safe_str(r.get("NETWORK_NAME"))
+        active_on = set()
+        for raw in (name, network):
+            for key in _service_keys(raw, db_domain):
+                active_on |= active_by_service.get(key, set())
+
+        if not active_read:
+            # The readings failed. "Unknown" is the honest answer; "offline" is
+            # a statement about the service that nothing here supports.
+            per_instance = [{"instance_number": i, "status": "unknown"} for i in all_instances] \
+                or [{"instance_number": None, "status": "unknown"}]
+            overall = "unknown"
+        elif all_instances:
             per_instance = [{"instance_number": i, "status": "online" if i in active_on else "offline"}
-                             for i in all_instances]
-            if len(active_on) == len(all_instances):
+                            for i in all_instances]
+            if active_on >= set(all_instances):
                 overall = "online"
             elif active_on:
                 overall = "partial"
@@ -3742,9 +3909,12 @@ def oracle_services(conn_id: int, db: Session):
         else:
             per_instance = [{"instance_number": None, "status": "online" if active_on else "offline"}]
             overall = "online" if active_on else "offline"
-        services.append({"service_name": name, "status": overall, "instances": per_instance})
 
-    return {"status": "success", "services": services}
+        services.append({"service_name": name, "network_name": network,
+                         "status": overall, "instances": per_instance})
+
+    return {"status": "success", "services": services,
+            "active_read": active_read, "errors": errors}
 
 
 # ──────────────────────────────────────────────────────────────

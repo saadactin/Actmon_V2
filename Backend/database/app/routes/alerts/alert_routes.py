@@ -243,7 +243,8 @@ def active_alerts(conn_id: Optional[int] = Query(None), db: Session = Depends(ge
 
     # Include the real collector-generated alerts (agent_notifications) — but ONLY
     # for metrics that have an ENABLED rule. Disable a rule (or all rules) and its
-    # alerts stop showing. Exact duplicates (same source + message) are collapsed.
+    # alerts stop showing. One row per subject: the same source + metric + message with its numbers
+    # stripped (e.g. one tablespace at 85.5% and later 85.6%) is ONE alert — newest first, so the latest wins.
     enabled_metrics = {r.metric for r in rules}
     seen = set()
     notifs = (db.query(AgentNotification)
@@ -255,7 +256,7 @@ def active_alerts(conn_id: Optional[int] = Query(None), db: Session = Depends(ge
         metric, label = _infer_metric(n.message or "")
         if metric not in enabled_metrics:
             continue
-        key = (n.agent_name, n.message)
+        key = (n.agent_name, metric, re.sub(r"\d+(?:\.\d+)?", "#", n.message or ""))
         if key in seen:
             continue
         seen.add(key)

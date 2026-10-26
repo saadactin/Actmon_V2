@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import cn from '@/lib/cn';
 import client from '@/api/client';
 import PageHeader from '@/components/layout/PageHeader';
@@ -17,6 +17,11 @@ import { engineFor, fmtMs, SEVERITY_TONES, SEVERITY_LABELS } from '@/config/slow
 import { SeverityBadge, AiAnalysisResult } from './SlowQueriesPage';
 import PgQueryAnalysis from '@/pages/postgresql/PgQueryAnalysis';
 import PlanDiagram from './PlanDiagram';
+import PlanCanvas from './PlanCanvas';
+import { ActionCard, InsightCard, MetricCard, SectionHead } from './queryAnalysisCards';
+import QueryAnalysisScreen1 from './QueryAnalysisScreen1';
+import QueryAnalysisResults from './QueryAnalysisResults';
+import { planObjects, quickInsights } from './queryInsights';
 import { pgTree, mysqlTree, oracleTree, mongoTree } from './planTree';
 
 /**
@@ -51,7 +56,10 @@ function Step({ n, title, subtitle, children }) {
 /** Every engine's EXPLAIN-equivalent comes back a different shape — this
  * renders whichever one is genuinely there rather than forcing a common table
  * onto data that doesn't fit it. */
-function PlanResult({ data }) {
+/** Renders whichever plan shape the engine returned. Exported because the
+ *  Execution Plan page serves every engine, and only Oracle's shape has the
+ *  dedicated canvas — the rest keep exactly the rendering they had. */
+export function PlanResult({ data }) {
   const [view, setView] = useState('table'); // 'table' | 'diagram' — default matches today's behaviour exactly
 
   if (data.plan_error || data.error) {
@@ -123,7 +131,10 @@ function PlanResult({ data }) {
           {tree && <PlanViewToggle view={view} onChange={setView} />}
         </div>
         {view === 'diagram' && tree ? (
-          <PlanDiagram tree={tree} />
+          /* The raw rows, not the normalised tree: the details panel shows
+             every column v$sql_plan returned, and the tree adapter keeps only
+             the four the old card had room for. */
+          <PlanCanvas rows={data.plan} />
         ) : (
           <Table
             columns={[
@@ -234,6 +245,121 @@ function StatCellInline({ label, value }) {
 const PLAN_REQUEST_TIMEOUT_MS = 60_000;
 
 /** Runs whichever engine's EXPLAIN-equivalent applies, on demand. */
+/**
+ * Sections 3 and 4: what the plan says about this query, and the facts around
+ * it.
+ *
+ * The insights need the execution plan, and reading one is not free — for most
+ * engines the "explain" call issues a statement against the server. So the
+ * plan is read on request, not on arrival, and until then each card says so
+ * rather than showing a zero that reads as "nothing found". Oracle is the
+ * exception: its plan is a SELECT from v$sql_plan, which executes nothing.
+ */
+function QuickInsights({ engine, id, row, planState }) {
+  const [ownPlan, setPlan] = useState(null); // null | {loading} | {rows} | {error}
+  const plan = planState || ownPlan;
+  const canRead = engine.hasExplain && (engine.key !== 'oracle' || !!row.query_id);
+
+  const read = async () => {
+    setPlan({ loading: true });
+    try {
+      if (engine.key !== 'oracle') throw new Error('Only Oracle plans are summarised here.');
+      const res = await client
+        .get(engine.api.explainSqlId(id, row.query_id), { timeout: PLAN_REQUEST_TIMEOUT_MS })
+        .then((r) => r.data);
+      if (res.status === 'error') throw new Error(res.error || 'The plan request failed.');
+      setPlan({ rows: Array.isArray(res.plan) ? res.plan : [] });
+    } catch (e) {
+      setPlan({ error: e?.message || String(e) });
+    }
+  };
+
+  // Reading v$sql_plan executes nothing, so for Oracle it happens on arrival.
+  const [started, setStarted] = useState(false);
+  if (!planState && engine.key === 'oracle' && canRead && !started) { setStarted(true); read(); }
+
+  const rows = plan?.rows || [];
+  const insights = quickInsights(rows);
+  const objects = planObjects(rows);
+
+  return (
+    <>
+      <Step n={3} title="Quick insights" subtitle="Key findings about this query, from its execution plan">
+        {plan?.loading && <InlineLoading label="Reading the execution plan…" />}
+        {plan?.error && (
+          <Notice tone="warning" title="The plan could not be read, so these are unavailable.">
+            {plan.error}
+          </Notice>
+        )}
+        {!plan && !canRead && (
+          <Notice tone="info" title="No plan available for this row.">
+            {engine.hasExplain
+              ? `This row carries no identifier ${engine.label} can look a plan up by.`
+              : `${engine.label} exposes no execution plan through ActMon.`}
+          </Notice>
+        )}
+        <div className={cn('grid gap-gutter-sm sm:grid-cols-2 xl:grid-cols-4', (plan?.loading || plan?.error) && 'mt-gutter-sm')}>
+          <InsightCard icon="alert" label="Full table scans" count={insights.fullTableScans}
+            note={insights.fullTableScans ? 'May impact performance' : 'None in this plan'} />
+          <InsightCard icon="key" label="Missing indexes" count={insights.missingIndexes}
+            note="Potential improvement" />
+          <InsightCard icon="branch" label="Join operations" count={insights.joinOperations}
+            goodWhenZero={false} note="Review join conditions" />
+          {/* A cost is a magnitude, not a fault — it gets the neutral tone
+              rather than the amber one a finding would carry. */}
+          <InsightCard icon="gauge" label="Estimated cost" count={insights.estimatedCost}
+            tone="accent" goodWhenZero={false} note="Optimizer estimate" />
+        </div>
+      </Step>
+
+      <Step n={4} title="Related information" subtitle="Additional details about this statement">
+        <div className="grid grid-cols-2 gap-gutter-sm sm:grid-cols-3 xl:grid-cols-5">
+          <MetricCard compact icon="database" label="Schema"
+            value={row.schema_name || row.database_name || null} />
+          <MetricCard compact icon="table" label="Tables"
+            value={objects ? objects.tables.length : null} />
+          <MetricCard compact icon="boxes" label="Object types"
+            value={objects && objects.types.length ? objects.types.join(', ') : null} />
+          <MetricCard compact icon="type" label="Query type"
+            value={(row.query_text || '').trim().split(/\s+/)[0]?.toUpperCase() || null} />
+          <MetricCard compact icon="key" label="SQL id"
+            value={row.query_id || null} />
+        </div>
+      </Step>
+    </>
+  );
+}
+
+/**
+ * Fetch one plan, by whatever route this engine offers.
+ *
+ * Exported and shared with the Execution Plan page so there is ONE definition
+ * of how a plan is requested per engine. Oracle reads v$sql_plan (a SELECT,
+ * executing nothing); the others issue an EXPLAIN against the server, which is
+ * why those stay behind an explicit action rather than running on arrival.
+ */
+export async function requestPlan(engine, id, row) {
+  if (engine.key === 'oracle') {
+    const sqlId = row.query_id;
+    if (!sqlId) throw new Error('No sql_id on this row.');
+    return client.get(engine.api.explainSqlId(id, sqlId), { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
+  }
+  if (engine.key === 'mongodb') {
+    const raw = row._raw || {};
+    const [database, collection] = String(raw.ns || row.database_name || '').split('.', 2);
+    return client.post(engine.api.explainOp(id), {
+      database: database || row.database_name || 'admin',
+      collection: collection || raw.collection || '',
+      query_filter: (() => { try { return JSON.parse(raw.query || '{}'); } catch { return {}; } })(),
+    }, { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
+  }
+  return client.post(engine.api.explainSql(id), {
+    sql_text: row.query_text,
+    database: row.database_name,
+    db_name: row.database_name,
+  }, { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
+}
+
 function PlanStep({ engine, id, row }) {
   const [state, setState] = useState(null); // null | {loading} | {data} | {error}
 
@@ -688,7 +814,9 @@ export default function SlowQueryDetailPage({ tech }) {
   const { state } = useLocation();
   const [ai, setAi] = useState(null);
 
-  const backTo = engine ? `${engine.dashboardPath(id)}/slow-queries` : '/databases';
+  // A caller outside the slow-query list (Performance) passes its own page as
+  // `backTo`, so Back returns there instead of to the Slow Queries list.
+  const backTo = state?.backTo || (engine ? `${engine.dashboardPath(id)}/slow-queries` : '/databases');
   const routerRow = state?.row;
   const canRefetch = !!(engine?.api.byId && routerRow?.query_id);
 
@@ -703,7 +831,83 @@ export default function SlowQueryDetailPage({ tech }) {
     retry: false,
   });
 
-  const row = routerRow || refetched?.query;
+  /* Refresh re-reads the statement by id (when the engine has one), and the
+     newer figures replace the ones handed over by the list. */
+  const [freshRow, setFreshRow] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const row = freshRow || routerRow || refetched?.query;
+  const refreshRow = async () => {
+    if (!engine?.api.byId || !row?.query_id) return;
+    setRefreshing(true);
+    try {
+      const r = await client.get(engine.api.byId(id, row.query_id)).then((x) => x.data);
+      if (r?.query) setFreshRow({ ...r.query, _raw: r.query._raw ?? row._raw });
+    } catch { /* keep the figures on screen */ } finally { setRefreshing(false); }
+  };
+
+  /* Oracle: the statement's own plan (V$SQL_PLAN executes nothing), read once
+     and shared by the statistics cards and Quick insights. */
+  const planQ = useQuery({
+    queryKey: ['qaPlan', id, row?.query_id],
+    queryFn: async () => {
+      const res = await client.get(engine.api.explainSqlId(id, row.query_id), { timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
+      if (res.status === 'error') throw new Error(res.error || 'The plan request failed.');
+      return Array.isArray(res.plan) ? res.plan : [];
+    },
+    enabled: !!(engine?.key === 'oracle' && row?.query_id),
+    retry: false,
+    staleTime: 60000,
+  });
+  /* Analyze (Oracle): reads keyed by the captured SQL_ID, run together. The
+     results screen opens only when the plan was read. */
+  const qc = useQueryClient();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const view = searchParams.get('view');
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState(null);
+  const [trendHours, setTrendHours] = useState(24);
+  const sqlRef = useRef(null);
+  const sqlId = row?.query_id;
+  const oracleApi = (path, params) => client.get(`/connections/oracle/${id}/${path}`, { params, timeout: PLAN_REQUEST_TIMEOUT_MS }).then((r) => r.data);
+  const resKeys = {
+    detail: ['qaDetail', id, sqlId],
+    stats: ['qaPlanStats', id, sqlId],
+    trend: ['qaTrend', id, sqlId, trendHours],
+    top: ['qaTopSql', id],
+  };
+  const detailQ = useQuery({ queryKey: resKeys.detail, queryFn: () => oracleApi('oracle-sql-detail', { sql_id: sqlId }), enabled: false, retry: false, staleTime: 60000 });
+  const statsQ = useQuery({ queryKey: resKeys.stats, queryFn: () => oracleApi('oracle-sql-plan-stats', { sql_id: sqlId }), enabled: false, retry: false, staleTime: 60000 });
+  const trendQ = useQuery({ queryKey: resKeys.trend, queryFn: () => oracleApi('oracle-sql-trend', { sql_id: sqlId, hours: trendHours }), enabled: view === 'results' && !!sqlId, retry: false, staleTime: 60000 });
+  const topQ = useQuery({ queryKey: resKeys.top, queryFn: () => oracleApi('oracle-top-sql'), enabled: false, retry: false, staleTime: 60000 });
+  const haveResults = !!(planQ.data && detailQ.data);
+
+  const runAnalysis = async (focus) => {
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const [plan] = await Promise.all([
+        planQ.data ? Promise.resolve(planQ.data) : planQ.refetch({ throwOnError: true }).then((r) => { if (r.error) throw r.error; return r.data; }),
+        qc.fetchQuery({ queryKey: resKeys.detail, queryFn: () => oracleApi('oracle-sql-detail', { sql_id: sqlId }), staleTime: 60000 }),
+      ]);
+      await Promise.allSettled([
+        qc.fetchQuery({ queryKey: resKeys.stats, queryFn: () => oracleApi('oracle-sql-plan-stats', { sql_id: sqlId }), staleTime: 60000 }),
+        qc.fetchQuery({ queryKey: resKeys.top, queryFn: () => oracleApi('oracle-top-sql'), staleTime: 60000 }),
+      ]);
+      if (!plan || !plan.length) throw new Error('Oracle returned no plan for this SQL ID — the cursor may have aged out of the shared pool.');
+      // Keep the edited text on this history entry, then open the results.
+      navigate(`${location.pathname}`, { replace: true, state: { ...(state || {}), row, sql: sqlRef.current } });
+      navigate(`${location.pathname}?view=results${focus ? `#${focus}` : ''}`, { state: { ...(state || {}), row, sql: sqlRef.current } });
+    } catch (e) {
+      setAnalyzeError(e?.response?.data?.detail ? JSON.stringify(e.response.data.detail) : (e?.message || String(e)));
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const planState = engine?.key === 'oracle'
+    ? (planQ.isLoading ? { loading: true } : planQ.error ? { error: planQ.error.message } : planQ.data ? { rows: planQ.data } : null)
+    : null;
 
   if (!engine) {
     return <><PageHeader title="Query Analysis" icon="zap" /><Notice tone="danger" title="Unknown database technology.">{String(tech)}</Notice></>;
@@ -731,16 +935,87 @@ export default function SlowQueryDetailPage({ tech }) {
 
   const sql = row.query_text || '';
 
-  const runAi = async () => {
+  const runAi = async (editedSql = null) => {
     setAi({ loading: true });
     try {
-      const payload = engine.buildAiPayload(row, row._raw);
+      // Screen 1's editor can send an edited statement; the cost figures
+      // stay the captured statement's.
+      const payload = engine.buildAiPayload(editedSql ? { ...row, query_text: editedSql } : row, row._raw);
+      if (editedSql && 'sql_text' in payload) payload.sql_text = editedSql;
       const res = await client.post(engine.api.analyzeGroq(id), payload).then((r) => r.data);
       setAi(res.status === 'success' ? { result: res.analysis } : { err: res.error || 'The analyser returned no result.' });
     } catch (e) {
       setAi({ err: e?.message || String(e) });
     }
   };
+
+  if (!engine.hasPgWorkspace && !engine.hasFullAnalysis && engine.key === 'oracle' && view === 'results') {
+    if (!haveResults) {
+      // A results URL opened directly (or refreshed): read the results again.
+      if (!analyzing && !analyzeError && sqlId) setTimeout(() => runAnalysis(), 0);
+      return (
+        <div className="space-y-gutter">
+          {analyzeError ? (
+            <Notice tone="danger" title="Analysis could not be completed.">
+              {analyzeError}
+              <div className="mt-2 flex gap-2">
+                <Button variant="secondary" icon="refresh" onClick={() => runAnalysis()}>Retry</Button>
+                <Button variant="secondary" icon="arrow-left" onClick={() => navigate(location.pathname, { state })}>Back to the query</Button>
+              </div>
+            </Notice>
+          ) : <PageLoading title="Analyzing…" />}
+        </div>
+      );
+    }
+    return (
+      <QueryAnalysisResults
+        engine={engine} id={id} row={row}
+        sql={state?.sql ?? row.query_text ?? ''}
+        results={{ plan: planQ.data || [], planStats: statsQ.data, detail: detailQ.data, trend: trendQ.data, topSql: topQ.data }}
+        onBack={() => navigate(-1)}
+        onRefresh={() => { planQ.refetch(); detailQ.refetch(); statsQ.refetch(); trendQ.refetch(); topQ.refetch(); }}
+        refreshing={planQ.isFetching || detailQ.isFetching || statsQ.isFetching || trendQ.isFetching || topQ.isFetching}
+        trendHours={trendHours} onTrendHours={setTrendHours}
+      />
+    );
+  }
+
+  if (!engine.hasPgWorkspace && !engine.hasFullAnalysis) {
+    const oracle = engine.key === 'oracle';
+    return (
+      <div className="space-y-gutter">
+        <QueryAnalysisScreen1
+          key={row.query_id || row.query_text}
+          engine={engine} id={id} row={row} backTo={backTo}
+          ai={ai}
+          initialSql={state?.sql}
+          onSqlChange={(v) => { sqlRef.current = v; }}
+          analyzing={analyzing}
+          analyzeError={analyzeError}
+          onRetry={() => runAnalysis()}
+          onAnalyze={oracle
+            ? (text, edited) => (edited
+              ? setAnalyzeError('Analyze reads the captured statement’s plan and statistics from Oracle by its SQL ID, and an edited statement has no cursor yet. ACTMON does not run EXPLAIN PLAN on text typed in the browser. Undo the edits to analyse the captured statement, or use "Analyse this query" for an AI reading of the edited text.')
+              : runAnalysis())
+            : (text, edited) => runAi(edited ? text : null)}
+          onAi={(text, edited) => runAi(edited ? text : null)}
+          onRefresh={refreshRow} refreshing={refreshing}
+          onPlan={oracle
+            ? () => (haveResults ? navigate(`${location.pathname}?view=results#qa-plan`, { state: { ...(state || {}), row, sql: sqlRef.current } }) : runAnalysis('qa-plan'))
+            : () => navigate(`${engine.dashboardPath(id)}/slow-queries/plan`, { state: { row } })}
+          planState={planState}
+        />
+        {ai?.err && (
+          <div>
+            <Notice tone="danger" title="Analysis failed.">{ai.err}</Notice>
+            <Button variant="secondary" icon="refresh" onClick={() => runAi()}>Try again</Button>
+          </div>
+        )}
+        {ai?.result && <AiAnalysisResult a={ai.result} />}
+        <QuickInsights engine={engine} id={id} row={row} planState={planState} />
+      </div>
+    );
+  }
 
   return (
     <>
@@ -768,23 +1043,40 @@ export default function SlowQueryDetailPage({ tech }) {
       ) : (
       <div className="space-y-gutter">
         <Step n={1} title="The query" subtitle="What it is and what it costs today">
+          {/* The card scrolls in both directions rather than wrapping: a long
+              statement stays readable line by line, and the Copy button keeps
+              the whole text whatever is on screen. */}
           <div className="flex items-start gap-2">
             <SqlBlock sql={sql || '(empty)'} className="max-h-60 flex-1 overflow-auto" />
             <CopyButton text={sql} />
           </div>
-          <div className="mt-gutter-sm grid grid-cols-2 gap-gutter-sm sm:grid-cols-3 lg:grid-cols-6">
-            <StatCell label="Severity" value={<SeverityBadge severity={row.severity} />} />
-            <StatCell label={row.execution_count != null ? 'Avg time' : 'Duration'} value={fmtMs(row.average_execution_time)}
-              tone={row.severity === 'critical' ? 'bad' : row.severity === 'high' ? 'warn' : 'neutral'} />
-            {row.execution_count != null && <StatCell label="Executions" value={fmtNumber(row.execution_count)} />}
-            {row.max_execution_time != null && <StatCell label="Max time" value={fmtMs(row.max_execution_time)} />}
-            {row.rows_returned != null && <StatCell label="Rows sent" value={fmtNumber(row.rows_returned)} />}
-            {row.rows_affected != null && <StatCell label="Rows examined" value={fmtNumber(row.rows_affected)} />}
-            {row.user_name && <StatCell label="User" value={row.user_name} />}
-            {row.host && <StatCell label="Host" value={row.host} />}
-            {row.first_seen && <StatCell label="First seen" value={fmtDateTime(row.first_seen) || row.first_seen} />}
-            {row.last_seen && <StatCell label="Last seen" value={fmtDateTime(row.last_seen) || row.last_seen} />}
+
+          {/* The five figures the reference leads with, then whatever else this
+              engine actually reports — a column no engine fills is not shown
+              rather than printed as a dash. */}
+          <div className="mt-gutter-sm grid grid-cols-2 gap-gutter-sm sm:grid-cols-3 xl:grid-cols-5">
+            <MetricCard icon="alert" label="Severity"
+              tone={row.severity === 'critical' ? 'danger' : row.severity === 'high' ? 'warning' : 'success'}
+              value={<SeverityBadge severity={row.severity} />} />
+            <MetricCard icon="clock" label={row.execution_count != null ? 'Avg time' : 'Duration'}
+              tone={row.severity === 'critical' ? 'danger' : row.severity === 'high' ? 'warning' : 'accent'}
+              value={fmtMs(row.average_execution_time)} />
+            <MetricCard icon="activity" label="Executions"
+              value={row.execution_count == null ? null : fmtNumber(row.execution_count)} />
+            <MetricCard icon="trend" label="Rows sent"
+              value={row.rows_returned == null ? null : fmtNumber(row.rows_returned)} />
+            <MetricCard icon="calendar" label="Last seen"
+              value={row.last_seen ? (fmtDateTime(row.last_seen) || row.last_seen) : null} />
           </div>
+          {(row.max_execution_time != null || row.rows_affected != null || row.user_name || row.host || row.first_seen) && (
+            <div className="mt-gutter-sm grid grid-cols-2 gap-gutter-sm sm:grid-cols-3 xl:grid-cols-5">
+              {row.max_execution_time != null && <MetricCard compact icon="clock" label="Max time" value={fmtMs(row.max_execution_time)} tone="neutral" />}
+              {row.rows_affected != null && <MetricCard compact icon="rows" label="Rows examined" value={fmtNumber(row.rows_affected)} tone="neutral" />}
+              {row.user_name && <MetricCard compact icon="user" label="User" value={row.user_name} tone="neutral" />}
+              {row.host && <MetricCard compact icon="server" label="Host" value={row.host} tone="neutral" />}
+              {row.first_seen && <MetricCard compact icon="calendar" label="First seen" value={fmtDateTime(row.first_seen) || row.first_seen} tone="neutral" />}
+            </div>
+          )}
         </Step>
 
         {engine.hasFullAnalysis ? (
@@ -794,26 +1086,57 @@ export default function SlowQueryDetailPage({ tech }) {
           </Step>
         ) : (
           <>
-            <Step n={2} title="Execution plan" subtitle={`Native to ${engine.label} — read on demand, never cached stale`}>
-              <PlanStep engine={engine} id={id} row={row} />
-            </Step>
+            <Step n={2} title="What's next?" subtitle="Analyse the execution plan and get recommendations">
+              <div className="grid gap-gutter-sm lg:grid-cols-3">
+                {/* Only offered where a plan can actually be fetched for this
+                    row — a card that leads to "no sql_id" is worse than none. */}
+                {engine.hasExplain && (
+                  <ActionCard
+                    tone="primary"
+                    icon="branch"
+                    title="View execution plan"
+                    body="See the complete execution plan, as a diagram and as a table."
+                    disabled={engine.key === 'oracle' && !row.query_id}
+                    onClick={() => navigate(`${engine.dashboardPath(id)}/slow-queries/plan`, { state: { row } })}
+                  />
+                )}
+                <ActionCard
+                  tone="success"
+                  icon="brain"
+                  title="Analyse this query"
+                  body="Read the statement together with its cost figures and suggest improvements."
+                  busy={ai?.loading}
+                  onClick={runAi}
+                />
+                {/* Shown only for engines that genuinely have a comparison
+                    workspace; the others would be a card with nowhere to go. */}
+                {engine.key === 'oracle' && (
+                  <ActionCard
+                    tone="accent"
+                    icon="layers"
+                    title="Compare & tune"
+                    body="Open Top SQL, where this statement sits beside its plan history."
+                    onClick={() => navigate(`${engine.dashboardPath(id)}/sql`)}
+                  />
+                )}
+              </div>
 
-            <Step n={3} title="How to make it faster" subtitle="The model reads the statement together with its cost figures">
-              {!ai && <Button variant="primary" size="lg" icon="brain" onClick={runAi}>Analyse this query</Button>}
-              {ai?.loading && <InlineLoading label="Analysing…" />}
+              {ai?.loading && <div className="mt-gutter-sm"><InlineLoading label="Analysing…" /></div>}
               {ai?.err && (
-                <>
+                <div className="mt-gutter-sm">
                   <Notice tone="danger" title="Analysis failed.">{ai.err}</Notice>
                   <Button variant="secondary" icon="refresh" onClick={runAi}>Try again</Button>
-                </>
+                </div>
               )}
               {ai?.result && (
-                <>
+                <div className="mt-gutter-sm">
                   <AiAnalysisResult a={ai.result} />
                   <Button variant="secondary" icon="refresh" className="mt-gutter-sm" onClick={runAi}>Re-analyse</Button>
-                </>
+                </div>
               )}
             </Step>
+
+            <QuickInsights engine={engine} id={id} row={row} />
           </>
         )}
       </div>

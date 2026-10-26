@@ -40,7 +40,7 @@ export default function OracleSessionDetailPage() {
   const { state } = useLocation();
   const { toasts, push, dismiss } = useToasts();
   const snapshot = state?.row;
-  const backTo = `/oracle-dashboard/${id}/live-queries`;
+  const backTo = state?.backTo || `/oracle-dashboard/${id}/live-queries`;
 
   const [showStatement, setShowStatement] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
@@ -205,6 +205,9 @@ export default function OracleSessionDetailPage() {
             ) : (
               <>
                 <Table
+                  rowHeight={64}
+                  darkHeader
+                  cellText
                   columns={[
                     { key: 'op', label: 'Operation' },
                     { key: 'object', label: 'Object' },
@@ -217,22 +220,22 @@ export default function OracleSessionDetailPage() {
                     key: String(p.id),
                     cells: {
                       op: (
-                        <span className="font-mono text-[11px] whitespace-pre text-fg"
+                        <span className="font-mono whitespace-pre text-fg"
                           style={{ paddingLeft: `${num(p.depth) * 12}px` }}>
                           {p.operation}{p.options ? ` ${p.options}` : ''}
                         </span>
                       ),
                       object: p.object_name ? (
-                        <span className="block text-[11px] leading-tight">
+                        <span className="block leading-tight">
                           <span className="block font-mono text-fg">{p.object_name}</span>
                           <span className="block text-subtle">{p.object_owner} · {p.object_type}</span>
                         </span>
                       ) : null,
                       cost: <span className="font-mono">{fmtNumber(p.cost)}</span>,
                       rows: <span className="font-mono">{fmtNumber(p.cardinality)}</span>,
-                      bytes: <span className="font-mono text-[11px] text-muted">{fmtNumber(p.bytes)}</span>,
+                      bytes: <span className="font-mono text-muted">{fmtNumber(p.bytes)}</span>,
                       pred: (
-                        <span className="block max-w-[260px] font-mono text-[10px] leading-snug break-words text-subtle">
+                        <span className="block max-w-[260px] font-mono leading-snug break-words text-subtle">
                           {p.access_predicates || p.filter_predicates || ''}
                         </span>
                       ),

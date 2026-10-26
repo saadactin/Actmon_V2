@@ -68,6 +68,11 @@ export const NAV_INDEX = [...MENU_ITEMS, ...EXTRA_ITEMS];
 export const ROUTE_LABELS = {
   '': 'Home',
   dashboard: 'Dashboard',
+  'cpu-performance': 'CPU Performance',
+  memory: 'Memory',
+  disk: 'Disk Consumption',
+  hosts: 'Hosts',
+  top: 'All Hosts',
   'cloud-dashboard': 'Cloud Dashboard',
   agents: 'Agents',
   deploy: 'Deploy',
